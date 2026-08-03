@@ -229,6 +229,30 @@ describe('guardrails', () => {
   });
 });
 
+describe('harness queries (wake cursor)', () => {
+  it('maxSeq advances and scopeChangedSince respects workstream and assignee scope', () => {
+    const s = freshStore();
+    const t = create(s, { workstream: 'alpha' });
+    const seq = s.maxSeq();
+    expect(seq).toBeGreaterThan(0);
+    expect(s.scopeChangedSince(seq, 'alpha')).toBe(false);
+    create(s, { workstream: 'beta' });
+    expect(s.scopeChangedSince(seq, 'alpha')).toBe(false); // beta noise does not wake alpha
+    s.updateTicket(builder, { ticket_id: t.id, note: 'progress', status: 'in_progress' });
+    expect(s.scopeChangedSince(seq, 'alpha')).toBe(true);
+  });
+  it('readyCount and actorActivitySince answer the harness questions', () => {
+    const s = freshStore();
+    const t = create(s, { workstream: 'alpha' });
+    expect(s.readyCount('alpha')).toBe(1);
+    const seq = s.maxSeq();
+    s.updateTicket(builder, { ticket_id: t.id, note: 'claimed', status: 'in_progress' });
+    expect(s.readyCount('alpha')).toBe(0);
+    expect(s.actorActivitySince('builder-loop', seq)).toBe(1);
+    expect(s.actorActivitySince('reviewer-loop', seq)).toBe(0);
+  });
+});
+
 describe('THE INVARIANT: tickets are a materialized view of events', () => {
   it('rebuild() from events reproduces identical state after a full lifecycle', () => {
     const s = freshStore();

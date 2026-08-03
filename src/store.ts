@@ -201,6 +201,39 @@ export class Store {
     return tickets;
   }
 
+  /** Highest event sequence number — the wake cursor for harnesses. */
+  maxSeq(): number {
+    const row = this.db.prepare('SELECT COALESCE(MAX(seq), 0) AS s FROM events').get() as { s: number };
+    return row.s;
+  }
+
+  /** Count of ready tickets in scope (open, unblocked, unassigned-or-reserved-for-caller). */
+  readyCount(workstream?: string, caller?: string): number {
+    return this.listTickets({ ready: true, workstream, caller, limit: 1000 }).length;
+  }
+
+  /** True if any event since `seq` touches the scope: a ticket in `workstream`,
+   *  or a ticket currently assigned to `assignee`. Zero-token wake check. */
+  scopeChangedSince(seq: number, workstream?: string, assignee?: string): boolean {
+    const clauses: string[] = [];
+    const params: unknown[] = [seq];
+    if (workstream) { clauses.push('t.workstream = ?'); params.push(workstream); }
+    if (assignee) { clauses.push('t.assignee = ?'); params.push(assignee); }
+    const scope = clauses.length ? `AND (${clauses.join(' OR ')})` : '';
+    const row = this.db
+      .prepare(`SELECT COUNT(*) AS n FROM events e JOIN tickets t ON t.id = e.ticket_id WHERE e.seq > ? ${scope}`)
+      .get(...params) as { n: number };
+    return row.n > 0;
+  }
+
+  /** Count of events written by `actorName` since `seq` — a harness's "did my agent produce?" check. */
+  actorActivitySince(actorName: string, seq: number): number {
+    const row = this.db
+      .prepare("SELECT COUNT(*) AS n FROM events WHERE seq > ? AND json_extract(actor, '$.name') = ?")
+      .get(seq, actorName) as { n: number };
+    return row.n;
+  }
+
   listWorkstreams(): string[] {
     const rows = this.db.prepare('SELECT DISTINCT workstream FROM tickets ORDER BY workstream').all() as { workstream: string }[];
     return rows.map((r) => r.workstream);

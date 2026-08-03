@@ -28,6 +28,7 @@
   },
   "bin": {
     "helm-mcp": "dist/server.js",
-    "helm-view": "dist/view.js"
+    "helm-view": "dist/view.js",
+    "helm-cli": "dist/cli.js"
   }
 }

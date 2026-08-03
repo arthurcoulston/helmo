@@ -1,0 +1,33 @@
+{
+  "name": "helm",
+  "version": "0.1.0",
+  "description": "Agent work record: agents write, humans read and meet.",
+  "main": "index.js",
+  "scripts": {
+    "test": "vitest run",
+    "build": "tsc",
+    "smoke": "node scripts/smoke.mjs",
+    "view": "tsx src/view.ts",
+    "mcp": "tsx src/server.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "better-sqlite3": "^13.0.2",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^26.1.2",
+    "tsx": "^4.23.5",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  },
+  "bin": {
+    "helm-mcp": "dist/server.js",
+    "helm-view": "dist/view.js"
+  }
+}

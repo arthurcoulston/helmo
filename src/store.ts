@@ -1,0 +1,575 @@
+import Database from 'better-sqlite3';
+import {
+  Actor, Answer, BlastRadius, BLAST_RADII, Confidence, Dep, DepType, Evidence,
+  HelmError, HelmEvent, Question, Status, Ticket,
+} from './types.js';
+
+const STALE_CLAIM_HOURS = 24;
+
+export interface CreateInput {
+  title: string;
+  body: string;
+  workstream: string;
+  type: string;
+  labels?: string[];
+  priority?: number;
+  status?: 'open' | 'in_progress';
+  assignee?: string;
+  deps?: { to: string; type: DepType }[];
+}
+
+export interface UpdateInput {
+  ticket_id: string;
+  note: string;
+  status?: 'open' | 'in_progress' | 'done' | 'cancelled';
+  takeover?: boolean;
+  handoff_to?: string;
+  evidence?: Evidence[];
+  confidence?: Confidence;
+  uncertainty_note?: string;
+  blast_radius?: BlastRadius;
+  tokens?: number;
+  cost_usd?: number;
+  title?: string;
+  body?: string;
+  priority?: number;
+  labels?: string[];
+  workstream?: string;
+}
+
+export interface ListFilter {
+  ready?: boolean;
+  caller?: string; // actor name, used by ready to include reservations
+  status?: Status;
+  workstream?: string;
+  assignee?: string;
+  type?: string;
+  priority_max?: number;
+  limit?: number;
+  cursor?: number; // offset
+}
+
+export interface UpdateResult {
+  ticket: Ticket;
+  warnings: string[];
+}
+
+const SCHEMA = `
+CREATE TABLE IF NOT EXISTS events (
+  seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts         TEXT NOT NULL,
+  ticket_id  TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  actor      TEXT NOT NULL,
+  payload    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_events_ticket ON events(ticket_id);
+CREATE TABLE IF NOT EXISTS tickets (
+  id             TEXT PRIMARY KEY,
+  title          TEXT NOT NULL,
+  body           TEXT NOT NULL DEFAULT '',
+  workstream     TEXT NOT NULL,
+  type           TEXT NOT NULL,
+  labels         TEXT NOT NULL DEFAULT '[]',
+  status         TEXT NOT NULL DEFAULT 'open',
+  priority       INTEGER NOT NULL DEFAULT 2,
+  assignee       TEXT,
+  evidence       TEXT NOT NULL DEFAULT '[]',
+  confidence     TEXT,
+  uncertainty_note TEXT,
+  blast_radius   TEXT NOT NULL DEFAULT 'none',
+  question       TEXT,
+  tokens_total   INTEGER NOT NULL DEFAULT 0,
+  cost_usd_total REAL NOT NULL DEFAULT 0,
+  created_at     TEXT NOT NULL,
+  updated_at     TEXT NOT NULL,
+  closed_at      TEXT
+);
+CREATE TABLE IF NOT EXISTS deps (
+  from_id TEXT NOT NULL,
+  to_id   TEXT NOT NULL,
+  type    TEXT NOT NULL,
+  PRIMARY KEY (from_id, to_id, type)
+);
+CREATE TABLE IF NOT EXISTS meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+`;
+
+function now(): string {
+  return new Date().toISOString();
+}
+
+function validateActor(actor: Actor): void {
+  if (!actor?.name || !actor?.kind) {
+    throw new HelmError(
+      'No actor identity. Configure HELM_ACTOR (JSON with at least {"name", "kind"}) in the MCP server environment, or pass an "actor" param. Provenance requires knowing who writes.',
+    );
+  }
+  if (actor.kind === 'agent' && (!actor.model || !actor.version)) {
+    throw new HelmError(
+      `Actor "${actor.name}" has kind "agent" but is missing model and/or version. Agents must identify their model ID and harness version — this is what makes corrections verifiable. Example: {"name":"${actor.name}","kind":"agent","model":"claude-sonnet-5","version":"1.0"}.`,
+    );
+  }
+}
+
+export class Store {
+  private db: Database.Database;
+
+  constructor(path: string) {
+    this.db = new Database(path);
+    this.db.pragma('journal_mode = WAL');
+    this.db.exec(SCHEMA);
+  }
+
+  close(): void {
+    this.db.close();
+  }
+
+  // ---------- reads ----------
+
+  getTicket(id: string): Ticket {
+    const row = this.db.prepare('SELECT * FROM tickets WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+    if (!row) {
+      throw new HelmError(`Ticket "${id}" not found. IDs look like "H-42"; use helm_list_tickets to find the one you mean.`);
+    }
+    return rowToTicket(row);
+  }
+
+  getDeps(id: string): { outgoing: Dep[]; incoming: Dep[] } {
+    return {
+      outgoing: this.db.prepare('SELECT * FROM deps WHERE from_id = ?').all(id) as Dep[],
+      incoming: this.db.prepare('SELECT * FROM deps WHERE to_id = ?').all(id) as Dep[],
+    };
+  }
+
+  getEvents(ticketId: string): HelmEvent[] {
+    const rows = this.db.prepare('SELECT * FROM events WHERE ticket_id = ? ORDER BY seq').all(ticketId) as Record<string, unknown>[];
+    return rows.map(rowToEvent);
+  }
+
+  lastAnswer(ticketId: string): Answer | null {
+    const row = this.db
+      .prepare("SELECT payload FROM events WHERE ticket_id = ? AND event_type = 'answered' ORDER BY seq DESC LIMIT 1")
+      .get(ticketId) as { payload: string } | undefined;
+    return row ? (JSON.parse(row.payload) as Answer) : null;
+  }
+
+  agentChain(ticketId: string): string[] {
+    const rows = this.db.prepare('SELECT actor FROM events WHERE ticket_id = ? ORDER BY seq').all(ticketId) as { actor: string }[];
+    const chain: string[] = [];
+    for (const r of rows) {
+      const a = JSON.parse(r.actor) as Actor;
+      const label = a.model ? `${a.name} (${a.model}${a.version ? ` v${a.version}` : ''})` : a.name;
+      if (chain[chain.length - 1] !== label) chain.push(label);
+    }
+    return chain;
+  }
+
+  isBlocked(id: string): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM deps d JOIN tickets t ON t.id = d.to_id
+         WHERE d.from_id = ? AND d.type = 'blocks' AND t.status NOT IN ('done','cancelled')`,
+      )
+      .get(id) as { n: number };
+    return row.n > 0;
+  }
+
+  listTickets(filter: ListFilter): Ticket[] {
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+    if (filter.status) { clauses.push('status = ?'); params.push(filter.status); }
+    if (filter.workstream) { clauses.push('workstream = ?'); params.push(filter.workstream); }
+    if (filter.assignee) { clauses.push('assignee = ?'); params.push(filter.assignee); }
+    if (filter.type) { clauses.push('type = ?'); params.push(filter.type); }
+    if (filter.priority_max !== undefined) { clauses.push('priority <= ?'); params.push(filter.priority_max); }
+    if (filter.ready) {
+      clauses.push("status = 'open'");
+      if (filter.caller) { clauses.push('(assignee IS NULL OR assignee = ?)'); params.push(filter.caller); }
+      else clauses.push('assignee IS NULL');
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    const limit = filter.limit ?? 20;
+    const offset = filter.cursor ?? 0;
+    const rows = this.db
+      .prepare(`SELECT * FROM tickets ${where} ORDER BY priority ASC, created_at ASC LIMIT ? OFFSET ?`)
+      .all(...params, limit + (filter.ready ? 50 : 0), offset) as Record<string, unknown>[];
+    let tickets = rows.map(rowToTicket);
+    if (filter.ready) tickets = tickets.filter((t) => !this.isBlocked(t.id)).slice(0, limit);
+    return tickets;
+  }
+
+  listWorkstreams(): string[] {
+    const rows = this.db.prepare('SELECT DISTINCT workstream FROM tickets ORDER BY workstream').all() as { workstream: string }[];
+    return rows.map((r) => r.workstream);
+  }
+
+  // ---------- writes (every write = append event + materialize, atomically) ----------
+
+  createTicket(actor: Actor, input: CreateInput): Ticket {
+    validateActor(actor);
+    if (!input.title?.trim()) throw new HelmError('title is required: one line, plain human terms.');
+    if (!input.body?.trim()) {
+      throw new HelmError(
+        'body is required. Write it so a different agent with NO other context could resume: goal, constraints, relevant paths/links, current state.',
+      );
+    }
+    if (!input.workstream?.trim()) {
+      throw new HelmError(
+        `workstream is required. Existing workstreams: ${JSON.stringify(this.listWorkstreams())}. Reuse one if it fits; invent only for genuinely new streams of work.`,
+      );
+    }
+    if (!input.type?.trim()) throw new HelmError('type is required: build|research|writing|ops|planning, or another short noun.');
+    const status = input.status ?? 'open';
+    if (status === 'in_progress' && !input.assignee) input = { ...input, assignee: actor.name };
+    for (const d of input.deps ?? []) this.getTicket(d.to); // existence check before mint
+
+    return this.db.transaction(() => {
+      const id = this.mintId();
+      const ts = now();
+      const payload = {
+        id,
+        title: input.title,
+        body: input.body,
+        workstream: input.workstream,
+        type: input.type,
+        labels: input.labels ?? [],
+        priority: input.priority ?? 2,
+        status,
+        assignee: input.assignee ?? null,
+      };
+      this.append(ts, id, 'created', actor, payload);
+      this.applyCreated(ts, payload);
+      for (const d of input.deps ?? []) {
+        this.checkNoBlocksCycle(id, d.to, d.type);
+        this.append(ts, id, 'linked', actor, { to: d.to, type: d.type });
+        this.applyLinked(id, d.to, d.type, true);
+      }
+      return this.getTicket(id);
+    })();
+  }
+
+  updateTicket(actor: Actor, input: UpdateInput): UpdateResult {
+    validateActor(actor);
+    if (!input.note?.trim()) {
+      throw new HelmError('note is required on every update: one or two lines, human terms, saying what actually happened. Notes are the story the human reads.');
+    }
+    const t = this.getTicket(input.ticket_id);
+    const warnings: string[] = [];
+    const diffs: Record<string, { from: unknown; to: unknown }> = {};
+
+    if (t.status === 'done' || t.status === 'cancelled') {
+      throw new HelmError(
+        `${t.id} is ${t.status} — terminal. The record is permanent; do not rework closed tickets. If follow-up work is needed, helm_create_ticket a new one with a 'relates' link to ${t.id}.`,
+      );
+    }
+    if (input.handoff_to && input.status) {
+      throw new HelmError('Pass either handoff_to or status, not both — a handoff sets status itself (open, reserved for the receiver).');
+    }
+
+    // status transitions
+    if (input.status) {
+      if (t.status === 'awaiting_human') {
+        throw new HelmError(
+          `${t.id} is awaiting_human — it is waiting on the human's answer, not on you. Status changes happen via helm_answer_ticket (orchestrator, during a meeting). You may still add notes/evidence.`,
+        );
+      }
+      if (input.status === 'in_progress' && t.status === 'open' && t.assignee && t.assignee !== actor.name && !input.takeover) {
+        const age = hoursSince(t.updated_at);
+        if (age < STALE_CLAIM_HOURS) {
+          throw new HelmError(
+            `${t.id} is reserved for "${t.assignee}" (last activity ${age.toFixed(1)}h ago). Pick different work rather than duplicating theirs. If the claim looks dead (>${STALE_CLAIM_HOURS}h), retry with takeover: true and say so in your note.`,
+          );
+        }
+        warnings.push(`Claim on "${t.assignee}" looked stale (${age.toFixed(1)}h); consider takeover: true next time for an explicit record.`);
+      }
+      if (input.status === 'in_progress' && t.status === 'in_progress' && t.assignee !== actor.name) {
+        const age = hoursSince(t.updated_at);
+        if (!input.takeover && age < STALE_CLAIM_HOURS) {
+          throw new HelmError(
+            `${t.id} is held by "${t.assignee}" (last update ${age.toFixed(1)}h ago). Pick different work. If the holder is dead (>${STALE_CLAIM_HOURS}h stale), retry with takeover: true.`,
+          );
+        }
+        if (!input.takeover) {
+          throw new HelmError(
+            `${t.id} is held by "${t.assignee}" and stale (${age.toFixed(1)}h). Retry with takeover: true and note the takeover.`,
+          );
+        }
+      }
+      diffs['status'] = { from: t.status, to: input.status };
+      if (input.status === 'in_progress') diffs['assignee'] = { from: t.assignee, to: actor.name };
+      if (input.status === 'open') diffs['assignee'] = { from: t.assignee, to: null };
+      if (input.status === 'done') {
+        const hasEvidence = t.evidence.length > 0 || (input.evidence?.length ?? 0) > 0;
+        if (!hasEvidence) {
+          warnings.push('done_without_evidence: done was recorded, but with no evidence link the human sees a claim, not a record. Add evidence via another update if any exists.');
+        }
+      }
+    }
+
+    if (input.handoff_to) {
+      if (t.status === 'in_progress' && t.assignee && t.assignee !== actor.name) {
+        throw new HelmError(`${t.id} is held by "${t.assignee}"; only the holder can hand it off.`);
+      }
+      if (t.status === 'awaiting_human') {
+        throw new HelmError(`${t.id} is awaiting_human; it cannot be handed off until answered.`);
+      }
+      diffs['status'] = { from: t.status, to: 'open' };
+      diffs['assignee'] = { from: t.assignee, to: input.handoff_to };
+    }
+
+    if (input.blast_radius) {
+      const from = BLAST_RADII.indexOf(t.blast_radius);
+      const to = BLAST_RADII.indexOf(input.blast_radius);
+      if (to < from) {
+        throw new HelmError(
+          `blast_radius never goes back down (currently '${t.blast_radius}', got '${input.blast_radius}'). It records the furthest the work has reached.`,
+        );
+      }
+      if (to > from) diffs['blast_radius'] = { from: t.blast_radius, to: input.blast_radius };
+    }
+
+    for (const field of ['title', 'body', 'priority', 'workstream', 'confidence', 'uncertainty_note'] as const) {
+      const v = input[field];
+      if (v !== undefined && v !== (t as unknown as Record<string, unknown>)[field]) {
+        diffs[field] = { from: (t as unknown as Record<string, unknown>)[field], to: v };
+      }
+    }
+    if (input.labels !== undefined && JSON.stringify(input.labels) !== JSON.stringify(t.labels)) {
+      diffs['labels'] = { from: t.labels, to: input.labels };
+    }
+    if (input.evidence?.length) {
+      diffs['evidence'] = { from: t.evidence, to: [...t.evidence, ...input.evidence] };
+    }
+    if (input.confidence && input.confidence !== 'routine' && !input.uncertainty_note && !t.uncertainty_note) {
+      warnings.push(`confidence '${input.confidence}' with no uncertainty_note — say WHERE the doubt is; that is what makes the review efficient.`);
+    }
+
+    return this.db.transaction(() => {
+      const ts = now();
+      const payload: Record<string, unknown> = { diffs, note: input.note };
+      if (input.tokens) payload['tokens'] = input.tokens;
+      if (input.cost_usd) payload['cost_usd'] = input.cost_usd;
+      if (input.takeover) payload['takeover'] = true;
+      if (input.handoff_to) payload['handoff_to'] = input.handoff_to;
+      this.append(ts, t.id, 'updated', actor, payload);
+      this.applyUpdated(ts, t.id, payload);
+      return { ticket: this.getTicket(t.id), warnings };
+    })();
+  }
+
+  returnToHuman(actor: Actor, ticketId: string, q: Question): Ticket {
+    validateActor(actor);
+    const t = this.getTicket(ticketId);
+    if (t.status !== 'open' && t.status !== 'in_progress') {
+      throw new HelmError(`${t.id} is ${t.status}; only open or in_progress tickets can be returned to the human.`);
+    }
+    for (const [field, v] of Object.entries({ situation: q.situation, question: q.question, recommendation: q.recommendation })) {
+      if (!(v as string)?.trim()) {
+        throw new HelmError(`${field} is required. The human works these in batched meetings; an incomplete question wastes the attention Helm exists to protect.`);
+      }
+    }
+    if (!q.options || q.options.length < 2 || q.options.length > 4) {
+      throw new HelmError('options: provide 2-4, each {label, consequence}. The human should be able to answer by saying a label.');
+    }
+    for (const o of q.options) {
+      if (!o.label?.trim() || !o.consequence?.trim()) throw new HelmError('Every option needs both label and consequence (what happens if chosen, including cost/risk).');
+    }
+    return this.db.transaction(() => {
+      const ts = now();
+      this.append(ts, t.id, 'returned', actor, q as unknown as Record<string, unknown>);
+      this.db
+        .prepare("UPDATE tickets SET status = 'awaiting_human', assignee = NULL, question = ?, updated_at = ? WHERE id = ?")
+        .run(JSON.stringify(q), ts, t.id);
+      return this.getTicket(t.id);
+    })();
+  }
+
+  answerTicket(actor: Actor, ticketId: string, a: Answer): Ticket {
+    validateActor(actor);
+    const t = this.getTicket(ticketId);
+    if (t.status !== 'awaiting_human') {
+      throw new HelmError(`${t.id} is ${t.status}, not awaiting_human — there is no pending question to answer.`);
+    }
+    if (!a.answer?.trim()) throw new HelmError('answer is required: the decision plus the human\'s reasoning and any new constraints.');
+    const resolution = a.resolution ?? 'resume';
+    return this.db.transaction(() => {
+      const ts = now();
+      this.append(ts, t.id, 'answered', actor, { ...a, resolution } as unknown as Record<string, unknown>);
+      if (resolution === 'resume') {
+        this.db.prepare("UPDATE tickets SET status = 'open', assignee = NULL, question = NULL, updated_at = ? WHERE id = ?").run(ts, t.id);
+      } else {
+        this.db
+          .prepare('UPDATE tickets SET status = ?, assignee = NULL, question = NULL, updated_at = ?, closed_at = ? WHERE id = ?')
+          .run(resolution, ts, ts, t.id);
+      }
+      return this.getTicket(t.id);
+    })();
+  }
+
+  linkTickets(actor: Actor, fromId: string, toId: string, type: DepType, action: 'add' | 'remove'): void {
+    validateActor(actor);
+    this.getTicket(fromId);
+    this.getTicket(toId);
+    if (fromId === toId) throw new HelmError('A ticket cannot link to itself.');
+    this.db.transaction(() => {
+      const ts = now();
+      if (action === 'add') {
+        this.checkNoBlocksCycle(fromId, toId, type);
+        this.append(ts, fromId, 'linked', actor, { to: toId, type });
+        this.applyLinked(fromId, toId, type, true);
+      } else {
+        this.append(ts, fromId, 'unlinked', actor, { to: toId, type });
+        this.applyLinked(fromId, toId, type, false);
+      }
+      this.db.prepare('UPDATE tickets SET updated_at = ? WHERE id = ?').run(ts, fromId);
+    })();
+  }
+
+  // ---------- rebuild (the invariant) ----------
+
+  /** Reconstruct tickets + deps purely from the event log. Used by tests to enforce
+   *  that materialized state is always derivable from events. */
+  rebuild(): void {
+    this.db.transaction(() => {
+      this.db.exec('DELETE FROM tickets; DELETE FROM deps;');
+      const rows = this.db.prepare('SELECT * FROM events ORDER BY seq').all() as Record<string, unknown>[];
+      for (const row of rows) {
+        const ev = rowToEvent(row);
+        switch (ev.event_type) {
+          case 'created':
+            this.applyCreated(ev.ts, ev.payload);
+            break;
+          case 'updated':
+            this.applyUpdated(ev.ts, ev.ticket_id, ev.payload);
+            break;
+          case 'returned':
+            this.db
+              .prepare("UPDATE tickets SET status = 'awaiting_human', assignee = NULL, question = ?, updated_at = ? WHERE id = ?")
+              .run(JSON.stringify(ev.payload), ev.ts, ev.ticket_id);
+            break;
+          case 'answered': {
+            const res = (ev.payload['resolution'] as string) ?? 'resume';
+            if (res === 'resume') {
+              this.db.prepare("UPDATE tickets SET status = 'open', assignee = NULL, question = NULL, updated_at = ? WHERE id = ?").run(ev.ts, ev.ticket_id);
+            } else {
+              this.db
+                .prepare('UPDATE tickets SET status = ?, assignee = NULL, question = NULL, updated_at = ?, closed_at = ? WHERE id = ?')
+                .run(res, ev.ts, ev.ts, ev.ticket_id);
+            }
+            break;
+          }
+          case 'linked':
+            this.applyLinked(ev.ticket_id, ev.payload['to'] as string, ev.payload['type'] as DepType, true);
+            break;
+          case 'unlinked':
+            this.applyLinked(ev.ticket_id, ev.payload['to'] as string, ev.payload['type'] as DepType, false);
+            break;
+        }
+      }
+    })();
+  }
+
+  dumpState(): { tickets: Ticket[]; deps: Dep[] } {
+    const tickets = (this.db.prepare('SELECT * FROM tickets ORDER BY id').all() as Record<string, unknown>[]).map(rowToTicket);
+    const deps = this.db.prepare('SELECT * FROM deps ORDER BY from_id, to_id, type').all() as Dep[];
+    return { tickets, deps };
+  }
+
+  // ---------- internals ----------
+
+  private mintId(): string {
+    const row = this.db.prepare("SELECT value FROM meta WHERE key = 'next_id'").get() as { value: string } | undefined;
+    const n = row ? parseInt(row.value, 10) : 1;
+    this.db.prepare("INSERT INTO meta (key, value) VALUES ('next_id', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(String(n + 1));
+    return `H-${n}`;
+  }
+
+  private append(ts: string, ticketId: string, type: string, actor: Actor, payload: Record<string, unknown>): void {
+    this.db
+      .prepare('INSERT INTO events (ts, ticket_id, event_type, actor, payload) VALUES (?, ?, ?, ?, ?)')
+      .run(ts, ticketId, type, JSON.stringify(actor), JSON.stringify(payload));
+  }
+
+  private applyCreated(ts: string, p: Record<string, unknown>): void {
+    this.db
+      .prepare(
+        `INSERT INTO tickets (id, title, body, workstream, type, labels, status, priority, assignee, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        p['id'], p['title'], p['body'], p['workstream'], p['type'],
+        JSON.stringify(p['labels'] ?? []), p['status'] ?? 'open', p['priority'] ?? 2, p['assignee'] ?? null, ts, ts,
+      );
+  }
+
+  private applyUpdated(ts: string, id: string, payload: Record<string, unknown>): void {
+    const diffs = (payload['diffs'] ?? {}) as Record<string, { from: unknown; to: unknown }>;
+    const sets: string[] = ['updated_at = ?'];
+    const params: unknown[] = [ts];
+    const jsonFields = new Set(['labels', 'evidence']);
+    for (const [field, d] of Object.entries(diffs)) {
+      if (!['title', 'body', 'workstream', 'type', 'labels', 'status', 'priority', 'assignee', 'evidence', 'confidence', 'uncertainty_note', 'blast_radius'].includes(field)) continue;
+      sets.push(`${field} = ?`);
+      params.push(jsonFields.has(field) ? JSON.stringify(d.to) : (d.to as never));
+    }
+    const status = diffs['status']?.to as string | undefined;
+    if (status === 'done' || status === 'cancelled') { sets.push('closed_at = ?'); params.push(ts); }
+    const tokens = payload['tokens'] as number | undefined;
+    if (tokens) { sets.push('tokens_total = tokens_total + ?'); params.push(tokens); }
+    const cost = payload['cost_usd'] as number | undefined;
+    if (cost) { sets.push('cost_usd_total = cost_usd_total + ?'); params.push(cost); }
+    params.push(id);
+    this.db.prepare(`UPDATE tickets SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+  }
+
+  private applyLinked(fromId: string, toId: string, type: DepType, add: boolean): void {
+    if (add) {
+      this.db.prepare('INSERT OR IGNORE INTO deps (from_id, to_id, type) VALUES (?, ?, ?)').run(fromId, toId, type);
+    } else {
+      this.db.prepare('DELETE FROM deps WHERE from_id = ? AND to_id = ? AND type = ?').run(fromId, toId, type);
+    }
+  }
+
+  private checkNoBlocksCycle(fromId: string, toId: string, type: DepType): void {
+    if (type !== 'blocks') return;
+    // Adding fromId -> toId. A cycle exists if fromId is reachable from toId via blocks edges.
+    const seen = new Set<string>();
+    const stack = [toId];
+    while (stack.length) {
+      const cur = stack.pop()!;
+      if (cur === fromId) {
+        throw new HelmError(
+          `Adding blocks ${fromId} -> ${toId} would create a cycle: these tickets would wait on each other forever. Re-examine which one is truly the prerequisite.`,
+        );
+      }
+      if (seen.has(cur)) continue;
+      seen.add(cur);
+      const next = this.db.prepare("SELECT to_id FROM deps WHERE from_id = ? AND type = 'blocks'").all(cur) as { to_id: string }[];
+      for (const n of next) stack.push(n.to_id);
+    }
+  }
+}
+
+function hoursSince(iso: string): number {
+  return (Date.now() - new Date(iso).getTime()) / 3_600_000;
+}
+
+function rowToTicket(row: Record<string, unknown>): Ticket {
+  return {
+    ...(row as unknown as Ticket),
+    labels: JSON.parse(row['labels'] as string),
+    evidence: JSON.parse(row['evidence'] as string),
+    question: row['question'] ? JSON.parse(row['question'] as string) : null,
+  };
+}
+
+function rowToEvent(row: Record<string, unknown>): HelmEvent {
+  return {
+    ...(row as unknown as HelmEvent),
+    actor: JSON.parse(row['actor'] as string),
+    payload: JSON.parse(row['payload'] as string),
+  };
+}

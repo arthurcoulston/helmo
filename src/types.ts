@@ -1,0 +1,83 @@
+export const STATUSES = ['open', 'in_progress', 'awaiting_human', 'done', 'cancelled'] as const;
+export type Status = (typeof STATUSES)[number];
+
+export const DEP_TYPES = ['blocks', 'parent', 'discovered_from', 'relates'] as const;
+export type DepType = (typeof DEP_TYPES)[number];
+
+export const BLAST_RADII = ['none', 'draft', 'records', 'sent', 'published'] as const;
+export type BlastRadius = (typeof BLAST_RADII)[number];
+
+export const CONFIDENCES = ['routine', 'spot_check', 'needs_review'] as const;
+export type Confidence = (typeof CONFIDENCES)[number];
+
+export const ACTOR_KINDS = ['agent', 'orchestrator', 'human'] as const;
+export type ActorKind = (typeof ACTOR_KINDS)[number];
+
+export interface Actor {
+  name: string;
+  kind: ActorKind;
+  model?: string;
+  version?: string;
+  session?: string;
+}
+
+export interface Evidence {
+  kind: 'commit' | 'file' | 'url' | 'draft' | 'other';
+  ref: string;
+  note?: string;
+}
+
+export interface Question {
+  situation: string;
+  question: string;
+  options: { label: string; consequence: string }[];
+  recommendation: string;
+  if_unanswered?: string;
+}
+
+export interface Answer {
+  answer: string;
+  chosen_option?: string;
+  resolution: 'resume' | 'done' | 'cancelled';
+}
+
+export interface Ticket {
+  id: string;
+  title: string;
+  body: string;
+  workstream: string;
+  type: string;
+  labels: string[];
+  status: Status;
+  priority: number;
+  assignee: string | null;
+  evidence: Evidence[];
+  confidence: Confidence | null;
+  uncertainty_note: string | null;
+  blast_radius: BlastRadius;
+  question: Question | null;
+  tokens_total: number;
+  cost_usd_total: number;
+  created_at: string;
+  updated_at: string;
+  closed_at: string | null;
+}
+
+export interface Dep {
+  from_id: string;
+  to_id: string;
+  type: DepType;
+}
+
+export type EventType = 'created' | 'updated' | 'returned' | 'answered' | 'linked' | 'unlinked';
+
+export interface HelmEvent {
+  seq: number;
+  ts: string;
+  ticket_id: string;
+  event_type: EventType;
+  actor: Actor;
+  payload: Record<string, unknown>;
+}
+
+export class HelmError extends Error {}

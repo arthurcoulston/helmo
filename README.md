@@ -12,7 +12,11 @@ A self-hosted, platform-agnostic work dashboard for AI agent teams. Agents (Clau
 
 Walking skeleton. Store + MCP server + plain read-only view. Being dogfooded on its own development.
 
-## Setup
+## Install
+
+**Agent-led install is the primary path.** Tell your agent: *"I want to use Helm — install it and set it up."* and point it at [AGENT-INSTALL.md](AGENT-INSTALL.md). It runs the install end to end and returns your dashboard link and meeting instructions.
+
+Manual setup, if you prefer:
 
 ```
 npm install && npm run build

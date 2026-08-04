@@ -167,7 +167,7 @@ function motionCard(t: Ticket): string {
 function row(t: Ticket, opts: { showDone?: boolean } = {}): string {
   const waits = t.status === 'open' ? blockedBy(t) : [];
   const noEv = t.status === 'done' && t.evidence.length === 0;
-  return `<details class="trow" id="d-${esc(t.id)}">
+  return `<details class="trow" id="${esc(t.id)}">
     <summary>
       <span class="tid">${esc(t.id)}</span>
       <span class="rtitle">${esc(t.title)}</span>

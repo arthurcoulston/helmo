@@ -55,6 +55,10 @@ try {
       out({ events: store.actorActivitySince(name, Number(flag('since-seq') ?? 0)) });
       break;
     }
+    case 'hygiene': {
+      out({ findings: store.hygiene() });
+      break;
+    }
     case 'actor-tickets': {
       const name = flag('name');
       if (!name) throw new HelmError('actor-tickets requires --name <actor name>');
@@ -139,6 +143,7 @@ try {
   record-spend   --ticket H-n [--tokens N] [--cost-usd X] --note N   (metered spend; terminal tickets accepted)
   list           [--ready] [--status S] [--workstream W] [--assignee A] [--limit N]
   get            <ticket-id>
+  hygiene                                                      (deterministic record checks, read-only)
   create         --title T --body B --workstream W --type TY [--priority P] [--status S] [--assignee A] [--dep H-n --dep-type TY] [--schedule 'every 30m' | '0 0 * * *']
   update         --ticket H-n --note N [--status S] [--evidence-kind K --evidence-ref R] [--confidence C] [--blast-radius B] [--tokens N] [--cost-usd X] [--handoff-to A] [--takeover]
   return         --ticket H-n --situation S --question Q --options '[{"label":..,"consequence":..}]' --recommendation R [--if-unanswered U]

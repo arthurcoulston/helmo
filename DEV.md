@@ -18,7 +18,10 @@ orchestrator meetings and the read-only view. Product intent:
   `actor-tickets`, H-19). `spend` events are bookkeeping, not motion: they
   accept terminal tickets and never touch status or updated_at.
 - `view.ts` — the read-only dashboard at :4400 (H-2). Read-only is
-  constitutional: no affordance on that page may mutate anything.
+  constitutional: no affordance on that page may mutate anything. Shows the
+  needs-grooming strip from `store.hygiene()` (H-23) — six deterministic
+  record checks, also queryable via `helm-cli hygiene`; hygiene is judgment-free
+  by design, the judgment half of cultivation stays human/agent.
 - `types.ts` — the shared vocabulary (statuses, blast radii, confidence).
 - `schedule.ts` — recurring-ticket schedules (H-22): 'every N<m|h|d>' or 5-field
   cron, UTC. A ticket with `schedule` set is a TEMPLATE — standing work, never

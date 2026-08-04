@@ -7,6 +7,7 @@ import { createServer } from 'node:http';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from './store.js';
+import { HygieneFinding } from './store.js';
 import { Ticket, HelmEvent } from './types.js';
 
 const dbPath = process.env['HELM_DB'] ?? join(homedir(), '.helm', 'helm.db');
@@ -188,6 +189,28 @@ function row(t: Ticket, opts: { showDone?: boolean } = {}): string {
 
 // ---------- page assembly ----------
 
+// The needs-grooming strip (H-23): icon+label, never color alone.
+const GROOM_LABEL: Record<HygieneFinding['check'], string> = {
+  stale_claim: '⏳ stale claim',
+  done_without_evidence: '✱ no evidence',
+  phantom_block: '🔓 unblocked, untouched',
+  aging_question: '❓ aging question',
+  spend_anomaly: '＄ spend anomaly',
+  priority_inversion: '▲ priority inversion',
+};
+
+function groomStrip(findings: HygieneFinding[]): string {
+  if (!findings.length) return '';
+  return `<section class="groom"><h2>Needs grooming</h2>
+    ${findings
+      .map(
+        (f) => `<p class="gitem"><span class="badge quiet">${GROOM_LABEL[f.check]}</span>
+          <a href="#${esc(f.ticket_id)}" class="tid">${esc(f.ticket_id)}</a> <span class="gdetail">${esc(f.detail)}</span></p>`,
+      )
+      .join('')}
+  </section>`;
+}
+
 function page(): string {
   const all = store.listTickets({ limit: 1000 });
   const by = (s: string) => all.filter((t) => t.status === s);
@@ -224,6 +247,8 @@ function page(): string {
   <h2>Awaiting you</h2>
   ${awaiting.length ? awaiting.map(questionCard).join('') : '<p class="allclear">✓ Queue is empty. Nothing needs you.</p>'}
 </section>
+
+${groomStrip(store.hygiene())}
 
 ${motion.length ? `<section><h2>In motion</h2>${motion.map(motionCard).join('')}</section>` : ''}
 
@@ -267,6 +292,8 @@ body { margin: 0 auto; padding: 28px 32px 64px; max-width: 1080px; background: v
 h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted); font-weight: 600;
   margin: 34px 0 10px; padding-top: 14px; border-top: 1px solid var(--hairline); }
 .allclear { color: var(--good-text); font-size: 15px; }
+.groom .gitem { margin: 3px 0; font-size: 12.5px; color: var(--ink-2); }
+.groom .gdetail { color: var(--muted); }
 .tid { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted); white-space: nowrap; }
 .spend { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12px; white-space: nowrap; }
 .badge { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border); white-space: nowrap; }

@@ -6,6 +6,8 @@ import {
 } from './types.js';
 
 const STALE_CLAIM_HOURS = 24;
+const AGING_QUESTION_HOURS = 48; // the awaiting-human queue exists to protect attention; its own staleness is the record failing
+const SPEND_ANOMALY_FACTOR = 3; // flag cost > 3x the workstream norm (needs >= 3 spent tickets for a norm)
 
 // Instances spawned by the store's own clock carry the store's identity —
 // attributing them to whichever reader triggered materialization would be
@@ -61,6 +63,12 @@ export interface ListFilter {
 export interface UpdateResult {
   ticket: Ticket;
   warnings: string[];
+}
+
+export interface HygieneFinding {
+  check: 'stale_claim' | 'done_without_evidence' | 'phantom_block' | 'aging_question' | 'spend_anomaly' | 'priority_inversion';
+  ticket_id: string;
+  detail: string;
 }
 
 const SCHEMA = `
@@ -219,6 +227,93 @@ export class Store {
     let tickets = rows.map(rowToTicket);
     if (filter.ready) tickets = tickets.filter((t) => !this.isBlocked(t.id)).slice(0, limit);
     return tickets;
+  }
+
+  /** Record hygiene that needs no judgment and no tokens (H-23): deterministic
+   *  queries over the store, surfaced in the view and `helm-cli hygiene`.
+   *  Pure read — never mutates. `nowTs` is injectable for tests. */
+  hygiene(nowTs: Date = new Date()): HygieneFinding[] {
+    const findings: HygieneFinding[] = [];
+    const hoursAgo = (h: number) => new Date(nowTs.getTime() - h * 3_600_000).toISOString();
+    const age = (iso: string) => Math.floor((nowTs.getTime() - new Date(iso).getTime()) / 3_600_000);
+
+    // Stale claims: in_progress with no events for >24h — the takeover threshold agents already use.
+    for (const r of this.db
+      .prepare(
+        `SELECT t.id, t.assignee, MAX(e.ts) AS last FROM tickets t JOIN events e ON e.ticket_id = t.id
+         WHERE t.status = 'in_progress' GROUP BY t.id HAVING last < ?`,
+      )
+      .all(hoursAgo(STALE_CLAIM_HOURS)) as { id: string; assignee: string | null; last: string }[]) {
+      findings.push({ check: 'stale_claim', ticket_id: r.id, detail: `held by ${r.assignee ?? '?'}, silent for ${age(r.last)}h` });
+    }
+
+    // Done without evidence: a claim, not a record (first-class here; the view already badges it per-row).
+    for (const r of this.db.prepare("SELECT id FROM tickets WHERE status = 'done' AND evidence = '[]'").all() as { id: string }[]) {
+      findings.push({ check: 'done_without_evidence', ticket_id: r.id, detail: 'closed with no evidence link' });
+    }
+
+    // Phantom blocks: every blocks-target closed, yet the waiting ticket has not
+    // stirred since. Compared on seq, the store's monotonic clock — wall-clock
+    // ties (same-millisecond writes) would make ts comparison lie.
+    for (const r of this.db
+      .prepare(
+        `SELECT t.id, MAX(b.closed_at) AS freed, GROUP_CONCAT(b.id) AS targets,
+                (SELECT MAX(seq) FROM events WHERE ticket_id = t.id) AS lastseq,
+                (SELECT MAX(e.seq) FROM deps d2 JOIN events e ON e.ticket_id = d2.to_id
+                 WHERE d2.from_id = t.id AND d2.type = 'blocks'
+                   AND ((e.event_type = 'updated' AND json_extract(e.payload, '$.diffs.status.to') IN ('done','cancelled'))
+                     OR (e.event_type = 'answered' AND json_extract(e.payload, '$.resolution') IN ('done','cancelled')))) AS freedseq
+         FROM tickets t JOIN deps d ON d.from_id = t.id AND d.type = 'blocks' JOIN tickets b ON b.id = d.to_id
+         WHERE t.status = 'open'
+         GROUP BY t.id
+         HAVING SUM(CASE WHEN b.status IN ('done','cancelled') THEN 0 ELSE 1 END) = 0 AND lastseq < freedseq`,
+      )
+      .all() as { id: string; freed: string; targets: string }[]) {
+      findings.push({ check: 'phantom_block', ticket_id: r.id, detail: `unblocked ${age(r.freed)}h ago (${r.targets} closed) but untouched since` });
+    }
+
+    // Aging questions.
+    for (const r of this.db
+      .prepare("SELECT id, updated_at FROM tickets WHERE status = 'awaiting_human' AND updated_at < ?")
+      .all(hoursAgo(AGING_QUESTION_HOURS)) as { id: string; updated_at: string }[]) {
+      findings.push({ check: 'aging_question', ticket_id: r.id, detail: `question waiting ${Math.floor(age(r.updated_at) / 24)}d` });
+    }
+
+    // Spend anomalies: cost far above the workstream norm (H-19 made cost real).
+    const spent = this.db
+      .prepare('SELECT id, workstream, cost_usd_total AS cost FROM tickets WHERE cost_usd_total > 0')
+      .all() as { id: string; workstream: string; cost: number }[];
+    const byWs = new Map<string, { id: string; cost: number }[]>();
+    for (const s of spent) {
+      if (!byWs.has(s.workstream)) byWs.set(s.workstream, []);
+      byWs.get(s.workstream)!.push(s);
+    }
+    for (const [ws, rows] of byWs) {
+      if (rows.length < 3) continue;
+      const total = rows.reduce((a, r) => a + r.cost, 0);
+      for (const r of rows) {
+        // The norm excludes the candidate: with it included, an outlier drags
+        // the mean up until nothing can ever exceed the threshold.
+        const peerMean = (total - r.cost) / (rows.length - 1);
+        if (r.cost > peerMean * SPEND_ANOMALY_FACTOR) {
+          findings.push({ check: 'spend_anomaly', ticket_id: r.id, detail: `$${r.cost.toFixed(2)} vs $${peerMean.toFixed(2)} '${ws}' norm` });
+        }
+      }
+    }
+
+    // Priority inversions: a high-priority ready ticket sits while lower-priority work in the same workstream is in motion.
+    for (const r of this.db
+      .prepare(
+        `SELECT o.id, o.priority, o.workstream FROM tickets o
+         WHERE o.status = 'open' AND o.assignee IS NULL AND o.schedule IS NULL AND o.priority <= 1
+           AND EXISTS (SELECT 1 FROM tickets w WHERE w.workstream = o.workstream AND w.status = 'in_progress' AND w.priority > o.priority)`,
+      )
+      .all() as { id: string; priority: number; workstream: string }[]) {
+      if (this.isBlocked(r.id)) continue;
+      findings.push({ check: 'priority_inversion', ticket_id: r.id, detail: `P${r.priority} ready while lower-priority '${r.workstream}' work is in motion` });
+    }
+
+    return findings;
   }
 
   /** Catch up recurring templates: spawn an instance for each template whose

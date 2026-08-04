@@ -334,6 +334,49 @@ describe('recurring templates (lazy materialization)', () => {
   });
 });
 
+describe('hygiene checks (deterministic, read-only)', () => {
+  const hrs = (h: number) => new Date(Date.now() + h * 3_600_000);
+  it('stale claims and aging questions surface after their thresholds', () => {
+    const s = freshStore();
+    const a = create(s);
+    s.updateTicket(builder, { ticket_id: a.id, note: 'claimed', status: 'in_progress' });
+    const b = create(s);
+    s.returnToHuman(builder, b.id, {
+      situation: 'x', question: 'y?', options: [{ label: 'l', consequence: 'c' }, { label: 'l2', consequence: 'c2' }], recommendation: 'l',
+    });
+    expect(s.hygiene()).toEqual([]); // nothing is stale yet
+    const later = s.hygiene(hrs(49));
+    expect(later).toContainEqual(expect.objectContaining({ check: 'stale_claim', ticket_id: a.id }));
+    expect(later).toContainEqual(expect.objectContaining({ check: 'aging_question', ticket_id: b.id }));
+  });
+  it('done without evidence and phantom blocks', () => {
+    const s = freshStore();
+    const noEv = create(s);
+    s.updateTicket(builder, { ticket_id: noEv.id, note: 'done, trust me', status: 'done' });
+    const target = create(s);
+    const waiter = create(s, { deps: [{ to: target.id, type: 'blocks' as const }] });
+    s.updateTicket(builder, { ticket_id: target.id, note: 'done', status: 'done', evidence: [{ kind: 'file', ref: '/tmp/x' }] });
+    const f = s.hygiene();
+    expect(f).toContainEqual(expect.objectContaining({ check: 'done_without_evidence', ticket_id: noEv.id }));
+    expect(f).toContainEqual(expect.objectContaining({ check: 'phantom_block', ticket_id: waiter.id }));
+    // touching the waiter clears the phantom flag
+    s.updateTicket(builder, { ticket_id: waiter.id, note: 'seen it, picking this up soon' });
+    expect(s.hygiene().filter((x) => x.check === 'phantom_block')).toEqual([]);
+  });
+  it('spend anomalies need a workstream norm; priority inversions need motion below a ready P1', () => {
+    const s = freshStore();
+    const t1 = create(s); const t2 = create(s); const t3 = create(s);
+    s.recordSpend(builder, t1.id, { cost_usd: 1, note: 'metered' });
+    s.recordSpend(builder, t2.id, { cost_usd: 1, note: 'metered' });
+    expect(s.hygiene().filter((x) => x.check === 'spend_anomaly')).toEqual([]); // only 2 spent tickets: no norm
+    s.recordSpend(builder, t3.id, { cost_usd: 20, note: 'metered' });
+    expect(s.hygiene()).toContainEqual(expect.objectContaining({ check: 'spend_anomaly', ticket_id: t3.id }));
+    const p1 = create(s, { priority: 1 });
+    s.updateTicket(builder, { ticket_id: t1.id, note: 'working the P2 instead', status: 'in_progress' });
+    expect(s.hygiene()).toContainEqual(expect.objectContaining({ check: 'priority_inversion', ticket_id: p1.id }));
+  });
+});
+
 describe('THE INVARIANT: tickets are a materialized view of events', () => {
   it('rebuild() from events reproduces identical state after a full lifecycle', () => {
     const s = freshStore();

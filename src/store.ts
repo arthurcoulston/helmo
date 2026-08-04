@@ -1,10 +1,16 @@
 import Database from 'better-sqlite3';
+import { parseSchedule } from './schedule.js';
 import {
   Actor, Answer, BlastRadius, BLAST_RADII, Confidence, Dep, DepType, Evidence,
   HelmError, HelmEvent, Question, Status, Ticket,
 } from './types.js';
 
 const STALE_CLAIM_HOURS = 24;
+
+// Instances spawned by the store's own clock carry the store's identity —
+// attributing them to whichever reader triggered materialization would be
+// false provenance.
+const SCHEDULER_ACTOR: Actor = { name: 'helm-scheduler', kind: 'orchestrator' };
 
 export interface CreateInput {
   title: string;
@@ -16,6 +22,9 @@ export interface CreateInput {
   status?: 'open' | 'in_progress';
   assignee?: string;
   deps?: { to: string; type: DepType }[];
+  schedule?: string; // makes this a recurring template
+  spawned_from?: string; // internal: set by materializeDue on instances
+  due?: string; // internal: the slot this instance was spawned for
 }
 
 export interface UpdateInput {
@@ -81,6 +90,7 @@ CREATE TABLE IF NOT EXISTS tickets (
   question       TEXT,
   tokens_total   INTEGER NOT NULL DEFAULT 0,
   cost_usd_total REAL NOT NULL DEFAULT 0,
+  schedule       TEXT,
   created_at     TEXT NOT NULL,
   updated_at     TEXT NOT NULL,
   closed_at      TEXT
@@ -121,6 +131,12 @@ export class Store {
     this.db = new Database(path);
     this.db.pragma('journal_mode = WAL');
     this.db.exec(SCHEMA);
+    // Additive migration for stores created before recurring templates (H-22).
+    try {
+      this.db.exec('ALTER TABLE tickets ADD COLUMN schedule TEXT');
+    } catch {
+      /* column already exists */
+    }
   }
 
   close(): void {
@@ -178,6 +194,9 @@ export class Store {
   }
 
   listTickets(filter: ListFilter): Ticket[] {
+    // Lazy materialization (H-22): every ticket-list read catches up recurring
+    // templates first, so due instances exist by the time the queue is answered.
+    this.materializeDue();
     const clauses: string[] = [];
     const params: unknown[] = [];
     if (filter.status) { clauses.push('status = ?'); params.push(filter.status); }
@@ -187,6 +206,7 @@ export class Store {
     if (filter.priority_max !== undefined) { clauses.push('priority <= ?'); params.push(filter.priority_max); }
     if (filter.ready) {
       clauses.push("status = 'open'");
+      clauses.push('schedule IS NULL'); // templates are standing work, never claimable
       if (filter.caller) { clauses.push('(assignee IS NULL OR assignee = ?)'); params.push(filter.caller); }
       else clauses.push('assignee IS NULL');
     }
@@ -199,6 +219,52 @@ export class Store {
     let tickets = rows.map(rowToTicket);
     if (filter.ready) tickets = tickets.filter((t) => !this.isBlocked(t.id)).slice(0, limit);
     return tickets;
+  }
+
+  /** Catch up recurring templates: spawn an instance for each template whose
+   *  next occurrence has passed (H-22). Called from every ticket-list read —
+   *  Helm has no daemon, so the read path is the clock. Skip-if-open: no new
+   *  instance while a previous one is open/in_progress/awaiting_human. After
+   *  downtime, only the latest missed slot spawns — a backlog of stale
+   *  instances would be silt, not work. Returns spawned ids. */
+  materializeDue(nowTs: Date = new Date()): string[] {
+    const templates = (
+      this.db.prepare("SELECT * FROM tickets WHERE schedule IS NOT NULL AND status = 'open'").all() as Record<string, unknown>[]
+    ).map(rowToTicket);
+    const spawned: string[] = [];
+    for (const t of templates) {
+      const open = this.db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM deps d JOIN tickets i ON i.id = d.from_id
+           WHERE d.to_id = ? AND d.type = 'parent' AND i.status IN ('open','in_progress','awaiting_human')`,
+        )
+        .get(t.id) as { n: number };
+      if (open.n > 0) continue;
+      const lastDue = (
+        this.db
+          .prepare("SELECT MAX(json_extract(payload, '$.due')) AS due FROM events WHERE event_type = 'created' AND json_extract(payload, '$.spawned_from') = ?")
+          .get(t.id) as { due: string | null }
+      ).due;
+      const sched = parseSchedule(t.schedule!);
+      let due = sched.next(new Date(lastDue ?? t.created_at));
+      if (due > nowTs) continue;
+      for (let n = sched.next(due); n <= nowTs; n = sched.next(due)) due = n; // latest missed slot only
+      const dueIso = due.toISOString();
+      const instance = this.createTicket(SCHEDULER_ACTOR, {
+        title: `${t.title} — ${dueIso.slice(0, 16)}Z`,
+        body: `${t.body}\n\n(Instance of recurring ${t.id}, due ${dueIso}; schedule '${t.schedule}'.)`,
+        workstream: t.workstream,
+        type: t.type,
+        labels: t.labels,
+        priority: t.priority,
+        assignee: t.assignee ?? undefined,
+        deps: [{ to: t.id, type: 'parent' }],
+        spawned_from: t.id,
+        due: dueIso,
+      });
+      spawned.push(instance.id);
+    }
+    return spawned;
   }
 
   /** Highest event sequence number — the wake cursor for harnesses. */
@@ -267,6 +333,10 @@ export class Store {
       );
     }
     if (!input.type?.trim()) throw new HelmError('type is required: build|research|writing|ops|planning, or another short noun.');
+    if (input.schedule) {
+      parseSchedule(input.schedule); // reject bad expressions at the door
+      if (input.status === 'in_progress') throw new HelmError('A recurring template is standing work — it cannot be in_progress; its instances are.');
+    }
     const status = input.status ?? 'open';
     if (status === 'in_progress' && !input.assignee) input = { ...input, assignee: actor.name };
     for (const d of input.deps ?? []) this.getTicket(d.to); // existence check before mint
@@ -274,7 +344,7 @@ export class Store {
     return this.db.transaction(() => {
       const id = this.mintId();
       const ts = now();
-      const payload = {
+      const payload: Record<string, unknown> = {
         id,
         title: input.title,
         body: input.body,
@@ -285,6 +355,8 @@ export class Store {
         status,
         assignee: input.assignee ?? null,
       };
+      if (input.schedule) payload['schedule'] = input.schedule;
+      if (input.spawned_from) { payload['spawned_from'] = input.spawned_from; payload['due'] = input.due; }
       this.append(ts, id, 'created', actor, payload);
       this.applyCreated(ts, payload);
       for (const d of input.deps ?? []) {
@@ -567,12 +639,13 @@ export class Store {
   private applyCreated(ts: string, p: Record<string, unknown>): void {
     this.db
       .prepare(
-        `INSERT INTO tickets (id, title, body, workstream, type, labels, status, priority, assignee, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO tickets (id, title, body, workstream, type, labels, status, priority, assignee, schedule, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         p['id'], p['title'], p['body'], p['workstream'], p['type'],
-        JSON.stringify(p['labels'] ?? []), p['status'] ?? 'open', p['priority'] ?? 2, p['assignee'] ?? null, ts, ts,
+        JSON.stringify(p['labels'] ?? []), p['status'] ?? 'open', p['priority'] ?? 2, p['assignee'] ?? null,
+        p['schedule'] ?? null, ts, ts,
       );
   }
 

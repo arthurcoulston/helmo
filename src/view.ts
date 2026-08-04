@@ -173,6 +173,7 @@ function row(t: Ticket, opts: { showDone?: boolean } = {}): string {
       <span class="rtitle">${esc(t.title)}</span>
       ${prioBadge(t)}
       ${waits.length ? `<span class="badge serious">⛔ waits on ${esc(waits.join(', '))}</span>` : ''}
+      ${t.schedule ? `<span class="badge">↻ ${esc(t.schedule)}</span>` : ''}
       ${noEv ? '<span class="badge critical">✱ no evidence</span>' : ''}
       ${confBadge(t)} ${blastBadge(t)}
       <span class="rmeta">${esc(t.workstream)} · ${esc(t.type)}${t.assignee ? ` · ${esc(t.assignee)}` : ''} ${money(t)} · ${esc(
@@ -192,7 +193,8 @@ function page(): string {
   const by = (s: string) => all.filter((t) => t.status === s);
   const awaiting = by('awaiting_human');
   const motion = by('in_progress');
-  const open = by('open');
+  const standing = by('open').filter((t) => t.schedule); // recurring templates (H-22)
+  const open = by('open').filter((t) => !t.schedule);
   const ready = open.filter((t) => !store.isBlocked(t.id));
   const blocked = open.filter((t) => store.isBlocked(t.id));
   const done = by('done');
@@ -227,6 +229,7 @@ ${motion.length ? `<section><h2>In motion</h2>${motion.map(motionCard).join('')}
 
 ${ready.length ? `<section><h2>Ready</h2>${ready.map((t) => row(t)).join('')}</section>` : ''}
 ${blocked.length ? `<section><h2>Blocked</h2>${blocked.map((t) => row(t)).join('')}</section>` : ''}
+${standing.length ? `<section><h2>Standing</h2>${standing.map((t) => row(t)).join('')}</section>` : ''}
 ${done.length ? `<section><h2>Done</h2>${done.map((t) => row(t, { showDone: true })).join('')}</section>` : ''}
 ${cancelled.length ? `<section><h2>Cancelled (${cancelled.length})</h2>${cancelled.map((t) => row(t)).join('')}</section>` : ''}
 

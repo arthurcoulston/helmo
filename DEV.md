@@ -20,6 +20,11 @@ orchestrator meetings and the read-only view. Product intent:
 - `view.ts` — the read-only dashboard at :4400 (H-2). Read-only is
   constitutional: no affordance on that page may mutate anything.
 - `types.ts` — the shared vocabulary (statuses, blast radii, confidence).
+- `schedule.ts` — recurring-ticket schedules (H-22): 'every N<m|h|d>' or 5-field
+  cron, UTC. A ticket with `schedule` set is a TEMPLATE — standing work, never
+  ready itself. Instances spawn lazily on ticket-list reads (the read path is
+  the clock; no daemon), linked via parent dep, actor `helm-scheduler`.
+  Skip-if-open; after downtime only the latest missed slot spawns.
 
 ## Commands
 

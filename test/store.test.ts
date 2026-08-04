@@ -287,6 +287,53 @@ describe('harness queries (wake cursor)', () => {
   });
 });
 
+describe('recurring templates (lazy materialization)', () => {
+  function template(s: Store, schedule = 'every 30m') {
+    return s.createTicket(builder, {
+      title: 'Nightly audit', body: 'Standing work: audit the thing.', workstream: 'helm-dev', type: 'ops', schedule,
+    });
+  }
+  it('rejects a bad schedule at creation', () => {
+    const s = freshStore();
+    expect(() => template(s, 'whenever')).toThrow(/neither/);
+  });
+  it('templates never appear in the ready queue; due instances do', () => {
+    const s = freshStore();
+    const t = template(s);
+    expect(s.listTickets({ ready: true }).map((x) => x.id)).toEqual([]);
+    // nothing due yet (created just now, first slot is +30m) — a read spawns nothing
+    expect(s.materializeDue(new Date(Date.now() + 1000)).length).toBe(0);
+    // 31 minutes later a queue read spawns the instance, linked to its template
+    const spawned = s.materializeDue(new Date(Date.now() + 31 * 60_000));
+    expect(spawned.length).toBe(1);
+    const inst = s.getTicket(spawned[0]!);
+    expect(inst.title).toContain('Nightly audit —');
+    expect(inst.schedule).toBeNull();
+    expect(s.getDeps(inst.id).outgoing).toEqual([{ from_id: inst.id, to_id: t.id, type: 'parent' }]);
+    const ready = s.listTickets({ ready: true }).map((x) => x.id);
+    expect(ready).toContain(inst.id);
+    expect(ready).not.toContain(t.id);
+  });
+  it('skip-if-open: no second instance while one is open; closing unblocks the next slot', () => {
+    const s = freshStore();
+    template(s);
+    const later = (min: number) => new Date(Date.now() + min * 60_000);
+    const [first] = s.materializeDue(later(31));
+    expect(s.materializeDue(later(65)).length).toBe(0); // slot due, but first is still open
+    s.updateTicket(builder, { ticket_id: first!, note: 'done', status: 'done' });
+    expect(s.materializeDue(later(65)).length).toBe(1);
+  });
+  it('after downtime only the latest missed slot spawns, and cancelling the template retires it', () => {
+    const s = freshStore();
+    const t = template(s);
+    const spawned = s.materializeDue(new Date(Date.now() + 6 * 60 * 60_000)); // ~12 slots missed
+    expect(spawned.length).toBe(1);
+    s.updateTicket(builder, { ticket_id: spawned[0]!, note: 'done', status: 'done' });
+    s.updateTicket(builder, { ticket_id: t.id, note: 'retiring the standing work', status: 'cancelled' });
+    expect(s.materializeDue(new Date(Date.now() + 24 * 60 * 60_000)).length).toBe(0);
+  });
+});
+
 describe('THE INVARIANT: tickets are a materialized view of events', () => {
   it('rebuild() from events reproduces identical state after a full lifecycle', () => {
     const s = freshStore();
@@ -312,6 +359,8 @@ describe('THE INVARIANT: tickets are a materialized view of events', () => {
     });
     s.updateTicket(builder, { ticket_id: a.id, note: 'venue booked, wrapping up', status: 'in_progress' });
     s.recordSpend(builder, b.id, { tokens: 12345, cost_usd: 1.25, note: 'metered post-close by the harness' });
+    s.createTicket(builder, { title: 'Standing sweep', body: 'recurring', workstream: 'helm-dev', type: 'ops', schedule: 'every 1h' });
+    expect(s.materializeDue(new Date(Date.now() + 61 * 60_000)).length).toBe(1);
 
     const before = s.dumpState();
     s.rebuild();

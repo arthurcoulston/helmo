@@ -44,6 +44,7 @@ function compact(t: Ticket) {
   return {
     id: t.id, title: t.title, status: t.status, priority: t.priority, workstream: t.workstream,
     type: t.type, assignee: t.assignee, blast_radius: t.blast_radius, updated_at: t.updated_at,
+    ...(t.schedule ? { schedule: t.schedule } : {}),
   };
 }
 
@@ -66,6 +67,9 @@ server.registerTool(
       status: z.enum(['open', 'in_progress']).optional().describe("'open' (default) or 'in_progress' if you are starting it now"),
       assignee: z.string().optional().describe('Reserve for a named agent without starting it; leave unset for the pool'),
       deps: z.array(z.object({ to: z.string(), type: z.enum(DEP_TYPES) })).optional(),
+      schedule: z.string().optional().describe(
+        "Makes this a RECURRING TEMPLATE: 'every <N><m|h|d>' or 5-field cron (UTC). The template itself is standing work — never ready, never claimed. Due instances spawn automatically on queue reads, linked to the template via a parent dep, and a new instance is skipped while a previous one is still open. Retire the template by cancelling it.",
+      ),
       actor: actorSchema,
     },
   },

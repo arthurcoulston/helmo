@@ -58,6 +58,7 @@ export interface Ticket {
   question: Question | null;
   tokens_total: number;
   cost_usd_total: number;
+  schedule: string | null; // set = recurring template (spawns instances, never ready itself)
   created_at: string;
   updated_at: string;
   closed_at: string | null;

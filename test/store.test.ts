@@ -229,6 +229,40 @@ describe('guardrails', () => {
   });
 });
 
+describe('recordSpend (harness metering)', () => {
+  it('accumulates onto a terminal ticket without touching status or updated_at', () => {
+    const s = freshStore();
+    const t = create(s);
+    s.updateTicket(builder, { ticket_id: t.id, note: 'done', status: 'done', evidence: [{ kind: 'file', ref: '/tmp/x' }] });
+    const closed = s.getTicket(t.id);
+    const after = s.recordSpend(builder, t.id, { tokens: 90000, cost_usd: 3.1, note: 'metered session, whole session charged here' });
+    expect(after.tokens_total).toBe(90000);
+    expect(after.cost_usd_total).toBeCloseTo(3.1);
+    expect(after.status).toBe('done');
+    expect(after.updated_at).toBe(closed.updated_at);
+  });
+  it('rejects an empty spend and a missing note', () => {
+    const s = freshStore();
+    const t = create(s);
+    expect(() => s.recordSpend(builder, t.id, { note: 'nothing' })).toThrow(/tokens and\/or cost_usd/);
+    expect(() => s.recordSpend(builder, t.id, { tokens: 5, note: ' ' })).toThrow(/note is required/);
+  });
+  it('actorTicketsSince orders by touch count within the window', () => {
+    const s = freshStore();
+    const a = create(s);
+    const b = create(s);
+    const seq = s.maxSeq();
+    s.updateTicket(builder, { ticket_id: b.id, note: 'claimed', status: 'in_progress' });
+    s.updateTicket(builder, { ticket_id: b.id, note: 'progress' });
+    s.updateTicket(builder, { ticket_id: a.id, note: 'side note' });
+    expect(s.actorTicketsSince('builder-loop', seq)).toEqual([
+      { id: b.id, events: 2 },
+      { id: a.id, events: 1 },
+    ]);
+    expect(s.actorTicketsSince('reviewer-loop', seq)).toEqual([]);
+  });
+});
+
 describe('harness queries (wake cursor)', () => {
   it('maxSeq advances and scopeChangedSince respects workstream and assignee scope', () => {
     const s = freshStore();
@@ -277,6 +311,7 @@ describe('THE INVARIANT: tickets are a materialized view of events', () => {
       confidence: 'spot_check', uncertainty_note: 'unclear if the deposit covers AV', blast_radius: 'records', cost_usd: 2000,
     });
     s.updateTicket(builder, { ticket_id: a.id, note: 'venue booked, wrapping up', status: 'in_progress' });
+    s.recordSpend(builder, b.id, { tokens: 12345, cost_usd: 1.25, note: 'metered post-close by the harness' });
 
     const before = s.dumpState();
     s.rebuild();

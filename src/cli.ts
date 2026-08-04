@@ -55,6 +55,21 @@ try {
       out({ events: store.actorActivitySince(name, Number(flag('since-seq') ?? 0)) });
       break;
     }
+    case 'actor-tickets': {
+      const name = flag('name');
+      if (!name) throw new HelmError('actor-tickets requires --name <actor name>');
+      out({ tickets: store.actorTicketsSince(name, Number(flag('since-seq') ?? 0)) });
+      break;
+    }
+    case 'record-spend': {
+      const t = store.recordSpend(actor(), req('ticket'), {
+        tokens: flag('tokens') !== undefined ? Number(flag('tokens')) : undefined,
+        cost_usd: flag('cost-usd') !== undefined ? Number(flag('cost-usd')) : undefined,
+        note: req('note'),
+      });
+      out({ id: t.id, tokens_total: t.tokens_total, cost_usd_total: t.cost_usd_total });
+      break;
+    }
     case 'list': {
       const tickets = store.listTickets({
         ready: has('ready') ? true : undefined,
@@ -119,6 +134,8 @@ try {
       console.error(`usage: helm-cli <command> [flags]
   wake-check     --workstream W --assignee A --since-seq N     (read-only harness poll)
   actor-activity --name A --since-seq N                        (did this actor write events?)
+  actor-tickets  --name A --since-seq N                        (which tickets, most-touched first)
+  record-spend   --ticket H-n [--tokens N] [--cost-usd X] --note N   (metered spend; terminal tickets accepted)
   list           [--ready] [--status S] [--workstream W] [--assignee A] [--limit N]
   get            <ticket-id>
   create         --title T --body B --workstream W --type TY [--priority P] [--status S] [--assignee A] [--dep H-n --dep-type TY]

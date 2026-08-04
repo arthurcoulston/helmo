@@ -234,6 +234,18 @@ export class Store {
     return row.n;
   }
 
+  /** Tickets `actorName` wrote events on since `seq`, most-touched first — a
+   *  harness's spend-attribution window. */
+  actorTicketsSince(actorName: string, seq: number): { id: string; events: number }[] {
+    return this.db
+      .prepare(
+        `SELECT ticket_id AS id, COUNT(*) AS events FROM events
+         WHERE seq > ? AND json_extract(actor, '$.name') = ?
+         GROUP BY ticket_id ORDER BY events DESC, MIN(seq) ASC`,
+      )
+      .all(seq, actorName) as { id: string; events: number }[];
+  }
+
   listWorkstreams(): string[] {
     const rows = this.db.prepare('SELECT DISTINCT workstream FROM tickets ORDER BY workstream').all() as { workstream: string }[];
     return rows.map((r) => r.workstream);
@@ -393,6 +405,29 @@ export class Store {
     })();
   }
 
+  /** Attribute metered spend to a ticket. Unlike updateTicket this accepts
+   *  terminal tickets: a harness meters a session only after it ends, by which
+   *  time the loop has usually closed its ticket. Bookkeeping, not motion —
+   *  it never changes status, assignee, or updated_at. */
+  recordSpend(actor: Actor, ticketId: string, input: { tokens?: number; cost_usd?: number; note: string }): Ticket {
+    validateActor(actor);
+    if (!input.tokens && !input.cost_usd) {
+      throw new HelmError('record-spend requires tokens and/or cost_usd — an empty spend record is noise.');
+    }
+    if (!input.note?.trim()) {
+      throw new HelmError('note is required on record-spend: say what session this spend came from and how it was attributed.');
+    }
+    this.getTicket(ticketId);
+    return this.db.transaction(() => {
+      const payload: Record<string, unknown> = { note: input.note };
+      if (input.tokens) payload['tokens'] = input.tokens;
+      if (input.cost_usd) payload['cost_usd'] = input.cost_usd;
+      this.append(now(), ticketId, 'spend', actor, payload);
+      this.applySpend(ticketId, payload);
+      return this.getTicket(ticketId);
+    })();
+  }
+
   returnToHuman(actor: Actor, ticketId: string, q: Question): Ticket {
     validateActor(actor);
     const t = this.getTicket(ticketId);
@@ -494,6 +529,9 @@ export class Store {
             }
             break;
           }
+          case 'spend':
+            this.applySpend(ev.ticket_id, ev.payload);
+            break;
           case 'linked':
             this.applyLinked(ev.ticket_id, ev.payload['to'] as string, ev.payload['type'] as DepType, true);
             break;
@@ -554,6 +592,18 @@ export class Store {
     if (tokens) { sets.push('tokens_total = tokens_total + ?'); params.push(tokens); }
     const cost = payload['cost_usd'] as number | undefined;
     if (cost) { sets.push('cost_usd_total = cost_usd_total + ?'); params.push(cost); }
+    params.push(id);
+    this.db.prepare(`UPDATE tickets SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+  }
+
+  private applySpend(id: string, payload: Record<string, unknown>): void {
+    const sets: string[] = [];
+    const params: unknown[] = [];
+    const tokens = payload['tokens'] as number | undefined;
+    if (tokens) { sets.push('tokens_total = tokens_total + ?'); params.push(tokens); }
+    const cost = payload['cost_usd'] as number | undefined;
+    if (cost) { sets.push('cost_usd_total = cost_usd_total + ?'); params.push(cost); }
+    if (!sets.length) return;
     params.push(id);
     this.db.prepare(`UPDATE tickets SET ${sets.join(', ')} WHERE id = ?`).run(...params);
   }

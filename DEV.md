@@ -14,7 +14,9 @@ orchestrator meetings and the read-only view. Product intent:
   contract for every agent** (triage duty, evidence rules, question quality);
   treat description edits as seriously as code — they are guidance-as-deployed.
 - `cli.ts` — programmatic write path for non-MCP writers (H-10); Capstan uses
-  it for wake-checks and escalations.
+  it for wake-checks, escalations, and spend write-back (`record-spend` +
+  `actor-tickets`, H-19). `spend` events are bookkeeping, not motion: they
+  accept terminal tickets and never touch status or updated_at.
 - `view.ts` — the read-only dashboard at :4400 (H-2). Read-only is
   constitutional: no affordance on that page may mutate anything.
 - `types.ts` — the shared vocabulary (statuses, blast radii, confidence).

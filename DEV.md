@@ -25,7 +25,9 @@ orchestrator meetings and the read-only view. Product intent:
 - View: `node dist/view.js` (port via `HELM_VIEW_PORT`, default 4400). Restart
   it after rebuilding — the running process holds old code.
 - Store lives at `~/.helm/helm.db` (`HELM_DB` overrides). Agent identity comes
-  from `HELM_ACTOR` env (JSON) — see H-3 for the interactive-identity gap.
+  from `HELM_ACTOR` env (JSON) for loops; the interactive user-scope env is
+  deliberately name+kind only, so interactive writes must pass a truthful
+  per-call `actor` override (name, model, harness version) or be rejected (H-3).
 
 ## Invariants that bite
 

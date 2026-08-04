@@ -23,7 +23,7 @@ const actorSchema = z
     session: z.string().optional(),
   })
   .optional()
-  .describe('Identity override for harnesses multiplexing many agents through one connection. Normally omit: the actor comes from HELM_ACTOR in the server environment.');
+  .describe('Who is writing. Omit only when HELM_ACTOR in the server environment already names you exactly (loops get accurate per-agent env). Interactive sessions: the env identity is a static placeholder that cannot know your name or model — pass your true identity on every write: {name: your crew name, kind: "agent", model: your exact model ID, version: your harness version, e.g. "claude-code-" + output of `claude --version`}. Writes without a truthful complete identity are rejected.');
 
 function resolveActor(override?: Actor): Actor {
   return override ?? envActor ?? ({} as Actor);

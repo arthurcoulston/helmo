@@ -19,7 +19,3 @@ of its role.
 
 - Work is tracked in Helm itself: claim before working, note progress when
   reality changes, close with evidence — the artifact, not a claim about it.
-- Cross-project context (dev sessions only): `~/projects/crew/FLEET.md`.
-- `~/projects/make-ai-good` and the `mag-*` repos are **sovereign** — no
-  writes, ever, by anyone here. Denials from the guard are the boundary
-  working; never route around them.

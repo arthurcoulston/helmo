@@ -1,7 +1,7 @@
 # DEV — coding context for helm
 
-Helm is the shared work record for Arthur's agents and himself: tickets that
-agents write and the human reads. The human never edits — steering happens in
+Helm is the shared work record for a human operator and their agents: tickets
+that agents write and the human reads. The human never edits — steering happens in
 orchestrator meetings and the read-only view. Product intent:
 `helm-product-description.md`; design rationale: `helm-v0-design.md`.
 
@@ -51,5 +51,7 @@ orchestrator meetings and the read-only view. Product intent:
 
 ## Neighbors
 
-Capstan supervises the loops that work this record (`~/projects/capstan`);
-agent identities live in `~/projects/crew`. Map: `~/projects/crew/FLEET.md`.
+Capstan, a sibling project, supervises the bash loops that draw work from this
+record; it consumes the helm-cli contract and injects the MCP server into
+agent sessions. Operators keep their own agent identities and estate maps
+outside this repo.

@@ -62,3 +62,28 @@ In your agent session (Claude Code, Codex): *"Summon helm orchestrator"* → loa
 npm test        # includes the core invariant: tickets rebuild exactly from the event log
 npm run smoke   # end-to-end MCP stdio round trip
 ```
+
+Note: `better-sqlite3` uses a prebuilt binary when one matches your Node
+version; otherwise it compiles from source, which needs a C toolchain and
+Python ≥ 3.8 (node-gyp). If install fails mid-compile, check `python3
+--version` and set `PYTHON=/path/to/modern/python3`.
+
+## Prior art
+
+Helm sits in a small family of agent work-trackers and owes a nod to
+[beads](https://github.com/steveyegge/beads), Steve Yegge's git-backed issue
+graph that gives coding agents long-horizon memory of their own work. If what
+you want is agent memory — epics, dependency graphs, issues that travel with
+the repo — use beads; it is excellent at that.
+
+Helm's center of gravity is the other side of the table: the human who has to
+trust the work without re-reading it. Agents write; the human reads a view and
+answers a queue. Hence the append-only event log with full actor provenance
+(who wrote, which model, which harness), "done" without an evidence link
+surfacing as a flagged claim rather than a fact, an `awaiting_human` queue
+designed to protect the operator's attention, and per-ticket metering of what
+the work actually cost. Same genus, different optimization.
+
+## License
+
+[MIT](LICENSE)

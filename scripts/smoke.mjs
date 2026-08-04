@@ -1,10 +1,11 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { join } from 'node:path';
 
 const transport = new StdioClientTransport({
   command: 'npx',
   args: ['tsx', 'src/server.ts'],
-  cwd: '/Users/arthurcoulston/projects/helm',
+  cwd: join(import.meta.dirname, '..'),
   env: {
     ...process.env,
     HELM_DB: process.env.SMOKE_DB,

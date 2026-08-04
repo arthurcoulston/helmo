@@ -10,8 +10,8 @@
     "view": "tsx src/view.ts",
     "mcp": "tsx src/server.ts"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": ["ai-agents", "mcp", "issue-tracker", "work-record", "agent-orchestration", "sqlite"],
+  "author": "Arthur Coulston",
   "license": "MIT",
   "type": "module",
   "dependencies": {

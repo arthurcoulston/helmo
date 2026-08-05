@@ -231,10 +231,20 @@ Rule of thumb (encoded in the tool descriptions): if the receiver's output is a 
 
 ## 8. Open questions for review
 
+Reviewed 2026-08-05 (H-5) against two days of dense dogfooding: 61 tickets,
+~400 events, loop and interactive traffic. Resolutions inline.
+
 1. **Workstreams: free text or first-class?** v0 says free text + "check before inventing." If meetings end up organized by workstream, promoting it to a table (with a description an orchestrator can read) may be worth it early.
+   → *Resolved: both, and dogfooding built it before this review could.* Steering (goal, budget) became a first-class table via H-55; the ticket field stays free text. The one observed cost was rename drift (`capstan-dev` beside `rev-dev`), which is housekeeping, not structure.
 2. **Priority scale** — proposed 0–3. Is "backlog" (Beads' P4) worth a distinct level, or is that just `open` + low priority?
+   → *Resolved: 0–3 stands.* Usage was 1/2/3 = 6/39/15; nobody reached for a backlog level — low-priority `open` carries "someday" fine. 0 is unused but cheap to keep for a real emergency.
 3. **`done` without evidence** — v0 accepts-but-flags. The stricter option (reject) teaches agents faster but will fight legitimately evidence-less work (e.g. "decided X after research"). Flag feels right; confirm.
+   → *Resolved: flag confirmed.* Two evidence-less dones in 61 (H-1, H-32), both genuine decision tickets — exactly the case rejection would have fought.
 4. **Cost reporting** — agents often don't know their own token spend reliably (a bash loop knows; an interactive session may not). Accept it as best-effort self-report, or drop from v0 and add when harnesses expose it?
+   → *Resolved the hard way (H-57): best-effort was wrong.* A loop agent's guesses double-counted $201 against a $30 budget. Now: report only measured numbers, harness-metered sessions never self-report, and the meter nets out anything they report anyway (`actor-spend`) so a session lands in the totals exactly once.
 5. **Retention/size** — event log grows forever by design. Fine for years at solo scale; noting it so it's a decision, not an accident.
+   → *Resolved: append-forever stands.* ~400 events ≈ 2.3MB. Revisit only if size ever degrades the view.
 6. **Stale-claim threshold** — proposed 24h before `takeover: true` is allowed. Too long for fast loops, too short for overnight research agents? Could be per-workstream config later; needs a v0 number now.
+   → *Resolved: 24h stands — as the advisory line and hygiene threshold, not a hard gate.* `takeover: true` with an honest note works at any age; all four dogfooding takeovers (loop reclaims, rename corrections) were legitimate and self-documenting. Per-workstream config stays unbuilt until something bites.
 7. **Agent names are unregistered free text** — a `handoff_to` typo strands a ticket reserved for an agent that doesn't exist (stale-claim takeover eventually rescues it, but slowly). v0 accepts this for simplicity; if it bites in dogfooding, the fix is a lightweight agent registry the orchestrator maintains, and `handoff_to` warning on unknown names rather than rejecting.
+   → *Bit in dogfooding — via rename, not typo.* The crew renames (H-52) left two scheduled tickets reserved for a name that no longer answers (`master-at-arms`; H-48/H-49), caught only by manual sweep. Still no registry: a deterministic hygiene check for assignees gone silent covers typo, rename, and retirement in one rule (ticketed from H-5).

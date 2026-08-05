@@ -8,7 +8,7 @@ orchestrator meetings and the read-only view. Product intent:
 ## Architecture (src/, ~1.5k lines, zero-dependency philosophy)
 
 - `store.ts` — the heart: SQLite store (better-sqlite3), append-only event log
-  with a global `seq` cursor (Capstan's wake signal rides on it), ticket
+  with a global `seq` cursor (Rev's wake signal rides on it), ticket
   materialization, blocking/ready computation, actor validation. Stop
   discipline (H-55): workstream steering (goal + budget_usd, human/orchestrator
   writes only, evented as `workstream_set` under `ws:<name>`) and the ready-
@@ -18,7 +18,7 @@ orchestrator meetings and the read-only view. Product intent:
 - `server.ts` — MCP stdio server. **Tool descriptions carry the behavioral
   contract for every agent** (triage duty, evidence rules, question quality);
   treat description edits as seriously as code — they are guidance-as-deployed.
-- `cli.ts` — programmatic write path for non-MCP writers (H-10); Capstan uses
+- `cli.ts` — programmatic write path for non-MCP writers (H-10); Rev uses
   it for wake-checks, escalations, and spend write-back (`record-spend` +
   `actor-tickets`, H-19). `spend` events are bookkeeping, not motion: they
   accept terminal tickets and never touch status or updated_at.
@@ -61,7 +61,7 @@ orchestrator meetings and the read-only view. Product intent:
 
 ## Neighbors
 
-Capstan, a sibling project, supervises the bash loops that draw work from this
+Rev (formerly Capstan), a sibling project, supervises the bash loops that draw work from this
 record; it consumes the helmo-cli contract and injects the MCP server into
 agent sessions. Operators keep their own agent identities and estate maps
 outside this repo.

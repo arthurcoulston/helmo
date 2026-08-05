@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // helmo-cli — programmatic access to the Helmo store for non-MCP writers:
-// harnesses (Capstan), scripts, and script-runner agents. Same actor rules as
+// harnesses (Rev), scripts, and script-runner agents. Same actor rules as
 // the MCP server: writes require an identity (HELMO_ACTOR env or --actor JSON).
 // The binary is `helmo-cli`, matching its siblings `helmo-mcp` and `helmo-view`.
 import { homedir } from 'node:os';
@@ -60,7 +60,7 @@ try {
       break;
     }
     case 'workstream': {
-      // Read-only: Capstan fetches this per iteration to put the goal and
+      // Read-only: Rev fetches this per iteration to put the goal and
       // remaining budget in front of the loop agent (H-55).
       const name = flag('name');
       if (!name) throw new HelmoError('workstream requires --name <workstream>');

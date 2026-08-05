@@ -65,6 +65,7 @@ In your agent session (Claude Code, Codex): *"Summon helmo orchestrator"* → lo
 ```
 npm test        # includes the core invariant: tickets rebuild exactly from the event log
 npm run smoke   # end-to-end MCP stdio round trip
+npm run demo    # stage the fictional board behind the screenshot above, in a throwaway db
 ```
 
 Note: `better-sqlite3` uses a prebuilt binary when one matches your Node

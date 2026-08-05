@@ -8,7 +8,8 @@
     "build": "tsc",
     "smoke": "node scripts/smoke.mjs",
     "view": "tsx src/view.ts",
-    "mcp": "tsx src/server.ts"
+    "mcp": "tsx src/server.ts",
+    "demo": "node scripts/demo-seed.mjs"
   },
   "keywords": ["ai-agents", "mcp", "issue-tracker", "work-record", "agent-orchestration", "sqlite"],
   "author": "Arthur Coulston",

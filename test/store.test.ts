@@ -20,6 +20,11 @@ function create(s: Store, over: Record<string, unknown> = {}) {
   });
 }
 
+/** The meeting touch that releases the triage rule (H-56) so the filer may claim. */
+function triage(s: Store, id: string) {
+  s.updateTicket(orch, { ticket_id: id, note: 'triaged in meeting: yes, worth doing' });
+}
+
 describe('ids', () => {
   it('mints sequential H-n ids and never reuses them', () => {
     const s = freshStore();
@@ -58,6 +63,7 @@ describe('claiming', () => {
   it('claims open work and records assignee', () => {
     const s = freshStore();
     const t = create(s);
+    triage(s, t.id);
     const { ticket } = s.updateTicket(builder, { ticket_id: t.id, note: 'starting', status: 'in_progress' });
     expect(ticket.status).toBe('in_progress');
     expect(ticket.assignee).toBe('builder-loop');
@@ -65,17 +71,20 @@ describe('claiming', () => {
   it('blocks claiming a ticket held by another agent, naming the holder', () => {
     const s = freshStore();
     const t = create(s);
+    triage(s, t.id);
     s.updateTicket(builder, { ticket_id: t.id, note: 'starting', status: 'in_progress' });
     expect(() => s.updateTicket(reviewer, { ticket_id: t.id, note: 'mine now', status: 'in_progress' })).toThrow(/builder-loop/);
   });
   it('blocks claiming a ticket reserved for someone else', () => {
     const s = freshStore();
     const t = create(s, { assignee: 'reviewer-loop' });
+    triage(s, t.id);
     expect(() => s.updateTicket(builder, { ticket_id: t.id, note: 'grab', status: 'in_progress' })).toThrow(/reserved/);
   });
   it('only open tickets can be claimed', () => {
     const s = freshStore();
     const t = create(s);
+    triage(s, t.id);
     s.updateTicket(builder, { ticket_id: t.id, note: 'start', status: 'in_progress' });
     s.returnToHuman(builder, t.id, {
       situation: 'Working the importer; hit a licensing question on the CSV parser.',
@@ -94,6 +103,7 @@ describe('handoff', () => {
   it('baton pass releases claim and reserves for receiver', () => {
     const s = freshStore();
     const t = create(s);
+    triage(s, t.id);
     s.updateTicket(builder, { ticket_id: t.id, note: 'building', status: 'in_progress' });
     const { ticket } = s.updateTicket(builder, { ticket_id: t.id, note: 'done building, needs review', handoff_to: 'reviewer-loop' });
     expect(ticket.status).toBe('open');
@@ -108,6 +118,7 @@ describe('handoff', () => {
   it('only the holder can hand off', () => {
     const s = freshStore();
     const t = create(s);
+    triage(s, t.id);
     s.updateTicket(builder, { ticket_id: t.id, note: 'building', status: 'in_progress' });
     expect(() => s.updateTicket(reviewer, { ticket_id: t.id, note: 'take it', handoff_to: 'reviewer-loop' })).toThrow(/holder/);
   });
@@ -251,6 +262,7 @@ describe('recordSpend (harness metering)', () => {
     const s = freshStore();
     const a = create(s);
     const b = create(s);
+    triage(s, b.id);
     const seq = s.maxSeq();
     s.updateTicket(builder, { ticket_id: b.id, note: 'claimed', status: 'in_progress' });
     s.updateTicket(builder, { ticket_id: b.id, note: 'progress' });
@@ -267,6 +279,7 @@ describe('harness queries (wake cursor)', () => {
   it('maxSeq advances and scopeChangedSince respects workstream and assignee scope', () => {
     const s = freshStore();
     const t = create(s, { workstream: 'alpha' });
+    triage(s, t.id); // before the cursor is captured, so the touch is not motion
     const seq = s.maxSeq();
     expect(seq).toBeGreaterThan(0);
     expect(s.scopeChangedSince(seq, 'alpha')).toBe(false);
@@ -278,6 +291,7 @@ describe('harness queries (wake cursor)', () => {
   it('readyCount and actorActivitySince answer the harness questions', () => {
     const s = freshStore();
     const t = create(s, { workstream: 'alpha' });
+    triage(s, t.id);
     expect(s.readyCount('alpha')).toBe(1);
     const seq = s.maxSeq();
     s.updateTicket(builder, { ticket_id: t.id, note: 'claimed', status: 'in_progress' });
@@ -410,11 +424,49 @@ describe('self-filed tickets need triage (H-55)', () => {
   });
 });
 
+describe('triage rule enforced on claims (H-56)', () => {
+  it('rejects a direct claim by the filer with a teaching error', () => {
+    const s = freshStore();
+    const t = create(s); // filed by builder
+    expect(() => s.updateTicket(builder, { ticket_id: t.id, note: 'claiming', status: 'in_progress' })).toThrow(/second pair of eyes/);
+  });
+  it('takeover does not bypass self-triage', () => {
+    const s = freshStore();
+    const t = create(s, { assignee: 'reviewer-loop' }); // builder files, reserves for reviewer
+    expect(() => s.updateTicket(builder, { ticket_id: t.id, note: 'taking it back', status: 'in_progress', takeover: true })).toThrow(/not self-triage/);
+  });
+  it('any touch by another actor releases the claim path too', () => {
+    const s = freshStore();
+    const t = create(s);
+    s.updateTicket(orch, { ticket_id: t.id, note: 'triaged in meeting: yes, worth doing' });
+    expect(s.updateTicket(builder, { ticket_id: t.id, note: 'claiming', status: 'in_progress' }).ticket.status).toBe('in_progress');
+  });
+  it('creating with in_progress stays legitimate — the rule guards backlog, not work started in the same breath', () => {
+    const s = freshStore();
+    const t = create(s, { status: 'in_progress' });
+    expect(t.status).toBe('in_progress');
+    expect(t.assignee).toBe('builder-loop');
+  });
+  it('an orchestrator may claim its own filing — it is the second pair of eyes', () => {
+    const s = freshStore();
+    const t = s.createTicket(orch, { title: 'Meeting follow-up', body: 'from the meeting. Current state: not started.', workstream: 'helmo-dev', type: 'ops' });
+    expect(s.updateTicket(orch, { ticket_id: t.id, note: 'doing it now', status: 'in_progress' }).ticket.status).toBe('in_progress');
+  });
+  it('instances of a self-made template are unclaimable by the template author too', () => {
+    const s = freshStore();
+    s.createTicket(builder, { title: 'Sweep', body: 'standing', workstream: 'helmo-dev', type: 'ops', schedule: 'every 30m' });
+    const [inst] = s.materializeDue(new Date(Date.now() + 31 * 60_000));
+    expect(() => s.updateTicket(builder, { ticket_id: inst!, note: 'claiming my sweep', status: 'in_progress' })).toThrow(/second pair of eyes/);
+    expect(s.updateTicket(reviewer, { ticket_id: inst!, note: 'claiming', status: 'in_progress' }).ticket.status).toBe('in_progress');
+  });
+});
+
 describe('hygiene checks (deterministic, read-only)', () => {
   const hrs = (h: number) => new Date(Date.now() + h * 3_600_000);
   it('stale claims and aging questions surface after their thresholds', () => {
     const s = freshStore();
     const a = create(s);
+    triage(s, a.id);
     s.updateTicket(builder, { ticket_id: a.id, note: 'claimed', status: 'in_progress' });
     const b = create(s);
     s.returnToHuman(builder, b.id, {
@@ -448,6 +500,7 @@ describe('hygiene checks (deterministic, read-only)', () => {
     s.recordSpend(builder, t3.id, { cost_usd: 20, note: 'metered' });
     expect(s.hygiene()).toContainEqual(expect.objectContaining({ check: 'spend_anomaly', ticket_id: t3.id }));
     const p1 = create(s, { priority: 1 });
+    triage(s, t1.id);
     s.updateTicket(builder, { ticket_id: t1.id, note: 'working the P2 instead', status: 'in_progress' });
     expect(s.hygiene()).toContainEqual(expect.objectContaining({ check: 'priority_inversion', ticket_id: p1.id }));
   });
@@ -459,6 +512,7 @@ describe('THE INVARIANT: tickets are a materialized view of events', () => {
     const a = create(s, { title: 'Gala venue' });
     const b = create(s, { title: 'Deposit decision', deps: [{ to: a.id, type: 'discovered_from' as const }] });
     s.linkTickets(builder, a.id, b.id, 'blocks', 'add');
+    triage(s, b.id);
     s.updateTicket(builder, { ticket_id: b.id, note: 'investigating', status: 'in_progress', tokens: 500 });
     s.returnToHuman(builder, b.id, {
       situation: 'Deposit needed by Friday.',
@@ -476,6 +530,7 @@ describe('THE INVARIANT: tickets are a materialized view of events', () => {
       evidence: [{ kind: 'url', ref: 'https://example.com/receipt' }],
       confidence: 'spot_check', uncertainty_note: 'unclear if the deposit covers AV', blast_radius: 'records', cost_usd: 2000,
     });
+    triage(s, a.id);
     s.updateTicket(builder, { ticket_id: a.id, note: 'venue booked, wrapping up', status: 'in_progress' });
     s.recordSpend(builder, b.id, { tokens: 12345, cost_usd: 1.25, note: 'metered post-close by the harness' });
     s.createTicket(builder, { title: 'Standing sweep', body: 'recurring', workstream: 'helmo-dev', type: 'ops', schedule: 'every 1h' });

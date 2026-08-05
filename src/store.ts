@@ -601,6 +601,16 @@ export class Store {
           `${t.id} is awaiting_human — it is waiting on the human's answer, not on you. Status changes happen via helmo_answer_ticket (orchestrator, during a meeting). You may still add notes/evidence.`,
         );
       }
+      // Triage enforcement (H-56): the ready-queue withholding (H-55) is a
+      // rule, not advice — an agent may not claim its own untouched filing
+      // directly either. Sits upstream of the reservation checks on purpose:
+      // takeover exists for stale claims and never releases self-triage.
+      // Agents only — a human or orchestrator IS the second pair of eyes.
+      if (input.status === 'in_progress' && t.status === 'open' && actor.kind === 'agent' && this.selfFiledUntouched(t.id, actor.name)) {
+        throw new HelmoError(
+          `${t.id} is your own filing, untouched by anyone else — executing your own discoveries takes a second pair of eyes first (the same triage rule that withholds it from your ready queue). Any event by a human or another agent releases it: a meeting answer, a note, a handoff, a priority change. takeover does not apply — it exists for stale claims, not self-triage. If this cannot wait, helmo_return_to_human with the case for urgency; if you are starting genuinely new work, create the ticket with status 'in_progress' in the same call instead of filing it and drawing it back later.`,
+        );
+      }
       if (input.status === 'in_progress' && t.status === 'open' && t.assignee && t.assignee !== actor.name && !input.takeover) {
         const age = hoursSince(t.updated_at);
         if (age < STALE_CLAIM_HOURS) {

@@ -334,6 +334,82 @@ describe('recurring templates (lazy materialization)', () => {
   });
 });
 
+describe('workstream steering (H-55)', () => {
+  it('agents cannot set goals or budgets; the human/orchestrator can', () => {
+    const s = freshStore();
+    expect(() => s.setWorkstream(builder, { name: 'alpha', goal: 'ship it' })).toThrow(/operator steering/);
+    const w = s.setWorkstream(orch, { name: 'alpha', goal: 'Arthur has a confirmed shortlist', budget_usd: 50 });
+    expect(w.goal).toBe('Arthur has a confirmed shortlist');
+    expect(w.budget_usd).toBe(50);
+    expect(w.remaining_usd).toBe(50);
+  });
+  it('partial updates keep the other field; empty writes are rejected', () => {
+    const s = freshStore();
+    s.setWorkstream(orch, { name: 'alpha', goal: 'the goal', budget_usd: 50 });
+    const w = s.setWorkstream(orch, { name: 'alpha', budget_usd: 80 });
+    expect(w.goal).toBe('the goal');
+    expect(w.budget_usd).toBe(80);
+    expect(() => s.setWorkstream(orch, { name: 'alpha' })).toThrow(/noise/);
+  });
+  it('spend counts against the budget and surfaces as budget pressure past 80%', () => {
+    const s = freshStore();
+    const t = create(s, { workstream: 'alpha' });
+    s.setWorkstream(orch, { name: 'alpha', budget_usd: 10 });
+    s.recordSpend(builder, t.id, { cost_usd: 7.9, note: 'metered' });
+    expect(s.hygiene().filter((f) => f.check === 'budget_pressure')).toEqual([]);
+    s.recordSpend(builder, t.id, { cost_usd: 0.2, note: 'metered' });
+    expect(s.hygiene()).toContainEqual(expect.objectContaining({ check: 'budget_pressure', workstream: 'alpha' }));
+    s.recordSpend(builder, t.id, { cost_usd: 5, note: 'metered' });
+    const f = s.hygiene().find((x) => x.check === 'budget_pressure');
+    expect(f?.detail).toMatch(/exhausted/);
+    expect(s.getWorkstreamInfo('alpha').remaining_usd).toBeCloseTo(-3.1);
+  });
+  it('listWorkstreamInfo covers streams with tickets and streams only steered', () => {
+    const s = freshStore();
+    create(s, { workstream: 'alpha' });
+    s.setWorkstream(orch, { name: 'beta', goal: 'future work' });
+    const names = s.listWorkstreamInfo().map((w) => w.name);
+    expect(names).toContain('alpha');
+    expect(names).toContain('beta');
+  });
+});
+
+describe('self-filed tickets need triage (H-55)', () => {
+  it('a ticket is withheld from its filer\'s ready queue but visible to others', () => {
+    const s = freshStore();
+    const t = create(s); // filed by builder
+    expect(s.listTickets({ ready: true, caller: 'builder-loop' }).map((x) => x.id)).not.toContain(t.id);
+    expect(s.selfFiledPending('builder-loop')).toContain(t.id);
+    expect(s.listTickets({ ready: true, caller: 'reviewer-loop' }).map((x) => x.id)).toContain(t.id);
+    expect(s.listTickets({ ready: true }).map((x) => x.id)).toContain(t.id); // anonymous read (the view) sees all
+  });
+  it('any touch by another actor releases it', () => {
+    const s = freshStore();
+    const t = create(s);
+    s.updateTicket(orch, { ticket_id: t.id, note: 'triaged in meeting: yes, worth doing' });
+    expect(s.listTickets({ ready: true, caller: 'builder-loop' }).map((x) => x.id)).toContain(t.id);
+    expect(s.selfFiledPending('builder-loop')).toEqual([]);
+  });
+  it('reserving your filing for another agent leaves their queue unaffected', () => {
+    const s = freshStore();
+    const t = create(s, { assignee: 'reviewer-loop' });
+    expect(s.listTickets({ ready: true, caller: 'reviewer-loop' }).map((x) => x.id)).toContain(t.id);
+  });
+  it('instances of a self-made template are judged by the template', () => {
+    const s = freshStore();
+    s.createTicket(builder, { title: 'Sweep', body: 'standing', workstream: 'helmo-dev', type: 'ops', schedule: 'every 30m' });
+    const [inst] = s.materializeDue(new Date(Date.now() + 31 * 60_000));
+    expect(s.listTickets({ ready: true, caller: 'builder-loop' }).map((x) => x.id)).not.toContain(inst);
+    expect(s.listTickets({ ready: true, caller: 'reviewer-loop' }).map((x) => x.id)).toContain(inst);
+  });
+  it('readyCount honors the rule, so a loop does not wake for its own filings', () => {
+    const s = freshStore();
+    create(s, { workstream: 'alpha' });
+    expect(s.readyCount('alpha', 'builder-loop')).toBe(0);
+    expect(s.readyCount('alpha', 'reviewer-loop')).toBe(1);
+  });
+});
+
 describe('hygiene checks (deterministic, read-only)', () => {
   const hrs = (h: number) => new Date(Date.now() + h * 3_600_000);
   it('stale claims and aging questions surface after their thresholds', () => {
@@ -404,6 +480,8 @@ describe('THE INVARIANT: tickets are a materialized view of events', () => {
     s.recordSpend(builder, b.id, { tokens: 12345, cost_usd: 1.25, note: 'metered post-close by the harness' });
     s.createTicket(builder, { title: 'Standing sweep', body: 'recurring', workstream: 'helmo-dev', type: 'ops', schedule: 'every 1h' });
     expect(s.materializeDue(new Date(Date.now() + 61 * 60_000)).length).toBe(1);
+    s.setWorkstream(orch, { name: 'helmo-dev', goal: 'the gala happens', budget_usd: 100 });
+    s.setWorkstream(orch, { name: 'helmo-dev', budget_usd: 120 }); // partial update must replay identically
 
     const before = s.dumpState();
     s.rebuild();

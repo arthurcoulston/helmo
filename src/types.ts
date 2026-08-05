@@ -70,7 +70,22 @@ export interface Dep {
   type: DepType;
 }
 
-export type EventType = 'created' | 'updated' | 'returned' | 'answered' | 'linked' | 'unlinked' | 'spend';
+export type EventType = 'created' | 'updated' | 'returned' | 'answered' | 'linked' | 'unlinked' | 'spend' | 'workstream_set';
+
+/** Operator steering for a stream of work (H-55). `goal` is what "done" means
+ *  for the whole stream — the thing that makes "is this still worth doing?"
+ *  answerable. `budget_usd` is a disclosed plan, not a kill switch. */
+export interface Workstream {
+  name: string;
+  goal: string | null;
+  budget_usd: number | null;
+  updated_at: string;
+}
+
+export interface WorkstreamInfo extends Workstream {
+  spent_usd: number;
+  remaining_usd: number | null; // null when no budget is set
+}
 
 export interface HelmoEvent {
   seq: number;

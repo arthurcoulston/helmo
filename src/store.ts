@@ -2,12 +2,13 @@ import Database from 'better-sqlite3';
 import { parseSchedule } from './schedule.js';
 import {
   Actor, Answer, BlastRadius, BLAST_RADII, Confidence, Dep, DepType, Evidence,
-  HelmoError, HelmoEvent, Question, Status, Ticket,
+  HelmoError, HelmoEvent, Question, Status, Ticket, Workstream, WorkstreamInfo,
 } from './types.js';
 
 const STALE_CLAIM_HOURS = 24;
 const AGING_QUESTION_HOURS = 48; // the awaiting-human queue exists to protect attention; its own staleness is the record failing
 const SPEND_ANOMALY_FACTOR = 3; // flag cost > 3x the workstream norm (needs >= 3 spent tickets for a norm)
+const BUDGET_PRESSURE_RATIO = 0.8; // surface a workstream budget once 80% is spent
 
 // Instances spawned by the store's own clock carry the store's identity —
 // attributing them to whichever reader triggered materialization would be
@@ -66,8 +67,9 @@ export interface UpdateResult {
 }
 
 export interface HygieneFinding {
-  check: 'stale_claim' | 'done_without_evidence' | 'phantom_block' | 'aging_question' | 'spend_anomaly' | 'priority_inversion';
-  ticket_id: string;
+  check: 'stale_claim' | 'done_without_evidence' | 'phantom_block' | 'aging_question' | 'spend_anomaly' | 'priority_inversion' | 'budget_pressure';
+  ticket_id?: string; // absent on workstream-level findings
+  workstream?: string;
   detail: string;
 }
 
@@ -112,6 +114,12 @@ CREATE TABLE IF NOT EXISTS deps (
 CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS workstreams (
+  name       TEXT PRIMARY KEY,
+  goal       TEXT,
+  budget_usd REAL,
+  updated_at TEXT NOT NULL
 );
 `;
 
@@ -225,8 +233,47 @@ export class Store {
       .prepare(`SELECT * FROM tickets ${where} ORDER BY priority ASC, created_at ASC LIMIT ? OFFSET ?`)
       .all(...params, limit + (filter.ready ? 50 : 0), offset) as Record<string, unknown>[];
     let tickets = rows.map(rowToTicket);
-    if (filter.ready) tickets = tickets.filter((t) => !this.isBlocked(t.id)).slice(0, limit);
+    if (filter.ready) {
+      tickets = tickets
+        .filter((t) => !this.isBlocked(t.id))
+        // Triage rule (H-55): work an agent filed for itself needs a second
+        // pair of eyes before that same agent may draw it — otherwise the
+        // queue is fed by its own consumer and never empties.
+        .filter((t) => !(filter.caller && this.selfFiledUntouched(t.id, filter.caller)))
+        .slice(0, limit);
+    }
     return tickets;
+  }
+
+  /** True when `caller` created this ticket and no other actor has written any
+   *  event on it since. Scheduler-spawned instances are judged by their
+   *  template: standing work an agent set up for itself is still self-filed. */
+  private selfFiledUntouched(id: string, caller: string): boolean {
+    const created = this.db
+      .prepare(
+        `SELECT json_extract(actor, '$.name') AS creator, json_extract(payload, '$.spawned_from') AS template
+         FROM events WHERE ticket_id = ? AND event_type = 'created'`,
+      )
+      .get(id) as { creator: string | null; template: string | null } | undefined;
+    if (!created) return false;
+    // The scheduler is the store's clock, not judgment — its events never
+    // count as the second pair of eyes.
+    const others = this.db
+      .prepare("SELECT COUNT(*) AS n FROM events WHERE ticket_id = ? AND json_extract(actor, '$.name') NOT IN (?, 'helmo-scheduler')")
+      .get(id, caller) as { n: number };
+    if (others.n > 0) return false;
+    if (created.template) return this.selfFiledUntouched(created.template, caller);
+    return created.creator === caller;
+  }
+
+  /** The tickets the triage rule is withholding from `caller`'s ready queue —
+   *  returned alongside the queue so the filer sees why, instead of wondering
+   *  where their ticket went. */
+  selfFiledPending(caller: string): string[] {
+    const rows = this.db
+      .prepare("SELECT id FROM tickets WHERE status = 'open' AND schedule IS NULL AND (assignee IS NULL OR assignee = ?) ORDER BY priority ASC, created_at ASC")
+      .all(caller) as { id: string }[];
+    return rows.map((r) => r.id).filter((id) => !this.isBlocked(id) && this.selfFiledUntouched(id, caller));
   }
 
   /** Record hygiene that needs no judgment and no tokens (H-23): deterministic
@@ -299,6 +346,18 @@ export class Store {
           findings.push({ check: 'spend_anomaly', ticket_id: r.id, detail: `$${r.cost.toFixed(2)} vs $${peerMean.toFixed(2)} '${ws}' norm` });
         }
       }
+    }
+
+    // Budget pressure: a workstream past 80% of its disclosed budget (H-55).
+    // Disclosure elsewhere is the plan; this is the operator-facing flag.
+    for (const ws of this.listWorkstreamInfo()) {
+      if (!ws.budget_usd || ws.spent_usd < ws.budget_usd * BUDGET_PRESSURE_RATIO) continue;
+      const pct = Math.round((ws.spent_usd / ws.budget_usd) * 100);
+      findings.push({
+        check: 'budget_pressure',
+        workstream: ws.name,
+        detail: `$${ws.spent_usd.toFixed(2)} of $${ws.budget_usd.toFixed(2)} spent (${pct}%)${ws.spent_usd >= ws.budget_usd ? ' — budget exhausted' : ''}`,
+      });
     }
 
     // Priority inversions: a high-priority ready ticket sits while lower-priority work in the same workstream is in motion.
@@ -412,7 +471,61 @@ export class Store {
     return rows.map((r) => r.workstream);
   }
 
+  /** One workstream with its steering and spend-to-date. Exists for names with
+   *  tickets but no steering row too — goal/budget are simply null there. */
+  getWorkstreamInfo(name: string): WorkstreamInfo {
+    const row = this.db.prepare('SELECT * FROM workstreams WHERE name = ?').get(name) as Workstream | undefined;
+    const spent = this.db
+      .prepare('SELECT COALESCE(SUM(cost_usd_total), 0) AS s FROM tickets WHERE workstream = ?')
+      .get(name) as { s: number };
+    const budget = row?.budget_usd ?? null;
+    return {
+      name,
+      goal: row?.goal ?? null,
+      budget_usd: budget,
+      updated_at: row?.updated_at ?? '',
+      spent_usd: spent.s,
+      remaining_usd: budget === null ? null : budget - spent.s,
+    };
+  }
+
+  listWorkstreamInfo(): WorkstreamInfo[] {
+    const names = new Set(this.listWorkstreams());
+    for (const r of this.db.prepare('SELECT name FROM workstreams').all() as { name: string }[]) names.add(r.name);
+    return [...names].sort().map((n) => this.getWorkstreamInfo(n));
+  }
+
   // ---------- writes (every write = append event + materialize, atomically) ----------
+
+  /** Set a workstream's goal and/or budget — the human's steering (H-55).
+   *  Agent-kind writes are rejected in the store, not just the tool docs: an
+   *  agent must never set or raise the budget of the stream it draws from.
+   *  Events ride the log under ticket_id `ws:<name>` so steering stays
+   *  derivable and attributed like everything else. */
+  setWorkstream(actor: Actor, input: { name: string; goal?: string; budget_usd?: number }): WorkstreamInfo {
+    validateActor(actor);
+    if (actor.kind === 'agent') {
+      throw new HelmoError(
+        'Workstream goals and budgets are operator steering — writable only by kind "human" or "orchestrator" (relaying a decision the human stated explicitly). An agent setting its own stream\'s goal or budget is the failure this field exists to prevent.',
+      );
+    }
+    if (!input.name?.trim()) throw new HelmoError('name is required: which workstream is being steered.');
+    if (input.goal === undefined && input.budget_usd === undefined) {
+      throw new HelmoError('Provide goal and/or budget_usd — an empty steering write is noise.');
+    }
+    if (input.budget_usd !== undefined && !(input.budget_usd >= 0)) {
+      throw new HelmoError('budget_usd must be a non-negative number (0 clears the pressure checks but keeps disclosure).');
+    }
+    return this.db.transaction(() => {
+      const ts = now();
+      const payload: Record<string, unknown> = { name: input.name };
+      if (input.goal !== undefined) payload['goal'] = input.goal;
+      if (input.budget_usd !== undefined) payload['budget_usd'] = input.budget_usd;
+      this.append(ts, `ws:${input.name}`, 'workstream_set', actor, payload);
+      this.applyWorkstreamSet(ts, payload);
+      return this.getWorkstreamInfo(input.name);
+    })();
+  }
 
   createTicket(actor: Actor, input: CreateInput): Ticket {
     validateActor(actor);
@@ -669,11 +782,14 @@ export class Store {
    *  that materialized state is always derivable from events. */
   rebuild(): void {
     this.db.transaction(() => {
-      this.db.exec('DELETE FROM tickets; DELETE FROM deps;');
+      this.db.exec('DELETE FROM tickets; DELETE FROM deps; DELETE FROM workstreams;');
       const rows = this.db.prepare('SELECT * FROM events ORDER BY seq').all() as Record<string, unknown>[];
       for (const row of rows) {
         const ev = rowToEvent(row);
         switch (ev.event_type) {
+          case 'workstream_set':
+            this.applyWorkstreamSet(ev.ts, ev.payload);
+            break;
           case 'created':
             this.applyCreated(ev.ts, ev.payload);
             break;
@@ -710,10 +826,11 @@ export class Store {
     })();
   }
 
-  dumpState(): { tickets: Ticket[]; deps: Dep[] } {
+  dumpState(): { tickets: Ticket[]; deps: Dep[]; workstreams: Workstream[] } {
     const tickets = (this.db.prepare('SELECT * FROM tickets ORDER BY id').all() as Record<string, unknown>[]).map(rowToTicket);
     const deps = this.db.prepare('SELECT * FROM deps ORDER BY from_id, to_id, type').all() as Dep[];
-    return { tickets, deps };
+    const workstreams = this.db.prepare('SELECT * FROM workstreams ORDER BY name').all() as Workstream[];
+    return { tickets, deps, workstreams };
   }
 
   // ---------- internals ----------
@@ -774,6 +891,20 @@ export class Store {
     if (!sets.length) return;
     params.push(id);
     this.db.prepare(`UPDATE tickets SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+  }
+
+  private applyWorkstreamSet(ts: string, p: Record<string, unknown>): void {
+    // COALESCE keeps the field a partial write did not carry — replaying the
+    // log reproduces exactly the same partial-update semantics.
+    this.db
+      .prepare(
+        `INSERT INTO workstreams (name, goal, budget_usd, updated_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT(name) DO UPDATE SET
+           goal = COALESCE(excluded.goal, workstreams.goal),
+           budget_usd = COALESCE(excluded.budget_usd, workstreams.budget_usd),
+           updated_at = excluded.updated_at`,
+      )
+      .run(p['name'], p['goal'] ?? null, p['budget_usd'] ?? null, ts);
   }
 
   private applyLinked(fromId: string, toId: string, type: DepType, add: boolean): void {

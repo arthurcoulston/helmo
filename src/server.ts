@@ -56,7 +56,8 @@ server.registerTool(
     description:
       `Create a ticket in Helmo, the shared work record for all agents and the human operator. Create a ticket whenever you start a distinct piece of work that isn't already tracked, and whenever you notice work that should happen but that you are NOT doing now (set status 'open' so another agent can pick it up; link it with dep type 'discovered_from' if you found it while working on something else — this preserves lineage without derailing you).\n\n` +
       `Write 'title' in plain human terms (one line, no jargon): the human reads it in a dashboard. Write 'body' so that a different agent with NO other context could pick the ticket up and continue — include goal, constraints, relevant paths/links, and current state. You will not be around to explain; the body is the handoff.\n\n` +
-      `Returns the new ticket ID (e.g. "H-142"). Reference it in commits, files, and messages you produce for this work. For 'workstream', check existing names first (helmo_list_tickets) before inventing a new one. Deps edges always point FROM this new ticket; for a reverse-direction edge (e.g. an existing ticket blocked by this new one) use helmo_link_tickets after creation.`,
+      `Returns the new ticket ID (e.g. "H-142"). Reference it in commits, files, and messages you produce for this work. For 'workstream', check existing names first (helmo_list_tickets) before inventing a new one. Deps edges always point FROM this new ticket; for a reverse-direction edge (e.g. an existing ticket blocked by this new one) use helmo_link_tickets after creation.\n\n` +
+      `Stop discipline: before filing a follow-on ticket, answer "who is waiting on this, and what will they do with it?" If the honest answer is "nobody, nothing yet", record it as residuals in the current ticket's body instead. When real loose ends remain, consolidate them into ONE follow-up ticket rather than fanning out several small ones. Note: a ticket you file does not enter YOUR OWN ready queue until a human or another agent touches it — discovery is always welcome, but executing your own discoveries takes a second pair of eyes.`,
     inputSchema: {
       title: z.string(),
       body: z.string(),
@@ -97,12 +98,18 @@ server.registerTool(
     try {
       const t = store.getTicket(ticket_id);
       const deps = store.getDeps(ticket_id);
+      const ws = store.getWorkstreamInfo(t.workstream);
       const base = {
         ...t,
         blocked: store.isBlocked(ticket_id),
         deps,
         agent_chain: store.agentChain(ticket_id),
         last_answer: store.lastAnswer(ticket_id),
+        // The stream's steering rides along so the claimer weighs the ticket
+        // against the goal and budget before spending anything (H-55).
+        ...(ws.goal || ws.budget_usd !== null
+          ? { workstream_steering: { ...(ws.goal ? { goal: ws.goal } : {}), ...(ws.budget_usd !== null ? { budget_usd: ws.budget_usd, spent_usd: ws.spent_usd, remaining_usd: ws.remaining_usd } : {}) } }
+          : {}),
       };
       if (format === 'history') return ok({ ...base, events: store.getEvents(ticket_id) });
       return ok(base);
@@ -118,7 +125,8 @@ server.registerTool(
     description:
       `Query tickets. Key filters: ready: true (open tickets with no open blockers that are unassigned or reserved for you — use this to find work you can start), status, workstream, assignee, type, priority_max. Returns compact rows sorted by priority then age; paginated (limit default 20, cursor = offset).\n\n` +
       `Start every loop iteration with {assignee: <your name>} — this returns both work you're mid-way through (in_progress) and work handed to you that you haven't started (open + reserved). Then {ready: true} for new work. Answered questions come back as unassigned open tickets — the ready queue surfaces them; you don't need to have been the agent who asked.\n\n` +
-      `Triage duty: if you pass over a ready ticket BECAUSE it needs something only the human can supply (a missing input, an unrecorded location, a decision), do not route around it silently — file its question with helmo_return_to_human first (no claim needed), then take other work. Helmo cannot see that kind of blockage; only you can. A known-blocked ticket left quietly in the ready queue stalls until someone else rediscovers what you already knew.`,
+      `Triage duty: if you pass over a ready ticket BECAUSE it needs something only the human can supply (a missing input, an unrecorded location, a decision), do not route around it silently — file its question with helmo_return_to_human first (no claim needed), then take other work. Helmo cannot see that kind of blockage; only you can. A known-blocked ticket left quietly in the ready queue stalls until someone else rediscovers what you already knew.\n\n` +
+      `The response's 'workstreams' carry the human's steering where set: 'goal' states what done means for the whole stream — check candidate work against it, and treat a met goal as a stop signal, not an invitation to polish; 'budget_usd'/'spent_usd'/'remaining_usd' disclose the stream's budget, which is a plan — front-load the highest-value work so stopping at any point is safe. Ready-queue triage rule: tickets you filed yourself are withheld from your own ready queue until a human or another agent touches them; they appear under 'awaiting_triage' (and stay available to everyone else).`,
     inputSchema: {
       ready: z.boolean().optional(),
       status: z.enum(STATUSES).optional(),
@@ -135,7 +143,18 @@ server.registerTool(
     try {
       const caller = resolveActor(actor as Actor | undefined)?.name;
       const tickets = store.listTickets({ ...filter, caller });
-      return ok({ tickets: tickets.map(compact), count: tickets.length, workstreams: store.listWorkstreams() });
+      const workstreams = store.listWorkstreamInfo().map((w) => ({
+        name: w.name,
+        ...(w.goal ? { goal: w.goal } : {}),
+        ...(w.budget_usd !== null ? { budget_usd: w.budget_usd, spent_usd: w.spent_usd, remaining_usd: w.remaining_usd } : {}),
+      }));
+      const awaitingTriage = filter.ready && caller ? store.selfFiledPending(caller) : [];
+      return ok({
+        tickets: tickets.map(compact),
+        count: tickets.length,
+        workstreams,
+        ...(awaitingTriage.length ? { awaiting_triage: awaitingTriage } : {}),
+      });
     } catch (e) {
       return fail(e);
     }
@@ -151,6 +170,7 @@ server.registerTool(
       `Finishing: set status "done" WITH evidence — the commit, file path, URL, or draft that proves the work exists. Done without evidence is a claim, not a record; it is accepted but flagged to the human. Also set confidence ('routine' = ship it, 'spot_check' = worth a glance, 'needs_review' = human should look) and, if not routine, an uncertainty_note saying specifically WHERE the doubt is — where you are uncertain is more useful than how uncertain you are.\n\n` +
       `Keep blast_radius current the moment your work touches more of the world: 'draft' (created artifacts, shared nothing), 'records' (modified records/systems, reversible), 'sent' (reached specific people), 'published' (reached the world). It never goes back down. Report tokens and/or cost_usd spent since your last update when you can.\n\n` +
       `Handing off to another agent: set handoff_to with a note saying what you did and what the receiver should do. This releases your claim and reserves the ticket for them; they'll find it via their own list call. Helmo records the pass; making the receiving agent run is your harness's job. Use handoff for round trips (builder→reviewer→builder) on one piece of work; if the delegated work is its own deliverable, create a linked ticket instead.\n\n` +
+      `Stopping well: when the marginal value of continuing drops — ask "what did the last stretch of work actually buy, and who is waiting for more?" — close the ticket with the residual loose ends documented in the body rather than pushing on. Closing at diminishing returns is a success state, not a failure. If the workstream discloses a budget, treat it as the plan: front-load the highest-value work, and when it is spent, close out honestly instead of continuing quietly.\n\n` +
       `Do NOT use this to ask the human anything — use helmo_return_to_human, which exists for that.`,
     inputSchema: {
       ticket_id: z.string(),
@@ -250,6 +270,28 @@ server.registerTool(
     try {
       const t = store.answerTicket(resolveActor(actor as Actor | undefined), ticket_id, { ...a, resolution: resolution ?? 'resume' });
       return ok({ ticket: compact(t) });
+    } catch (e) {
+      return fail(e);
+    }
+  },
+);
+
+server.registerTool(
+  'helmo_set_workstream',
+  {
+    description:
+      `Set a workstream's goal ("done means…") and/or budget_usd — the human's steering surface. Call this ONLY to relay a decision the human stated explicitly; the write requires actor kind 'human' or 'orchestrator', and agent-kind writes are rejected: an agent must never set or raise the goal or budget of the stream it draws work from.\n\n` +
+      `The goal is what lets every agent answer "is this stream's purpose already met?" — phrase it as the end state, not activities (e.g. "Arthur has a confirmed, emailable outreach shortlist", not "research contacts"). The budget is a disclosed plan, not a kill switch: agents see remaining balance on every queue read and are expected to front-load the highest-value work and close out honestly when it is spent. Partial updates are fine — a field you omit keeps its current value.`,
+    inputSchema: {
+      name: z.string().describe('The workstream being steered'),
+      goal: z.string().optional().describe('What done means for the whole stream, as an end state'),
+      budget_usd: z.number().min(0).optional().describe('Total budget for the stream in USD; spend already recorded counts against it'),
+      actor: actorSchema,
+    },
+  },
+  async ({ actor, ...input }) => {
+    try {
+      return ok(store.setWorkstream(resolveActor(actor as Actor | undefined), input));
     } catch (e) {
       return fail(e);
     }

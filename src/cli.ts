@@ -59,6 +59,24 @@ try {
       out({ findings: store.hygiene() });
       break;
     }
+    case 'workstream': {
+      // Read-only: Capstan fetches this per iteration to put the goal and
+      // remaining budget in front of the loop agent (H-55).
+      const name = flag('name');
+      if (!name) throw new HelmoError('workstream requires --name <workstream>');
+      out(store.getWorkstreamInfo(name));
+      break;
+    }
+    case 'workstream-set': {
+      out(
+        store.setWorkstream(actor(), {
+          name: req('name'),
+          goal: flag('goal'),
+          budget_usd: flag('budget-usd') !== undefined ? Number(flag('budget-usd')) : undefined,
+        }),
+      );
+      break;
+    }
     case 'actor-tickets': {
       const name = flag('name');
       if (!name) throw new HelmoError('actor-tickets requires --name <actor name>');
@@ -144,6 +162,8 @@ try {
   list           [--ready] [--status S] [--workstream W] [--assignee A] [--limit N]
   get            <ticket-id>
   hygiene                                                      (deterministic record checks, read-only)
+  workstream     --name W                                      (goal, budget, spend-to-date; read-only)
+  workstream-set --name W [--goal G] [--budget-usd X]          (operator steering; actor kind human/orchestrator only)
   create         --title T --body B --workstream W --type TY [--priority P] [--status S] [--assignee A] [--dep H-n --dep-type TY] [--schedule 'every 30m' | '0 0 * * *']
   update         --ticket H-n --note N [--status S] [--evidence-kind K --evidence-ref R] [--confidence C] [--blast-radius B] [--tokens N] [--cost-usd X] [--handoff-to A] [--takeover]
   return         --ticket H-n --situation S --question Q --options '[{"label":..,"consequence":..}]' --recommendation R [--if-unanswered U]

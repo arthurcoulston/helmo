@@ -9,7 +9,12 @@ orchestrator meetings and the read-only view. Product intent:
 
 - `store.ts` — the heart: SQLite store (better-sqlite3), append-only event log
   with a global `seq` cursor (Capstan's wake signal rides on it), ticket
-  materialization, blocking/ready computation, actor validation.
+  materialization, blocking/ready computation, actor validation. Stop
+  discipline (H-55): workstream steering (goal + budget_usd, human/orchestrator
+  writes only, evented as `workstream_set` under `ws:<name>`) and the ready-
+  queue triage rule — a ticket is withheld from its own filer's ready queue
+  until another actor touches it (scheduler instances are judged by their
+  template), so an agent's queue is never fed solely by that agent.
 - `server.ts` — MCP stdio server. **Tool descriptions carry the behavioral
   contract for every agent** (triage duty, evidence rules, question quality);
   treat description edits as seriously as code — they are guidance-as-deployed.
@@ -46,6 +51,10 @@ orchestrator meetings and the read-only view. Product intent:
 - `blocks` deps point FROM the waiting ticket TO its prerequisite.
 - Done-without-evidence is accepted but flagged — keep it that way; the flag
   is the feature.
+- Workstream budgets are disclosure, never enforcement: nothing in the store
+  may block a write because a budget is spent — recording reality always wins.
+  The agent-kind rejection in `setWorkstream` is the one hard rule (an agent
+  must never steer its own stream).
 - Tool-description changes deploy on the next session spawn (loops get them
   immediately; running sessions keep the old text).
 

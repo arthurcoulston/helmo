@@ -197,6 +197,7 @@ const GROOM_LABEL: Record<HygieneFinding['check'], string> = {
   aging_question: '❓ aging question',
   spend_anomaly: '＄ spend anomaly',
   priority_inversion: '▲ priority inversion',
+  budget_pressure: '＄ budget pressure',
 };
 
 function groomStrip(findings: HygieneFinding[]): string {
@@ -205,8 +206,27 @@ function groomStrip(findings: HygieneFinding[]): string {
     ${findings
       .map(
         (f) => `<p class="gitem"><span class="badge quiet">${GROOM_LABEL[f.check]}</span>
-          <a href="#${esc(f.ticket_id)}" class="tid">${esc(f.ticket_id)}</a> <span class="gdetail">${esc(f.detail)}</span></p>`,
+          ${f.ticket_id ? `<a href="#${esc(f.ticket_id)}" class="tid">${esc(f.ticket_id)}</a>` : `<span class="tid">${esc(f.workstream ?? '')}</span>`} <span class="gdetail">${esc(f.detail)}</span></p>`,
       )
+      .join('')}
+  </section>`;
+}
+
+// Operator steering (H-55): only workstreams the human has actually steered
+// appear — an unsteered stream has nothing to show.
+function steeringStrip(): string {
+  const rows = store.listWorkstreamInfo().filter((w) => w.goal || w.budget_usd !== null);
+  if (!rows.length) return '';
+  return `<section class="groom"><h2>Workstream steering</h2>
+    ${rows
+      .map((w) => {
+        const budget =
+          w.budget_usd !== null
+            ? `<span class="spend">$${w.spent_usd.toFixed(2)} of $${w.budget_usd.toFixed(2)} spent</span>`
+            : w.spent_usd ? `<span class="spend">$${w.spent_usd.toFixed(2)} spent</span>` : '';
+        return `<p class="gitem"><span class="tid">${esc(w.name)}</span>
+          ${w.goal ? `<span class="gdetail">done means: ${esc(w.goal)}</span>` : ''} ${budget}</p>`;
+      })
       .join('')}
   </section>`;
 }
@@ -249,6 +269,8 @@ function page(): string {
 </section>
 
 ${groomStrip(store.hygiene())}
+
+${steeringStrip()}
 
 ${motion.length ? `<section><h2>In motion</h2>${motion.map(motionCard).join('')}</section>` : ''}
 

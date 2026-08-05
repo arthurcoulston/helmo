@@ -1,4 +1,4 @@
-# Helm — Product Description
+# Helmo — Product Description
 
 Open source, self-hosted, agent-platform agnostic.
 
@@ -13,13 +13,13 @@ Two rules:
 1. **Status is self-reported by agents, and agents are trusted.** An agent marks its own work done, blocked, or in progress. Every report should carry an evidence link (the commit, the file, the draft, the published URL) so any claim is spot-checkable — but verification against evidence is a later layer, not a launch requirement.
 2. **The default view is all tickets.** Everything the team is doing, visible in one place. Collapsing routine work and surfacing anomalies (low confidence, high blast radius, unusual spend) can come later as filters — hiding is opt-in, not the default.
 
-## Why Helm is different
+## Why Helmo is different
 
 The agent-management space (Beads, Gas Town, Omnara, Vibe Kanban, GitHub Agent HQ) is crowded, but no comp occupies this combination:
 
 - **The human interface is a great view plus AI meetings.** Not a form-filled tracker with a chat bolted on: a visual surface worth staring at, and an orchestrator-run meeting for everything interactive. The visual quality of the view is a differentiator, not a nicety.
-- **The human never edits.** No adding, changing, or deleting tickets by hand — the human views and talks to AI, nothing else. Every comp ships a human editing UI; Helm's read-only constraint is a feature, because it keeps the record entirely agent-written and forces the meeting to be good.
-- **Not just for software.** Coding is one work type among many — events, research, writing, operations. Every serious comp is repo- and code-shaped. Helm will work well for software without being shaped by it.
+- **The human never edits.** No adding, changing, or deleting tickets by hand — the human views and talks to AI, nothing else. Every comp ships a human editing UI; Helmo's read-only constraint is a feature, because it keeps the record entirely agent-written and forces the meeting to be good.
+- **Not just for software.** Coding is one work type among many — events, research, writing, operations. Every serious comp is repo- and code-shaped. Helmo will work well for software without being shaped by it.
 
 ## Users
 
@@ -30,7 +30,7 @@ The agent-management space (Beads, Gas Town, Omnara, Vibe Kanban, GitHub Agent H
 
 Agents return tickets to the human when blocked, when a decision is needed, or when something needs clarification. These queue.
 
-The human's main interaction with the system is working that queue in conversation with the orchestrator — a **meeting**, where the backlog *is* the agenda. The meeting happens inside the human's existing agent surface (Claude Code, Codex): the human summons it — "summon helm orchestrator" — which loads the orchestrator context into the current session. The team runs autonomously; the human is summoned to unblock, not to manage. The queue is always visible in the context of the broader pipeline, so answering happens with awareness of what's moving.
+The human's main interaction with the system is working that queue in conversation with the orchestrator — a **meeting**, where the backlog *is* the agenda. The meeting happens inside the human's existing agent surface (Claude Code, Codex): the human summons it — "summon helmo orchestrator" — which loads the orchestrator context into the current session. The team runs autonomously; the human is summoned to unblock, not to manage. The queue is always visible in the context of the broader pipeline, so answering happens with awareness of what's moving.
 
 Design consequences:
 
@@ -42,13 +42,13 @@ Design consequences:
 
 ## When agents escalate
 
-Whether an agent ships autonomously or returns a ticket for approval is the **agent's discretion, governed by its constitution** — the instructions it was given for its workstream. E.g., "if complex, seek approval; if simple, ship without asking" (in practice, in-depth and specific to the agent's work). Helm doesn't enforce an approval policy; it provides the escalation channel (the returned ticket and the awaiting-human queue) that constitutions route through.
+Whether an agent ships autonomously or returns a ticket for approval is the **agent's discretion, governed by its constitution** — the instructions it was given for its workstream. E.g., "if complex, seek approval; if simple, ship without asking" (in practice, in-depth and specific to the agent's work). Helmo doesn't enforce an approval policy; it provides the escalation channel (the returned ticket and the awaiting-human queue) that constitutions route through.
 
 ## Components
 
 **The store.** Local. A single SQLite database (WAL mode) outside any repo: tickets plus an append-only event log. The event log carries provenance; the ticket carries current state. One DB serves agents across all repos and work types — no per-repo databases, no sync protocol, no merge states.
 
-*Beads was evaluated (2026-08) and the decision is build, not adopt.* Beads' own history validates this architecture: its git-committed-JSONL era produced exactly the agent merge collisions Helm avoids, and the v1.0 fix (embedded Dolt, sync commands, bootstrap/repair flows) is machinery for a distributed topology Helm doesn't have. What Helm adopts from Beads instead:
+*Beads was evaluated (2026-08) and the decision is build, not adopt.* Beads' own history validates this architecture: its git-committed-JSONL era produced exactly the agent merge collisions Helmo avoids, and the v1.0 fix (embedded Dolt, sync commands, bootstrap/repair flows) is machinery for a distributed topology Helmo doesn't have. What Helmo adopts from Beads instead:
 
 - Collision-free, short, speakable ticket IDs (hash-based — parallel agents never coordinate on ID assignment)
 - A computed ready/blocked queue derived from typed dependencies, where each dependency type has stated, computable semantics (`blocks` affects readiness; `discovered-from` records lineage without blocking)

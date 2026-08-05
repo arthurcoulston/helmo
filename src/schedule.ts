@@ -2,7 +2,7 @@
 //   'every <N><m|h|d>'        — interval from the last instance's due time
 //   '<min> <hour> <dom> <mon> <dow>' — 5-field cron: *, */n, lists, ranges
 // Zero-dependency by design, like the rest of the store.
-import { HelmError } from './types.js';
+import { HelmoError } from './types.js';
 
 const EVERY = /^every\s+(\d+)\s*(m|h|d)$/i;
 
@@ -21,11 +21,11 @@ function parseCronField(spec: string, min: number, max: number, label: string): 
     else if (/^\d+$/.test(range)) { lo = hi = parseInt(range, 10); }
     else {
       const m = /^(\d+)-(\d+)$/.exec(range);
-      if (!m) throw new HelmError(`Bad ${label} field '${spec}' in schedule. Use *, n, n-m, */k, or comma lists.`);
+      if (!m) throw new HelmoError(`Bad ${label} field '${spec}' in schedule. Use *, n, n-m, */k, or comma lists.`);
       lo = parseInt(m[1]!, 10); hi = parseInt(m[2]!, 10);
     }
     if (lo < min || hi > max || lo > hi || by < 1) {
-      throw new HelmError(`${label} field '${spec}' out of range (${min}-${max}).`);
+      throw new HelmoError(`${label} field '${spec}' out of range (${min}-${max}).`);
     }
     for (let v = lo; v <= hi; v += by) values.add(v);
   }
@@ -62,22 +62,22 @@ class Cron implements Schedule {
         this.dow.matches(t.getUTCDay())
       ) return new Date(t.getTime());
     }
-    throw new HelmError('Schedule never matches within 400 days — check the cron expression.');
+    throw new HelmoError('Schedule never matches within 400 days — check the cron expression.');
   }
 }
 
-/** Parse or throw a teaching HelmError. All times are UTC. */
+/** Parse or throw a teaching HelmoError. All times are UTC. */
 export function parseSchedule(expr: string): Schedule {
   const every = EVERY.exec(expr.trim());
   if (every) {
     const n = parseInt(every[1]!, 10);
-    if (n < 1) throw new HelmError("Schedule 'every 0x' never fires. Use a positive interval.");
+    if (n < 1) throw new HelmoError("Schedule 'every 0x' never fires. Use a positive interval.");
     const unit = every[2]!.toLowerCase();
     return new Interval(n * (unit === 'm' ? 60_000 : unit === 'h' ? 3_600_000 : 86_400_000));
   }
   const fields = expr.trim().split(/\s+/);
   if (fields.length !== 5) {
-    throw new HelmError(
+    throw new HelmoError(
       `Schedule '${expr}' is neither 'every <N><m|h|d>' nor 5-field cron '<min> <hour> <dom> <mon> <dow>' (UTC).`,
     );
   }

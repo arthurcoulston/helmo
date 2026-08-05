@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { parseSchedule } from './schedule.js';
 import {
   Actor, Answer, BlastRadius, BLAST_RADII, Confidence, Dep, DepType, Evidence,
-  HelmError, HelmEvent, Question, Status, Ticket,
+  HelmoError, HelmoEvent, Question, Status, Ticket,
 } from './types.js';
 
 const STALE_CLAIM_HOURS = 24;
@@ -12,7 +12,7 @@ const SPEND_ANOMALY_FACTOR = 3; // flag cost > 3x the workstream norm (needs >= 
 // Instances spawned by the store's own clock carry the store's identity —
 // attributing them to whichever reader triggered materialization would be
 // false provenance.
-const SCHEDULER_ACTOR: Actor = { name: 'helm-scheduler', kind: 'orchestrator' };
+const SCHEDULER_ACTOR: Actor = { name: 'helmo-scheduler', kind: 'orchestrator' };
 
 export interface CreateInput {
   title: string;
@@ -121,12 +121,12 @@ function now(): string {
 
 function validateActor(actor: Actor): void {
   if (!actor?.name || !actor?.kind) {
-    throw new HelmError(
-      'No actor identity. Configure HELM_ACTOR (JSON with at least {"name", "kind"}) in the MCP server environment, or pass an "actor" param. Provenance requires knowing who writes.',
+    throw new HelmoError(
+      'No actor identity. Configure HELMO_ACTOR (JSON with at least {"name", "kind"}) in the MCP server environment, or pass an "actor" param. Provenance requires knowing who writes.',
     );
   }
   if (actor.kind === 'agent' && (!actor.model || !actor.version)) {
-    throw new HelmError(
+    throw new HelmoError(
       `Actor "${actor.name}" has kind "agent" but is missing model and/or version. Agents must identify their model ID and harness version — this is what makes corrections verifiable. Example: {"name":"${actor.name}","kind":"agent","model":"claude-sonnet-5","version":"1.0"}.`,
     );
   }
@@ -156,7 +156,7 @@ export class Store {
   getTicket(id: string): Ticket {
     const row = this.db.prepare('SELECT * FROM tickets WHERE id = ?').get(id) as Record<string, unknown> | undefined;
     if (!row) {
-      throw new HelmError(`Ticket "${id}" not found. IDs look like "H-42"; use helm_list_tickets to find the one you mean.`);
+      throw new HelmoError(`Ticket "${id}" not found. IDs look like "H-42"; use helmo_list_tickets to find the one you mean.`);
     }
     return rowToTicket(row);
   }
@@ -168,7 +168,7 @@ export class Store {
     };
   }
 
-  getEvents(ticketId: string): HelmEvent[] {
+  getEvents(ticketId: string): HelmoEvent[] {
     const rows = this.db.prepare('SELECT * FROM events WHERE ticket_id = ? ORDER BY seq').all(ticketId) as Record<string, unknown>[];
     return rows.map(rowToEvent);
   }
@@ -230,7 +230,7 @@ export class Store {
   }
 
   /** Record hygiene that needs no judgment and no tokens (H-23): deterministic
-   *  queries over the store, surfaced in the view and `helm-cli hygiene`.
+   *  queries over the store, surfaced in the view and `helmo-cli hygiene`.
    *  Pure read — never mutates. `nowTs` is injectable for tests. */
   hygiene(nowTs: Date = new Date()): HygieneFinding[] {
     const findings: HygieneFinding[] = [];
@@ -318,7 +318,7 @@ export class Store {
 
   /** Catch up recurring templates: spawn an instance for each template whose
    *  next occurrence has passed (H-22). Called from every ticket-list read —
-   *  Helm has no daemon, so the read path is the clock. Skip-if-open: no new
+   *  Helmo has no daemon, so the read path is the clock. Skip-if-open: no new
    *  instance while a previous one is open/in_progress/awaiting_human. After
    *  downtime, only the latest missed slot spawns — a backlog of stale
    *  instances would be silt, not work. Returns spawned ids. */
@@ -416,21 +416,21 @@ export class Store {
 
   createTicket(actor: Actor, input: CreateInput): Ticket {
     validateActor(actor);
-    if (!input.title?.trim()) throw new HelmError('title is required: one line, plain human terms.');
+    if (!input.title?.trim()) throw new HelmoError('title is required: one line, plain human terms.');
     if (!input.body?.trim()) {
-      throw new HelmError(
+      throw new HelmoError(
         'body is required. Write it so a different agent with NO other context could resume: goal, constraints, relevant paths/links, current state.',
       );
     }
     if (!input.workstream?.trim()) {
-      throw new HelmError(
+      throw new HelmoError(
         `workstream is required. Existing workstreams: ${JSON.stringify(this.listWorkstreams())}. Reuse one if it fits; invent only for genuinely new streams of work.`,
       );
     }
-    if (!input.type?.trim()) throw new HelmError('type is required: build|research|writing|ops|planning, or another short noun.');
+    if (!input.type?.trim()) throw new HelmoError('type is required: build|research|writing|ops|planning, or another short noun.');
     if (input.schedule) {
       parseSchedule(input.schedule); // reject bad expressions at the door
-      if (input.status === 'in_progress') throw new HelmError('A recurring template is standing work — it cannot be in_progress; its instances are.');
+      if (input.status === 'in_progress') throw new HelmoError('A recurring template is standing work — it cannot be in_progress; its instances are.');
     }
     const status = input.status ?? 'open';
     if (status === 'in_progress' && !input.assignee) input = { ...input, assignee: actor.name };
@@ -466,32 +466,32 @@ export class Store {
   updateTicket(actor: Actor, input: UpdateInput): UpdateResult {
     validateActor(actor);
     if (!input.note?.trim()) {
-      throw new HelmError('note is required on every update: one or two lines, human terms, saying what actually happened. Notes are the story the human reads.');
+      throw new HelmoError('note is required on every update: one or two lines, human terms, saying what actually happened. Notes are the story the human reads.');
     }
     const t = this.getTicket(input.ticket_id);
     const warnings: string[] = [];
     const diffs: Record<string, { from: unknown; to: unknown }> = {};
 
     if (t.status === 'done' || t.status === 'cancelled') {
-      throw new HelmError(
-        `${t.id} is ${t.status} — terminal. The record is permanent; do not rework closed tickets. If follow-up work is needed, helm_create_ticket a new one with a 'relates' link to ${t.id}.`,
+      throw new HelmoError(
+        `${t.id} is ${t.status} — terminal. The record is permanent; do not rework closed tickets. If follow-up work is needed, helmo_create_ticket a new one with a 'relates' link to ${t.id}.`,
       );
     }
     if (input.handoff_to && input.status) {
-      throw new HelmError('Pass either handoff_to or status, not both — a handoff sets status itself (open, reserved for the receiver).');
+      throw new HelmoError('Pass either handoff_to or status, not both — a handoff sets status itself (open, reserved for the receiver).');
     }
 
     // status transitions
     if (input.status) {
       if (t.status === 'awaiting_human') {
-        throw new HelmError(
-          `${t.id} is awaiting_human — it is waiting on the human's answer, not on you. Status changes happen via helm_answer_ticket (orchestrator, during a meeting). You may still add notes/evidence.`,
+        throw new HelmoError(
+          `${t.id} is awaiting_human — it is waiting on the human's answer, not on you. Status changes happen via helmo_answer_ticket (orchestrator, during a meeting). You may still add notes/evidence.`,
         );
       }
       if (input.status === 'in_progress' && t.status === 'open' && t.assignee && t.assignee !== actor.name && !input.takeover) {
         const age = hoursSince(t.updated_at);
         if (age < STALE_CLAIM_HOURS) {
-          throw new HelmError(
+          throw new HelmoError(
             `${t.id} is reserved for "${t.assignee}" (last activity ${age.toFixed(1)}h ago). Pick different work rather than duplicating theirs. If the claim looks dead (>${STALE_CLAIM_HOURS}h), retry with takeover: true and say so in your note.`,
           );
         }
@@ -500,12 +500,12 @@ export class Store {
       if (input.status === 'in_progress' && t.status === 'in_progress' && t.assignee !== actor.name) {
         const age = hoursSince(t.updated_at);
         if (!input.takeover && age < STALE_CLAIM_HOURS) {
-          throw new HelmError(
+          throw new HelmoError(
             `${t.id} is held by "${t.assignee}" (last update ${age.toFixed(1)}h ago). Pick different work. If the holder is dead (>${STALE_CLAIM_HOURS}h stale), retry with takeover: true.`,
           );
         }
         if (!input.takeover) {
-          throw new HelmError(
+          throw new HelmoError(
             `${t.id} is held by "${t.assignee}" and stale (${age.toFixed(1)}h). Retry with takeover: true and note the takeover.`,
           );
         }
@@ -523,10 +523,10 @@ export class Store {
 
     if (input.handoff_to) {
       if (t.status === 'in_progress' && t.assignee && t.assignee !== actor.name) {
-        throw new HelmError(`${t.id} is held by "${t.assignee}"; only the holder can hand it off.`);
+        throw new HelmoError(`${t.id} is held by "${t.assignee}"; only the holder can hand it off.`);
       }
       if (t.status === 'awaiting_human') {
-        throw new HelmError(`${t.id} is awaiting_human; it cannot be handed off until answered.`);
+        throw new HelmoError(`${t.id} is awaiting_human; it cannot be handed off until answered.`);
       }
       diffs['status'] = { from: t.status, to: 'open' };
       diffs['assignee'] = { from: t.assignee, to: input.handoff_to };
@@ -536,7 +536,7 @@ export class Store {
       const from = BLAST_RADII.indexOf(t.blast_radius);
       const to = BLAST_RADII.indexOf(input.blast_radius);
       if (to < from) {
-        throw new HelmError(
+        throw new HelmoError(
           `blast_radius never goes back down (currently '${t.blast_radius}', got '${input.blast_radius}'). It records the furthest the work has reached.`,
         );
       }
@@ -579,10 +579,10 @@ export class Store {
   recordSpend(actor: Actor, ticketId: string, input: { tokens?: number; cost_usd?: number; note: string }): Ticket {
     validateActor(actor);
     if (!input.tokens && !input.cost_usd) {
-      throw new HelmError('record-spend requires tokens and/or cost_usd — an empty spend record is noise.');
+      throw new HelmoError('record-spend requires tokens and/or cost_usd — an empty spend record is noise.');
     }
     if (!input.note?.trim()) {
-      throw new HelmError('note is required on record-spend: say what session this spend came from and how it was attributed.');
+      throw new HelmoError('note is required on record-spend: say what session this spend came from and how it was attributed.');
     }
     this.getTicket(ticketId);
     return this.db.transaction(() => {
@@ -599,18 +599,18 @@ export class Store {
     validateActor(actor);
     const t = this.getTicket(ticketId);
     if (t.status !== 'open' && t.status !== 'in_progress') {
-      throw new HelmError(`${t.id} is ${t.status}; only open or in_progress tickets can be returned to the human.`);
+      throw new HelmoError(`${t.id} is ${t.status}; only open or in_progress tickets can be returned to the human.`);
     }
     for (const [field, v] of Object.entries({ situation: q.situation, question: q.question, recommendation: q.recommendation })) {
       if (!(v as string)?.trim()) {
-        throw new HelmError(`${field} is required. The human works these in batched meetings; an incomplete question wastes the attention Helm exists to protect.`);
+        throw new HelmoError(`${field} is required. The human works these in batched meetings; an incomplete question wastes the attention Helmo exists to protect.`);
       }
     }
     if (!q.options || q.options.length < 2 || q.options.length > 4) {
-      throw new HelmError('options: provide 2-4, each {label, consequence}. The human should be able to answer by saying a label.');
+      throw new HelmoError('options: provide 2-4, each {label, consequence}. The human should be able to answer by saying a label.');
     }
     for (const o of q.options) {
-      if (!o.label?.trim() || !o.consequence?.trim()) throw new HelmError('Every option needs both label and consequence (what happens if chosen, including cost/risk).');
+      if (!o.label?.trim() || !o.consequence?.trim()) throw new HelmoError('Every option needs both label and consequence (what happens if chosen, including cost/risk).');
     }
     return this.db.transaction(() => {
       const ts = now();
@@ -626,9 +626,9 @@ export class Store {
     validateActor(actor);
     const t = this.getTicket(ticketId);
     if (t.status !== 'awaiting_human') {
-      throw new HelmError(`${t.id} is ${t.status}, not awaiting_human — there is no pending question to answer.`);
+      throw new HelmoError(`${t.id} is ${t.status}, not awaiting_human — there is no pending question to answer.`);
     }
-    if (!a.answer?.trim()) throw new HelmError('answer is required: the decision plus the human\'s reasoning and any new constraints.');
+    if (!a.answer?.trim()) throw new HelmoError('answer is required: the decision plus the human\'s reasoning and any new constraints.');
     const resolution = a.resolution ?? 'resume';
     return this.db.transaction(() => {
       const ts = now();
@@ -648,7 +648,7 @@ export class Store {
     validateActor(actor);
     this.getTicket(fromId);
     this.getTicket(toId);
-    if (fromId === toId) throw new HelmError('A ticket cannot link to itself.');
+    if (fromId === toId) throw new HelmoError('A ticket cannot link to itself.');
     this.db.transaction(() => {
       const ts = now();
       if (action === 'add') {
@@ -792,7 +792,7 @@ export class Store {
     while (stack.length) {
       const cur = stack.pop()!;
       if (cur === fromId) {
-        throw new HelmError(
+        throw new HelmoError(
           `Adding blocks ${fromId} -> ${toId} would create a cycle: these tickets would wait on each other forever. Re-examine which one is truly the prerequisite.`,
         );
       }
@@ -817,9 +817,9 @@ function rowToTicket(row: Record<string, unknown>): Ticket {
   };
 }
 
-function rowToEvent(row: Record<string, unknown>): HelmEvent {
+function rowToEvent(row: Record<string, unknown>): HelmoEvent {
   return {
-    ...(row as unknown as HelmEvent),
+    ...(row as unknown as HelmoEvent),
     actor: JSON.parse(row['actor'] as string),
     payload: JSON.parse(row['payload'] as string),
   };

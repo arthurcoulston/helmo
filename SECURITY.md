@@ -1,6 +1,6 @@
 # Security
 
-Helm is a local-first tool: the store is a SQLite file on your machine, the
+Helmo is a local-first tool: the store is a SQLite file on your machine, the
 view binds to localhost, and nothing phones home. Its threat surface is
 correspondingly small, but not zero — the view renders agent-written text,
 and the MCP/CLI write paths trust the actor identity they are given.

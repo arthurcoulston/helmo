@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// helm-cli — programmatic access to the Helm store for non-MCP writers:
+// helmo-cli — programmatic access to the Helmo store for non-MCP writers:
 // harnesses (Capstan), scripts, and script-runner agents. Same actor rules as
-// the MCP server: writes require an identity (HELM_ACTOR env or --actor JSON).
-// The binary is `helm-cli`, not `helm`, to avoid colliding with Kubernetes Helm.
+// the MCP server: writes require an identity (HELMO_ACTOR env or --actor JSON).
+// The binary is `helmo-cli`, matching its siblings `helmo-mcp` and `helmo-view`.
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from './store.js';
-import { Actor, DepType, HelmError } from './types.js';
+import { Actor, DepType, HelmoError } from './types.js';
 
 const args = process.argv.slice(2);
 const cmd = args.shift();
@@ -20,12 +20,12 @@ function has(name: string): boolean {
   return args.includes(`--${name}`);
 }
 
-const store = new Store(process.env['HELM_DB'] ?? join(homedir(), '.helm', 'helm.db'));
+const store = new Store(process.env['HELMO_DB'] ?? join(homedir(), '.helmo', 'helmo.db'));
 
 function actor(): Actor {
-  const raw = flag('actor') ?? process.env['HELM_ACTOR'];
+  const raw = flag('actor') ?? process.env['HELMO_ACTOR'];
   if (!raw) {
-    throw new HelmError('No actor. Set HELM_ACTOR env or pass --actor \'{"name":"...","kind":"agent","model":"...","version":"..."}\'.');
+    throw new HelmoError('No actor. Set HELMO_ACTOR env or pass --actor \'{"name":"...","kind":"agent","model":"...","version":"..."}\'.');
   }
   return JSON.parse(raw) as Actor;
 }
@@ -51,7 +51,7 @@ try {
     }
     case 'actor-activity': {
       const name = flag('name');
-      if (!name) throw new HelmError('actor-activity requires --name <actor name>');
+      if (!name) throw new HelmoError('actor-activity requires --name <actor name>');
       out({ events: store.actorActivitySince(name, Number(flag('since-seq') ?? 0)) });
       break;
     }
@@ -61,7 +61,7 @@ try {
     }
     case 'actor-tickets': {
       const name = flag('name');
-      if (!name) throw new HelmError('actor-tickets requires --name <actor name>');
+      if (!name) throw new HelmoError('actor-tickets requires --name <actor name>');
       out({ tickets: store.actorTicketsSince(name, Number(flag('since-seq') ?? 0)) });
       break;
     }
@@ -88,7 +88,7 @@ try {
     }
     case 'get': {
       const id = flag('ticket') ?? args[0];
-      if (!id) throw new HelmError('get requires a ticket id');
+      if (!id) throw new HelmoError('get requires a ticket id');
       out({ ...store.getTicket(id), last_answer: store.lastAnswer(id), agent_chain: store.agentChain(id) });
       break;
     }
@@ -136,7 +136,7 @@ try {
       break;
     }
     default:
-      console.error(`usage: helm-cli <command> [flags]
+      console.error(`usage: helmo-cli <command> [flags]
   wake-check     --workstream W --assignee A --since-seq N     (read-only harness poll)
   actor-activity --name A --since-seq N                        (did this actor write events?)
   actor-tickets  --name A --since-seq N                        (which tickets, most-touched first)
@@ -147,11 +147,11 @@ try {
   create         --title T --body B --workstream W --type TY [--priority P] [--status S] [--assignee A] [--dep H-n --dep-type TY] [--schedule 'every 30m' | '0 0 * * *']
   update         --ticket H-n --note N [--status S] [--evidence-kind K --evidence-ref R] [--confidence C] [--blast-radius B] [--tokens N] [--cost-usd X] [--handoff-to A] [--takeover]
   return         --ticket H-n --situation S --question Q --options '[{"label":..,"consequence":..}]' --recommendation R [--if-unanswered U]
-Writes read identity from HELM_ACTOR env or --actor JSON. DB path from HELM_DB (default ~/.helm/helm.db).`);
+Writes read identity from HELMO_ACTOR env or --actor JSON. DB path from HELMO_DB (default ~/.helmo/helmo.db).`);
       process.exit(cmd ? 1 : 0);
   }
 } catch (e) {
-  console.error(JSON.stringify({ error: e instanceof HelmError ? e.message : String(e) }));
+  console.error(JSON.stringify({ error: e instanceof HelmoError ? e.message : String(e) }));
   process.exit(1);
 } finally {
   store.close();
@@ -159,7 +159,7 @@ Writes read identity from HELM_ACTOR env or --actor JSON. DB path from HELM_DB (
 
 function req(name: string): string {
   const v = flag(name);
-  if (v === undefined) throw new HelmError(`--${name} is required for '${cmd}'`);
+  if (v === undefined) throw new HelmoError(`--${name} is required for '${cmd}'`);
   return v;
 }
 function actorSafe(): Actor | undefined {

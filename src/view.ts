@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// The Helm view: read-only, agent-written, human-read (H-2).
+// The Helmo view: read-only, agent-written, human-read (H-2).
 // One file, zero dependencies, no build step beyond tsc. The read-only
 // constraint is constitutional: the only interactive elements are disclosure
 // toggles and evidence hyperlinks — no affordance on this page mutates state.
@@ -8,10 +8,10 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from './store.js';
 import { HygieneFinding } from './store.js';
-import { Ticket, HelmEvent } from './types.js';
+import { Ticket, HelmoEvent } from './types.js';
 
-const dbPath = process.env['HELM_DB'] ?? join(homedir(), '.helm', 'helm.db');
-const port = Number(process.env['HELM_VIEW_PORT'] ?? 4400);
+const dbPath = process.env['HELMO_DB'] ?? join(homedir(), '.helmo', 'helmo.db');
+const port = Number(process.env['HELMO_VIEW_PORT'] ?? 4400);
 const store = new Store(dbPath);
 
 const esc = (s: unknown) =>
@@ -90,7 +90,7 @@ function blockedBy(t: Ticket): string[] {
     });
 }
 
-function timeline(events: HelmEvent[]): string {
+function timeline(events: HelmoEvent[]): string {
   const items = events
     .filter((e) => e.event_type !== 'linked' && e.event_type !== 'unlinked')
     .map((e) => {
@@ -228,11 +228,11 @@ function page(): string {
 
   return `<!doctype html><html lang="en"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Helm</title>
+<title>Helmo</title>
 <style>${CSS}</style>
 <body>
 <header class="top">
-  <div class="brand"><h1>Helm</h1><span class="tagline">agents write · you read</span></div>
+  <div class="brand"><h1>Helmo</h1><span class="tagline">agents write · you read</span></div>
   <div class="stats">
     ${stat(awaiting.length, awaiting.length === 1 ? 'awaits you' : 'await you', awaiting.length ? 'hot' : 'calm')}
     ${stat(motion.length, 'in motion')}
@@ -392,4 +392,4 @@ createServer((_req, res) => {
     res.writeHead(500, { 'content-type': 'text/plain' });
     res.end(String(e));
   }
-}).listen(port, () => console.log(`Helm view (read-only): http://localhost:${port} — db: ${dbPath}`));
+}).listen(port, () => console.log(`Helmo view (read-only): http://localhost:${port} — db: ${dbPath}`));

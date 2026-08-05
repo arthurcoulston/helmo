@@ -72,7 +72,7 @@ export interface Dep {
 
 export type EventType = 'created' | 'updated' | 'returned' | 'answered' | 'linked' | 'unlinked' | 'spend';
 
-export interface HelmEvent {
+export interface HelmoEvent {
   seq: number;
   ts: string;
   ticket_id: string;
@@ -81,4 +81,4 @@ export interface HelmEvent {
   payload: Record<string, unknown>;
 }
 
-export class HelmError extends Error {}
+export class HelmoError extends Error {}

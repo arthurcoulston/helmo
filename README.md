@@ -1,12 +1,12 @@
-# Helm
+# Helmo
 
 Agent work record: **agents write, humans read and meet.**
 
 A self-hosted, platform-agnostic work dashboard for AI agent teams. Agents (Claude Code, Codex, any MCP-capable agent — mostly headless bash loops) create and manage tickets through MCP tools. The human never edits: they read a view, and they work the `awaiting_human` queue in conversation with a summonable orchestrator. Status is self-reported, backed by evidence links; provenance comes from an append-only event log.
 
-- Product: [helm-product-description.md](helm-product-description.md)
-- Design (schema, IDs, tool surface): [helm-v0-design.md](helm-v0-design.md)
-- Orchestrator context (summon this to run a meeting): [HELM-ORCHESTRATOR.md](HELM-ORCHESTRATOR.md)
+- Product: [helmo-product-description.md](helmo-product-description.md)
+- Design (schema, IDs, tool surface): [helmo-v0-design.md](helmo-v0-design.md)
+- Orchestrator context (summon this to run a meeting): [HELMO-ORCHESTRATOR.md](HELMO-ORCHESTRATOR.md)
 
 ## Status
 
@@ -14,7 +14,7 @@ Walking skeleton. Store + MCP server + plain read-only view. Being dogfooded on 
 
 ## Install
 
-**Agent-led install is the primary path.** Tell your agent: *"I want to use Helm — install it and set it up."* and point it at [AGENT-INSTALL.md](AGENT-INSTALL.md). It runs the install end to end and returns your dashboard link and meeting instructions.
+**Agent-led install is the primary path.** Tell your agent: *"I want to use Helmo — install it and set it up."* and point it at [AGENT-INSTALL.md](AGENT-INSTALL.md). It runs the install end to end and returns your dashboard link and meeting instructions.
 
 Manual setup, if you prefer:
 
@@ -22,7 +22,7 @@ Manual setup, if you prefer:
 npm install && npm run build
 ```
 
-The store is a single SQLite file (WAL), default `~/.helm/helm.db`, override with `HELM_DB`.
+The store is a single SQLite file (WAL), default `~/.helmo/helmo.db`, override with `HELMO_DB`.
 
 ### Connect an agent (MCP, stdio)
 
@@ -31,20 +31,20 @@ Each agent's MCP config launches the server with the agent's identity:
 ```json
 {
   "mcpServers": {
-    "helm": {
+    "helmo": {
       "command": "node",
-      "args": ["/path/to/helm/dist/server.js"],
+      "args": ["/path/to/helmo/dist/server.js"],
       "env": {
-        "HELM_ACTOR": "{\"name\": \"builder-loop\", \"kind\": \"agent\", \"model\": \"claude-sonnet-5\", \"version\": \"1.0\"}"
+        "HELMO_ACTOR": "{\"name\": \"builder-loop\", \"kind\": \"agent\", \"model\": \"claude-sonnet-5\", \"version\": \"1.0\"}"
       }
     }
   }
 }
 ```
 
-For Claude Code: `claude mcp add helm -e HELM_ACTOR='{"name":"...","kind":"agent","model":"...","version":"1.0"}' -- node /path/to/helm/dist/server.js`
+For Claude Code: `claude mcp add helmo -e HELMO_ACTOR='{"name":"...","kind":"agent","model":"...","version":"1.0"}' -- node /path/to/helmo/dist/server.js`
 
-Tools: `helm_create_ticket`, `helm_get_ticket`, `helm_list_tickets`, `helm_update_ticket`, `helm_link_tickets`, `helm_return_to_human`, `helm_answer_ticket`. The tool descriptions teach correct usage; no separate convention doc is required.
+Tools: `helmo_create_ticket`, `helmo_get_ticket`, `helmo_list_tickets`, `helmo_update_ticket`, `helmo_link_tickets`, `helmo_return_to_human`, `helmo_answer_ticket`. The tool descriptions teach correct usage; no separate convention doc is required.
 
 ### The view (read-only)
 
@@ -54,7 +54,7 @@ npm run view    # http://localhost:4400
 
 ### Run a meeting
 
-In your agent session (Claude Code, Codex): *"Summon helm orchestrator"* → load [HELM-ORCHESTRATOR.md](HELM-ORCHESTRATOR.md) as context. The orchestrator walks you through the awaiting-human queue and records your answers.
+In your agent session (Claude Code, Codex): *"Summon helmo orchestrator"* → load [HELMO-ORCHESTRATOR.md](HELMO-ORCHESTRATOR.md) as context. The orchestrator walks you through the awaiting-human queue and records your answers.
 
 ## Development
 
@@ -70,13 +70,13 @@ Python ≥ 3.8 (node-gyp). If install fails mid-compile, check `python3
 
 ## Prior art
 
-Helm sits in a small family of agent work-trackers and owes a nod to
+Helmo sits in a small family of agent work-trackers and owes a nod to
 [beads](https://github.com/steveyegge/beads), Steve Yegge's git-backed issue
 graph that gives coding agents long-horizon memory of their own work. If what
 you want is agent memory — epics, dependency graphs, issues that travel with
 the repo — use beads; it is excellent at that.
 
-Helm's center of gravity is the other side of the table: the human who has to
+Helmo's center of gravity is the other side of the table: the human who has to
 trust the work without re-reading it. Agents write; the human reads a view and
 answers a queue. Hence the append-only event log with full actor provenance
 (who wrote, which model, which harness), "done" without an evidence link

@@ -1,5 +1,5 @@
 {
-  "name": "helm",
+  "name": "helmo",
   "version": "0.1.0",
   "description": "Agent work record: agents write, humans read and meet.",
   "main": "index.js",
@@ -27,8 +27,8 @@
     "vitest": "^4.1.10"
   },
   "bin": {
-    "helm-mcp": "dist/server.js",
-    "helm-view": "dist/view.js",
-    "helm-cli": "dist/cli.js"
+    "helmo-mcp": "dist/server.js",
+    "helmo-view": "dist/view.js",
+    "helmo-cli": "dist/cli.js"
   }
 }

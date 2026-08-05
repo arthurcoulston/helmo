@@ -1,4 +1,4 @@
-// Connects to the Helm MCP server exactly as a registered agent would
+// Connects to the Helmo MCP server exactly as a registered agent would
 // (same command + env as the user-scope Claude Code config) and does a
 // read-only sanity check. Safe to run anytime.
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -9,16 +9,16 @@ const transport = new StdioClientTransport({
   args: [new URL('../dist/server.js', import.meta.url).pathname],
   env: {
     ...process.env,
-    HELM_ACTOR: JSON.stringify({ name: 'claude-code-interactive', kind: 'agent', model: 'claude-fable-5', version: 'claude-code-2.1.201' }),
+    HELMO_ACTOR: JSON.stringify({ name: 'claude-code-interactive', kind: 'agent', model: 'claude-fable-5', version: 'claude-code-2.1.201' }),
   },
 });
-const client = new Client({ name: 'helm-check', version: '0.1.0' });
+const client = new Client({ name: 'helmo-check', version: '0.1.0' });
 await client.connect(transport);
 
 const tools = await client.listTools();
 console.log(`tools (${tools.tools.length}): ${tools.tools.map((t) => t.name).join(', ')}`);
 
-const r = await client.callTool({ name: 'helm_list_tickets', arguments: {} });
+const r = await client.callTool({ name: 'helmo_list_tickets', arguments: {} });
 const body = JSON.parse(r.content[0].text);
 console.log(`tickets: ${body.result.count}, workstreams: ${JSON.stringify(body.result.workstreams)}`);
 

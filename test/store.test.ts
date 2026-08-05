@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { Store } from '../src/store.js';
-import { Actor, HelmError } from '../src/types.js';
+import { Actor, HelmoError } from '../src/types.js';
 
 const builder: Actor = { name: 'builder-loop', kind: 'agent', model: 'claude-sonnet-5', version: '1.0' };
 const reviewer: Actor = { name: 'reviewer-loop', kind: 'agent', model: 'gpt-6-codex', version: '2.1' };
-const orch: Actor = { name: 'helm-orchestrator', kind: 'orchestrator', model: 'claude-fable-5', version: '0.1' };
+const orch: Actor = { name: 'helmo-orchestrator', kind: 'orchestrator', model: 'claude-fable-5', version: '0.1' };
 
 function freshStore(): Store {
   return new Store(':memory:');
@@ -14,7 +14,7 @@ function create(s: Store, over: Record<string, unknown> = {}) {
   return s.createTicket(builder, {
     title: 'Build the importer',
     body: 'Goal: import CSVs from ./data. Constraint: keep memory under 1GB. Current state: not started.',
-    workstream: 'helm-dev',
+    workstream: 'helmo-dev',
     type: 'build',
     ...over,
   });
@@ -290,7 +290,7 @@ describe('harness queries (wake cursor)', () => {
 describe('recurring templates (lazy materialization)', () => {
   function template(s: Store, schedule = 'every 30m') {
     return s.createTicket(builder, {
-      title: 'Nightly audit', body: 'Standing work: audit the thing.', workstream: 'helm-dev', type: 'ops', schedule,
+      title: 'Nightly audit', body: 'Standing work: audit the thing.', workstream: 'helmo-dev', type: 'ops', schedule,
     });
   }
   it('rejects a bad schedule at creation', () => {
@@ -402,7 +402,7 @@ describe('THE INVARIANT: tickets are a materialized view of events', () => {
     });
     s.updateTicket(builder, { ticket_id: a.id, note: 'venue booked, wrapping up', status: 'in_progress' });
     s.recordSpend(builder, b.id, { tokens: 12345, cost_usd: 1.25, note: 'metered post-close by the harness' });
-    s.createTicket(builder, { title: 'Standing sweep', body: 'recurring', workstream: 'helm-dev', type: 'ops', schedule: 'every 1h' });
+    s.createTicket(builder, { title: 'Standing sweep', body: 'recurring', workstream: 'helmo-dev', type: 'ops', schedule: 'every 1h' });
     expect(s.materializeDue(new Date(Date.now() + 61 * 60_000)).length).toBe(1);
 
     const before = s.dumpState();

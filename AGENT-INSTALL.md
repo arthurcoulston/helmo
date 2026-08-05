@@ -58,7 +58,7 @@ claude mcp add --scope user helmo -e 'HELMO_ACTOR={"name":"<agent-name>","kind":
 cd <helmo-path> && nohup node dist/view.js > /tmp/helmo-view.log 2>&1 &
 ```
 
-Serves read-only at `http://localhost:4400` (override port with `HELMO_VIEW_PORT`, database with `HELMO_DB`). Verify it responds: `curl -s localhost:4400 | grep -q Helmo`. Note for the human that this doesn't survive reboot yet; a login service is a welcome contribution.
+Serves read-only at `http://localhost:4400`, bound to 127.0.0.1 (override port with `HELMO_VIEW_PORT`, host with `HELMO_VIEW_HOST`, database with `HELMO_DB`). Verify it responds: `curl -s localhost:4400 | grep -q Helmo`. Note for the human that this doesn't survive reboot yet; a login service is a welcome contribution.
 
 ### 5. Verify end to end
 

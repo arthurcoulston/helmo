@@ -12,6 +12,7 @@ import { Ticket, HelmoEvent } from './types.js';
 
 const dbPath = process.env['HELMO_DB'] ?? join(homedir(), '.helmo', 'helmo.db');
 const port = Number(process.env['HELMO_VIEW_PORT'] ?? 4400);
+const host = process.env['HELMO_VIEW_HOST'] ?? '127.0.0.1';
 const store = new Store(dbPath);
 
 const esc = (s: unknown) =>
@@ -414,4 +415,4 @@ createServer((_req, res) => {
     res.writeHead(500, { 'content-type': 'text/plain' });
     res.end(String(e));
   }
-}).listen(port, () => console.log(`Helmo view (read-only): http://localhost:${port} — db: ${dbPath}`));
+}).listen(port, host, () => console.log(`Helmo view (read-only): http://localhost:${port} — db: ${dbPath}`));

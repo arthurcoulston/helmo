@@ -37,8 +37,9 @@ orchestrator meetings and the read-only view. Product intent:
 ## Commands
 
 - `npm run build` (tsc → dist/), `npm test` (store + e2e against a temp db).
-- View: `node dist/view.js` (port via `HELMO_VIEW_PORT`, default 4400). Restart
-  it after rebuilding — the running process holds old code.
+- View: `node dist/view.js` (port via `HELMO_VIEW_PORT`, default 4400; binds
+  127.0.0.1 — `HELMO_VIEW_HOST` to change). Restart it after rebuilding — the
+  running process holds old code.
 - Store lives at `~/.helmo/helmo.db` (`HELMO_DB` overrides). Agent identity comes
   from `HELMO_ACTOR` env (JSON) for loops; the interactive user-scope env is
   deliberately name+kind only, so interactive writes must pass a truthful

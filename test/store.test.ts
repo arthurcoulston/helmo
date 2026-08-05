@@ -273,6 +273,17 @@ describe('recordSpend (harness metering)', () => {
     ]);
     expect(s.actorTicketsSince('reviewer-loop', seq)).toEqual([]);
   });
+  it('actorSelfSpendSince sums self-reported spend, excluding meter spend events', () => {
+    const s = freshStore();
+    const t = create(s);
+    triage(s, t.id);
+    const seq = s.maxSeq();
+    s.updateTicket(builder, { ticket_id: t.id, note: 'claimed', status: 'in_progress' });
+    s.updateTicket(builder, { ticket_id: t.id, note: 'guessed my own usage', tokens: 120000, cost_usd: 14 });
+    s.recordSpend(reviewer, t.id, { tokens: 40000, cost_usd: 3.68, note: 'metered by harness' });
+    expect(s.actorSelfSpendSince('builder-loop', seq)).toEqual({ tokens: 120000, cost_usd: 14 });
+    expect(s.actorSelfSpendSince('reviewer-loop', seq)).toEqual({ tokens: 0, cost_usd: 0 });
+  });
 });
 
 describe('harness queries (wake cursor)', () => {

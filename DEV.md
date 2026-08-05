@@ -22,8 +22,11 @@ orchestrator meetings and the read-only view. Product intent:
   treat description edits as seriously as code — they are guidance-as-deployed.
 - `cli.ts` — programmatic write path for non-MCP writers (H-10); Rev uses
   it for wake-checks, escalations, and spend write-back (`record-spend` +
-  `actor-tickets`, H-19). `spend` events are bookkeeping, not motion: they
-  accept terminal tickets and never touch status or updated_at.
+  `actor-tickets`, H-19; `actor-spend` lets the meter net out what the agent
+  self-reported so a session lands in the totals exactly once, H-57 — negative
+  spend events are reconciliations, keep accepting them). `spend` events are
+  bookkeeping, not motion: they accept terminal tickets and never touch status
+  or updated_at.
 - `view.ts` — the read-only dashboard at :4400 (H-2). Read-only is
   constitutional: no affordance on that page may mutate anything. Shows the
   needs-grooming strip from `store.hygiene()` (H-23) — six deterministic

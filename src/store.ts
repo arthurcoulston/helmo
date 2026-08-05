@@ -466,6 +466,21 @@ export class Store {
       .all(seq, actorName) as { id: string; events: number }[];
   }
 
+  /** Spend `actorName` self-reported on its own writes since `seq` (meter
+   *  'spend' events excluded) — what a harness nets out of its metered figure
+   *  so a session lands in the totals exactly once (H-57). */
+  actorSelfSpendSince(actorName: string, seq: number): { tokens: number; cost_usd: number } {
+    const row = this.db
+      .prepare(
+        `SELECT COALESCE(SUM(json_extract(payload, '$.tokens')), 0) AS tokens,
+                COALESCE(SUM(json_extract(payload, '$.cost_usd')), 0) AS cost
+         FROM events
+         WHERE seq > ? AND event_type != 'spend' AND json_extract(actor, '$.name') = ?`,
+      )
+      .get(seq, actorName) as { tokens: number; cost: number };
+    return { tokens: row.tokens, cost_usd: row.cost };
+  }
+
   listWorkstreams(): string[] {
     const rows = this.db.prepare('SELECT DISTINCT workstream FROM tickets ORDER BY workstream').all() as { workstream: string }[];
     return rows.map((r) => r.workstream);

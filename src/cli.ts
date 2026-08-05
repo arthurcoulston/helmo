@@ -83,6 +83,10 @@ try {
       out({ tickets: store.actorTicketsSince(name, Number(flag('since-seq') ?? 0)) });
       break;
     }
+    case 'rename-workstream': {
+      out(store.renameWorkstream(actor(), { from: req('from'), to: req('to'), note: req('note') }));
+      break;
+    }
     case 'actor-spend': {
       const name = flag('name');
       if (!name) throw new HelmoError('actor-spend requires --name <actor name>');
@@ -170,6 +174,7 @@ try {
   get            <ticket-id>
   hygiene                                                      (deterministic record checks, read-only)
   workstream     --name W                                      (goal, budget, spend-to-date; read-only)
+  rename-workstream --from X --to Y --note N   (relabel every ticket incl. closed; one evented rename)
   workstream-set --name W [--goal G] [--budget-usd X]          (operator steering; actor kind human/orchestrator only)
   create         --title T --body B --workstream W --type TY [--priority P] [--status S] [--assignee A] [--dep H-n --dep-type TY] [--schedule 'every 30m' | '0 0 * * *']
   update         --ticket H-n --note N [--status S] [--evidence-kind K --evidence-ref R] [--confidence C] [--blast-radius B] [--tokens N] [--cost-usd X] [--handoff-to A] [--takeover]

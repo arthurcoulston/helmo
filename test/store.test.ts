@@ -286,6 +286,34 @@ describe('recordSpend (harness metering)', () => {
   });
 });
 
+describe('renameWorkstream', () => {
+  it('moves every ticket including closed ones, keeps steering, and survives rebuild', () => {
+    const s = freshStore();
+    const a = create(s, { workstream: 'old-name' });
+    const b = create(s, { workstream: 'old-name' });
+    triage(s, a.id);
+    s.updateTicket(builder, { ticket_id: a.id, note: 'claimed', status: 'in_progress' });
+    s.updateTicket(builder, { ticket_id: a.id, note: 'done', status: 'done', evidence: [{ kind: 'file', ref: '/tmp/x' }] });
+    s.setWorkstream(orch, { name: 'old-name', goal: 'ship it', budget_usd: 10 });
+    const res = s.renameWorkstream(orch, { from: 'old-name', to: 'new-name', note: 'product renamed' });
+    expect(res.moved).toBe(2);
+    expect(s.getTicket(a.id).workstream).toBe('new-name');
+    expect(s.getTicket(b.id).workstream).toBe('new-name');
+    expect(s.getWorkstreamInfo('new-name').goal).toBe('ship it');
+    const before = s.dumpState();
+    s.rebuild();
+    expect(s.dumpState()).toEqual(before);
+  });
+  it('refuses a rename that would collide two steering rows, and an empty source', () => {
+    const s = freshStore();
+    create(s, { workstream: 'x' });
+    s.setWorkstream(orch, { name: 'x', goal: 'gx' });
+    s.setWorkstream(orch, { name: 'y', goal: 'gy' });
+    expect(() => s.renameWorkstream(orch, { from: 'x', to: 'y', note: 'merge' })).toThrow(/steering/);
+    expect(() => s.renameWorkstream(orch, { from: 'ghost', to: 'z', note: 'typo' })).toThrow(/nothing to rename/);
+  });
+});
+
 describe('harness queries (wake cursor)', () => {
   it('maxSeq advances and scopeChangedSince respects workstream and assignee scope', () => {
     const s = freshStore();

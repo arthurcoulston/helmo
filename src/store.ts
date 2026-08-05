@@ -486,6 +486,37 @@ export class Store {
     return rows.map((r) => r.workstream);
   }
 
+  /** Rename a workstream across the record — an organizational relabel, not
+   *  rework: one event carries the history and every ticket (open or closed)
+   *  moves, which is why this exists instead of per-ticket workstream edits.
+   *  Ticket updated_at is untouched: a relabel is not motion. */
+  renameWorkstream(actor: Actor, input: { from: string; to: string; note: string }): { moved: number } {
+    validateActor(actor);
+    const from = input.from?.trim();
+    const to = input.to?.trim();
+    if (!from || !to) throw new HelmoError('rename-workstream requires from and to names.');
+    if (from === to) throw new HelmoError('from and to are the same name — nothing to rename.');
+    if (!input.note?.trim()) throw new HelmoError('note is required on rename-workstream: say why the stream is being renamed.');
+    return this.db.transaction(() => {
+      const n = (this.db.prepare('SELECT COUNT(*) AS n FROM tickets WHERE workstream = ?').get(from) as { n: number }).n;
+      const steering = this.db.prepare('SELECT 1 FROM workstreams WHERE name = ?').get(from);
+      if (!n && !steering) throw new HelmoError(`No tickets or steering under '${from}' — nothing to rename.`);
+      if (steering && this.db.prepare('SELECT 1 FROM workstreams WHERE name = ?').get(to)) {
+        throw new HelmoError(
+          `Both '${from}' and '${to}' carry steering — merge goal/budget deliberately via workstream-set, then rename.`,
+        );
+      }
+      this.append(now(), `ws:${to}`, 'workstream_renamed', actor, { from, to, tickets: n, note: input.note });
+      this.applyWorkstreamRenamed({ from, to });
+      return { moved: n };
+    })();
+  }
+
+  private applyWorkstreamRenamed(payload: Record<string, unknown>): void {
+    this.db.prepare('UPDATE tickets SET workstream = ? WHERE workstream = ?').run(payload['to'], payload['from']);
+    this.db.prepare('UPDATE workstreams SET name = ? WHERE name = ?').run(payload['to'], payload['from']);
+  }
+
   /** One workstream with its steering and spend-to-date. Exists for names with
    *  tickets but no steering row too — goal/budget are simply null there. */
   getWorkstreamInfo(name: string): WorkstreamInfo {
@@ -814,6 +845,9 @@ export class Store {
         switch (ev.event_type) {
           case 'workstream_set':
             this.applyWorkstreamSet(ev.ts, ev.payload);
+            break;
+          case 'workstream_renamed':
+            this.applyWorkstreamRenamed(ev.payload);
             break;
           case 'created':
             this.applyCreated(ev.ts, ev.payload);

@@ -70,7 +70,7 @@ export interface Dep {
   type: DepType;
 }
 
-export type EventType = 'created' | 'updated' | 'returned' | 'answered' | 'linked' | 'unlinked' | 'spend' | 'workstream_set';
+export type EventType = 'created' | 'updated' | 'returned' | 'answered' | 'linked' | 'unlinked' | 'spend' | 'workstream_set' | 'workstream_renamed';
 
 /** Operator steering for a stream of work (H-55). `goal` is what "done" means
  *  for the whole stream — the thing that makes "is this still worth doing?"

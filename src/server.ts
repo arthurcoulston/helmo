@@ -281,7 +281,7 @@ server.registerTool(
   {
     description:
       `Set a workstream's goal ("done means…") and/or budget_usd — the human's steering surface. Call this ONLY to relay a decision the human stated explicitly; the write requires actor kind 'human' or 'orchestrator', and agent-kind writes are rejected: an agent must never set or raise the goal or budget of the stream it draws work from.\n\n` +
-      `The goal is what lets every agent answer "is this stream's purpose already met?" — phrase it as the end state, not activities (e.g. "Arthur has a confirmed, emailable outreach shortlist", not "research contacts"). The budget is a disclosed plan, not a kill switch: agents see remaining balance on every queue read and are expected to front-load the highest-value work and close out honestly when it is spent. Partial updates are fine — a field you omit keeps its current value.`,
+      `The goal is what lets every agent answer "is this stream's purpose already met?" — phrase it as the end state, not activities (e.g. "the operator has a confirmed, emailable outreach shortlist", not "research contacts"). The budget is a disclosed plan, not a kill switch: agents see remaining balance on every queue read and are expected to front-load the highest-value work and close out honestly when it is spent. Partial updates are fine — a field you omit keeps its current value.`,
     inputSchema: {
       name: z.string().describe('The workstream being steered'),
       goal: z.string().optional().describe('What done means for the whole stream, as an end state'),

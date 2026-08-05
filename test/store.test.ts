@@ -391,8 +391,8 @@ describe('workstream steering (H-55)', () => {
   it('agents cannot set goals or budgets; the human/orchestrator can', () => {
     const s = freshStore();
     expect(() => s.setWorkstream(builder, { name: 'alpha', goal: 'ship it' })).toThrow(/operator steering/);
-    const w = s.setWorkstream(orch, { name: 'alpha', goal: 'Arthur has a confirmed shortlist', budget_usd: 50 });
-    expect(w.goal).toBe('Arthur has a confirmed shortlist');
+    const w = s.setWorkstream(orch, { name: 'alpha', goal: 'the operator has a confirmed shortlist', budget_usd: 50 });
+    expect(w.goal).toBe('the operator has a confirmed shortlist');
     expect(w.budget_usd).toBe(50);
     expect(w.remaining_usd).toBe(50);
   });

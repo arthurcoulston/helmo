@@ -65,8 +65,9 @@ npm run smoke   # end-to-end MCP stdio round trip
 
 Note: `better-sqlite3` uses a prebuilt binary when one matches your Node
 version; otherwise it compiles from source, which needs a C toolchain and
-Python ≥ 3.8 (node-gyp). If install fails mid-compile, check `python3
---version` and set `PYTHON=/path/to/modern/python3`.
+Python ≥ 3.8 (node-gyp). If install fails in `node-gyp rebuild`, an old
+`python3` on your PATH is the usual culprit — on macOS,
+`PYTHON=/usr/bin/python3 npm install` fixes it.
 
 ## Prior art
 

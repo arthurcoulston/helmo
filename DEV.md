@@ -29,8 +29,10 @@ orchestrator meetings and the read-only view. Product intent:
   or updated_at.
 - `view.ts` — the read-only dashboard at :4400 (H-2). Read-only is
   constitutional: no affordance on that page may mutate anything. Shows the
-  needs-grooming strip from `store.hygiene()` (H-23) — six deterministic
-  record checks, also queryable via `helmo-cli hygiene`; hygiene is judgment-free
+  needs-grooming strip from `store.hygiene()` (H-23) — seven deterministic
+  record checks (silent_assignee, H-61, watches open reservations whose
+  assignee has written nothing for 7d or never — typo/rename/retirement in one
+  rule), also queryable via `helmo-cli hygiene`; hygiene is judgment-free
   by design, the judgment half of cultivation stays human/agent.
 - `types.ts` — the shared vocabulary (statuses, blast radii, confidence).
 - `schedule.ts` — recurring-ticket schedules (H-22): 'every N<m|h|d>' or 5-field

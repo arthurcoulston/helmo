@@ -543,6 +543,25 @@ describe('hygiene checks (deterministic, read-only)', () => {
     s.updateTicket(builder, { ticket_id: t1.id, note: 'working the P2 instead', status: 'in_progress' });
     expect(s.hygiene()).toContainEqual(expect.objectContaining({ check: 'priority_inversion', ticket_id: p1.id }));
   });
+  it('silent assignees: never-written names flag while the store is live; quiet weeks flag nobody', () => {
+    const s = freshStore();
+    const typo = create(s, { assignee: 'mastr-at-arms' });
+    // The creation event itself is other-actor activity: a name with no events anywhere flags at once.
+    expect(s.hygiene()).toContainEqual(expect.objectContaining({ check: 'silent_assignee', ticket_id: typo.id }));
+    const held = create(s, { assignee: 'reviewer-loop' });
+    s.updateTicket(reviewer, { ticket_id: held.id, note: 'seen, will start after current work' });
+    expect(s.hygiene().filter((x) => x.check === 'silent_assignee').map((x) => x.ticket_id)).toEqual([typo.id]);
+    // 8 days on with the whole store quiet: the activity guard holds everything back (operator away, nothing is wrong).
+    expect(s.hygiene(hrs(8 * 24)).filter((x) => x.check === 'silent_assignee')).toEqual([]);
+    // Same 8 days but the store is live: event ts is wall-clock, so nudge one
+    // builder event into the window; reviewer's 8d silence now flags too.
+    (s as unknown as { db: { prepare(sql: string): { run(v: string): unknown } } }).db
+      .prepare("UPDATE events SET ts = ? WHERE seq = (SELECT MAX(seq) FROM events WHERE json_extract(actor, '$.name') = 'builder-loop')")
+      .run(hrs(8 * 24 - 1).toISOString());
+    const f = s.hygiene(hrs(8 * 24)).filter((x) => x.check === 'silent_assignee');
+    expect(f).toContainEqual(expect.objectContaining({ ticket_id: typo.id }));
+    expect(f).toContainEqual(expect.objectContaining({ ticket_id: held.id, detail: expect.stringContaining('silent everywhere for 8d') }));
+  });
 });
 
 describe('THE INVARIANT: tickets are a materialized view of events', () => {

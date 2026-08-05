@@ -9,6 +9,7 @@ const STALE_CLAIM_HOURS = 24;
 const AGING_QUESTION_HOURS = 48; // the awaiting-human queue exists to protect attention; its own staleness is the record failing
 const SPEND_ANOMALY_FACTOR = 3; // flag cost > 3x the workstream norm (needs >= 3 spent tickets for a norm)
 const BUDGET_PRESSURE_RATIO = 0.8; // surface a workstream budget once 80% is spent
+const SILENT_ASSIGNEE_HOURS = 168; // 7d without the assignee writing anywhere: a reservation that will not wake on its own
 
 // Instances spawned by the store's own clock carry the store's identity —
 // attributing them to whichever reader triggered materialization would be
@@ -67,7 +68,7 @@ export interface UpdateResult {
 }
 
 export interface HygieneFinding {
-  check: 'stale_claim' | 'done_without_evidence' | 'phantom_block' | 'aging_question' | 'spend_anomaly' | 'priority_inversion' | 'budget_pressure';
+  check: 'stale_claim' | 'done_without_evidence' | 'phantom_block' | 'aging_question' | 'spend_anomaly' | 'priority_inversion' | 'budget_pressure' | 'silent_assignee';
   ticket_id?: string; // absent on workstream-level findings
   workstream?: string;
   detail: string;
@@ -357,6 +358,31 @@ export class Store {
         check: 'budget_pressure',
         workstream: ws.name,
         detail: `$${ws.spent_usd.toFixed(2)} of $${ws.budget_usd.toFixed(2)} spent (${pct}%)${ws.spent_usd >= ws.budget_usd ? ' — budget exhausted' : ''}`,
+      });
+    }
+
+    // Silent assignees (H-61): an open reservation whose assignee has written
+    // nothing anywhere for 7d — or never at all (mistyped, renamed, retired) —
+    // while the rest of the store was active. The activity guard keeps a
+    // store-wide quiet week from lighting up every reservation; in_progress
+    // holders are stale_claim's territory at 24h.
+    for (const r of this.db
+      .prepare(
+        `SELECT t.id, t.assignee,
+                (SELECT MAX(ts) FROM events WHERE json_extract(actor, '$.name') = t.assignee) AS last
+         FROM tickets t
+         WHERE t.status = 'open' AND t.assignee IS NOT NULL AND t.schedule IS NULL
+           AND EXISTS (SELECT 1 FROM events e WHERE e.ts >= ?
+                       AND json_extract(e.actor, '$.name') NOT IN (t.assignee, 'helmo-scheduler'))
+         GROUP BY t.id HAVING last IS NULL OR last < ?`,
+      )
+      .all(hoursAgo(SILENT_ASSIGNEE_HOURS), hoursAgo(SILENT_ASSIGNEE_HOURS)) as { id: string; assignee: string; last: string | null }[]) {
+      findings.push({
+        check: 'silent_assignee',
+        ticket_id: r.id,
+        detail: r.last
+          ? `reserved for "${r.assignee}", silent everywhere for ${Math.floor(age(r.last) / 24)}d`
+          : `reserved for "${r.assignee}", who has never written an event — mistyped, renamed, or retired?`,
       });
     }
 

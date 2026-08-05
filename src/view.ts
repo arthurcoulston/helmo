@@ -199,6 +199,7 @@ const GROOM_LABEL: Record<HygieneFinding['check'], string> = {
   spend_anomaly: '＄ spend anomaly',
   priority_inversion: '▲ priority inversion',
   budget_pressure: '＄ budget pressure',
+  silent_assignee: '👻 silent assignee',
 };
 
 function groomStrip(findings: HygieneFinding[]): string {

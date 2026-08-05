@@ -13,6 +13,14 @@
   "keywords": ["ai-agents", "mcp", "issue-tracker", "work-record", "agent-orchestration", "sqlite"],
   "author": "Arthur Coulston",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/arthurcoulston/helmo.git"
+  },
+  "homepage": "https://github.com/arthurcoulston/helmo#readme",
+  "bugs": {
+    "url": "https://github.com/arthurcoulston/helmo/issues"
+  },
   "type": "module",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

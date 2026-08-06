@@ -17,6 +17,10 @@ orchestrator meetings and the read-only view. Product intent:
   template), so an agent's queue is never fed solely by that agent. Since
   H-56 the claim path enforces the same rule for agent actors — takeover
   never bypasses self-triage; create-with-in_progress stays legitimate.
+  Mangled-write gate (H-71): free-text fields carrying tool-call parameter
+  markup are rejected at the door — that markup is the signature of a
+  mis-serialized call whose later fields would be silently swallowed;
+  deliberate quoting must break the tag.
 - `server.ts` — MCP stdio server. **Tool descriptions carry the behavioral
   contract for every agent** (triage duty, evidence rules, question quality);
   treat description edits as seriously as code — they are guidance-as-deployed.

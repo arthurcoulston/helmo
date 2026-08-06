@@ -59,6 +59,71 @@ describe('required context', () => {
   });
 });
 
+describe('mangled tool-call writes rejected at the door (H-71)', () => {
+  // The shape of the real incident (H-32 seq 159): the note carries its own
+  // closing tag, then the markup and content of every following field.
+  const mangled = 'Ranked all 336; no keyword pass.</note>\n<parameter name="uncertainty_note">Tier boundaries are judgment calls.';
+
+  it('rejects an update note carrying swallowed parameter markup, storing nothing', () => {
+    const s = freshStore();
+    const t = create(s);
+    triage(s, t.id);
+    const before = s.getEvents(t.id).length;
+    expect(() => s.updateTicket(builder, { ticket_id: t.id, note: mangled, status: 'done' })).toThrow(/mis-serialized/);
+    expect(s.getEvents(t.id).length).toBe(before);
+    expect(s.getTicket(t.id).status).toBe('open');
+  });
+
+  it('rejects markup in a created body', () => {
+    const s = freshStore();
+    expect(() => create(s, { body: mangled })).toThrow(/H-71/);
+  });
+
+  it("rejects the field's own closing tag even with no other markup", () => {
+    const s = freshStore();
+    const t = create(s);
+    expect(() => s.updateTicket(builder, { ticket_id: t.id, note: 'done.</note>' })).toThrow(/mis-serialized/);
+  });
+
+  it('rejects namespace-prefixed markup variants', () => {
+    const s = freshStore();
+    const t = create(s);
+    const prefixed = 'progress <' + 'ns:parameter name="body">rest';
+    expect(() => s.updateTicket(builder, { ticket_id: t.id, note: prefixed })).toThrow(/mis-serialized/);
+  });
+
+  it('guards questions and answers too', () => {
+    const s = freshStore();
+    const t = create(s);
+    triage(s, t.id);
+    expect(() =>
+      s.returnToHuman(builder, t.id, {
+        situation: mangled,
+        question: 'Proceed?',
+        options: [
+          { label: 'yes', consequence: 'goes ahead' },
+          { label: 'no', consequence: 'stops' },
+        ],
+        recommendation: 'yes',
+      }),
+    ).toThrow(/mis-serialized/);
+  });
+
+  it('leaves ordinary angle-bracket prose alone', () => {
+    const s = freshStore();
+    const t = create(s);
+    const { ticket } = s.updateTicket(builder, { ticket_id: t.id, note: 'kept memory < 1GB; a <= b holds; see the <details> block' });
+    expect(ticket.id).toBe(t.id);
+  });
+
+  it('accepts a deliberately broken quote of the markup', () => {
+    const s = freshStore();
+    const t = create(s);
+    const { ticket } = s.updateTicket(builder, { ticket_id: t.id, note: 'the blob contained "< parameter name=" markup; tag broken here on purpose' });
+    expect(ticket.id).toBe(t.id);
+  });
+});
+
 describe('claiming', () => {
   it('claims open work and records assignee', () => {
     const s = freshStore();

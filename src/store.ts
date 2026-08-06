@@ -141,6 +141,24 @@ function validateActor(actor: Actor): void {
   }
 }
 
+// H-71: a mis-serialized tool call dumps parameter markup — and every field
+// after the break — into the first free-text field, and the swallowed fields
+// are silently lost. Detection lives store-side because the writing agent is,
+// by definition, the one whose serialization is broken. Matches the tool-call
+// tag vocabulary with or without a namespace prefix.
+const TOOLCALL_MARKUP = /<\/?([a-z]+:)?(parameter|invoke|function_calls)[\s>=]/i;
+
+function rejectSwallowedMarkup(fields: Record<string, string | undefined | null>): void {
+  for (const [name, value] of Object.entries(fields)) {
+    if (!value) continue;
+    if (TOOLCALL_MARKUP.test(value) || value.includes(`</${name}>`)) {
+      throw new HelmoError(
+        `The "${name}" text contains tool-call parameter markup ("</${name}>", "<parameter name=", or similar) — the signature of a mis-serialized call, where every field after the break is swallowed into this one and silently lost (H-71). Nothing was stored. Re-send the write with each field as its own parameter. If you are deliberately quoting such markup, break the tag (e.g. "< parameter") so it cannot be mistaken for a serialization fault.`,
+      );
+    }
+  }
+}
+
 export class Store {
   private db: Database.Database;
 
@@ -523,6 +541,7 @@ export class Store {
     if (!from || !to) throw new HelmoError('rename-workstream requires from and to names.');
     if (from === to) throw new HelmoError('from and to are the same name — nothing to rename.');
     if (!input.note?.trim()) throw new HelmoError('note is required on rename-workstream: say why the stream is being renamed.');
+    rejectSwallowedMarkup({ note: input.note });
     return this.db.transaction(() => {
       const n = (this.db.prepare('SELECT COUNT(*) AS n FROM tickets WHERE workstream = ?').get(from) as { n: number }).n;
       const steering = this.db.prepare('SELECT 1 FROM workstreams WHERE name = ?').get(from);
@@ -588,6 +607,7 @@ export class Store {
     if (input.budget_usd !== undefined && !(input.budget_usd >= 0)) {
       throw new HelmoError('budget_usd must be a non-negative number (0 clears the pressure checks but keeps disclosure).');
     }
+    rejectSwallowedMarkup({ goal: input.goal });
     return this.db.transaction(() => {
       const ts = now();
       const payload: Record<string, unknown> = { name: input.name };
@@ -613,6 +633,7 @@ export class Store {
       );
     }
     if (!input.type?.trim()) throw new HelmoError('type is required: build|research|writing|ops|planning, or another short noun.');
+    rejectSwallowedMarkup({ title: input.title, body: input.body });
     if (input.schedule) {
       parseSchedule(input.schedule); // reject bad expressions at the door
       if (input.status === 'in_progress') throw new HelmoError('A recurring template is standing work — it cannot be in_progress; its instances are.');
@@ -653,6 +674,7 @@ export class Store {
     if (!input.note?.trim()) {
       throw new HelmoError('note is required on every update: one or two lines, human terms, saying what actually happened. Notes are the story the human reads.');
     }
+    rejectSwallowedMarkup({ note: input.note, title: input.title, body: input.body, uncertainty_note: input.uncertainty_note });
     const t = this.getTicket(input.ticket_id);
     const warnings: string[] = [];
     const diffs: Record<string, { from: unknown; to: unknown }> = {};
@@ -779,6 +801,7 @@ export class Store {
     if (!input.note?.trim()) {
       throw new HelmoError('note is required on record-spend: say what session this spend came from and how it was attributed.');
     }
+    rejectSwallowedMarkup({ note: input.note });
     this.getTicket(ticketId);
     return this.db.transaction(() => {
       const payload: Record<string, unknown> = { note: input.note };
@@ -807,6 +830,7 @@ export class Store {
     for (const o of q.options) {
       if (!o.label?.trim() || !o.consequence?.trim()) throw new HelmoError('Every option needs both label and consequence (what happens if chosen, including cost/risk).');
     }
+    rejectSwallowedMarkup({ situation: q.situation, question: q.question, recommendation: q.recommendation, if_unanswered: q.if_unanswered });
     return this.db.transaction(() => {
       const ts = now();
       this.append(ts, t.id, 'returned', actor, q as unknown as Record<string, unknown>);
@@ -824,6 +848,7 @@ export class Store {
       throw new HelmoError(`${t.id} is ${t.status}, not awaiting_human — there is no pending question to answer.`);
     }
     if (!a.answer?.trim()) throw new HelmoError('answer is required: the decision plus the human\'s reasoning and any new constraints.');
+    rejectSwallowedMarkup({ answer: a.answer });
     const resolution = a.resolution ?? 'resume';
     return this.db.transaction(() => {
       const ts = now();

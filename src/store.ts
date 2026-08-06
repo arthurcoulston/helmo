@@ -67,8 +67,13 @@ export interface UpdateResult {
   warnings: string[];
 }
 
+export const HYGIENE_CHECKS = [
+  'stale_claim', 'done_without_evidence', 'phantom_block', 'aging_question',
+  'spend_anomaly', 'priority_inversion', 'budget_pressure', 'silent_assignee',
+] as const;
+
 export interface HygieneFinding {
-  check: 'stale_claim' | 'done_without_evidence' | 'phantom_block' | 'aging_question' | 'spend_anomaly' | 'priority_inversion' | 'budget_pressure' | 'silent_assignee';
+  check: (typeof HYGIENE_CHECKS)[number];
   ticket_id?: string; // absent on workstream-level findings
   workstream?: string;
   detail: string;
@@ -121,6 +126,14 @@ CREATE TABLE IF NOT EXISTS workstreams (
   goal       TEXT,
   budget_usd REAL,
   updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS hygiene_dispositions (
+  check_name TEXT NOT NULL,
+  ticket_id  TEXT NOT NULL,
+  actor      TEXT NOT NULL,
+  reason     TEXT NOT NULL,
+  ts         TEXT NOT NULL,
+  PRIMARY KEY (check_name, ticket_id)
 );
 `;
 
@@ -313,8 +326,18 @@ export class Store {
       findings.push({ check: 'stale_claim', ticket_id: r.id, detail: `held by ${r.assignee ?? '?'}, silent for ${age(r.last)}h` });
     }
 
-    // Done without evidence: a claim, not a record (first-class here; the view already badges it per-row).
-    for (const r of this.db.prepare("SELECT id FROM tickets WHERE status = 'done' AND evidence = '[]'").all() as { id: string }[]) {
+    // Done without evidence: a claim, not a record (first-class here; the view
+    // already badges it per-row). A question ticket the human closed via
+    // helmo_answer_ticket is exempt — its closure IS on the record, as the
+    // answer (H-81); only 'done' resolutions matter since cancelled tickets
+    // are never flagged here.
+    for (const r of this.db
+      .prepare(
+        `SELECT id FROM tickets t WHERE status = 'done' AND evidence = '[]'
+         AND NOT EXISTS (SELECT 1 FROM events e WHERE e.ticket_id = t.id AND e.event_type = 'answered'
+                         AND json_extract(e.payload, '$.resolution') = 'done')`,
+      )
+      .all() as { id: string }[]) {
       findings.push({ check: 'done_without_evidence', ticket_id: r.id, detail: 'closed with no evidence link' });
     }
 
@@ -416,7 +439,14 @@ export class Store {
       findings.push({ check: 'priority_inversion', ticket_id: r.id, detail: `P${r.priority} ready while lower-priority '${r.workstream}' work is in motion` });
     }
 
-    return findings;
+    // Disposed findings (H-81): examined once, judgment recorded, never
+    // re-reported. The ledger only ever holds terminal tickets, so nothing
+    // live is masked by a standing disposition.
+    const disposed = new Set(
+      (this.db.prepare('SELECT check_name, ticket_id FROM hygiene_dispositions').all() as { check_name: string; ticket_id: string }[])
+        .map((d) => `${d.check_name}:${d.ticket_id}`),
+    );
+    return findings.filter((f) => !f.ticket_id || !disposed.has(`${f.check}:${f.ticket_id}`));
   }
 
   /** Catch up recurring templates: spawn an instance for each template whose
@@ -813,6 +843,39 @@ export class Store {
     })();
   }
 
+  /** Record that a hygiene finding on a terminal ticket was examined and dealt
+   *  with, so sweeps stop re-spending attention on it (H-81). Terminal tickets
+   *  only: an open ticket's findings clear by acting on the ticket, and a
+   *  standing disposition there could mask a live problem. Like spend, this is
+   *  bookkeeping, not motion — it accepts terminal tickets and never touches
+   *  status or updated_at. Append-once per (check, ticket). */
+  disposeHygieneFinding(actor: Actor, input: { check: string; ticket_id: string; reason: string }): void {
+    validateActor(actor);
+    if (!(HYGIENE_CHECKS as readonly string[]).includes(input.check)) {
+      throw new HelmoError(`Unknown hygiene check "${input.check}". Checks: ${HYGIENE_CHECKS.join(', ')}.`);
+    }
+    if (!input.reason?.trim()) {
+      throw new HelmoError('reason is required on hygiene-dispose: say why this finding is dealt with, for the next sweep to read.');
+    }
+    rejectSwallowedMarkup({ reason: input.reason });
+    const t = this.getTicket(input.ticket_id);
+    if (t.status !== 'done' && t.status !== 'cancelled') {
+      throw new HelmoError(`${t.id} is ${t.status} — dispositions exist for terminal tickets only. A live ticket's finding clears by acting on the ticket itself.`);
+    }
+    const existing = this.db
+      .prepare('SELECT reason FROM hygiene_dispositions WHERE check_name = ? AND ticket_id = ?')
+      .get(input.check, t.id) as { reason: string } | undefined;
+    if (existing) {
+      throw new HelmoError(`'${input.check}' on ${t.id} is already disposed ("${existing.reason}") — nothing to record.`);
+    }
+    this.db.transaction(() => {
+      const ts = now();
+      const payload = { check: input.check, reason: input.reason };
+      this.append(ts, t.id, 'hygiene_disposed', actor, payload);
+      this.applyHygieneDisposed(ts, t.id, actor, payload);
+    })();
+  }
+
   returnToHuman(actor: Actor, ticketId: string, q: Question): Ticket {
     validateActor(actor);
     const t = this.getTicket(ticketId);
@@ -889,7 +952,7 @@ export class Store {
    *  that materialized state is always derivable from events. */
   rebuild(): void {
     this.db.transaction(() => {
-      this.db.exec('DELETE FROM tickets; DELETE FROM deps; DELETE FROM workstreams;');
+      this.db.exec('DELETE FROM tickets; DELETE FROM deps; DELETE FROM workstreams; DELETE FROM hygiene_dispositions;');
       const rows = this.db.prepare('SELECT * FROM events ORDER BY seq').all() as Record<string, unknown>[];
       for (const row of rows) {
         const ev = rowToEvent(row);
@@ -925,6 +988,9 @@ export class Store {
           case 'spend':
             this.applySpend(ev.ticket_id, ev.payload);
             break;
+          case 'hygiene_disposed':
+            this.applyHygieneDisposed(ev.ts, ev.ticket_id, ev.actor, ev.payload);
+            break;
           case 'linked':
             this.applyLinked(ev.ticket_id, ev.payload['to'] as string, ev.payload['type'] as DepType, true);
             break;
@@ -936,11 +1002,12 @@ export class Store {
     })();
   }
 
-  dumpState(): { tickets: Ticket[]; deps: Dep[]; workstreams: Workstream[] } {
+  dumpState(): { tickets: Ticket[]; deps: Dep[]; workstreams: Workstream[]; dispositions: Record<string, unknown>[] } {
     const tickets = (this.db.prepare('SELECT * FROM tickets ORDER BY id').all() as Record<string, unknown>[]).map(rowToTicket);
     const deps = this.db.prepare('SELECT * FROM deps ORDER BY from_id, to_id, type').all() as Dep[];
     const workstreams = this.db.prepare('SELECT * FROM workstreams ORDER BY name').all() as Workstream[];
-    return { tickets, deps, workstreams };
+    const dispositions = this.db.prepare('SELECT * FROM hygiene_dispositions ORDER BY check_name, ticket_id').all() as Record<string, unknown>[];
+    return { tickets, deps, workstreams, dispositions };
   }
 
   // ---------- internals ----------
@@ -1001,6 +1068,12 @@ export class Store {
     if (!sets.length) return;
     params.push(id);
     this.db.prepare(`UPDATE tickets SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+  }
+
+  private applyHygieneDisposed(ts: string, ticketId: string, actor: Actor, p: Record<string, unknown>): void {
+    this.db
+      .prepare('INSERT OR IGNORE INTO hygiene_dispositions (check_name, ticket_id, actor, reason, ts) VALUES (?, ?, ?, ?, ?)')
+      .run(p['check'], ticketId, actor.name, p['reason'], ts);
   }
 
   private applyWorkstreamSet(ts: string, p: Record<string, unknown>): void {

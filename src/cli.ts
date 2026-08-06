@@ -59,6 +59,11 @@ try {
       out({ findings: store.hygiene() });
       break;
     }
+    case 'hygiene-dispose': {
+      store.disposeHygieneFinding(actor(), { check: req('check'), ticket_id: req('ticket'), reason: req('reason') });
+      out({ disposed: `${flag('check')} on ${flag('ticket')}` });
+      break;
+    }
     case 'workstream': {
       // Read-only: Rev fetches this per iteration to put the goal and
       // remaining budget in front of the loop agent (H-55).
@@ -173,6 +178,7 @@ try {
   list           [--ready] [--status S] [--workstream W] [--assignee A] [--limit N]
   get            <ticket-id>
   hygiene                                                      (deterministic record checks, read-only)
+  hygiene-dispose --check C --ticket H-n --reason R  (stop re-reporting a finding on a TERMINAL ticket; evented, append-once)
   workstream     --name W                                      (goal, budget, spend-to-date; read-only)
   rename-workstream --from X --to Y --note N   (relabel every ticket incl. closed; one evented rename)
   workstream-set --name W [--goal G] [--budget-usd X]          (operator steering; actor kind human/orchestrator only)

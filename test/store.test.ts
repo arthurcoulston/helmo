@@ -627,6 +627,62 @@ describe('hygiene checks (deterministic, read-only)', () => {
     expect(f).toContainEqual(expect.objectContaining({ ticket_id: typo.id }));
     expect(f).toContainEqual(expect.objectContaining({ ticket_id: held.id, detail: expect.stringContaining('silent everywhere for 8d') }));
   });
+  it('a question ticket the human closed via answer is not done_without_evidence: the answer IS the closure record (H-81)', () => {
+    const s = freshStore();
+    const q = create(s);
+    s.returnToHuman(builder, q.id, {
+      situation: 'Choosing the CSV parser license.', question: 'GPL ok?',
+      options: [{ label: 'yes', consequence: 'faster' }, { label: 'no', consequence: '2 days' }],
+      recommendation: 'no',
+    });
+    s.answerTicket(orch, q.id, { answer: 'No — keep the license clean. That settles the ticket.', chosen_option: 'no', resolution: 'done' });
+    expect(s.hygiene().filter((x) => x.check === 'done_without_evidence')).toEqual([]);
+    // an agent-closed done with no evidence still flags
+    const bare = create(s);
+    s.updateTicket(builder, { ticket_id: bare.id, note: 'done, trust me', status: 'done' });
+    expect(s.hygiene().filter((x) => x.check === 'done_without_evidence').map((x) => x.ticket_id)).toEqual([bare.id]);
+  });
+});
+
+describe('hygiene dispositions (H-81)', () => {
+  function doneWithoutEvidence(s: Store) {
+    const t = create(s);
+    s.updateTicket(builder, { ticket_id: t.id, note: 'done, trust me', status: 'done' });
+    return t;
+  }
+  it('a disposed finding stops re-reporting; others on the same ticket are untouched', () => {
+    const s = freshStore();
+    const t = doneWithoutEvidence(s);
+    s.recordSpend(builder, t.id, { cost_usd: 20, note: 'metered' });
+    const t2 = create(s); const t3 = create(s);
+    s.recordSpend(builder, t2.id, { cost_usd: 1, note: 'metered' });
+    s.recordSpend(builder, t3.id, { cost_usd: 1, note: 'metered' });
+    expect(s.hygiene().map((f) => f.check).sort()).toEqual(['done_without_evidence', 'spend_anomaly']);
+    s.disposeHygieneFinding(reviewer, { check: 'done_without_evidence', ticket_id: t.id, reason: 'deliverable was conversational; accepted by the human in the 08-06 meeting' });
+    expect(s.hygiene().map((f) => f.check)).toEqual(['spend_anomaly']);
+  });
+  it('terminal tickets only — a live ticket clears by acting on it', () => {
+    const s = freshStore();
+    const t = create(s);
+    expect(() => s.disposeHygieneFinding(reviewer, { check: 'stale_claim', ticket_id: t.id, reason: 'x' })).toThrow(/terminal/);
+  });
+  it('rejects unknown checks, empty reasons, and double disposal', () => {
+    const s = freshStore();
+    const t = doneWithoutEvidence(s);
+    expect(() => s.disposeHygieneFinding(reviewer, { check: 'imaginary_check', ticket_id: t.id, reason: 'x' })).toThrow(/Unknown hygiene check/);
+    expect(() => s.disposeHygieneFinding(reviewer, { check: 'done_without_evidence', ticket_id: t.id, reason: '  ' })).toThrow(/reason is required/);
+    s.disposeHygieneFinding(reviewer, { check: 'done_without_evidence', ticket_id: t.id, reason: 'accepted' });
+    expect(() => s.disposeHygieneFinding(builder, { check: 'done_without_evidence', ticket_id: t.id, reason: 'again' })).toThrow(/already disposed/);
+  });
+  it('disposal is bookkeeping, not motion: status and updated_at untouched', () => {
+    const s = freshStore();
+    const t = doneWithoutEvidence(s);
+    const before = s.getTicket(t.id);
+    s.disposeHygieneFinding(reviewer, { check: 'done_without_evidence', ticket_id: t.id, reason: 'accepted in meeting' });
+    const after = s.getTicket(t.id);
+    expect(after.status).toBe('done');
+    expect(after.updated_at).toBe(before.updated_at);
+  });
 });
 
 describe('THE INVARIANT: tickets are a materialized view of events', () => {
@@ -660,6 +716,7 @@ describe('THE INVARIANT: tickets are a materialized view of events', () => {
     expect(s.materializeDue(new Date(Date.now() + 61 * 60_000)).length).toBe(1);
     s.setWorkstream(orch, { name: 'helmo-dev', goal: 'the gala happens', budget_usd: 100 });
     s.setWorkstream(orch, { name: 'helmo-dev', budget_usd: 120 }); // partial update must replay identically
+    s.disposeHygieneFinding(orch, { check: 'spend_anomaly', ticket_id: b.id, reason: 'whole-session metering; explained in the 08-06 meeting' });
 
     const before = s.dumpState();
     s.rebuild();

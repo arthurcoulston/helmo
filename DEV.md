@@ -33,11 +33,17 @@ orchestrator meetings and the read-only view. Product intent:
   or updated_at.
 - `view.ts` — the read-only dashboard at :4400 (H-2). Read-only is
   constitutional: no affordance on that page may mutate anything. Shows the
-  needs-grooming strip from `store.hygiene()` (H-23) — seven deterministic
+  needs-grooming strip from `store.hygiene()` (H-23) — eight deterministic
   record checks (silent_assignee, H-61, watches open reservations whose
   assignee has written nothing for 7d or never — typo/rename/retirement in one
   rule), also queryable via `helmo-cli hygiene`; hygiene is judgment-free
-  by design, the judgment half of cultivation stays human/agent.
+  by design, the judgment half of cultivation stays human/agent. Since H-81
+  that judgment has a recording surface: `helmo-cli hygiene-dispose` writes an
+  evented, append-once disposition for a finding on a TERMINAL ticket and the
+  sweep stops re-reporting it (open tickets clear by being acted on, so
+  dispositions there are refused — nothing live can be masked). Also H-81:
+  done_without_evidence exempts question tickets the human closed via
+  helmo_answer_ticket — the recorded answer is the closure evidence.
 - `types.ts` — the shared vocabulary (statuses, blast radii, confidence).
 - `schedule.ts` — recurring-ticket schedules (H-22): 'every N<m|h|d>' or 5-field
   cron, UTC. A ticket with `schedule` set is a TEMPLATE — standing work, never

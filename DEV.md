@@ -31,8 +31,13 @@ orchestrator meetings and the read-only view. Product intent:
   spend events are reconciliations, keep accepting them). `spend` events are
   bookkeeping, not motion: they accept terminal tickets and never touch status
   or updated_at.
-- `view.ts` — the read-only dashboard at :4400 (H-2). Read-only is
-  constitutional: no affordance on that page may mutate anything. Shows the
+- `view.ts` — the dashboard at :4400 (H-2). The constitutional line, restated
+  with Arthur in H-90: the page carries no record DATA-ENTRY (agents write
+  the record), but answering an awaiting_human question is operator steering
+  — the ONE mutation the page may perform, via POST /answer through
+  store.answerTicket with a human actor named by HELMO_OPERATOR (unset =
+  fully read-only; the env var is the deliberate switch). Everything else
+  stays disclosure toggles and evidence links; add no other write affordance. Shows the
   needs-grooming strip from `store.hygiene()` (H-23) — eight deterministic
   record checks (silent_assignee, H-61, watches open reservations whose
   assignee has written nothing for 7d or never — typo/rename/retirement in one

@@ -1,18 +1,22 @@
 #!/usr/bin/env node
-// The Helmo view: read-only, agent-written, human-read (H-2).
-// One file, zero dependencies, no build step beyond tsc. The read-only
-// constraint is constitutional: the only interactive elements are disclosure
-// toggles and evidence hyperlinks — no affordance on this page mutates state.
+// The Helmo view: agent-written, human-read (H-2). One file, zero
+// dependencies, no build step beyond tsc. The constitutional line, restated
+// with Arthur in H-90: the page carries NO record data-entry — agents write
+// the record — but ANSWERING an awaiting_human question is operator steering,
+// and it is the one mutation this page may perform. The answer surface only
+// exists when HELMO_OPERATOR names the human (deliberate config); every other
+// element remains disclosure toggles and evidence hyperlinks.
 import { createServer } from 'node:http';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from './store.js';
 import { HygieneFinding } from './store.js';
-import { Ticket, HelmoEvent } from './types.js';
+import { Actor, HelmoError, Ticket, HelmoEvent } from './types.js';
 
 const dbPath = process.env['HELMO_DB'] ?? join(homedir(), '.helmo', 'helmo.db');
 const port = Number(process.env['HELMO_VIEW_PORT'] ?? 4400);
 const host = process.env['HELMO_VIEW_HOST'] ?? '127.0.0.1';
+const operator = process.env['HELMO_OPERATOR']?.trim() || null;
 const store = new Store(dbPath);
 
 const esc = (s: unknown) =>
@@ -135,22 +139,42 @@ function details(t: Ticket): string {
 
 // ---------- the three display shapes ----------
 
-// The hero: a question awaiting the human. Everything the agent prepared is shown.
+// The hero: a question awaiting the human. Everything the agent prepared is
+// shown; with an operator configured, the options are the answer surface (H-90).
 function questionCard(t: Ticket): string {
   const q = t.question;
   if (!q) return '';
-  return `<article class="qcard" id="${esc(t.id)}">
+  const opt = (o: { label: string; consequence: string }) =>
+    operator
+      ? `<button type="button" class="option" data-label="${esc(o.label)}"><span class="opt-label">${esc(o.label)}</span><span class="opt-consequence">${esc(o.consequence)}</span></button>`
+      : `<div class="option"><span class="opt-label">${esc(o.label)}</span><span class="opt-consequence">${esc(o.consequence)}</span></div>`;
+  return `<article class="qcard" id="${esc(t.id)}" data-ticket="${esc(t.id)}">
     <header><span class="tid">${esc(t.id)}</span> <span class="qtitle">${esc(t.title)}</span>
       <span class="meta">${esc(t.workstream)} · asked ${esc(rel(t.updated_at))} ${blastBadge(t)}</span></header>
     <p class="situation">${esc(q.situation)}</p>
     <p class="question">${esc(q.question)}</p>
-    <div class="options">${q.options
-      .map((o) => `<div class="option"><span class="opt-label">${esc(o.label)}</span><span class="opt-consequence">${esc(o.consequence)}</span></div>`)
-      .join('')}</div>
+    <div class="options">${q.options.map(opt).join('')}</div>
     <p class="rec"><span class="rec-mark">agent recommends</span> ${esc(q.recommendation)}</p>
     ${q.if_unanswered ? `<p class="silence">⏱ If unanswered: ${esc(q.if_unanswered)}</p>` : ''}
+    ${operator ? answerForm() : ''}
     <details class="more" id="d-${esc(t.id)}"><summary>ticket detail</summary>${details(t)}</details>
   </article>`;
+}
+
+// Hidden until an option is clicked. The answer goes through store.answerTicket
+// unchanged — same validation, eventing, and semantics as a meeting answer.
+function answerForm(): string {
+  return `<div class="answer-form" hidden>
+    <div class="af-picked">answering <b class="af-label"></b></div>
+    <input class="af-reason" placeholder="reasoning / constraints (optional — agents learn from the why)">
+    <select class="af-res">
+      <option value="resume">answer & reopen for the crew</option>
+      <option value="done">answer settles it — close done</option>
+      <option value="cancelled">answer kills it — cancel</option>
+    </select>
+    <button type="button" class="af-send">Answer as ${esc(operator)}</button>
+    <span class="af-status" role="status"></span>
+  </div>`;
 }
 
 // In motion: who holds it, what they last said, how far it reaches.
@@ -254,7 +278,7 @@ function page(): string {
 <style>${CSS}</style>
 <body>
 <header class="top">
-  <div class="brand"><h1>Helmo</h1><span class="tagline">agents write · you read</span></div>
+  <div class="brand"><h1>Helmo</h1><span class="tagline">${operator ? 'agents write · you read & answer' : 'agents write · you read'}</span></div>
   <div class="stats">
     ${stat(awaiting.length, awaiting.length === 1 ? 'awaits you' : 'await you', awaiting.length ? 'hot' : 'calm')}
     ${stat(motion.length, 'in motion')}
@@ -282,7 +306,7 @@ ${standing.length ? `<section><h2>Standing</h2>${standing.map((t) => row(t)).joi
 ${done.length ? `<section><h2>Done</h2>${done.map((t) => row(t, { showDone: true })).join('')}</section>` : ''}
 ${cancelled.length ? `<section><h2>Cancelled (${cancelled.length})</h2>${cancelled.map((t) => row(t)).join('')}</section>` : ''}
 
-<footer>read-only · ${esc(dbPath)} · refreshed <span id="age">just now</span></footer>
+<footer>${operator ? `answers write as ${esc(operator)} (human) · everything else read-only` : 'read-only · set HELMO_OPERATOR to answer from here'} · ${esc(dbPath)} · refreshed <span id="age">just now</span></footer>
 <script>${JS}</script>
 </body></html>`;
 }
@@ -347,6 +371,22 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; color: 
 .rec-mark { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--good-text); font-weight: 650; margin-right: 8px; }
 .silence { color: var(--muted); font-size: 12.5px; margin: 0; }
 
+/* ---- the answer surface (H-90): options are buttons only when an operator is configured ---- */
+button.option { cursor: pointer; text-align: left; background: none; color: inherit; font: inherit; width: 100%; }
+button.option:hover { border-color: var(--accent); }
+button.option.selected { border-color: var(--accent); box-shadow: inset 2px 0 0 var(--accent); }
+.answer-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 0 0 12px; padding: 10px 12px;
+  border: 1px solid var(--hairline); border-radius: 8px; background: var(--page); font-size: 13px; }
+.af-picked { white-space: nowrap; }
+.af-reason { flex: 1 1 260px; padding: 5px 9px; border: 1px solid var(--hairline); border-radius: 6px;
+  background: var(--surface); color: var(--ink); font: inherit; }
+.af-res { padding: 5px 6px; border: 1px solid var(--hairline); border-radius: 6px; background: var(--surface); color: var(--ink); font: inherit; }
+.af-send { padding: 5px 14px; border: 1px solid var(--accent); border-radius: 6px; background: var(--accent); color: #fff;
+  font: inherit; font-weight: 600; cursor: pointer; }
+.af-send:disabled { opacity: 0.5; cursor: default; }
+.af-status { color: var(--muted); font-size: 12.5px; }
+.af-status.err { color: var(--critical); }
+
 /* ---- in-motion cards ---- */
 .mcard { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 13px 18px; margin: 10px 0; }
 .mcard header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
@@ -385,11 +425,15 @@ details.more summary { font-size: 12px; color: var(--muted); cursor: pointer; }
 footer { margin-top: 48px; color: var(--muted); font-size: 11.5px; border-top: 1px solid var(--hairline); padding-top: 12px; }
 `;
 
-// Refresh by replacement, preserving scroll and open disclosures. Read-only:
-// this script fetches and renders; it never sends anything but GET /.
+// Refresh by replacement, preserving scroll and open disclosures — and paused
+// while an answer is being composed, so the refresh never eats the human's
+// half-written reasoning. Handlers ride document-level delegation, which
+// survives body replacement. The ONLY non-GET this page ever sends is
+// POST /answer, and only from the click flow below (H-90).
 const JS = `
 let last = Date.now();
 setInterval(async () => {
+  if (document.querySelector('.answer-form:not([hidden])')) return; // composing: hands off
   try {
     const r = await fetch(location.pathname, { cache: 'no-store' });
     if (!r.ok) return;
@@ -406,9 +450,81 @@ setInterval(() => {
   const el = document.getElementById('age');
   if (el) el.textContent = Math.round((Date.now() - last) / 1000) + 's ago';
 }, 5000);
+
+document.addEventListener('click', async (e) => {
+  const opt = e.target.closest('button.option[data-label]');
+  if (opt) {
+    const card = opt.closest('.qcard');
+    card.querySelectorAll('button.option').forEach((o) => o.classList.toggle('selected', o === opt));
+    const form = card.querySelector('.answer-form');
+    form.hidden = false;
+    form.dataset.label = opt.dataset.label;
+    form.querySelector('.af-label').textContent = opt.dataset.label;
+    form.querySelector('.af-reason').focus();
+    return;
+  }
+  const send = e.target.closest('.af-send');
+  if (send) {
+    const form = send.closest('.answer-form');
+    const card = form.closest('.qcard');
+    const status = form.querySelector('.af-status');
+    const reason = form.querySelector('.af-reason').value.trim();
+    send.disabled = true;
+    status.classList.remove('err');
+    status.textContent = 'recording…';
+    try {
+      const r = await fetch('/answer', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          ticket_id: card.dataset.ticket,
+          chosen_option: form.dataset.label,
+          reasoning: reason || undefined,
+          resolution: form.querySelector('.af-res').value,
+        }),
+      });
+      const out = await r.json();
+      if (!r.ok) throw new Error(out.error || 'answer failed');
+      status.textContent = 'recorded ✓';
+      setTimeout(() => location.reload(), 400);
+    } catch (err) {
+      status.classList.add('err');
+      status.textContent = String(err.message || err);
+      send.disabled = false;
+    }
+  }
+});
 `;
 
-createServer((_req, res) => {
+// The one write route (H-90). It exists only when HELMO_OPERATOR is set, and
+// it does nothing the store's answerTicket wouldn't allow an orchestrator to
+// relay in a meeting — the dashboard just lets the human say it directly.
+function handleAnswer(body: string, res: { writeHead: (c: number, h: Record<string, string>) => void; end: (s: string) => void }): void {
+  const json = (code: number, v: unknown) => {
+    res.writeHead(code, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(v));
+  };
+  if (!operator) return json(403, { error: 'No operator configured: set HELMO_OPERATOR to enable answering from the dashboard.' });
+  try {
+    const p = JSON.parse(body) as { ticket_id?: string; chosen_option?: string; reasoning?: string; resolution?: string };
+    if (!p.ticket_id || !p.chosen_option) return json(400, { error: 'ticket_id and chosen_option are required.' });
+    const actor: Actor = { name: operator, kind: 'human', session: 'dashboard' };
+    const answer = p.reasoning?.trim() ? `${p.chosen_option} — ${p.reasoning.trim()}` : p.chosen_option;
+    const resolution = (['resume', 'done', 'cancelled'].includes(p.resolution ?? '') ? p.resolution : 'resume') as 'resume' | 'done' | 'cancelled';
+    const t = store.answerTicket(actor, p.ticket_id, { answer, chosen_option: p.chosen_option, resolution });
+    return json(200, { ok: true, id: t.id, status: t.status });
+  } catch (e) {
+    return json(e instanceof HelmoError ? 400 : 500, { error: e instanceof Error ? e.message : String(e) });
+  }
+}
+
+createServer((req, res) => {
+  if (req.method === 'POST' && req.url === '/answer') {
+    let body = '';
+    req.on('data', (c) => (body += c));
+    req.on('end', () => handleAnswer(body, res));
+    return;
+  }
   try {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     res.end(page());
@@ -416,4 +532,6 @@ createServer((_req, res) => {
     res.writeHead(500, { 'content-type': 'text/plain' });
     res.end(String(e));
   }
-}).listen(port, host, () => console.log(`Helmo view (read-only): http://localhost:${port} — db: ${dbPath}`));
+}).listen(port, host, () =>
+  console.log(`Helmo view: http://localhost:${port} — db: ${dbPath}${operator ? ` — answers enabled for ${operator}` : ' (read-only; set HELMO_OPERATOR to answer)'}`),
+);

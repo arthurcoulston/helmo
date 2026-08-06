@@ -1,6 +1,6 @@
 {
   "name": "helmo",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Agent work record: agents write, humans read and meet.",
   "main": "index.js",
   "scripts": {
@@ -11,7 +11,14 @@
     "mcp": "tsx src/server.ts",
     "demo": "node scripts/demo-seed.mjs"
   },
-  "keywords": ["ai-agents", "mcp", "issue-tracker", "work-record", "agent-orchestration", "sqlite"],
+  "keywords": [
+    "ai-agents",
+    "mcp",
+    "issue-tracker",
+    "work-record",
+    "agent-orchestration",
+    "sqlite"
+  ],
   "author": "Arthur Coulston",
   "license": "MIT",
   "repository": {

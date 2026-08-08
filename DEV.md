@@ -21,9 +21,19 @@ orchestrator meetings and the read-only view. Product intent:
   markup are rejected at the door — that markup is the signature of a
   mis-serialized call whose later fields would be silently swallowed;
   deliberate quoting must break the tag.
-- `server.ts` — MCP stdio server. **Tool descriptions carry the behavioral
-  contract for every agent** (triage duty, evidence rules, question quality);
-  treat description edits as seriously as code — they are guidance-as-deployed.
+- `tools.ts` — the MCP tool surface, registered identically by both entry
+  points below (H-116). **Tool descriptions carry the behavioral contract for
+  every agent** (triage duty, evidence rules, question quality); treat
+  description edits as seriously as code — they are guidance-as-deployed, and
+  they live here and only here so local and remote agents can never drift.
+- `server.ts` — MCP stdio entry (local agents; thin wrapper over tools.ts).
+- `remote.ts` — MCP Streamable HTTP entry (H-116): same tools, for remote
+  agents reaching Helmo through the crew-mcp worker (OAuth front door) over
+  cloudflared. Binds 127.0.0.1:4401 (`HELMO_REMOTE_PORT`), refuses to start
+  without `HELMO_REMOTE_TOKEN` (min 24 chars) and 401s anything not bearing
+  it — the tunnel is never trusted alone. Stateless per-request servers,
+  POST-only. No `HELMO_ACTOR` fallback on this path: remote writes must carry
+  a truthful per-call actor (H-3) or be rejected.
 - `cli.ts` — programmatic write path for non-MCP writers (H-10); Rev uses
   it for wake-checks, escalations, and spend write-back (`record-spend` +
   `actor-tickets`, H-19; `actor-spend` lets the meter net out what the agent

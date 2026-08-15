@@ -59,6 +59,15 @@ orchestrator meetings and the read-only view. Product intent:
   dispositions there are refused — nothing live can be masked). Also H-81:
   done_without_evidence exempts question tickets the human closed via
   helmo_answer_ticket — the recorded answer is the closure evidence.
+- Evidence ref form (H-95): commit = `repo@sha` (`crew@24e8003`), one commit
+  per item; file = absolute or `repo:relative/path`, never bare-relative; url
+  as-is; other/draft free text. Prose belongs in the item's `note`. The point
+  is legibility, not parsing — Arthur's ruling (H-4, cancelled 2026-08-15) is
+  that evidence exists for documentation and to make the closing agent ask
+  "is this complete?", NOT to catch dishonesty, so there is no verifier and a
+  ref that later dangles is not a defect. Evidence is a point-in-time receipt.
+  The 08-06 corpus audit is archival; do not retrofit it (its rename map is in
+  crew/agents/mason/workspace/h4-evidence-audit-20260806.md).
 - `types.ts` — the shared vocabulary (statuses, blast radii, confidence).
 - `schedule.ts` — recurring-ticket schedules (H-22): 'every N<m|h|d>' or 5-field
   cron, UTC. A ticket with `schedule` set is a TEMPLATE — standing work, never

@@ -178,6 +178,24 @@ export class Store {
   constructor(path: string) {
     this.db = new Database(path);
     this.db.pragma('journal_mode = WAL');
+    // WAL lets readers run alongside the one writer, but a second WRITER gets
+    // SQLITE_BUSY with no retry window unless we ask for one — and every open
+    // is a writer, since the constructor below migrates. Five seconds is far
+    // beyond any legitimate write here (single-row inserts on a local file,
+    // milliseconds) and exists to absorb pileups: four loops polling, a sweep
+    // spawning schedule instances, the dashboard answering. It is the ceiling
+    // on how long any caller stalls behind a writer, so it must stay well
+    // under the callers' own patience — rev polls on 60s (H-134).
+    this.db.pragma('busy_timeout = 5000');
+    // The pragma alone is not enough, and the gap is silent: every write here
+    // runs in a transaction that reads first (minting an id, loading a ticket),
+    // so a DEFERRED begin only asks for the write lock partway through — and
+    // SQLite refuses that upgrade with an instant SQLITE_BUSY rather than
+    // waiting, because waiting mid-transaction is how deadlocks happen. The
+    // busy_timeout never gets a chance to apply. Every write transaction below
+    // therefore runs .immediate(): the lock is taken at BEGIN, where waiting is
+    // safe and the timeout does its job. Removing an .immediate() reintroduces
+    // H-134 without failing a single test that doesn't contend.
     this.db.exec(SCHEMA);
     // Additive migration for stores created before recurring templates (H-22).
     try {
@@ -584,7 +602,7 @@ export class Store {
       this.append(now(), `ws:${to}`, 'workstream_renamed', actor, { from, to, tickets: n, note: input.note });
       this.applyWorkstreamRenamed({ from, to });
       return { moved: n };
-    })();
+    }).immediate();
   }
 
   private applyWorkstreamRenamed(payload: Record<string, unknown>): void {
@@ -646,7 +664,7 @@ export class Store {
       this.append(ts, `ws:${input.name}`, 'workstream_set', actor, payload);
       this.applyWorkstreamSet(ts, payload);
       return this.getWorkstreamInfo(input.name);
-    })();
+    }).immediate();
   }
 
   createTicket(actor: Actor, input: CreateInput): Ticket {
@@ -696,7 +714,7 @@ export class Store {
         this.applyLinked(id, d.to, d.type, true);
       }
       return this.getTicket(id);
-    })();
+    }).immediate();
   }
 
   updateTicket(actor: Actor, input: UpdateInput): UpdateResult {
@@ -816,7 +834,7 @@ export class Store {
       this.append(ts, t.id, 'updated', actor, payload);
       this.applyUpdated(ts, t.id, payload);
       return { ticket: this.getTicket(t.id), warnings };
-    })();
+    }).immediate();
   }
 
   /** Attribute metered spend to a ticket. Unlike updateTicket this accepts
@@ -840,7 +858,7 @@ export class Store {
       this.append(now(), ticketId, 'spend', actor, payload);
       this.applySpend(ticketId, payload);
       return this.getTicket(ticketId);
-    })();
+    }).immediate();
   }
 
   /** Record that a hygiene finding on a terminal ticket was examined and dealt
@@ -873,7 +891,7 @@ export class Store {
       const payload = { check: input.check, reason: input.reason };
       this.append(ts, t.id, 'hygiene_disposed', actor, payload);
       this.applyHygieneDisposed(ts, t.id, actor, payload);
-    })();
+    }).immediate();
   }
 
   returnToHuman(actor: Actor, ticketId: string, q: Question): Ticket {
@@ -901,7 +919,7 @@ export class Store {
         .prepare("UPDATE tickets SET status = 'awaiting_human', assignee = NULL, question = ?, updated_at = ? WHERE id = ?")
         .run(JSON.stringify(q), ts, t.id);
       return this.getTicket(t.id);
-    })();
+    }).immediate();
   }
 
   answerTicket(actor: Actor, ticketId: string, a: Answer): Ticket {
@@ -924,7 +942,7 @@ export class Store {
           .run(resolution, ts, ts, t.id);
       }
       return this.getTicket(t.id);
-    })();
+    }).immediate();
   }
 
   linkTickets(actor: Actor, fromId: string, toId: string, type: DepType, action: 'add' | 'remove'): void {
@@ -943,7 +961,7 @@ export class Store {
         this.applyLinked(fromId, toId, type, false);
       }
       this.db.prepare('UPDATE tickets SET updated_at = ? WHERE id = ?').run(ts, fromId);
-    })();
+    }).immediate();
   }
 
   // ---------- rebuild (the invariant) ----------
@@ -999,7 +1017,7 @@ export class Store {
             break;
         }
       }
-    })();
+    }).immediate();
   }
 
   dumpState(): { tickets: Ticket[]; deps: Dep[]; workstreams: Workstream[]; dispositions: Record<string, unknown>[] } {

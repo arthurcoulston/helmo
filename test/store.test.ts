@@ -1,4 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { spawn } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Store } from '../src/store.js';
 import { Actor, HelmoError } from '../src/types.js';
 
@@ -722,5 +726,37 @@ describe('THE INVARIANT: tickets are a materialized view of events', () => {
     s.rebuild();
     const after = s.dumpState();
     expect(after).toEqual(before);
+  });
+});
+
+describe('write contention', () => {
+  it('waits out a lock another process holds instead of failing instantly', async () => {
+    // The contending writer has to be a real second process: better-sqlite3 is
+    // synchronous, so an in-process holder could never commit while we blocked
+    // waiting for it. Regression guard for H-134, where a loop died outright
+    // because a busy store threw instead of waiting.
+    const dir = mkdtempSync(join(tmpdir(), 'helmo-contention-'));
+    const dbPath = join(dir, 'helmo.db');
+    const s = new Store(dbPath); // migrate first, so we time a write and not the open
+
+    const holdMs = 400;
+    const holder = spawn(process.execPath, [
+      '-e',
+      `const D=require('better-sqlite3');const db=new D(process.argv[1]);` +
+        `db.pragma('journal_mode = WAL');db.prepare('BEGIN IMMEDIATE').run();` +
+        `setTimeout(()=>{db.prepare('COMMIT').run();db.close();},${holdMs});`,
+      dbPath,
+    ], { cwd: new URL('..', import.meta.url).pathname });
+    await new Promise((r) => setTimeout(r, 150)); // let it take the lock
+
+    const started = Date.now();
+    const t = create(s);
+    const waited = Date.now() - started;
+
+    expect(t.id).toMatch(/^H-\d+$/);
+    expect(waited).toBeGreaterThan(100); // it really did block on the lock
+    holder.kill();
+    s.close();
+    rmSync(dir, { recursive: true, force: true });
   });
 });

@@ -90,6 +90,12 @@ orchestrator meetings and the read-only view. Product intent:
   must never steer its own stream).
 - Tool-description changes deploy on the next session spawn (loops get them
   immediately; running sessions keep the old text).
+- Every write transaction runs `.immediate()`, and that is load-bearing. These
+  transactions read before they write (minting an id, loading a ticket), so a
+  deferred begin asks for the write lock partway through — an upgrade SQLite
+  refuses with an instant SQLITE_BUSY instead of waiting, so `busy_timeout`
+  never applies. Drop an `.immediate()` and concurrent writers start throwing
+  again under contention, with every non-contending test still green (H-134).
 
 ## Neighbors
 

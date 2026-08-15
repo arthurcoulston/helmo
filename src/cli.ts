@@ -38,7 +38,9 @@ try {
   switch (cmd) {
     case 'wake-check': {
       // The harness idle poll: one call answers "should this loop wake, and at
-      // what cursor should it re-idle." Read-only, zero tokens.
+      // what cursor should it re-idle." Zero tokens, and read-only in what it
+      // REPORTS — but not in what it does: opening a Store migrates, so this
+      // takes the write lock like any other call (H-134).
       const since = Number(flag('since-seq') ?? 0);
       const workstream = flag('workstream');
       const assignee = flag('assignee');

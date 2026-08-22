@@ -50,7 +50,12 @@ orchestrator meetings and the read-only view. Product intent:
   the record), but answering an awaiting_human question is operator steering
   — the ONE mutation the page may perform, via POST /answer through
   store.answerTicket with a human actor named by HELMO_OPERATOR (unset =
-  fully read-only; the env var is the deliberate switch). Everything else
+  fully read-only; the env var is the deliberate switch). The route is gated
+  against browser CSRF (H-145): JSON content-type + a custom header force a
+  preflight the server never answers, Origin/Sec-Fetch-Site are checked when
+  present, and a per-boot nonce the page carries must be echoed — friction
+  against a forged one-liner, NOT a wall against local agents (same-user
+  box; ward's threat model). Dashboard answers render marked as such. Everything else
   stays disclosure toggles and evidence links; add no other write affordance. Shows the
   needs-grooming strip from `store.hygiene()` (H-23) — eight deterministic
   record checks (silent_assignee, H-61, watches open reservations whose

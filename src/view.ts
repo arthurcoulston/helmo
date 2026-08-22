@@ -6,6 +6,7 @@
 // and it is the one mutation this page may perform. The answer surface only
 // exists when HELMO_OPERATOR names the human (deliberate config); every other
 // element remains disclosure toggles and evidence hyperlinks.
+import { randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -17,6 +18,14 @@ const dbPath = process.env['HELMO_DB'] ?? join(homedir(), '.helmo', 'helmo.db');
 const port = Number(process.env['HELMO_VIEW_PORT'] ?? 4400);
 const host = process.env['HELMO_VIEW_HOST'] ?? '127.0.0.1';
 const operator = process.env['HELMO_OPERATOR']?.trim() || null;
+// Per-boot nonce the page carries and POST /answer must echo (H-145). NOT a
+// wall against local agents — any same-user process can GET the page and read
+// it. It turns a forged approval from one innocuous curl into a deliberate
+// read-then-impersonate, which is the kind of act the constitution and
+// injection defences catch. Friction, not a gate; keep the comment honest.
+const answerNonce = randomBytes(16).toString('hex');
+const ANSWER_HEADER = 'x-helmo-answer';
+const sameOrigin = new Set([`http://127.0.0.1:${port}`, `http://localhost:${port}`]);
 const store = new Store(dbPath);
 
 const esc = (s: unknown) =>
@@ -107,9 +116,12 @@ function timeline(events: HelmoEvent[]): string {
       const what =
         e.event_type === 'created' ? 'created' :
         e.event_type === 'returned' ? 'returned to human' :
-        e.event_type === 'answered' ? 'answered' : '';
+        e.event_type === 'answered' ? (e.actor.session === 'dashboard' ? 'answered from the dashboard' : 'answered') : '';
+      // Dashboard answers are visibly marked so a click here is never mistaken
+      // for an answer relayed from a meeting (H-145).
+      const whatCls = e.actor.session === 'dashboard' && e.event_type === 'answered' ? 'tl-what tl-dash' : 'tl-what';
       return `<div class="tl"><span class="tl-when">${esc(rel(e.ts))}</span><span class="tl-who">${esc(e.actor.name)}</span>${
-        what ? `<span class="tl-what">${what}</span>` : ''
+        what ? `<span class="${whatCls}">${what}</span>` : ''
       }${note ? `<span class="tl-note">${esc(note)}</span>` : ''}</div>`;
     });
   return items.length ? `<div class="tl-wrap">${items.join('')}</div>` : '';
@@ -272,7 +284,7 @@ function page(): string {
 
   const stat = (n: number, label: string, cls = '') => `<div class="stat ${cls}"><div class="stat-n">${n}</div><div class="stat-l">${label}</div></div>`;
 
-  return `<!doctype html><html lang="en"><meta charset="utf-8">
+  return `<!doctype html><html lang="en" data-answer="${answerNonce}"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Helmo</title>
 <style>${CSS}</style>
@@ -421,6 +433,7 @@ details.more summary { font-size: 12px; color: var(--muted); cursor: pointer; }
 .tl-when { color: var(--muted); margin-right: 8px; font-variant-numeric: tabular-nums; }
 .tl-who { color: var(--accent); font-weight: 600; margin-right: 8px; }
 .tl-what { color: var(--muted); font-style: italic; margin-right: 8px; }
+.tl-dash { color: var(--hot, #b45309); font-weight: 600; }
 .tl-note { color: var(--ink-2); display: block; margin-top: 1px; }
 footer { margin-top: 48px; color: var(--muted); font-size: 11.5px; border-top: 1px solid var(--hairline); padding-top: 12px; }
 `;
@@ -475,7 +488,7 @@ document.addEventListener('click', async (e) => {
     try {
       const r = await fetch('/answer', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', 'x-helmo-answer': document.documentElement.dataset.answer },
         body: JSON.stringify({
           ticket_id: card.dataset.ticket,
           chosen_option: form.dataset.label,
@@ -499,12 +512,25 @@ document.addEventListener('click', async (e) => {
 // The one write route (H-90). It exists only when HELMO_OPERATOR is set, and
 // it does nothing the store's answerTicket wouldn't allow an orchestrator to
 // relay in a meeting — the dashboard just lets the human say it directly.
-function handleAnswer(body: string, res: { writeHead: (c: number, h: Record<string, string>) => void; end: (s: string) => void }): void {
+function handleAnswer(
+  headers: Record<string, string | string[] | undefined>,
+  body: string,
+  res: { writeHead: (c: number, h: Record<string, string>) => void; end: (s: string) => void },
+): void {
   const json = (code: number, v: unknown) => {
     res.writeHead(code, { 'content-type': 'application/json' });
     res.end(JSON.stringify(v));
   };
   if (!operator) return json(403, { error: 'No operator configured: set HELMO_OPERATOR to enable answering from the dashboard.' });
+  // Browser CSRF gate (H-145). A cross-origin page can send a "simple" POST
+  // without preflight; a custom header and a JSON content-type both force a
+  // preflight, which this server never answers — so the browser never sends
+  // it. Origin is checked when present as belt-and-braces.
+  const h = (k: string) => (Array.isArray(headers[k]) ? headers[k]![0] : headers[k]) ?? '';
+  if (!h('content-type').toLowerCase().startsWith('application/json')) return json(403, { error: 'answers must be application/json' });
+  if (h('origin') && !sameOrigin.has(h('origin'))) return json(403, { error: 'cross-origin answer refused' });
+  if (h('sec-fetch-site') && h('sec-fetch-site') !== 'same-origin' && h('sec-fetch-site') !== 'none') return json(403, { error: 'cross-site answer refused' });
+  if (h(ANSWER_HEADER) !== answerNonce) return json(403, { error: 'missing or stale answer token — reload the dashboard' });
   try {
     const p = JSON.parse(body) as { ticket_id?: string; chosen_option?: string; reasoning?: string; resolution?: string };
     if (!p.ticket_id || !p.chosen_option) return json(400, { error: 'ticket_id and chosen_option are required.' });
@@ -522,7 +548,7 @@ createServer((req, res) => {
   if (req.method === 'POST' && req.url === '/answer') {
     let body = '';
     req.on('data', (c) => (body += c));
-    req.on('end', () => handleAnswer(body, res));
+    req.on('end', () => handleAnswer(req.headers, body, res));
     return;
   }
   try {

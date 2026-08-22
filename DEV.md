@@ -39,7 +39,10 @@ orchestrator meetings and the read-only view. Product intent:
   it for wake-checks, escalations, and spend write-back (`record-spend` +
   `actor-tickets`, H-19; `actor-spend` lets the meter net out what the agent
   self-reported so a session lands in the totals exactly once, H-57 — negative
-  spend events are reconciliations, keep accepting them). `spend` events are
+  spend events are reconciliations, keep accepting them; `by_ticket` lets the
+  meter cancel each guess where it sits, H-187). `record-spend` floors a total
+  at zero and marks the event CLAMPED — a negative total is bad arithmetic
+  upstream, never a record. `spend` events are
   bookkeeping, not motion: they accept terminal tickets and never touch status
   or updated_at.
 - `view.ts` — the dashboard at :4400 (H-2). The constitutional line, restated

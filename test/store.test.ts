@@ -512,6 +512,15 @@ describe('self-filed tickets need triage (H-55)', () => {
     expect(s.listTickets({ ready: true, caller: 'builder-loop' }).map((x) => x.id)).toContain(t.id);
     expect(s.selfFiledPending('builder-loop')).toEqual([]);
   });
+  it('a metered spend event is bookkeeping, not a second pair of eyes (H-242)', () => {
+    const s = freshStore();
+    const t = create(s); // filed by builder
+    const meter: Actor = { name: 'rev', kind: 'agent', model: 'rev-harness', version: '0.1.0' };
+    s.recordSpend(meter, t.id, { tokens: 28316, cost_usd: 5.2, note: 'metered: loop builder-loop iteration 26' });
+    expect(s.listTickets({ ready: true, caller: 'builder-loop' }).map((x) => x.id)).not.toContain(t.id);
+    expect(s.selfFiledPending('builder-loop')).toContain(t.id);
+    expect(() => s.updateTicket(builder, { ticket_id: t.id, note: 'claiming', status: 'in_progress' })).toThrow(/second pair of eyes/);
+  });
   it('reserving your filing for another agent leaves their queue unaffected', () => {
     const s = freshStore();
     const t = create(s, { assignee: 'reviewer-loop' });

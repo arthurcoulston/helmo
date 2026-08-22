@@ -306,10 +306,12 @@ export class Store {
       )
       .get(id) as { creator: string | null; template: string | null } | undefined;
     if (!created) return false;
-    // The scheduler is the store's clock, not judgment — its events never
-    // count as the second pair of eyes.
+    // The scheduler is the store's clock and spend is the meter's bookkeeping —
+    // neither is judgment, so neither counts as the second pair of eyes (H-242:
+    // rev meters every loop session onto the tickets it touched, including the
+    // ones the agent just filed).
     const others = this.db
-      .prepare("SELECT COUNT(*) AS n FROM events WHERE ticket_id = ? AND json_extract(actor, '$.name') NOT IN (?, 'helmo-scheduler')")
+      .prepare("SELECT COUNT(*) AS n FROM events WHERE ticket_id = ? AND event_type != 'spend' AND json_extract(actor, '$.name') NOT IN (?, 'helmo-scheduler')")
       .get(id, caller) as { n: number };
     if (others.n > 0) return false;
     if (created.template) return this.selfFiledUntouched(created.template, caller);

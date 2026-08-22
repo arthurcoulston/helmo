@@ -14,7 +14,8 @@ orchestrator meetings and the read-only view. Product intent:
   writes only, evented as `workstream_set` under `ws:<name>`) and the ready-
   queue triage rule — a ticket is withheld from its own filer's ready queue
   until another actor touches it (scheduler instances are judged by their
-  template), so an agent's queue is never fed solely by that agent. Since
+  template; scheduler and `spend` events never count — clock and meter are
+  not judgment, H-242), so an agent's queue is never fed solely by that agent. Since
   H-56 the claim path enforces the same rule for agent actors — takeover
   never bypasses self-triage; create-with-in_progress stays legitimate.
   Mangled-write gate (H-71): free-text fields carrying tool-call parameter

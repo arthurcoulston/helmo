@@ -481,36 +481,43 @@ export class Store {
     ).map(rowToTicket);
     const spawned: string[] = [];
     for (const t of templates) {
-      const open = this.db
-        .prepare(
-          `SELECT COUNT(*) AS n FROM deps d JOIN tickets i ON i.id = d.from_id
-           WHERE d.to_id = ? AND d.type = 'parent' AND i.status IN ('open','in_progress','awaiting_human')`,
-        )
-        .get(t.id) as { n: number };
-      if (open.n > 0) continue;
-      const lastDue = (
-        this.db
-          .prepare("SELECT MAX(json_extract(payload, '$.due')) AS due FROM events WHERE event_type = 'created' AND json_extract(payload, '$.spawned_from') = ?")
-          .get(t.id) as { due: string | null }
-      ).due;
-      const sched = parseSchedule(t.schedule!);
-      let due = sched.next(new Date(lastDue ?? t.created_at));
-      if (due > nowTs) continue;
-      for (let n = sched.next(due); n <= nowTs; n = sched.next(due)) due = n; // latest missed slot only
-      const dueIso = due.toISOString();
-      const instance = this.createTicket(SCHEDULER_ACTOR, {
-        title: `${t.title} — ${dueIso.slice(0, 16)}Z`,
-        body: `${t.body}\n\n(Instance of recurring ${t.id}, due ${dueIso}; schedule '${t.schedule}'.)`,
-        workstream: t.workstream,
-        type: t.type,
-        labels: t.labels,
-        priority: t.priority,
-        assignee: t.assignee ?? undefined,
-        deps: [{ to: t.id, type: 'parent' }],
-        spawned_from: t.id,
-        due: dueIso,
-      });
-      spawned.push(instance.id);
+      // Skip-if-open check and insert share one IMMEDIATE transaction: as two
+      // separate steps, two concurrent readers both saw no open instance and
+      // both spawned (H-169, twins 8ms apart). Nested createTicket becomes a
+      // savepoint inside it.
+      const id = this.db.transaction((): string | null => {
+        const open = this.db
+          .prepare(
+            `SELECT COUNT(*) AS n FROM deps d JOIN tickets i ON i.id = d.from_id
+             WHERE d.to_id = ? AND d.type = 'parent' AND i.status IN ('open','in_progress','awaiting_human')`,
+          )
+          .get(t.id) as { n: number };
+        if (open.n > 0) return null;
+        const lastDue = (
+          this.db
+            .prepare("SELECT MAX(json_extract(payload, '$.due')) AS due FROM events WHERE event_type = 'created' AND json_extract(payload, '$.spawned_from') = ?")
+            .get(t.id) as { due: string | null }
+        ).due;
+        const sched = parseSchedule(t.schedule!);
+        let due = sched.next(new Date(lastDue ?? t.created_at));
+        if (due > nowTs) return null;
+        for (let n = sched.next(due); n <= nowTs; n = sched.next(due)) due = n; // latest missed slot only
+        const dueIso = due.toISOString();
+        // Instances enter the pool unassigned: a reserved template re-created a
+        // reservation on every spawn and stalled three listens in a row (H-171).
+        return this.createTicket(SCHEDULER_ACTOR, {
+          title: `${t.title} — ${dueIso.slice(0, 16)}Z`,
+          body: `${t.body}\n\n(Instance of recurring ${t.id}, due ${dueIso}; schedule '${t.schedule}'.)`,
+          workstream: t.workstream,
+          type: t.type,
+          labels: t.labels,
+          priority: t.priority,
+          deps: [{ to: t.id, type: 'parent' }],
+          spawned_from: t.id,
+          due: dueIso,
+        }).id;
+      }).immediate();
+      if (id) spawned.push(id);
     }
     return spawned;
   }

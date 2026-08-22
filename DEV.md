@@ -73,8 +73,11 @@ orchestrator meetings and the read-only view. Product intent:
 - `schedule.ts` — recurring-ticket schedules (H-22): 'every N<m|h|d>' or 5-field
   cron, UTC. A ticket with `schedule` set is a TEMPLATE — standing work, never
   ready itself. Instances spawn lazily on ticket-list reads (the read path is
-  the clock; no daemon), linked via parent dep, actor `helmo-scheduler`.
-  Skip-if-open; after downtime only the latest missed slot spawns.
+  the clock; no daemon), linked via parent dep, actor `helmo-scheduler`,
+  always unassigned (a reserved template stalled three listens, H-171).
+  Skip-if-open, checked and inserted in ONE immediate transaction (two
+  readers spawned twins, H-169); after downtime only the latest missed slot
+  spawns.
 
 ## Commands
 

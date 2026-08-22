@@ -445,6 +445,14 @@ describe('recurring templates (lazy materialization)', () => {
     s.updateTicket(builder, { ticket_id: first!, note: 'done', status: 'done' });
     expect(s.materializeDue(later(65)).length).toBe(1);
   });
+  it('instances spawn unassigned even from a reserved template (H-171)', () => {
+    const s = freshStore();
+    s.createTicket(builder, {
+      title: 'Daily listen', body: 'standing', workstream: 'helmo-dev', type: 'ops', schedule: 'every 1d', assignee: 'reviewer-loop',
+    });
+    const [inst] = s.materializeDue(new Date(Date.now() + 25 * 60 * 60_000));
+    expect(s.getTicket(inst!).assignee).toBeNull();
+  });
   it('after downtime only the latest missed slot spawns, and cancelling the template retires it', () => {
     const s = freshStore();
     const t = template(s);
@@ -739,6 +747,31 @@ describe('THE INVARIANT: tickets are a materialized view of events', () => {
 });
 
 describe('write contention', () => {
+  it('skip-if-open holds against a twin being committed by another process (H-169)', async () => {
+    // The H-169 shape: another process has already spawned this slot's instance
+    // but not yet committed when we run our check. The check must wait for the
+    // lock (one IMMEDIATE transaction with the insert), then see the open twin.
+    const dir = mkdtempSync(join(tmpdir(), 'helmo-twins-'));
+    const dbPath = join(dir, 'helmo.db');
+    const s = new Store(dbPath);
+    const t = s.createTicket(builder, { title: 'Sweep', body: 'standing', workstream: 'helmo-dev', type: 'ops', schedule: 'every 1d' });
+    const holder = spawn(process.execPath, [
+      '-e',
+      `const D=require('better-sqlite3');const db=new D(process.argv[1]);db.pragma('journal_mode = WAL');` +
+        `db.prepare('BEGIN IMMEDIATE').run();` +
+        `db.prepare("INSERT INTO tickets (id,title,workstream,type,created_at,updated_at) VALUES ('H-99','Sweep — twin','helmo-dev','ops','2026-01-01','2026-01-01')").run();` +
+        `db.prepare("INSERT INTO deps (from_id,to_id,type) VALUES ('H-99',?,'parent')").run(process.argv[2]);` +
+        `setTimeout(()=>{db.prepare('COMMIT').run();db.close();},400);`,
+      dbPath, t.id,
+    ], { cwd: new URL('..', import.meta.url).pathname });
+    await new Promise((r) => setTimeout(r, 150)); // holder has inserted, not committed
+
+    const spawned = s.materializeDue(new Date(Date.now() + 25 * 60 * 60_000));
+    expect(spawned).toEqual([]); // waited, then saw the twin
+    holder.kill();
+    s.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
   it('waits out a lock another process holds instead of failing instantly', async () => {
     // The contending writer has to be a real second process: better-sqlite3 is
     // synchronous, so an in-process holder could never commit while we blocked

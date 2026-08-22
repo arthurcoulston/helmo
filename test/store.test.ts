@@ -353,6 +353,34 @@ describe('recordSpend (harness metering)', () => {
     expect(s.actorSelfSpendSince('builder-loop', seq)).toEqual({ tokens: 120000, cost_usd: 14 });
     expect(s.actorSelfSpendSince('reviewer-loop', seq)).toEqual({ tokens: 0, cost_usd: 0 });
   });
+  it('actorSelfSpendByTicketSince splits the self-report by the ticket that carries it (H-187)', () => {
+    const s = freshStore();
+    const a = create(s);
+    const b = create(s);
+    triage(s, a.id);
+    triage(s, b.id);
+    const seq = s.maxSeq();
+    s.updateTicket(builder, { ticket_id: a.id, note: 'claimed', status: 'in_progress' });
+    s.updateTicket(builder, { ticket_id: b.id, note: 'guessed on the side ticket', tokens: 80000 });
+    s.updateTicket(builder, { ticket_id: a.id, note: 'guessed on the main one', cost_usd: 2 });
+    expect(s.actorSelfSpendByTicketSince('builder-loop', seq)).toEqual([
+      { id: a.id, tokens: 0, cost_usd: 2 },
+      { id: b.id, tokens: 80000, cost_usd: 0 },
+    ]);
+    expect(s.actorSelfSpendByTicketSince('reviewer-loop', seq)).toEqual([]);
+  });
+  it('floors a total at zero and marks the event when a delta would go below it (H-187)', () => {
+    const s = freshStore();
+    const t = create(s);
+    s.recordSpend(builder, t.id, { tokens: 1000, cost_usd: 1, note: 'metered' });
+    const after = s.recordSpend(builder, t.id, { tokens: -62304, cost_usd: -0.5, note: 'reconciliation' });
+    expect(after.tokens_total).toBe(0);
+    expect(after.cost_usd_total).toBeCloseTo(0.5);
+    const ev = s.getEvents(t.id).filter((e) => e.event_type === 'spend').at(-1)!;
+    expect(ev.payload['tokens']).toBe(-1000);
+    expect(ev.payload['cost_usd']).toBe(-0.5);
+    expect(String(ev.payload['note'])).toMatch(/CLAMPED.*tokens -62304 floored to -1000/);
+  });
 });
 
 describe('renameWorkstream', () => {

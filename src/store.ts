@@ -582,6 +582,24 @@ export class Store {
     return { tokens: row.tokens, cost_usd: row.cost };
   }
 
+  /** The same self-reported spend, per ticket — so a harness can cancel each
+   *  guess on the ticket that carries it rather than pushing one session-wide
+   *  correction onto whichever ticket it charges (H-187: that left a ticket at
+   *  −62k tokens while its neighbour kept the +80k guess). */
+  actorSelfSpendByTicketSince(actorName: string, seq: number): { id: string; tokens: number; cost_usd: number }[] {
+    return this.db
+      .prepare(
+        `SELECT ticket_id AS id,
+                COALESCE(SUM(json_extract(payload, '$.tokens')), 0) AS tokens,
+                COALESCE(SUM(json_extract(payload, '$.cost_usd')), 0) AS cost_usd
+         FROM events
+         WHERE seq > ? AND event_type != 'spend' AND json_extract(actor, '$.name') = ?
+         GROUP BY ticket_id HAVING tokens != 0 OR cost_usd != 0
+         ORDER BY MIN(seq) ASC`,
+      )
+      .all(seq, actorName) as { id: string; tokens: number; cost_usd: number }[];
+  }
+
   listWorkstreams(): string[] {
     const rows = this.db.prepare('SELECT DISTINCT workstream FROM tickets ORDER BY workstream').all() as { workstream: string }[];
     return rows.map((r) => r.workstream);
@@ -861,9 +879,27 @@ export class Store {
     rejectSwallowedMarkup({ note: input.note });
     this.getTicket(ticketId);
     return this.db.transaction(() => {
-      const payload: Record<string, unknown> = { note: input.note };
-      if (input.tokens) payload['tokens'] = input.tokens;
-      if (input.cost_usd) payload['cost_usd'] = input.cost_usd;
+      // A total below zero is impossible, so a delta that would take one there
+      // is bad arithmetic upstream: floor at zero and say so in the event,
+      // loudly, rather than let the record carry a negative (H-187).
+      const cur = this.getTicket(ticketId);
+      let tokens = input.tokens;
+      let cost = input.cost_usd;
+      const clamped: string[] = [];
+      if (tokens && cur.tokens_total + tokens < 0) {
+        clamped.push(`tokens ${tokens} floored to ${-cur.tokens_total}`);
+        tokens = -cur.tokens_total;
+      }
+      if (cost && cur.cost_usd_total + cost < 0) {
+        clamped.push(`cost_usd ${cost} floored to ${-cur.cost_usd_total}`);
+        cost = -cur.cost_usd_total;
+      }
+      const payload: Record<string, unknown> = {
+        note: clamped.length ? `${input.note} [CLAMPED: would have taken the total below zero — ${clamped.join('; ')}]` : input.note,
+      };
+      if (clamped.length) process.stderr.write(`helmo record-spend ${ticketId}: ${clamped.join('; ')}\n`);
+      if (tokens) payload['tokens'] = tokens;
+      if (cost) payload['cost_usd'] = cost;
       this.append(now(), ticketId, 'spend', actor, payload);
       this.applySpend(ticketId, payload);
       return this.getTicket(ticketId);

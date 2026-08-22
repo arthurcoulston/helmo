@@ -97,7 +97,8 @@ try {
     case 'actor-spend': {
       const name = flag('name');
       if (!name) throw new HelmoError('actor-spend requires --name <actor name>');
-      out(store.actorSelfSpendSince(name, Number(flag('since-seq') ?? 0)));
+      const since = Number(flag('since-seq') ?? 0);
+      out({ ...store.actorSelfSpendSince(name, since), by_ticket: store.actorSelfSpendByTicketSince(name, since) });
       break;
     }
     case 'record-spend': {
@@ -175,7 +176,7 @@ try {
   wake-check     --workstream W --assignee A --since-seq N     (read-only harness poll)
   actor-activity --name A --since-seq N                        (did this actor write events?)
   actor-tickets  --name A --since-seq N                        (which tickets, most-touched first)
-  actor-spend    --name A --since-seq N                        (spend A self-reported in the window)
+  actor-spend    --name A --since-seq N                        (spend A self-reported in the window, total + by_ticket)
   record-spend   --ticket H-n [--tokens N] [--cost-usd X] --note N   (metered spend; terminal tickets accepted)
   list           [--ready] [--status S] [--workstream W] [--assignee A] [--limit N]
   get            <ticket-id>

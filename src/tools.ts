@@ -34,6 +34,7 @@ function compact(t: Ticket) {
   return {
     id: t.id, title: t.title, status: t.status, priority: t.priority, workstream: t.workstream,
     type: t.type, assignee: t.assignee, blast_radius: t.blast_radius, updated_at: t.updated_at,
+    ...(t.project ? { project: t.project } : {}),
     ...(t.schedule ? { schedule: t.schedule } : {}),
   };
 }
@@ -56,6 +57,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
         body: z.string(),
         workstream: z.string(),
         type: z.string().describe('build|research|writing|ops|planning, or another short noun if none fit'),
+        project: z.string().optional().describe('Optional grouping tag for work that belongs to a named project (e.g. a roadmap project id like "R-4") — how cost and progress roll up. Routine work needs none.'),
         labels: z.array(z.string()).optional(),
         priority: z.number().int().min(0).max(3).optional().describe('0 critical, 1 high, 2 normal (default), 3 low'),
         status: z.enum(['open', 'in_progress']).optional().describe("'open' (default) or 'in_progress' if you are starting it now. Starting your own ticket in the same call is legitimate; once it sits as open backlog, the triage rule holds it from you until a human or another agent touches it"),
@@ -124,6 +126,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
         ready: z.boolean().optional(),
         status: z.enum(STATUSES).optional(),
         workstream: z.string().optional(),
+        project: z.string().optional().describe('Filter to tickets carrying this project tag'),
         assignee: z.string().optional(),
         type: z.string().optional(),
         priority_max: z.number().int().optional(),
@@ -142,10 +145,14 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
           ...(w.budget_usd !== null ? { budget_usd: w.budget_usd, spent_usd: w.spent_usd, remaining_usd: w.remaining_usd } : {}),
         }));
         const awaitingTriage = filter.ready && caller ? store.selfFiledPending(caller) : [];
+        // The standing notice rides along like workstream steering (H-172):
+        // the human's one-line current priority, disclosure not tasking.
+        const notice = store.getNotice();
         return ok({
           tickets: tickets.map(compact),
           count: tickets.length,
           workstreams,
+          ...(notice ? { notice } : {}),
           ...(awaitingTriage.length ? { awaiting_triage: awaitingTriage } : {}),
         });
       } catch (e) {
@@ -182,6 +189,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
         priority: z.number().int().min(0).max(3).optional(),
         labels: z.array(z.string()).optional(),
         workstream: z.string().optional(),
+        project: z.string().optional().describe("Set or change the project tag; '' clears it"),
         actor: actorSchema,
       },
     },
@@ -285,6 +293,27 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
     async ({ actor, ...input }) => {
       try {
         return ok(store.setWorkstream(resolveActor(actor as Actor | undefined), input));
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    'helmo_set_notice',
+    {
+      description:
+        `Set or clear the standing notice: ONE line of current priority with its provenance, carried on every helmo_list_tickets response the way workstream steering is. Call it ONLY to relay a decision the human stated explicitly (e.g. their ship-next call on the roadmap); the write requires actor kind 'human' or 'orchestrator', and agent-kind writes are rejected — an agent must never broadcast its own priority to the fleet.\n\n` +
+        `The notice is disclosure, not tasking: agents reading it learn what the human currently wants shipped, and weigh their choice of ready work accordingly — it does not authorize starting anything. Write provenance so a stranger can trace the decision ("ship_next R-4, decided by Arthur 2026-08-24, recorded by mason"). Empty text clears the notice.`,
+      inputSchema: {
+        text: z.string().describe("The one-line current priority; '' clears it"),
+        provenance: z.string().describe('Who decided and what recorded it'),
+        actor: actorSchema,
+      },
+    },
+    async ({ actor, ...input }) => {
+      try {
+        return ok({ notice: store.setNotice(resolveActor(actor as Actor | undefined), input) });
       } catch (e) {
         return fail(e);
       }

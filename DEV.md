@@ -118,9 +118,26 @@ orchestrator meetings and the read-only view. Product intent:
   never applies. Drop an `.immediate()` and concurrent writers start throwing
   again under contention, with every non-contending test still green (H-134).
 
+## The roadmap seam (H-172)
+
+Three additions carried for helmo-roadmap (the sibling layer-above-the-ticket
+at ~/projects/helmo-roadmap), each independently useful to a Helmo-only user
+and together a public API commitment — resist widening past them:
+
+- an optional `project` tag on tickets (create/update; '' clears), another
+  grouping string alongside workstream and the join key for cost rollups;
+- a `project` filter on the ticket query;
+- the standing notice: one line of current priority with provenance, stored
+  via `notice_set` events and riding on every helmo_list_tickets response the
+  way workstream steering does. `helmo_set_notice` is operator steering —
+  agent-kind writes rejected in the store, same rule as setWorkstream — and
+  the notice is disclosure, not tasking: it never authorizes work. Helmo
+  knows nothing about what writes it.
+
 ## Neighbors
 
 Rev (formerly Capstan), a sibling project, supervises the bash loops that draw work from this
 record; it consumes the helmo-cli contract and injects the MCP server into
 agent sessions. Operators keep their own agent identities and estate maps
-outside this repo.
+outside this repo. helmo-roadmap is a client of this repo's MCP surface and
+holds no code path into it; the seam above is the whole coupling.

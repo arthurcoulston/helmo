@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { parseSchedule } from './schedule.js';
 import {
   Actor, Answer, BlastRadius, BLAST_RADII, Confidence, Dep, DepType, Evidence,
-  HelmoError, HelmoEvent, Question, Status, Ticket, Workstream, WorkstreamInfo,
+  HelmoError, HelmoEvent, Notice, Question, Status, Ticket, Workstream, WorkstreamInfo,
 } from './types.js';
 
 const STALE_CLAIM_HOURS = 24;
@@ -21,6 +21,7 @@ export interface CreateInput {
   body: string;
   workstream: string;
   type: string;
+  project?: string;
   labels?: string[];
   priority?: number;
   status?: 'open' | 'in_progress';
@@ -48,6 +49,7 @@ export interface UpdateInput {
   priority?: number;
   labels?: string[];
   workstream?: string;
+  project?: string | null; // '' clears the tag
 }
 
 export interface ListFilter {
@@ -55,6 +57,7 @@ export interface ListFilter {
   caller?: string; // actor name, used by ready to include reservations
   status?: Status;
   workstream?: string;
+  project?: string;
   assignee?: string;
   type?: string;
   priority_max?: number;
@@ -94,6 +97,7 @@ CREATE TABLE IF NOT EXISTS tickets (
   title          TEXT NOT NULL,
   body           TEXT NOT NULL DEFAULT '',
   workstream     TEXT NOT NULL,
+  project        TEXT,
   type           TEXT NOT NULL,
   labels         TEXT NOT NULL DEFAULT '[]',
   status         TEXT NOT NULL DEFAULT 'open',
@@ -125,6 +129,12 @@ CREATE TABLE IF NOT EXISTS workstreams (
   name       TEXT PRIMARY KEY,
   goal       TEXT,
   budget_usd REAL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS notice (
+  id         INTEGER PRIMARY KEY CHECK (id = 1),
+  text       TEXT NOT NULL,
+  provenance TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS hygiene_dispositions (
@@ -203,6 +213,12 @@ export class Store {
     } catch {
       /* column already exists */
     }
+    // Additive migration for stores created before the project tag (H-172).
+    try {
+      this.db.exec('ALTER TABLE tickets ADD COLUMN project TEXT');
+    } catch {
+      /* column already exists */
+    }
   }
 
   close(): void {
@@ -267,6 +283,7 @@ export class Store {
     const params: unknown[] = [];
     if (filter.status) { clauses.push('status = ?'); params.push(filter.status); }
     if (filter.workstream) { clauses.push('workstream = ?'); params.push(filter.workstream); }
+    if (filter.project) { clauses.push('project = ?'); params.push(filter.project); }
     if (filter.assignee) { clauses.push('assignee = ?'); params.push(filter.assignee); }
     if (filter.type) { clauses.push('type = ?'); params.push(filter.type); }
     if (filter.priority_max !== undefined) { clauses.push('priority <= ?'); params.push(filter.priority_max); }
@@ -694,6 +711,41 @@ export class Store {
     }).immediate();
   }
 
+  /** The standing notice (H-172): one line of current priority with its
+   *  provenance, riding along on ticket-queue responses the way workstream
+   *  steering does. Helmo knows nothing about what writes it — a roadmap
+   *  tool, a meeting, a script — but like workstream steering it IS operator
+   *  steering, so agent-kind writes are rejected: it reaches the whole fleet,
+   *  and only a decision the human stated may be relayed into it. Disclosure,
+   *  not tasking: seeing the notice does not authorize starting the work.
+   *  Empty text clears it. */
+  setNotice(actor: Actor, input: { text: string; provenance: string }): Notice | null {
+    validateActor(actor);
+    if (actor.kind === 'agent') {
+      throw new HelmoError(
+        'The standing notice is operator steering — writable only by kind "human" or "orchestrator" (relaying a decision the human stated explicitly). An agent broadcasting its own priority to the fleet is the failure this rule exists to prevent.',
+      );
+    }
+    if (input.text === undefined || input.provenance === undefined) {
+      throw new HelmoError('text and provenance are both required (empty text clears the notice; provenance says who decided and what recorded it).');
+    }
+    if (input.text.trim() && !input.provenance.trim()) {
+      throw new HelmoError('provenance is required with a non-empty notice: who decided this and what recorded it, so the fleet reads a decision, not a flag.');
+    }
+    rejectSwallowedMarkup({ text: input.text, provenance: input.provenance });
+    return this.db.transaction(() => {
+      const ts = now();
+      this.append(ts, 'notice', 'notice_set', actor, { text: input.text, provenance: input.provenance });
+      this.applyNoticeSet(ts, { text: input.text, provenance: input.provenance });
+      return this.getNotice();
+    }).immediate();
+  }
+
+  getNotice(): Notice | null {
+    const row = this.db.prepare('SELECT text, provenance, updated_at FROM notice WHERE id = 1').get() as Notice | undefined;
+    return row && row.text.trim() ? row : null;
+  }
+
   createTicket(actor: Actor, input: CreateInput): Ticket {
     validateActor(actor);
     if (!input.title?.trim()) throw new HelmoError('title is required: one line, plain human terms.');
@@ -731,6 +783,7 @@ export class Store {
         status,
         assignee: input.assignee ?? null,
       };
+      if (input.project) payload['project'] = input.project;
       if (input.schedule) payload['schedule'] = input.schedule;
       if (input.spawned_from) { payload['spawned_from'] = input.spawned_from; payload['due'] = input.due; }
       this.append(ts, id, 'created', actor, payload);
@@ -835,7 +888,9 @@ export class Store {
       if (to > from) diffs['blast_radius'] = { from: t.blast_radius, to: input.blast_radius };
     }
 
-    for (const field of ['title', 'body', 'priority', 'workstream', 'confidence', 'uncertainty_note'] as const) {
+    // An empty-string project clears the tag; the column goes back to NULL.
+    if (input.project === '') input = { ...input, project: null };
+    for (const field of ['title', 'body', 'priority', 'workstream', 'project', 'confidence', 'uncertainty_note'] as const) {
       const v = input[field];
       if (v !== undefined && v !== (t as unknown as Record<string, unknown>)[field]) {
         diffs[field] = { from: (t as unknown as Record<string, unknown>)[field], to: v };
@@ -1015,7 +1070,7 @@ export class Store {
    *  that materialized state is always derivable from events. */
   rebuild(): void {
     this.db.transaction(() => {
-      this.db.exec('DELETE FROM tickets; DELETE FROM deps; DELETE FROM workstreams; DELETE FROM hygiene_dispositions;');
+      this.db.exec('DELETE FROM tickets; DELETE FROM deps; DELETE FROM workstreams; DELETE FROM hygiene_dispositions; DELETE FROM notice;');
       const rows = this.db.prepare('SELECT * FROM events ORDER BY seq').all() as Record<string, unknown>[];
       for (const row of rows) {
         const ev = rowToEvent(row);
@@ -1025,6 +1080,9 @@ export class Store {
             break;
           case 'workstream_renamed':
             this.applyWorkstreamRenamed(ev.payload);
+            break;
+          case 'notice_set':
+            this.applyNoticeSet(ev.ts, ev.payload);
             break;
           case 'created':
             this.applyCreated(ev.ts, ev.payload);
@@ -1065,12 +1123,12 @@ export class Store {
     }).immediate();
   }
 
-  dumpState(): { tickets: Ticket[]; deps: Dep[]; workstreams: Workstream[]; dispositions: Record<string, unknown>[] } {
+  dumpState(): { tickets: Ticket[]; deps: Dep[]; workstreams: Workstream[]; dispositions: Record<string, unknown>[]; notice: Notice | null } {
     const tickets = (this.db.prepare('SELECT * FROM tickets ORDER BY id').all() as Record<string, unknown>[]).map(rowToTicket);
     const deps = this.db.prepare('SELECT * FROM deps ORDER BY from_id, to_id, type').all() as Dep[];
     const workstreams = this.db.prepare('SELECT * FROM workstreams ORDER BY name').all() as Workstream[];
     const dispositions = this.db.prepare('SELECT * FROM hygiene_dispositions ORDER BY check_name, ticket_id').all() as Record<string, unknown>[];
-    return { tickets, deps, workstreams, dispositions };
+    return { tickets, deps, workstreams, dispositions, notice: this.getNotice() };
   }
 
   // ---------- internals ----------
@@ -1091,11 +1149,11 @@ export class Store {
   private applyCreated(ts: string, p: Record<string, unknown>): void {
     this.db
       .prepare(
-        `INSERT INTO tickets (id, title, body, workstream, type, labels, status, priority, assignee, schedule, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO tickets (id, title, body, workstream, project, type, labels, status, priority, assignee, schedule, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
-        p['id'], p['title'], p['body'], p['workstream'], p['type'],
+        p['id'], p['title'], p['body'], p['workstream'], p['project'] ?? null, p['type'],
         JSON.stringify(p['labels'] ?? []), p['status'] ?? 'open', p['priority'] ?? 2, p['assignee'] ?? null,
         p['schedule'] ?? null, ts, ts,
       );
@@ -1107,7 +1165,7 @@ export class Store {
     const params: unknown[] = [ts];
     const jsonFields = new Set(['labels', 'evidence']);
     for (const [field, d] of Object.entries(diffs)) {
-      if (!['title', 'body', 'workstream', 'type', 'labels', 'status', 'priority', 'assignee', 'evidence', 'confidence', 'uncertainty_note', 'blast_radius'].includes(field)) continue;
+      if (!['title', 'body', 'workstream', 'project', 'type', 'labels', 'status', 'priority', 'assignee', 'evidence', 'confidence', 'uncertainty_note', 'blast_radius'].includes(field)) continue;
       sets.push(`${field} = ?`);
       params.push(jsonFields.has(field) ? JSON.stringify(d.to) : (d.to as never));
     }
@@ -1151,6 +1209,15 @@ export class Store {
            updated_at = excluded.updated_at`,
       )
       .run(p['name'], p['goal'] ?? null, p['budget_usd'] ?? null, ts);
+  }
+
+  private applyNoticeSet(ts: string, p: Record<string, unknown>): void {
+    this.db
+      .prepare(
+        `INSERT INTO notice (id, text, provenance, updated_at) VALUES (1, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET text = excluded.text, provenance = excluded.provenance, updated_at = excluded.updated_at`,
+      )
+      .run(p['text'], p['provenance'], ts);
   }
 
   private applyLinked(fromId: string, toId: string, type: DepType, add: boolean): void {

@@ -46,6 +46,7 @@ export interface Ticket {
   title: string;
   body: string;
   workstream: string;
+  project: string | null; // optional grouping tag, e.g. a roadmap project id — the join key for rollups
   type: string;
   labels: string[];
   status: Status;
@@ -70,7 +71,17 @@ export interface Dep {
   type: DepType;
 }
 
-export type EventType = 'created' | 'updated' | 'returned' | 'answered' | 'linked' | 'unlinked' | 'spend' | 'workstream_set' | 'workstream_renamed' | 'hygiene_disposed';
+export type EventType = 'created' | 'updated' | 'returned' | 'answered' | 'linked' | 'unlinked' | 'spend' | 'workstream_set' | 'workstream_renamed' | 'hygiene_disposed' | 'notice_set';
+
+/** The standing notice: a one-line current priority with its provenance,
+ *  riding along on every ticket-queue response the way workstream steering
+ *  does. Helmo knows nothing about what writes it (a roadmap tool, a meeting,
+ *  a script); it is disclosure to the fleet, not tasking. */
+export interface Notice {
+  text: string;
+  provenance: string;
+  updated_at: string;
+}
 
 /** Operator steering for a stream of work (H-55). `goal` is what "done" means
  *  for the whole stream — the thing that makes "is this still worth doing?"

@@ -830,3 +830,45 @@ describe('write contention', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 });
+
+describe('the roadmap seam (H-172): project tag and standing notice', () => {
+  it('tickets carry an optional project tag, filterable, clearable with empty string', () => {
+    const s = freshStore();
+    const tagged = create(s, { project: 'R-4' });
+    const plain = create(s);
+    expect(s.getTicket(tagged.id).project).toBe('R-4');
+    expect(s.getTicket(plain.id).project).toBeNull();
+
+    const hits = s.listTickets({ project: 'R-4' });
+    expect(hits.map((t) => t.id)).toEqual([tagged.id]);
+
+    s.updateTicket(reviewer, { ticket_id: plain.id, note: 'this is roadmap work', project: 'R-4' });
+    expect(s.listTickets({ project: 'R-4' })).toHaveLength(2);
+
+    s.updateTicket(reviewer, { ticket_id: tagged.id, note: 'mistagged', project: '' });
+    expect(s.getTicket(tagged.id).project).toBeNull();
+  });
+
+  it('the notice is operator steering: agent writes rejected, provenance required, empty clears', () => {
+    const s = freshStore();
+    expect(() => s.setNotice(builder, { text: 'ship X', provenance: 'p' })).toThrow(HelmoError);
+    expect(() => s.setNotice(orch, { text: 'ship X', provenance: ' ' })).toThrow(/provenance/);
+
+    s.setNotice(orch, { text: 'SHIP NEXT: R-4 (roadmap)', provenance: 'decided by arthur 2026-08-24, recorded by mason' });
+    expect(s.getNotice()?.text).toContain('R-4');
+
+    s.setNotice(orch, { text: '', provenance: 'cleared after R-4 shipped' });
+    expect(s.getNotice()).toBeNull();
+  });
+
+  it('project tag and notice survive rebuild', () => {
+    const s = freshStore();
+    const t = create(s, { project: 'R-1' });
+    s.updateTicket(reviewer, { ticket_id: t.id, note: 'retag', project: 'R-2' });
+    s.setNotice(orch, { text: 'ship R-2', provenance: 'arthur, meeting' });
+    const before = s.dumpState();
+    s.rebuild();
+    expect(s.dumpState()).toEqual(before);
+    expect(s.getTicket(t.id).project).toBe('R-2');
+  });
+});

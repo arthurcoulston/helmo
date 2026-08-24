@@ -214,7 +214,7 @@ function row(t: Ticket, opts: { showDone?: boolean } = {}): string {
       ${t.schedule ? `<span class="badge">↻ ${esc(t.schedule)}</span>` : ''}
       ${noEv ? '<span class="badge critical">✱ no evidence</span>' : ''}
       ${confBadge(t)} ${blastBadge(t)}
-      <span class="rmeta">${esc(t.workstream)} · ${esc(t.type)}${t.assignee ? ` · ${esc(t.assignee)}` : ''} ${money(t)} · ${esc(
+      <span class="rmeta">${esc(t.workstream)}${t.project ? ` · ${esc(t.project)}` : ''} · ${esc(t.type)}${t.assignee ? ` · ${esc(t.assignee)}` : ''} ${money(t)} · ${esc(
         rel(opts.showDone ? (t.closed_at ?? t.updated_at) : t.updated_at)
       )}</span>
       ${opts.showDone ? `<span class="evrow">${evidenceLinks(t)}</span>` : ''}
@@ -253,9 +253,13 @@ function groomStrip(findings: HygieneFinding[]): string {
 // Operator steering (H-55): only workstreams the human has actually steered
 // appear — an unsteered stream has nothing to show.
 function steeringStrip(): string {
+  // The standing notice (H-172) leads the strip when set: the fleet sees it
+  // on every queue read, so the human should see it here.
+  const notice = store.getNotice();
   const rows = store.listWorkstreamInfo().filter((w) => w.goal || w.budget_usd !== null);
-  if (!rows.length) return '';
+  if (!rows.length && !notice) return '';
   return `<section class="groom"><h2>Workstream steering</h2>
+    ${notice ? `<p class="gitem"><span class="badge accent">📣 standing notice</span> <span class="gdetail">${esc(notice.text)} (${esc(notice.provenance)})</span></p>` : ''}
     ${rows
       .map((w) => {
         const budget =

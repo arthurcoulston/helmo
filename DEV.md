@@ -44,6 +44,15 @@ orchestrator meetings and the read-only view. Product intent:
   the CLI, the MCP server, and rev's own metering all go straight through. Test
   suite and a reviewable copy live in `crew/tools/store-guard/`; the hook itself
   is not in git, which is a gap noted on H-448.
+- **`purge-orphan` is the only sanctioned deletion**, and it is deliberately
+  narrow (H-448): it removes a ticket row ONLY if the event log has no events
+  for it. That is the whole safety property — a row with no events is not a
+  ticket, it is a write from outside, and removing it takes nothing from the
+  log. A row with even one event is refused, at any bar; history is not deleted
+  here. It requires `--confirm` and prints the removed row so the deletion can
+  be undone by hand. It exists so that the answer to a corrupt row is never
+  "run some SQL", which is the habit that caused the incident in the first
+  place.
 - **Ids: the table gets a vote** (H-448). `mintId` takes
   `max(next_id, highest existing H-n + 1)`. Trusting the counter alone made a
   single already-issued id unrecoverable — the INSERT collides, the transaction

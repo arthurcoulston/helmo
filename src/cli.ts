@@ -51,6 +51,21 @@ try {
       });
       break;
     }
+    case 'purge-orphan': {
+      // Repair path for a row written outside Helmo (H-448). Refuses anything
+      // with history, prints what it removed so the deletion is recoverable,
+      // and requires --confirm because it is the one destructive command here.
+      const id = flag('ticket');
+      if (!id) throw new HelmoError('purge-orphan requires --ticket H-n');
+      if (!has('confirm')) {
+        const n = store.hygiene().filter((f) => f.check === 'orphan_ticket' && f.ticket_id === id).length;
+        throw new HelmoError(
+          `purge-orphan removes ${id} permanently. It is ${n ? '' : 'NOT '}currently reported as an orphan by hygiene. Re-run with --confirm; the removed row is printed so it can be put back.`,
+        );
+      }
+      out({ purged: store.purgeOrphan(id) });
+      break;
+    }
     case 'actor-activity': {
       const name = flag('name');
       if (!name) throw new HelmoError('actor-activity requires --name <actor name>');
@@ -174,6 +189,7 @@ try {
     default:
       console.error(`usage: helmo-cli <command> [flags]
   wake-check     --workstream W --assignee A --since-seq N     (read-only harness poll)
+  purge-orphan   --ticket H-n --confirm                          (remove a row with NO events — a write that came from outside)
   actor-activity --name A --since-seq N [--advancing]          (did this actor write events? --advancing: only ones that moved something)
   actor-tickets  --name A --since-seq N                        (which tickets, most-touched first)
   actor-spend    --name A --since-seq N                        (spend A self-reported in the window, total + by_ticket)

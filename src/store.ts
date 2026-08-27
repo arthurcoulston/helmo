@@ -1159,6 +1159,36 @@ export class Store {
     return { tickets, deps, workstreams, dispositions, notice: this.getNotice() };
   }
 
+  /** Remove a ticket row that Helmo never created.
+   *
+   *  The ONLY rows this will touch are ones with no events at all. That is the
+   *  whole safety property: this store's invariant is that tickets are a
+   *  materialized view of the event log, so a row with no events is not a
+   *  ticket — it is a write that came from outside, and removing it takes
+   *  nothing away from the log, which never knew about it. A row with even one
+   *  event has history, and history is not deleted here at any bar.
+   *
+   *  Returns the row as it was, so the caller can record what it removed. Added
+   *  under H-448, when bosun inserted a ticket straight into the table and the
+   *  only sanctioned repair was "Arthur runs SQL by hand" — which is exactly
+   *  the habit that caused the incident. */
+  purgeOrphan(ticketId: string): Record<string, unknown> {
+    const row = this.db.prepare('SELECT * FROM tickets WHERE id = ?').get(ticketId) as Record<string, unknown> | undefined;
+    if (!row) throw new HelmoError(`${ticketId} does not exist.`);
+    const events = (this.db.prepare('SELECT COUNT(*) AS n FROM events WHERE ticket_id = ?').get(ticketId) as { n: number }).n;
+    if (events > 0) {
+      throw new HelmoError(
+        `${ticketId} has ${events} event(s) — it is a real ticket with history, not an orphan row. This command only removes rows the event log has never heard of. Cancel it instead.`,
+      );
+    }
+    this.db.transaction(() => {
+      this.db.prepare('DELETE FROM deps WHERE from_id = ? OR to_id = ?').run(ticketId, ticketId);
+      this.db.prepare('DELETE FROM hygiene_dispositions WHERE ticket_id = ?').run(ticketId);
+      this.db.prepare('DELETE FROM tickets WHERE id = ?').run(ticketId);
+    })();
+    return row;
+  }
+
   // ---------- internals ----------
 
   /** Mint the next ticket id.

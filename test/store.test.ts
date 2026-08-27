@@ -931,6 +931,27 @@ describe('id collision recovery (H-448)', () => {
     expect(finding?.detail).toContain('wrote to the table directly');
   });
 
+  it('purges an orphan row and returns what it removed', () => {
+    const s = freshStore();
+    create(s);
+    raw(s).prepare("INSERT INTO tickets (id, title, body, workstream, type, status, priority, labels, evidence, blast_radius, created_at, updated_at, tokens_total, cost_usd_total) VALUES ('H-9','orphan','','w','ops','cancelled',2,'[]','[]','none','1787863040.0','1787863040.0',0,0)").run();
+    const removed = s.purgeOrphan('H-9');
+    expect(removed['id']).toBe('H-9');
+    expect(removed['created_at']).toBe('1787863040.0'); // printed so it can be put back
+    expect(s.hygiene().some((f) => f.check === 'orphan_ticket')).toBe(false);
+  });
+
+  it('REFUSES to purge a real ticket — history is never deleted here', () => {
+    const s = freshStore();
+    const t = create(s);
+    expect(() => s.purgeOrphan(t.id)).toThrow(/event\(s\)/);
+    expect(() => s.purgeOrphan(t.id)).toThrow(/Cancel it instead/);
+  });
+
+  it('refuses an id that does not exist', () => {
+    expect(() => freshStore().purgeOrphan('H-999')).toThrow(/does not exist/);
+  });
+
   it('finds no orphans in a store Helmo built itself', () => {
     const s = freshStore();
     create(s);

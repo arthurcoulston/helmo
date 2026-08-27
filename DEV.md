@@ -35,6 +35,15 @@ orchestrator meetings and the read-only view. Product intent:
   it — the tunnel is never trusted alone. Stateless per-request servers,
   POST-only. No `HELMO_ACTOR` fallback on this path: remote writes must carry
   a truthful per-call actor (H-3) or be rejected.
+- **Nothing writes to the store but Helmo**, enforced (H-448). A PreToolUse
+  hook, `~/.claude/hooks/protect-stores.sh`, denies write-class tool calls that
+  reach into `~/.helmo` or `~/.helmo-roadmap` directly — the same shape as the
+  sovereign guard, and the sole effective layer under `bypassPermissions`.
+  Reads pass: a read is how you diagnose, a write is how you corrupt. The front
+  doors are untouched, because they name the executable rather than the store:
+  the CLI, the MCP server, and rev's own metering all go straight through. Test
+  suite and a reviewable copy live in `crew/tools/store-guard/`; the hook itself
+  is not in git, which is a gap noted on H-448.
 - **Ids: the table gets a vote** (H-448). `mintId` takes
   `max(next_id, highest existing H-n + 1)`. Trusting the counter alone made a
   single already-issued id unrecoverable — the INSERT collides, the transaction

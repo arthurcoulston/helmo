@@ -34,14 +34,20 @@ const esc = (s: unknown) =>
 // ---------- small renderers ----------
 
 function rel(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
+  // A timestamp this cannot parse is a corrupt record, not a reason to take
+  // the dashboard down. H-446 carried a Unix epoch float where every other row
+  // has an ISO string, and toISOString() threw on it — which crashed the view
+  // on every request until the row was noticed (H-448).
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return `bad timestamp (${String(iso).slice(0, 24)})`;
+  const ms = Date.now() - t;
   const m = Math.floor(ms / 60000);
   if (m < 1) return 'just now';
   if (m < 60) return `${m}m ago`;
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}h ago`;
   const d = Math.floor(h / 24);
-  return d < 14 ? `${d}d ago` : new Date(iso).toISOString().slice(0, 10);
+  return d < 14 ? `${d}d ago` : new Date(t).toISOString().slice(0, 10);
 }
 
 function money(t: Ticket): string {
@@ -557,11 +563,16 @@ createServer((req, res) => {
     return;
   }
   try {
+    // Render BEFORE the headers go out. Writing 200 first meant any error in
+    // page() hit a catch that could no longer set a status — the writeHead(500)
+    // threw ERR_HTTP_HEADERS_SENT, unhandled, and took the whole view process
+    // down. A render bug should be a 500 you can read, not a dead dashboard.
+    const html = page();
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-    res.end(page());
+    res.end(html);
   } catch (e) {
     res.writeHead(500, { 'content-type': 'text/plain' });
-    res.end(String(e));
+    res.end(String(e instanceof Error ? (e.stack ?? e.message) : e));
   }
 }).listen(port, host, () =>
   console.log(`Helmo view: http://localhost:${port} — db: ${dbPath}${operator ? ` — answers enabled for ${operator}` : ' (read-only; set HELMO_OPERATOR to answer)'}`),

@@ -236,6 +236,7 @@ const GROOM_LABEL: Record<HygieneFinding['check'], string> = {
   priority_inversion: '▲ priority inversion',
   budget_pressure: '＄ budget pressure',
   silent_assignee: '👻 silent assignee',
+  orphan_ticket: '⚠ orphan row — not created by Helmo',
 };
 
 function groomStrip(findings: HygieneFinding[]): string {

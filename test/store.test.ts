@@ -891,3 +891,50 @@ describe('the roadmap seam (H-172): project tag and standing notice', () => {
     expect(s.getTicket(t.id).project).toBe('R-2');
   });
 });
+
+describe('id collision recovery (H-448)', () => {
+  // Reaching past the public surface on purpose: these tests reproduce a store
+  // that was corrupted from OUTSIDE Helmo — a row written straight into the
+  // table — which is exactly what no public method can produce.
+  const raw = (s: Store) => (s as unknown as { db: { prepare(q: string): { run(...a: unknown[]): void } } }).db;
+
+  it('recovers when the counter has fallen behind the table, instead of wedging forever', () => {
+    const s = freshStore();
+    const first = create(s);
+    expect(first.id).toBe('H-1');
+
+    // The 2026-08-27 shape: a row Helmo never minted, and a counter pointing
+    // straight at it. Before this fix every subsequent write collided, the
+    // transaction rolled the counter back, and the same id was minted forever
+    // — taking every queue read in the estate down with it.
+    raw(s).prepare("INSERT INTO tickets (id, title, body, workstream, type, status, priority, labels, evidence, blast_radius, created_at, updated_at, tokens_total, cost_usd_total) VALUES ('H-2','orphan','','w','ops','cancelled',2,'[]','[]','none','1787863040.0','1787863040.0',0,0)").run();
+    raw(s).prepare("UPDATE meta SET value = '2' WHERE key = 'next_id'").run();
+
+    const next = create(s);
+    expect(next.id).toBe('H-3'); // advanced past the orphan in one step
+    expect(create(s).id).toBe('H-4'); // and keeps going
+  });
+
+  it('never hands back an id that is already taken, however far the counter has drifted', () => {
+    const s = freshStore();
+    for (let i = 0; i < 3; i++) create(s);
+    raw(s).prepare("UPDATE meta SET value = '1' WHERE key = 'next_id'").run();
+    expect(create(s).id).toBe('H-4');
+  });
+
+  it('reports the orphan row rather than quietly routing around it', () => {
+    const s = freshStore();
+    create(s);
+    raw(s).prepare("INSERT INTO tickets (id, title, body, workstream, type, status, priority, labels, evidence, blast_radius, created_at, updated_at, tokens_total, cost_usd_total) VALUES ('H-9','orphan','','w','ops','cancelled',2,'[]','[]','none','1787863040.0','1787863040.0',0,0)").run();
+    const finding = s.hygiene().find((f) => f.check === 'orphan_ticket');
+    expect(finding?.ticket_id).toBe('H-9');
+    expect(finding?.detail).toContain('wrote to the table directly');
+  });
+
+  it('finds no orphans in a store Helmo built itself', () => {
+    const s = freshStore();
+    create(s);
+    create(s);
+    expect(s.hygiene().some((f) => f.check === 'orphan_ticket')).toBe(false);
+  });
+});

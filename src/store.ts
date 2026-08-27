@@ -73,7 +73,7 @@ export interface UpdateResult {
 export const HYGIENE_CHECKS = [
   'stale_claim', 'done_without_evidence', 'phantom_block', 'aging_question',
   'spend_anomaly', 'priority_inversion', 'budget_pressure', 'silent_assignee',
-] as const;
+  'orphan_ticket',] as const;
 
 export interface HygieneFinding {
   check: (typeof HYGIENE_CHECKS)[number];
@@ -361,6 +361,21 @@ export class Store {
       )
       .all(hoursAgo(STALE_CLAIM_HOURS)) as { id: string; assignee: string | null; last: string }[]) {
       findings.push({ check: 'stale_claim', ticket_id: r.id, detail: `held by ${r.assignee ?? '?'}, silent for ${age(r.last)}h` });
+    }
+
+    // Orphan rows: a ticket with no events at all. THE INVARIANT of this store
+    // is that tickets are a materialized view of events, so such a row was not
+    // written by Helmo — it went straight into the table. It is reported rather
+    // than repaired: what to do with someone else's write is a human's call,
+    // and the event log has nothing to reconstruct it from (H-448).
+    for (const r of this.db
+      .prepare(`SELECT id FROM tickets t WHERE NOT EXISTS (SELECT 1 FROM events e WHERE e.ticket_id = t.id)`)
+      .all() as { id: string }[]) {
+      findings.push({
+        check: 'orphan_ticket',
+        ticket_id: r.id,
+        detail: 'row exists with no events — Helmo did not create this ticket; something wrote to the table directly',
+      });
     }
 
     // Done without evidence: a claim, not a record (first-class here; the view
@@ -1146,9 +1161,34 @@ export class Store {
 
   // ---------- internals ----------
 
+  /** Mint the next ticket id.
+   *
+   *  The counter alone used to be trusted, which made a single id it had
+   *  already issued unrecoverable: the INSERT collides, the transaction rolls
+   *  back, the counter rolls back with it, and the SAME id is minted forever.
+   *  Every write blocks — and because `wake-check` materializes due recurring
+   *  instances, so does every harness poll. On 2026-08-27 that took the whole
+   *  fleet down for forty minutes over one bad row (H-448).
+   *
+   *  So the table gets a vote. The counter can only ever move forward past the
+   *  highest id that exists, which recovers from drift in one step and cannot
+   *  loop. A counter found behind the table is an anomaly, not routine: it
+   *  says a row exists that this method never issued, so it is reported to
+   *  stderr and surfaced by the `orphan_ticket` hygiene check. */
   private mintId(): string {
     const row = this.db.prepare("SELECT value FROM meta WHERE key = 'next_id'").get() as { value: string } | undefined;
-    const n = row ? parseInt(row.value, 10) : 1;
+    const counter = row ? parseInt(row.value, 10) : 1;
+    const maxRow = this.db
+      .prepare("SELECT MAX(CAST(SUBSTR(id, 3) AS INTEGER)) AS m FROM tickets WHERE id LIKE 'H-%'")
+      .get() as { m: number | null } | undefined;
+    const floor = (maxRow?.m ?? 0) + 1;
+    const n = Math.max(Number.isFinite(counter) ? counter : 1, floor);
+    if (n !== counter) {
+      console.error(
+        `helmo: next_id was ${counter} but H-${floor - 1} already exists — advancing to H-${n}. ` +
+          `A ticket row was created that Helmo did not mint; run 'helmo-cli hygiene' for the orphan_ticket check.`,
+      );
+    }
     this.db.prepare("INSERT INTO meta (key, value) VALUES ('next_id', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(String(n + 1));
     return `H-${n}`;
   }

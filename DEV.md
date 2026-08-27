@@ -35,6 +35,16 @@ orchestrator meetings and the read-only view. Product intent:
   it — the tunnel is never trusted alone. Stateless per-request servers,
   POST-only. No `HELMO_ACTOR` fallback on this path: remote writes must carry
   a truthful per-call actor (H-3) or be rejected.
+- **Ids: the table gets a vote** (H-448). `mintId` takes
+  `max(next_id, highest existing H-n + 1)`. Trusting the counter alone made a
+  single already-issued id unrecoverable — the INSERT collides, the transaction
+  rolls back, the counter rolls back with it, and the same id is minted forever.
+  Because `wake-check` materializes due recurring instances, that blocked every
+  harness poll in the estate, not just writes: on 2026-08-27 one bad row took
+  the whole fleet down for forty minutes. A counter found behind the table is
+  reported to stderr and surfaced by the `orphan_ticket` hygiene check — a row
+  with no events was not written by Helmo, and repairing someone else's write
+  is a human's call, not this store's.
 - `cli.ts` — programmatic write path for non-MCP writers (H-10); Rev uses
   it for wake-checks, escalations, and spend write-back (`record-spend` +
   `actor-tickets`, H-19; `actor-activity --advancing` answers "did this

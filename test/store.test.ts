@@ -435,6 +435,25 @@ describe('harness queries (wake cursor)', () => {
     expect(s.actorActivitySince('builder-loop', seq)).toBe(1);
     expect(s.actorActivitySince('reviewer-loop', seq)).toBe(0);
   });
+  it('--advancing separates work that moved something from a note (H-412)', () => {
+    const s = freshStore();
+    const t = create(s, { workstream: 'alpha' });
+    triage(s, t.id);
+    const seq = s.maxSeq();
+
+    // A note and nothing else: activity, but nothing moved.
+    s.updateTicket(builder, { ticket_id: t.id, note: 'still blocked on the poller; nothing to do' });
+    expect(s.actorActivitySince('builder-loop', seq)).toBe(1);
+    expect(s.actorActivitySince('builder-loop', seq, true)).toBe(0);
+
+    // A status change is advancement, note or not.
+    s.updateTicket(builder, { ticket_id: t.id, note: 'claimed', status: 'in_progress' });
+    expect(s.actorActivitySince('builder-loop', seq, true)).toBe(1);
+
+    // So is filing a new ticket.
+    create(s, { workstream: 'alpha' });
+    expect(s.actorActivitySince('builder-loop', seq, true)).toBeGreaterThan(1);
+  });
 });
 
 describe('recurring templates (lazy materialization)', () => {

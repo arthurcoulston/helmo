@@ -564,10 +564,23 @@ export class Store {
     return row.n > 0;
   }
 
-  /** Count of events written by `actorName` since `seq` — a harness's "did my agent produce?" check. */
-  actorActivitySince(actorName: string, seq: number): number {
+  /** Count of events written by `actorName` since `seq` — a harness's "did my
+   *  agent produce?" check.
+   *
+   *  `advancingOnly` narrows it to events that moved something: a ticket
+   *  created, linked, disposed, returned to a human, or an update carrying a
+   *  real diff. A note-only update does not count. Writing "still blocked,
+   *  nothing to do" is the cheapest possible event and, counted as production,
+   *  it re-certifies a loop as busy and buys it another whole iteration —
+   *  which is how rev's ladder lost the chance to idle (H-412). */
+  actorActivitySince(actorName: string, seq: number, advancingOnly = false): number {
+    const advancing = advancingOnly
+      ? `AND NOT (event_type = 'updated'
+                  AND (json_extract(payload, '$.diffs') IS NULL
+                       OR json_extract(payload, '$.diffs') = '{}'))`
+      : '';
     const row = this.db
-      .prepare("SELECT COUNT(*) AS n FROM events WHERE seq > ? AND json_extract(actor, '$.name') = ?")
+      .prepare(`SELECT COUNT(*) AS n FROM events WHERE seq > ? AND json_extract(actor, '$.name') = ? ${advancing}`)
       .get(seq, actorName) as { n: number };
     return row.n;
   }

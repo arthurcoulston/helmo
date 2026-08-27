@@ -54,7 +54,7 @@ try {
     case 'actor-activity': {
       const name = flag('name');
       if (!name) throw new HelmoError('actor-activity requires --name <actor name>');
-      out({ events: store.actorActivitySince(name, Number(flag('since-seq') ?? 0)) });
+      out({ events: store.actorActivitySince(name, Number(flag('since-seq') ?? 0), has('advancing')) });
       break;
     }
     case 'hygiene': {
@@ -174,7 +174,7 @@ try {
     default:
       console.error(`usage: helmo-cli <command> [flags]
   wake-check     --workstream W --assignee A --since-seq N     (read-only harness poll)
-  actor-activity --name A --since-seq N                        (did this actor write events?)
+  actor-activity --name A --since-seq N [--advancing]          (did this actor write events? --advancing: only ones that moved something)
   actor-tickets  --name A --since-seq N                        (which tickets, most-touched first)
   actor-spend    --name A --since-seq N                        (spend A self-reported in the window, total + by_ticket)
   record-spend   --ticket H-n [--tokens N] [--cost-usd X] --note N   (metered spend; terminal tickets accepted)

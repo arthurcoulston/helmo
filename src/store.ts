@@ -565,6 +565,18 @@ export class Store {
     return this.listTickets({ ready: true, workstream, caller, limit: 1000 }).length;
   }
 
+  /** Count of in_progress tickets assigned to `assignee` — work already in
+   *  hand. A harness that knows this alongside readyCount can tell "the agent
+   *  has nothing to draw AND nothing mid-flight" — the probe case (rev H-412):
+   *  that iteration only answers "is there anything to do?" and can run on the
+   *  cheapest model. */
+  heldCount(assignee: string): number {
+    const row = this.db
+      .prepare("SELECT COUNT(*) AS n FROM tickets WHERE status = 'in_progress' AND assignee = ?")
+      .get(assignee) as { n: number };
+    return row.n;
+  }
+
   /** True if any event since `seq` touches the scope: a ticket in `workstream`,
    *  or a ticket currently assigned to `assignee`. Zero-token wake check. */
   scopeChangedSince(seq: number, workstream?: string, assignee?: string): boolean {

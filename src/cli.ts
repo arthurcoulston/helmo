@@ -47,6 +47,10 @@ try {
       out({
         max_seq: store.maxSeq(),
         ready_count: store.readyCount(workstream, assignee),
+        // held_count only when the caller is identified: work already in hand.
+        // With ready_count it lets a harness spot the probe case — nothing to
+        // draw, nothing mid-flight — and run that pass cheap (rev H-412).
+        ...(assignee ? { held_count: store.heldCount(assignee) } : {}),
         changed_since: store.scopeChangedSince(since, workstream, assignee),
       });
       break;

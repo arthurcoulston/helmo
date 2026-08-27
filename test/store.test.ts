@@ -435,6 +435,17 @@ describe('harness queries (wake cursor)', () => {
     expect(s.actorActivitySince('builder-loop', seq)).toBe(1);
     expect(s.actorActivitySince('reviewer-loop', seq)).toBe(0);
   });
+  it('heldCount reports in_progress work in the assignee\'s hands (probe case, rev H-412)', () => {
+    const s = freshStore();
+    const t = create(s, { workstream: 'alpha' });
+    triage(s, t.id);
+    expect(s.heldCount('builder-loop')).toBe(0);
+    s.updateTicket(builder, { ticket_id: t.id, note: 'claimed', status: 'in_progress' });
+    expect(s.heldCount('builder-loop')).toBe(1);
+    expect(s.heldCount('reviewer-loop')).toBe(0);
+    s.updateTicket(builder, { ticket_id: t.id, note: 'done', status: 'done', evidence: [{ kind: 'other', ref: 'x' }] });
+    expect(s.heldCount('builder-loop')).toBe(0);
+  });
   it('--advancing separates work that moved something from a note (H-412)', () => {
     const s = freshStore();
     const t = create(s, { workstream: 'alpha' });

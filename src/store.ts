@@ -848,7 +848,7 @@ export class Store {
     if (input.status) {
       if (t.status === 'awaiting_human') {
         throw new HelmoError(
-          `${t.id} is awaiting_human — it is waiting on the human's answer, not on you. Status changes happen via helmo_answer_ticket (orchestrator, during a meeting). You may still add notes/evidence.`,
+          `${t.id} is awaiting_human — its status moves when the human's answer is recorded, and helmo_answer_ticket is how you record it. IF THE HUMAN HAS ANSWERED — in a meeting, at the desk, anywhere — relay it now with helmo_answer_ticket (resolution 'done' closes it, 'resume' reopens it for whoever takes it next); that is a normal thing for any agent to do, not a role you need. Quote their reasoning, not just the choice. If they have NOT answered, leave it: you may still add notes and evidence.`,
         );
       }
       // Triage enforcement (H-56): the ready-queue withholding (H-55) is a

@@ -368,13 +368,18 @@ export class Store {
     // written by Helmo — it went straight into the table. It is reported rather
     // than repaired: what to do with someone else's write is a human's call,
     // and the event log has nothing to reconstruct it from (H-448).
+    // The tell is a missing 'created' event, not an empty history: a foreign
+    // row that later actors touched through the front door (as bosun's
+    // hand-written '446' was — cancelled and spend-charged before anyone
+    // noticed it was never minted, H-463) accumulates events and would pass
+    // a no-events-at-all test forever.
     for (const r of this.db
-      .prepare(`SELECT id FROM tickets t WHERE NOT EXISTS (SELECT 1 FROM events e WHERE e.ticket_id = t.id)`)
+      .prepare(`SELECT id FROM tickets t WHERE NOT EXISTS (SELECT 1 FROM events e WHERE e.ticket_id = t.id AND e.event_type = 'created')`)
       .all() as { id: string }[]) {
       findings.push({
         check: 'orphan_ticket',
         ticket_id: r.id,
-        detail: 'row exists with no events — Helmo did not create this ticket; something wrote to the table directly',
+        detail: 'row has no created event — Helmo did not mint this ticket; something wrote to the table directly',
       });
     }
 

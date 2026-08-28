@@ -942,6 +942,20 @@ describe('id collision recovery (H-448)', () => {
     expect(finding?.detail).toContain('wrote to the table directly');
   });
 
+  it('reports a partial orphan — a foreign row that later actors touched through the front door (H-463)', () => {
+    // The live-store shape found in H-463: bosun's hand-written '446' was
+    // cancelled and spend-charged through legitimate calls, so it HAD events —
+    // just never a 'created' — and the no-events-at-all test missed it forever.
+    const s = freshStore();
+    const real = create(s);
+    raw(s).prepare("INSERT INTO tickets (id, title, body, workstream, type, status, priority, labels, evidence, blast_radius, created_at, updated_at, tokens_total, cost_usd_total) VALUES ('446','orphan','','w','ops','open',2,'[]','[]','none','1787863032.0','1787863032.0',0,0)").run();
+    s.updateTicket(builder, { ticket_id: '446', note: 'touched through the front door', status: 'cancelled' });
+    const orphans = s.hygiene().filter((f) => f.check === 'orphan_ticket');
+    expect(orphans.map((f) => f.ticket_id)).toEqual(['446']);
+    expect(orphans[0]?.detail).toContain('no created event');
+    expect(s.hygiene().some((f) => f.check === 'orphan_ticket' && f.ticket_id === real.id)).toBe(false);
+  });
+
   it('purges an orphan row and returns what it removed', () => {
     const s = freshStore();
     create(s);

@@ -166,7 +166,10 @@ and together a public API commitment — resist widening past them:
   way workstream steering does. `helmo_set_notice` is operator steering —
   agent-kind writes rejected in the store, same rule as setWorkstream — and
   the notice is disclosure, not tasking: it never authorizes work. Helmo
-  knows nothing about what writes it.
+  knows nothing about what writes it. A summoned agent relaying a decision
+  the human made live in the room writes as kind "orchestrator" with the
+  provenance naming the human and the session — that is what orchestrator
+  means here, not a workaround (H-413; first used for roadmap R-8).
 
 ## Neighbors
 

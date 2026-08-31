@@ -114,9 +114,12 @@ orchestrator meetings and the read-only view. Product intent:
   ready itself. Instances spawn lazily on ticket-list reads (the read path is
   the clock; no daemon), linked via parent dep, actor `helmo-scheduler`,
   always unassigned (a reserved template stalled three listens, H-171).
-  Skip-if-open, checked and inserted in ONE immediate transaction (two
+  Skip-if-in-motion, checked and inserted in ONE immediate transaction (two
   readers spawned twins, H-169); after downtime only the latest missed slot
-  spawns.
+  spawns. An instance in_progress, awaiting_human, or carrying a human answer
+  blocks the next slot; a plain open instance nobody started is superseded
+  (cancelled by the scheduler) when the next slot comes due — before H-618 it
+  silently stalled the schedule for as long as it sat unworked.
 
 ## Commands
 

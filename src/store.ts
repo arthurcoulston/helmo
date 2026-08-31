@@ -508,8 +508,11 @@ export class Store {
 
   /** Catch up recurring templates: spawn an instance for each template whose
    *  next occurrence has passed (H-22). Called from every ticket-list read —
-   *  Helmo has no daemon, so the read path is the clock. Skip-if-open: no new
-   *  instance while a previous one is open/in_progress/awaiting_human. After
+   *  Helmo has no daemon, so the read path is the clock. Skip-if-in-motion: no
+   *  new instance while a previous one is in_progress, awaiting_human, or
+   *  carries a human answer. A plain open instance nobody has started is
+   *  superseded — cancelled by the scheduler — when the next slot comes due;
+   *  before H-618 it silently stalled the schedule for as long as it sat. After
    *  downtime, only the latest missed slot spawns — a backlog of stale
    *  instances would be silt, not work. Returns spawned ids. */
   materializeDue(nowTs: Date = new Date()): string[] {
@@ -518,18 +521,20 @@ export class Store {
     ).map(rowToTicket);
     const spawned: string[] = [];
     for (const t of templates) {
-      // Skip-if-open check and insert share one IMMEDIATE transaction: as two
+      // Blocking check and insert share one IMMEDIATE transaction: as two
       // separate steps, two concurrent readers both saw no open instance and
       // both spawned (H-169, twins 8ms apart). Nested createTicket becomes a
       // savepoint inside it.
       const id = this.db.transaction((): string | null => {
-        const open = this.db
+        const live = this.db
           .prepare(
-            `SELECT COUNT(*) AS n FROM deps d JOIN tickets i ON i.id = d.from_id
+            `SELECT i.id, i.status,
+                    EXISTS(SELECT 1 FROM events e WHERE e.ticket_id = i.id AND e.event_type = 'answered') AS answered
+             FROM deps d JOIN tickets i ON i.id = d.from_id
              WHERE d.to_id = ? AND d.type = 'parent' AND i.status IN ('open','in_progress','awaiting_human')`,
           )
-          .get(t.id) as { n: number };
-        if (open.n > 0) return null;
+          .all(t.id) as { id: string; status: string; answered: number }[];
+        if (live.some((i) => i.status !== 'open' || i.answered)) return null;
         const lastDue = (
           this.db
             .prepare("SELECT MAX(json_extract(payload, '$.due')) AS due FROM events WHERE event_type = 'created' AND json_extract(payload, '$.spawned_from') = ?")
@@ -540,6 +545,13 @@ export class Store {
         if (due > nowTs) return null;
         for (let n = sched.next(due); n <= nowTs; n = sched.next(due)) due = n; // latest missed slot only
         const dueIso = due.toISOString();
+        for (const i of live) {
+          this.updateTicket(SCHEDULER_ACTOR, {
+            ticket_id: i.id,
+            status: 'cancelled',
+            note: `Superseded by the ${dueIso.slice(0, 16)}Z slot of ${t.id} — still unclaimed when the next occurrence came due (H-618).`,
+          });
+        }
         // Instances enter the pool unassigned: a reserved template re-created a
         // reservation on every spawn and stalled three listens in a row (H-171).
         return this.createTicket(SCHEDULER_ACTOR, {

@@ -494,14 +494,39 @@ describe('recurring templates (lazy materialization)', () => {
     expect(ready).toContain(inst.id);
     expect(ready).not.toContain(t.id);
   });
-  it('skip-if-open: no second instance while one is open; closing unblocks the next slot', () => {
+  it('skip-if-in-motion: no second instance while one is in_progress; closing unblocks the next slot', () => {
     const s = freshStore();
     template(s);
     const later = (min: number) => new Date(Date.now() + min * 60_000);
     const [first] = s.materializeDue(later(31));
-    expect(s.materializeDue(later(65)).length).toBe(0); // slot due, but first is still open
-    s.updateTicket(builder, { ticket_id: first!, note: 'done', status: 'done' });
+    s.updateTicket(reviewer, { ticket_id: first!, note: 'on it', status: 'in_progress' });
+    expect(s.materializeDue(later(65)).length).toBe(0); // slot due, but first is in motion
+    s.updateTicket(reviewer, { ticket_id: first!, note: 'done', status: 'done' });
     expect(s.materializeDue(later(65)).length).toBe(1);
+  });
+  it('a stale unclaimed instance is superseded when the next slot comes due (H-618)', () => {
+    const s = freshStore();
+    template(s);
+    const later = (min: number) => new Date(Date.now() + min * 60_000);
+    const [first] = s.materializeDue(later(31));
+    const [second] = s.materializeDue(later(65)); // first sat open and unclaimed
+    expect(second).toBeDefined();
+    expect(s.getTicket(first!).status).toBe('cancelled');
+    expect(s.getTicket(second!).status).toBe('open');
+  });
+  it('an answered instance blocks the next slot instead of being superseded', () => {
+    const s = freshStore();
+    template(s);
+    const later = (min: number) => new Date(Date.now() + min * 60_000);
+    const [first] = s.materializeDue(later(31));
+    s.returnToHuman(builder, first!, {
+      situation: 'stuck', question: 'which way?',
+      options: [{ label: 'a', consequence: 'x' }, { label: 'b', consequence: 'y' }],
+      recommendation: 'a',
+    });
+    s.answerTicket(orch, first!, { answer: 'a it is', resolution: 'resume' });
+    expect(s.materializeDue(later(65)).length).toBe(0); // open again, but carries a human answer
+    expect(s.getTicket(first!).status).toBe('open');
   });
   it('instances spawn unassigned even from a reserved template (H-171)', () => {
     const s = freshStore();
@@ -819,8 +844,9 @@ describe('write contention', () => {
         `db.prepare('BEGIN IMMEDIATE').run();` +
         `db.prepare("INSERT INTO tickets (id,title,workstream,type,created_at,updated_at) VALUES ('H-99','Sweep — twin','helmo-dev','ops','2026-01-01','2026-01-01')").run();` +
         `db.prepare("INSERT INTO deps (from_id,to_id,type) VALUES ('H-99',?,'parent')").run(process.argv[2]);` +
+        `db.prepare("INSERT INTO events (ts, ticket_id, event_type, actor, payload) VALUES ('2026-01-01','H-99','created','{\\"name\\":\\"helmo-scheduler\\",\\"kind\\":\\"orchestrator\\"}',?)").run(JSON.stringify({spawned_from:process.argv[2],due:process.argv[3]}));` +
         `setTimeout(()=>{db.prepare('COMMIT').run();db.close();},400);`,
-      dbPath, t.id,
+      dbPath, t.id, new Date(new Date(t.created_at).getTime() + 24 * 3600_000).toISOString(),
     ], { cwd: new URL('..', import.meta.url).pathname });
     await new Promise((r) => setTimeout(r, 150)); // holder has inserted, not committed
 

@@ -282,7 +282,13 @@ export class Store {
     const clauses: string[] = [];
     const params: unknown[] = [];
     if (filter.status) { clauses.push('status = ?'); params.push(filter.status); }
-    if (filter.workstream) { clauses.push('workstream = ?'); params.push(filter.workstream); }
+    // Assignment is explicit routing (H-661): in a caller's ready queue, a
+    // workstream filter scopes only the UNASSIGNED pool — a ticket assigned to
+    // the caller is ready wherever it lives. ANDing the workstream over the
+    // assignee clause left a ticket routed to a loop's agent from another
+    // workstream invisible to the loop forever (wake fired, ready said 0).
+    const routedReady = filter.ready && filter.caller && filter.workstream;
+    if (filter.workstream && !routedReady) { clauses.push('workstream = ?'); params.push(filter.workstream); }
     if (filter.project) { clauses.push('project = ?'); params.push(filter.project); }
     if (filter.assignee) { clauses.push('assignee = ?'); params.push(filter.assignee); }
     if (filter.type) { clauses.push('type = ?'); params.push(filter.type); }
@@ -290,7 +296,10 @@ export class Store {
     if (filter.ready) {
       clauses.push("status = 'open'");
       clauses.push('schedule IS NULL'); // templates are standing work, never claimable
-      if (filter.caller) { clauses.push('(assignee IS NULL OR assignee = ?)'); params.push(filter.caller); }
+      if (routedReady) {
+        clauses.push('((workstream = ? AND assignee IS NULL) OR assignee = ?)');
+        params.push(filter.workstream, filter.caller);
+      } else if (filter.caller) { clauses.push('(assignee IS NULL OR assignee = ?)'); params.push(filter.caller); }
       else clauses.push('assignee IS NULL');
     }
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
@@ -577,7 +586,8 @@ export class Store {
     return row.s;
   }
 
-  /** Count of ready tickets in scope (open, unblocked, unassigned-or-reserved-for-caller). */
+  /** Count of ready tickets in scope (open, unblocked, unassigned-or-reserved-
+   *  for-caller). Reserved-for-caller crosses the workstream filter (H-661). */
   readyCount(workstream?: string, caller?: string): number {
     return this.listTickets({ ready: true, workstream, caller, limit: 1000 }).length;
   }

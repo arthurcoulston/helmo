@@ -435,6 +435,22 @@ describe('harness queries (wake cursor)', () => {
     expect(s.actorActivitySince('builder-loop', seq)).toBe(1);
     expect(s.actorActivitySince('reviewer-loop', seq)).toBe(0);
   });
+  it('a ticket assigned to the caller is ready across the workstream filter (H-661)', () => {
+    const s = freshStore();
+    const t = create(s, { workstream: 'governance', assignee: 'reviewer-loop' });
+    // The assignee's ready queue sees it even scoped to another workstream:
+    // assignment is explicit routing, the filter scopes only the unassigned pool.
+    expect(s.readyCount('security', 'reviewer-loop')).toBe(1);
+    expect(s.listTickets({ ready: true, workstream: 'security', caller: 'reviewer-loop' }).map((x) => x.id)).toContain(t.id);
+    // Everyone else's scoped queue stays clean of it — assigned elsewhere, other workstream.
+    expect(s.readyCount('security', 'other-loop')).toBe(0);
+    expect(s.readyCount('security')).toBe(0);
+    // Claiming removes it from ready as usual.
+    s.updateTicket(reviewer, { ticket_id: t.id, note: 'claimed', status: 'in_progress' });
+    expect(s.readyCount('security', 'reviewer-loop')).toBe(0);
+    // A plain (non-ready) workstream listing is untouched by the routing rule.
+    expect(s.listTickets({ workstream: 'security', caller: 'reviewer-loop' }).map((x) => x.id)).not.toContain(t.id);
+  });
   it('heldCount reports in_progress work in the assignee\'s hands (probe case, rev H-412)', () => {
     const s = freshStore();
     const t = create(s, { workstream: 'alpha' });

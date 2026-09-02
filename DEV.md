@@ -21,7 +21,12 @@ orchestrator meetings and the read-only view. Product intent:
   Mangled-write gate (H-71): free-text fields carrying tool-call parameter
   markup are rejected at the door — that markup is the signature of a
   mis-serialized call whose later fields would be silently swallowed;
-  deliberate quoting must break the tag.
+  deliberate quoting must break the tag. Ready routing rule (H-661): in a
+  caller's ready queue a workstream filter scopes only the unassigned pool —
+  a ticket assigned to the caller is ready wherever it lives. ANDing the
+  filter over the assignee clause left cross-workstream assignments invisible
+  to rev loops forever: the wake fired (scopeChangedSince ORs the same
+  clauses) while ready said 0.
 - `tools.ts` — the MCP tool surface, registered identically by both entry
   points below (H-116). **Tool descriptions carry the behavioral contract for
   every agent** (triage duty, evidence rules, question quality); treat

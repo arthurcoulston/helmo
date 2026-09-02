@@ -592,6 +592,30 @@ export class Store {
     return this.listTickets({ ready: true, workstream, caller, limit: 1000 }).length;
   }
 
+  /** In_progress tickets assigned to `assignee`, each with the actor that put
+   *  it in_progress and when — the same-seat guard's raw material (rev H-558).
+   *  Two live sessions sharing one crew name (a rev loop and a desk subagent)
+   *  write indistinguishable `name`s; the claiming actor's `session` stamp is
+   *  what tells the seat's own mid-flight work from a foreign hold. A ticket
+   *  whose claim event cannot be found is reported with null actor/ts — the
+   *  caller decides what unattributable means. */
+  seatHolds(assignee: string): { ticket_id: string; claim_actor: Actor | null; claimed_at: string | null }[] {
+    const rows = this.db
+      .prepare("SELECT id FROM tickets WHERE status = 'in_progress' AND assignee = ?")
+      .all(assignee) as { id: string }[];
+    return rows.map(({ id }) => {
+      const ev = this.db
+        .prepare(
+          `SELECT actor, ts FROM events WHERE ticket_id = ?
+             AND ((event_type = 'updated' AND json_extract(payload, '$.diffs.status.to') = 'in_progress')
+               OR (event_type = 'created' AND json_extract(payload, '$.status') = 'in_progress'))
+           ORDER BY seq DESC LIMIT 1`,
+        )
+        .get(id) as { actor: string; ts: string } | undefined;
+      return { ticket_id: id, claim_actor: ev ? (JSON.parse(ev.actor) as Actor) : null, claimed_at: ev?.ts ?? null };
+    });
+  }
+
   /** Count of in_progress tickets assigned to `assignee` — work already in
    *  hand. A harness that knows this alongside readyCount can tell "the agent
    *  has nothing to draw AND nothing mid-flight" — the probe case (rev H-412):

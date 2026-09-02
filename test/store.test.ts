@@ -462,6 +462,28 @@ describe('harness queries (wake cursor)', () => {
     s.updateTicket(builder, { ticket_id: t.id, note: 'done', status: 'done', evidence: [{ kind: 'other', ref: 'x' }] });
     expect(s.heldCount('builder-loop')).toBe(0);
   });
+  it('seatHolds names who claimed each in_progress ticket in a name (H-558)', () => {
+    const s = freshStore();
+    expect(s.seatHolds('ward-loop')).toEqual([]);
+    // A desk-flavored actor and a rev-flavored one share the crew name; the
+    // session stamp is what tells them apart.
+    const desk: Actor = { name: 'ward-loop', kind: 'agent', model: 'claude-fable-5', version: 'claude-code-2.1.221' };
+    const loop: Actor = { name: 'ward-loop', kind: 'agent', model: 'claude-sonnet-5', version: '0.3', session: 'rev:ward-loop' };
+    const a = create(s, { assignee: 'ward-loop' });
+    triage(s, a.id);
+    s.updateTicket(desk, { ticket_id: a.id, note: 'claimed at the desk', status: 'in_progress' });
+    // Created directly in_progress: the created event is the claim.
+    const b = s.createTicket(loop, { title: 'Loop starts its own', body: 'work started in the same breath', workstream: 'helmo-dev', type: 'ops', status: 'in_progress', assignee: 'ward-loop' });
+    const holds = s.seatHolds('ward-loop');
+    expect(holds.map((h) => h.ticket_id).sort()).toEqual([a.id, b.id].sort());
+    const byId = Object.fromEntries(holds.map((h) => [h.ticket_id, h]));
+    expect(byId[a.id]!.claim_actor?.session).toBeUndefined();
+    expect(byId[a.id]!.claimed_at).toBeTruthy();
+    expect(byId[b.id]!.claim_actor?.session).toBe('rev:ward-loop');
+    // Terminal work drops out of the holds.
+    s.updateTicket(desk, { ticket_id: a.id, note: 'done', status: 'done', evidence: [{ kind: 'other', ref: 'x' }] });
+    expect(s.seatHolds('ward-loop').map((h) => h.ticket_id)).toEqual([b.id]);
+  });
   it('--advancing separates work that moved something from a note (H-412)', () => {
     const s = freshStore();
     const t = create(s, { workstream: 'alpha' });

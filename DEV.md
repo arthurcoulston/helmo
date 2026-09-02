@@ -26,7 +26,10 @@ orchestrator meetings and the read-only view. Product intent:
   a ticket assigned to the caller is ready wherever it lives. ANDing the
   filter over the assignee clause left cross-workstream assignments invisible
   to rev loops forever: the wake fired (scopeChangedSince ORs the same
-  clauses) while ready said 0.
+  clauses) while ready said 0. Seat holds (H-558): `seatHolds`/`seat-check`
+  reports each in_progress ticket in a name with the actor that claimed it —
+  the claiming actor's `session` stamp is how rev's same-seat guard tells a
+  loop's own mid-flight work from a desk session sharing the crew name.
 - `tools.ts` — the MCP tool surface, registered identically by both entry
   points below (H-116). **Tool descriptions carry the behavioral contract for
   every agent** (triage duty, evidence rules, question quality); treat

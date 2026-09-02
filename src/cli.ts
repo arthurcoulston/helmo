@@ -55,6 +55,13 @@ try {
       });
       break;
     }
+    case 'seat-check': {
+      // Who holds in_progress work in this name, and which session claimed it —
+      // rev's same-seat guard (H-558) reads this before spending an iteration,
+      // so a loop and a desk session sharing a crew name stop colliding.
+      out({ holds: store.seatHolds(req('assignee')) });
+      break;
+    }
     case 'purge-orphan': {
       // Repair path for a row written outside Helmo (H-448). Refuses anything
       // with history, prints what it removed so the deletion is recoverable,
@@ -193,6 +200,7 @@ try {
     default:
       console.error(`usage: helmo-cli <command> [flags]
   wake-check     --workstream W --assignee A --since-seq N     (read-only harness poll)
+  seat-check     --assignee A                                  (in_progress holds in a name + claiming actor; rev's same-seat guard)
   purge-orphan   --ticket H-n --confirm                          (remove a row with NO events — a write that came from outside)
   actor-activity --name A --since-seq N [--advancing]          (did this actor write events? --advancing: only ones that moved something)
   actor-tickets  --name A --since-seq N                        (which tickets, most-touched first)

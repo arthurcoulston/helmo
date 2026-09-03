@@ -223,12 +223,23 @@ ladder, `--hairline`, and the radius ramp (`--radius-card` / `-inner` /
 `-control` are the estate's `--radius` × 1 / 0.8 / 0.6). Helmo's middle ink is
 mixed from the estate's two, since shadcn has no third step.
 
-Not adopted, deliberately: the status colours and the interactive `--link`
-blue. shadcn's neutral base ships no status ramp, and its own `--accent` is a
-hover *surface*, not an interactive colour — mapping onto either would be
-translation dressed as adoption. Those five stay Helmo's, follow the dataviz
-reference palette, and always ride with a text label. Whether the estate grows
-a status ramp and an interactive hue of its own is a live question on H-713.
+Status colours and the interactive `--link` blue were held back at first —
+shadcn's neutral base ships no status ramp, and its own `--accent` is a hover
+*surface*, not an interactive colour. The estate grew both of its own in H-771,
+so they alias like everything else now and Helmo's dark overrides for them are
+gone: the estate's ramp is themed.
+
+Two values moved in that swap, both because Helmo renders as **text** what the
+reference palette specifies as a chart mark. `--warning` was `#fab219`, 1.83:1
+on white, and it is this page's headline figure and badge ink; `--serious` was
+`#ec835a` at 2.64:1. Both take the estate's deepened light step. Colour still
+always rides with a text label, never alone.
+
+`test/estate-tokens.test.ts` now also asserts **no bare hex below the seam** —
+every colour here is a token, so a literal is a value picked against one theme
+and shown in both. Two had shipped: white on the send button, which is 3.64:1
+on the dark link blue (`--interactive-foreground` fixes it), and an amber
+falling back from a `--hot` that was defined nowhere in the file.
 
 Two collisions had to be resolved, because the vendored file lands on `:root`
 ahead of Helmo's own block: `--muted` and `--accent` exist in both with

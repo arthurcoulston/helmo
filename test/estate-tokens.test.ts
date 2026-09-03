@@ -28,13 +28,37 @@ describe('vendored estate tokens', () => {
     expect(readFileSync(VENDORED, 'utf8')).toBe(render(readFileSync(SOURCE, 'utf8')));
   });
 
-  it('carries the dark values under prefers-color-scheme, not on a class alone', () => {
+  it('carries the SURFACE tokens under prefers-color-scheme, not on a class alone', () => {
     // The view has no theme switch, so this is the line between "adopted the
     // tokens" and "adopted the light half of the tokens and wore it at night".
     // It reads the vendored copy, not the source: what ships is what matters.
+    //
+    // The assertion has to name the block, not just count media queries. The
+    // token file emits two of them — the surfaces and, since H-713, the crew
+    // mark hues — so "a prefers-color-scheme block exists somewhere, and
+    // --background is declared somewhere" is satisfied by the hues alone while
+    // the surfaces quietly lose their dark half. That weaker form shipped here
+    // first and was measured green against exactly that mutation. `[^}]*` is
+    // what pins it: it cannot leave the `:root:not(.light)` rule it started in.
     const css = readFileSync(VENDORED, 'utf8');
-    expect(css).toMatch(/@media \(prefers-color-scheme: dark\) \{\s*:root:not\(\.light\) \{/);
-    expect(css).toMatch(/--background: [^;]+;/);
+    const darkBlocks = css.split(/@media \(prefers-color-scheme: dark\) \{/).slice(1);
+    expect(
+      darkBlocks.some((b) => /^\s*:root:not\(\.light\) \{[^}]*--background: [^;]+;/.test(b)),
+    ).toBe(true);
+  });
+
+  it('has no seam alias that resolves to itself', () => {
+    // The seam is a block of `--ours: var(--theirs)` aliases, and a careless
+    // rewrite turns one into `--ours: var(--ours)`. CSS calls that
+    // guaranteed-invalid: the property ends up with no value at all, every
+    // rule using it is dropped, and nothing anywhere goes red — the page just
+    // quietly loses its borders. That happened adopting these tokens into the
+    // roadmap, and only sampling pixels out of the render caught it.
+    const view = readFileSync(new URL('../src/view.ts', import.meta.url), 'utf8');
+    const selfRefs = [...view.matchAll(/--([a-z0-9-]+):\s*var\(--([a-z0-9-]+)\)/g)]
+      .filter((m) => m[1] === m[2])
+      .map((m) => m[0]);
+    expect(selfRefs).toEqual([]);
   });
 
   it('refuses a source that cannot be vendored verbatim', () => {

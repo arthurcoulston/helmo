@@ -236,6 +236,16 @@ ahead of Helmo's own block: `--muted` and `--accent` exist in both with
 `--ink-3` and `--link`. Helmo's `--border` was folded into `--hairline` — the
 estate has one border token and the two were the same value under it.
 
+**One trap, learned adopting the same seam into the roadmap.** An alias that
+comes out self-referential (`--hairline: var(--hairline)`) is
+*guaranteed-invalid* in CSS: the property ends up with no value, every rule
+using it is dropped, and nothing goes red — the page just quietly loses all its
+borders. `test/estate-tokens.test.ts` now asserts no seam alias resolves to
+itself. The same file's prefers-color-scheme assertion was also tightened: the
+token file emits two dark blocks now (surfaces, and the crew mark hues since
+H-713), so the loose form was satisfied by the hues alone while the surfaces
+lost their dark half.
+
 ## Neighbors
 
 Rev (formerly Capstan), a sibling project, supervises the bash loops that draw work from this

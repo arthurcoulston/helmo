@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { Store } from './store.js';
-import { Actor, ACTOR_KINDS, BLAST_RADII, CONFIDENCES, DEP_TYPES, HelmoError, STATUSES, Ticket } from './types.js';
+import { Actor, ACTOR_KINDS, BLAST_RADII, CONFIDENCES, DEP_TYPES, HelmoError, STATUSES, Ticket, writingActor } from './types.js';
 
 // Single source of truth for the MCP tool surface (H-116). Both entry points —
 // server.ts (stdio, local agents) and remote.ts (Streamable HTTP, remote
@@ -40,7 +40,7 @@ function compact(t: Ticket) {
 }
 
 export function buildServer(store: Store, envActor: Actor | null): McpServer {
-  const resolveActor = (override?: Actor): Actor => override ?? envActor ?? ({} as Actor);
+  const resolveActor = (override?: Actor): Actor => writingActor(override, envActor);
 
   const server = new McpServer({ name: 'helmo', version: '0.1.0' });
 

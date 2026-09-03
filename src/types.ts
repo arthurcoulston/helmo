@@ -21,6 +21,22 @@ export interface Actor {
   session?: string;
 }
 
+/** Who to record as the writer, given what the caller passed and what the
+ *  server environment holds. Identity — name, kind, model, version — is the
+ *  caller's to state. The `session` stamp is not: it says WHICH live process
+ *  is writing, rev injects it into a loop server's HELMO_ACTOR as the seat id
+ *  ("rev:mason"), and an agent inside that loop has no way to know its own.
+ *  So an explicit actor, which the tool guidance asks interactive sessions to
+ *  send on every write, must not silently strip it. One that did left a
+ *  stampless claim, and rev's same-seat guard (H-558) then read the loop's own
+ *  finished work as another live session and stood the seat down for 24 hours
+ *  (H-687). A caller that states its own session keeps it. */
+export function writingActor(override: Actor | undefined, env: Actor | null): Actor {
+  if (!override) return env ?? ({} as Actor);
+  if (override.session || !env?.session) return override;
+  return { ...override, session: env.session };
+}
+
 export interface Evidence {
   kind: 'commit' | 'file' | 'url' | 'draft' | 'other';
   ref: string;

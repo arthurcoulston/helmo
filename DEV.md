@@ -139,6 +139,11 @@ orchestrator meetings and the read-only view. Product intent:
   from `HELMO_ACTOR` env (JSON) for loops; the interactive user-scope env is
   deliberately name+kind only, so interactive writes must pass a truthful
   per-call `actor` override (name, model, harness version) or be rejected (H-3).
+  The two compose rather than replace (`writingActor` in types.ts, used by both
+  the MCP and CLI paths): identity is the caller's to state, but the `session`
+  stamp comes from the env, because it says which PROCESS is writing and no
+  agent can know its own. An override that stripped it wedged a loop for 24h
+  against its own finished claim (H-687).
 
 ## Invariants that bite
 

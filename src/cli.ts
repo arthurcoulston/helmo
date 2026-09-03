@@ -6,7 +6,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from './store.js';
-import { Actor, DepType, HelmoError } from './types.js';
+import { Actor, DepType, HelmoError, writingActor } from './types.js';
 
 const args = process.argv.slice(2);
 const cmd = args.shift();
@@ -23,11 +23,17 @@ function has(name: string): boolean {
 const store = new Store(process.env['HELMO_DB'] ?? join(homedir(), '.helmo', 'helmo.db'));
 
 function actor(): Actor {
-  const raw = flag('actor') ?? process.env['HELMO_ACTOR'];
-  if (!raw) {
+  const override = flag('actor');
+  const env = process.env['HELMO_ACTOR'];
+  if (!override && !env) {
     throw new HelmoError('No actor. Set HELMO_ACTOR env or pass --actor \'{"name":"...","kind":"agent","model":"...","version":"..."}\'.');
   }
-  return JSON.parse(raw) as Actor;
+  // --actor says who is writing; the environment says which process it came
+  // through, and keeps the seat stamp when both are present (H-687).
+  return writingActor(
+    override ? (JSON.parse(override) as Actor) : undefined,
+    env ? (JSON.parse(env) as Actor) : null,
+  );
 }
 
 function out(data: unknown): void {

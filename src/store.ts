@@ -305,8 +305,17 @@ export class Store {
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     const limit = filter.limit ?? 20;
     const offset = filter.cursor ?? 0;
+    // Terminal statuses sort last (H-669): every loop is told to open with
+    // {assignee: <name>}, and that query paged history first — an agent with 20
+    // closed tickets read "all done" and missed its live assignment. Within each
+    // group the old priority/age order stands; the view buckets by status, so
+    // this only reorders across a boundary it already draws.
     const rows = this.db
-      .prepare(`SELECT * FROM tickets ${where} ORDER BY priority ASC, created_at ASC LIMIT ? OFFSET ?`)
+      .prepare(
+        `SELECT * FROM tickets ${where}
+         ORDER BY (status IN ('done','cancelled')) ASC, priority ASC, created_at ASC
+         LIMIT ? OFFSET ?`,
+      )
       .all(...params, limit + (filter.ready ? 50 : 0), offset) as Record<string, unknown>[];
     let tickets = rows.map(rowToTicket);
     if (filter.ready) {

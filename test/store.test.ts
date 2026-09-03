@@ -278,6 +278,40 @@ describe('ready queue and blocking', () => {
   });
 });
 
+describe('live work sorts before history (H-669)', () => {
+  it('an open assigned ticket is on page one behind 25 closed ones', () => {
+    const s = freshStore();
+    for (let i = 0; i < 25; i++) {
+      const t = create(s, { assignee: 'builder-loop', priority: 1 });
+      s.updateTicket(builder, { ticket_id: t.id, note: 'shipped', status: 'done', evidence: [{ kind: 'file', ref: '/tmp/x' }] });
+    }
+    // Filed last and at a lower priority than every closed one — under the old
+    // priority-then-age sort it landed on page two and went unread.
+    const live = create(s, { assignee: 'builder-loop', priority: 3, title: 'The one that still needs doing' });
+
+    const page = s.listTickets({ assignee: 'builder-loop' });
+    expect(page).toHaveLength(20);
+    expect(page[0].id).toBe(live.id);
+    expect(page.slice(1).every((t) => t.status === 'done')).toBe(true);
+  });
+
+  it('within a group the priority-then-age order is unchanged', () => {
+    const s = freshStore();
+    const old2 = create(s, { priority: 2 });
+    const p0 = create(s, { priority: 0 });
+    const new2 = create(s, { priority: 2 });
+    expect(s.listTickets({}).map((t) => t.id)).toEqual([p0.id, old2.id, new2.id]);
+  });
+
+  it('an explicit status filter is unaffected', () => {
+    const s = freshStore();
+    const a = create(s, { priority: 0 });
+    const b = create(s, { priority: 1 });
+    for (const t of [b, a]) s.updateTicket(builder, { ticket_id: t.id, note: 'shipped', status: 'done', evidence: [{ kind: 'file', ref: '/tmp/x' }] });
+    expect(s.listTickets({ status: 'done' }).map((t) => t.id)).toEqual([a.id, b.id]);
+  });
+});
+
 describe('guardrails', () => {
   it('blast radius never ratchets down', () => {
     const s = freshStore();

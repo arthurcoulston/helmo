@@ -153,6 +153,11 @@ orchestrator meetings and the read-only view. Product intent:
   must never steer its own stream).
 - Tool-description changes deploy on the next session spawn (loops get them
   immediately; running sessions keep the old text).
+- `listTickets` sorts terminal statuses last, then priority, then age — agents
+  are told to open every iteration with `{assignee: <name>}`, and a first page
+  of closed tickets reads as an empty queue (H-258, then H-669). The view
+  buckets by status, so it is indifferent to the key; anything new that pages
+  results is not.
 - Every write transaction runs `.immediate()`, and that is load-bearing. These
   transactions read before they write (minting an id, loading a ticket), so a
   deferred begin asks for the write lock partway through — an upgrade SQLite

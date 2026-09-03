@@ -61,6 +61,24 @@ describe('vendored estate tokens', () => {
     expect(selfRefs).toEqual([]);
   });
 
+  it('has no bare hex in a rule below the seam', () => {
+    // Every colour on this page is now a token, so a literal below the alias
+    // block is a value picked against one theme and shown in both. It is the
+    // failure mode with no channel to report itself: tsc is clean, the tests
+    // pass, the page renders, and the number is simply wrong in the mode
+    // nobody is looking at. Two shipped here until H-771 — an amber falling
+    // back from a `--hot` that was never defined, and white on the send
+    // button, which measures 3.64:1 on the dark link blue.
+    //
+    // Comments are stripped first: the notes above cite the hexes they
+    // replaced, and this would otherwise redden on its own explanation.
+    const view = readFileSync(new URL('../src/view.ts', import.meta.url), 'utf8');
+    const css = view.slice(view.indexOf('const CSS = `'));
+    const belowSeam = css.slice(css.indexOf('* { box-sizing'));
+    const literals = [...belowSeam.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/#[0-9a-fA-F]{3,8}\b/g)];
+    expect(literals.map((m) => m[0])).toEqual([]);
+  });
+
   it('refuses a source that cannot be vendored verbatim', () => {
     // The copy lands inside a template literal. A backtick or `${` in the
     // source would escape it, so the script stops instead of escaping — an

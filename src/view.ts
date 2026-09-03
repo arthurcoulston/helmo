@@ -339,8 +339,9 @@ ${cancelled.length ? `<section><h2>Cancelled (${cancelled.length})</h2>${cancell
 // (R-11 H-714): one visual system across Helmo, roadmap, rev, the health page
 // and the estate shell. Helmo keeps its own token names and every rule below
 // is unchanged — the aliases are the whole seam, so a look ratified upstream
-// restyles this page without it being touched. Status colors stay Helmo's own
-// and the block below says why.
+// restyles this page without it being touched. Status colors are the estate's
+// too since H-771 — the ramp it grew is themed, so Helmo's own dark overrides
+// for them are gone.
 //
 // ESTATE_TOKENS goes first: the aliases read from it, and it brings the dark
 // values under prefers-color-scheme, which is what a page with no theme
@@ -358,18 +359,23 @@ ${ESTATE_TOKENS}
   --radius-card: var(--radius); --radius-inner: calc(var(--radius) * 0.8);
   --radius-control: calc(var(--radius) * 0.6);
 
-  /* Not adopted, deliberately. shadcn's neutral base ships no status ramp,
-     and its own --accent is a hover SURFACE, not an interactive colour —
-     mapping onto either would be translation, not adoption. These follow the
-     reference palette (dataviz skill) and always ride with a text label,
-     never colour alone. Whether the estate gets a status ramp and an
-     interactive hue of its own is H-713's palette question, not this file's. */
-  --good-text: #006300; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
-  --link: #2a78d6; --amber-wash: rgba(250,178,25,0.08);
+  /* Status and link were the one part of this page shadcn had nothing for, so
+     they were held back as literals until the estate grew a ramp of its own
+     (H-771). Now they alias like everything else. Two of the values move:
+     --warning was #fab219, which is 1.83:1 on white — it is a chart mark in
+     the reference palette, not text, and Helmo renders it as both a headline
+     figure and badge ink; --serious was #ec835a at 2.64:1. Both take the
+     estate's deepened light step. Colour still always rides with a text
+     label, never alone (H-713). */
+  --good-text: var(--status-good); --warning: var(--status-warn); --serious: var(--status-serious);
+  --critical: var(--status-bad); --link: var(--interactive);
+  --amber-wash: var(--status-warn-wash); --amber-ink: var(--status-warn-ink);
+  /* The send button is a solid fill of --link with text on it, which is a
+     second job for that colour. It used to hardcode white, and white on the
+     dark link blue is 3.64:1 — a real defect on this page, found by the
+     estate's own contrast test rather than by looking at it. */
+  --link-ink: var(--interactive-foreground);
 }
-@media (prefers-color-scheme: dark) { :root {
-  --good-text: #0ca30c; --link: #3987e5; --amber-wash: rgba(250,178,25,0.06);
-} }
 * { box-sizing: border-box; }
 body { margin: 0 auto; padding: 28px 32px 64px; max-width: 1080px; background: var(--page); color: var(--ink);
   font: 14px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
@@ -390,12 +396,11 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; color: 
 .spend { font-variant-numeric: tabular-nums; color: var(--ink-3); font-size: 12px; white-space: nowrap; }
 .badge { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--hairline); white-space: nowrap; }
 .badge.neutral { color: var(--ink-2); }
-.badge.warning { color: #8a5c00; background: var(--amber-wash); border-color: transparent; }
+.badge.warning { color: var(--amber-ink); background: var(--amber-wash); border-color: transparent; }
 .badge.serious { color: var(--serious); }
 .badge.critical { color: var(--critical); font-weight: 600; }
 .badge.accent { color: var(--link); }
 .badge.quiet { color: var(--ink-3); }
-@media (prefers-color-scheme: dark) { .badge.warning { color: var(--warning); } }
 .meta, .rmeta { color: var(--ink-3); font-size: 12px; }
 .chain { color: var(--ink-3); font-size: 11px; font-family: ui-monospace, monospace; }
 
@@ -425,7 +430,7 @@ button.option.selected { border-color: var(--link); box-shadow: inset 2px 0 0 va
 .af-reason { flex: 1 1 260px; padding: 5px 9px; border: 1px solid var(--hairline); border-radius: var(--radius-control);
   background: var(--surface); color: var(--ink); font: inherit; }
 .af-res { padding: 5px 6px; border: 1px solid var(--hairline); border-radius: var(--radius-control); background: var(--surface); color: var(--ink); font: inherit; }
-.af-send { padding: 5px 14px; border: 1px solid var(--link); border-radius: var(--radius-control); background: var(--link); color: #fff;
+.af-send { padding: 5px 14px; border: 1px solid var(--link); border-radius: var(--radius-control); background: var(--link); color: var(--link-ink);
   font: inherit; font-weight: 600; cursor: pointer; }
 .af-send:disabled { opacity: 0.5; cursor: default; }
 .af-status { color: var(--ink-3); font-size: 12.5px; }
@@ -465,7 +470,10 @@ details.more summary { font-size: 12px; color: var(--ink-3); cursor: pointer; }
 .tl-when { color: var(--ink-3); margin-right: 8px; font-variant-numeric: tabular-nums; }
 .tl-who { color: var(--link); font-weight: 600; margin-right: 8px; }
 .tl-what { color: var(--ink-3); font-style: italic; margin-right: 8px; }
-.tl-dash { color: var(--hot, #b45309); font-weight: 600; }
+/* --hot was never defined anywhere in this file, so this always rendered its
+   literal fallback — an amber picked before the page had a dark half. It is
+   the estate's warning step now, like every other amber here. */
+.tl-dash { color: var(--warning); font-weight: 600; }
 .tl-note { color: var(--ink-2); display: block; margin-top: 1px; }
 footer { margin-top: 48px; color: var(--ink-3); font-size: 11.5px; border-top: 1px solid var(--hairline); padding-top: 12px; }
 `;

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -901,6 +901,50 @@ describe('THE INVARIANT: tickets are a materialized view of events', () => {
   });
 });
 
+/** How long each holder below keeps the write lock after announcing it. The
+ *  contending write blocks for the whole span, so this is dead time in the
+ *  suite — but it is also the slack the test has to reach its write before the
+ *  lock is released, and it must stay well under the store's 5s busy_timeout
+ *  so the write waits rather than giving up. */
+const HOLD_MS = 1200;
+
+/** Resolves, with the moment it happened, when the holder subprocess announces
+ *  it has the write lock.
+ *
+ *  Sleeping a fixed 150ms instead was the H-681 flake. Node's boot plus the
+ *  native sqlite load is ~60ms on a quiet machine but unbounded under CI load,
+ *  and a holder that lost that race left the contending write with no lock to
+ *  contend for: it succeeded in 1ms and the assertion that it had blocked
+ *  failed. The red said "the lock did not block" when what happened was that
+ *  the test never tested the lock. Waiting for the holder's own word is not a
+ *  longer sleep, it is a different kind of thing — it cannot go stale under
+ *  load, because the signal is the event. */
+function heldLock(holder: ChildProcess): Promise<number> {
+  return new Promise((resolve, reject) => {
+    let out = '';
+    let err = '';
+    const giveUp = setTimeout(
+      () => reject(new Error(`holder never took the lock within 10s; its stderr: ${err || '(silent)'}`)),
+      10_000,
+    );
+    holder.stdout!.on('data', (d) => {
+      out += d;
+      if (out.includes('HELD')) {
+        clearTimeout(giveUp);
+        resolve(Date.now());
+      }
+    });
+    holder.stderr!.on('data', (d) => {
+      err += d;
+    });
+    // Fires on our own kill() too, but by then the promise has settled.
+    holder.on('exit', (code) => {
+      clearTimeout(giveUp);
+      reject(new Error(`holder exited (${code}) before taking the lock; its stderr: ${err || '(silent)'}`));
+    });
+  });
+}
+
 describe('write contention', () => {
   it('skip-if-open holds against a twin being committed by another process (H-169)', async () => {
     // The H-169 shape: another process has already spawned this slot's instance
@@ -917,12 +961,17 @@ describe('write contention', () => {
         `db.prepare("INSERT INTO tickets (id,title,workstream,type,created_at,updated_at) VALUES ('H-99','Sweep — twin','helmo-dev','ops','2026-01-01','2026-01-01')").run();` +
         `db.prepare("INSERT INTO deps (from_id,to_id,type) VALUES ('H-99',?,'parent')").run(process.argv[2]);` +
         `db.prepare("INSERT INTO events (ts, ticket_id, event_type, actor, payload) VALUES ('2026-01-01','H-99','created','{\\"name\\":\\"helmo-scheduler\\",\\"kind\\":\\"orchestrator\\"}',?)").run(JSON.stringify({spawned_from:process.argv[2],due:process.argv[3]}));` +
-        `setTimeout(()=>{db.prepare('COMMIT').run();db.close();},400);`,
+        `console.log('HELD');` + // inserted, not committed — the state this test needs
+        `setTimeout(()=>{db.prepare('COMMIT').run();db.close();},${HOLD_MS});`,
       dbPath, t.id, new Date(new Date(t.created_at).getTime() + 24 * 3600_000).toISOString(),
     ], { cwd: new URL('..', import.meta.url).pathname });
-    await new Promise((r) => setTimeout(r, 150)); // holder has inserted, not committed
+    const heldAt = await heldLock(holder);
 
+    const startedAt = Date.now();
     const spawned = s.materializeDue(new Date(Date.now() + 25 * 60 * 60_000));
+    // If we arrived after the holder let go, the twin was already committed and
+    // this proved nothing about waiting. Say so, rather than blaming the store.
+    expect(startedAt - heldAt).toBeLessThan(HOLD_MS);
     expect(spawned).toEqual([]); // waited, then saw the twin
     holder.kill();
     s.close();
@@ -937,20 +986,23 @@ describe('write contention', () => {
     const dbPath = join(dir, 'helmo.db');
     const s = new Store(dbPath); // migrate first, so we time a write and not the open
 
-    const holdMs = 400;
     const holder = spawn(process.execPath, [
       '-e',
       `const D=require('better-sqlite3');const db=new D(process.argv[1]);` +
         `db.pragma('journal_mode = WAL');db.prepare('BEGIN IMMEDIATE').run();` +
-        `setTimeout(()=>{db.prepare('COMMIT').run();db.close();},${holdMs});`,
+        `console.log('HELD');` +
+        `setTimeout(()=>{db.prepare('COMMIT').run();db.close();},${HOLD_MS});`,
       dbPath,
     ], { cwd: new URL('..', import.meta.url).pathname });
-    await new Promise((r) => setTimeout(r, 150)); // let it take the lock
+    const heldAt = await heldLock(holder);
 
     const started = Date.now();
     const t = create(s);
     const waited = Date.now() - started;
 
+    // Same guard as the twin test: a write that began after the lock was
+    // released never contended, and its speed is not evidence about the store.
+    expect(started - heldAt).toBeLessThan(HOLD_MS);
     expect(t.id).toMatch(/^H-\d+$/);
     expect(waited).toBeGreaterThan(100); // it really did block on the lock
     holder.kill();

@@ -132,6 +132,8 @@ orchestrator meetings and the read-only view. Product intent:
 ## Commands
 
 - `npm run build` (tsc → dist/), `npm test` (store + e2e against a temp db).
+- `npm run vendor:tokens` refreshes the vendored estate design tokens; add
+  `-- --check` to fail on drift instead. See below.
 - View: `node dist/view.js` (port via `HELMO_VIEW_PORT`, default 4400; binds
   127.0.0.1 — `HELMO_VIEW_HOST` to change). Restart it after rebuilding — the
   running process holds old code.
@@ -193,6 +195,46 @@ and together a public API commitment — resist widening past them:
   the human made live in the room writes as kind "orchestrator" with the
   provenance naming the human and the session — that is what orchestrator
   means here, not a workaround (H-413; first used for roadmap R-8).
+
+## The estate design tokens (R-11 H-714)
+
+`src/estate-tokens.generated.ts` is a **vendored copy** of the estate shell's
+`tokens/estate-tokens.css` — the source of the visual system every estate
+surface shares. `scripts/vendor-estate-tokens.mjs` refreshes it (also
+`--check`); `test/estate-tokens.test.ts` fails on drift.
+
+Vendoring, not importing, is the point: Helmo is published standalone, so a
+clone with no estate checkout beside it must build and run unchanged. That is
+also why the drift test uses `it.skipIf` rather than an early return — with no
+source to compare against it reports **skipped**, which is visible in the run
+summary, where a `console.log` from a passing test is not. The runs that judge
+the copy are Arthur's machine and estate CI.
+
+The copy is verbatim, and the script refuses a source containing a backtick or
+`${` rather than escaping it. If a token file ever needs translating to be
+usable here, that is a change to make in the estate's generator, once — not
+four times in four products.
+
+**What was adopted, and what was not.** `view.ts` keeps every one of its own
+token names and not one of its ~90 rules changed; the aliases at the top of
+`CSS` are the whole seam, so a look ratified upstream restyles this page
+without it being touched. Adopted: surfaces (`--page`, `--surface`), the ink
+ladder, `--hairline`, and the radius ramp (`--radius-card` / `-inner` /
+`-control` are the estate's `--radius` × 1 / 0.8 / 0.6). Helmo's middle ink is
+mixed from the estate's two, since shadcn has no third step.
+
+Not adopted, deliberately: the status colours and the interactive `--link`
+blue. shadcn's neutral base ships no status ramp, and its own `--accent` is a
+hover *surface*, not an interactive colour — mapping onto either would be
+translation dressed as adoption. Those five stay Helmo's, follow the dataviz
+reference palette, and always ride with a text label. Whether the estate grows
+a status ramp and an interactive hue of its own is a live question on H-713.
+
+Two collisions had to be resolved, because the vendored file lands on `:root`
+ahead of Helmo's own block: `--muted` and `--accent` exist in both with
+*different meanings* (surface vs text; hover surface vs link). Helmo's are now
+`--ink-3` and `--link`. Helmo's `--border` was folded into `--hairline` — the
+estate has one border token and the two were the same value under it.
 
 ## Neighbors
 

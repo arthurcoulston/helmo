@@ -10,6 +10,7 @@ import { randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { ESTATE_TOKENS } from './estate-tokens.generated.js';
 import { Store } from './store.js';
 import { HygieneFinding } from './store.js';
 import { Actor, HelmoError, Ticket, HelmoEvent } from './types.js';
@@ -334,87 +335,107 @@ ${cancelled.length ? `<section><h2>Cancelled (${cancelled.length})</h2>${cancell
 </body></html>`;
 }
 
-// Chrome and ink tokens follow the reference palette (dataviz skill): fixed
-// status colors always ride with a text label, never color alone.
+// Chrome, ink and shape come from the estate's design tokens, vendored
+// (R-11 H-714): one visual system across Helmo, roadmap, rev, the health page
+// and the estate shell. Helmo keeps its own token names and every rule below
+// is unchanged — the aliases are the whole seam, so a look ratified upstream
+// restyles this page without it being touched. Status colors stay Helmo's own
+// and the block below says why.
+//
+// ESTATE_TOKENS goes first: the aliases read from it, and it brings the dark
+// values under prefers-color-scheme, which is what a page with no theme
+// switch needs.
 const CSS = `
+${ESTATE_TOKENS}
 :root {
   color-scheme: light dark;
-  --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
-  --hairline: #e1e0d9; --border: rgba(11,11,11,0.10);
-  --good: #0ca30c; --good-text: #006300; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
-  --accent: #2a78d6; --amber-wash: rgba(250,178,25,0.08);
+  --page: var(--background); --surface: var(--card); --ink: var(--foreground);
+  /* Helmo runs a three-step ink ladder where shadcn has two; the middle step
+     is mixed rather than picked, so a look change carries it too. */
+  --ink-2: color-mix(in oklab, var(--foreground) 72%, var(--background));
+  --ink-3: var(--muted-foreground);
+  --hairline: var(--border);
+  --radius-card: var(--radius); --radius-inner: calc(var(--radius) * 0.8);
+  --radius-control: calc(var(--radius) * 0.6);
+
+  /* Not adopted, deliberately. shadcn's neutral base ships no status ramp,
+     and its own --accent is a hover SURFACE, not an interactive colour —
+     mapping onto either would be translation, not adoption. These follow the
+     reference palette (dataviz skill) and always ride with a text label,
+     never colour alone. Whether the estate gets a status ramp and an
+     interactive hue of its own is H-713's palette question, not this file's. */
+  --good-text: #006300; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
+  --link: #2a78d6; --amber-wash: rgba(250,178,25,0.08);
 }
 @media (prefers-color-scheme: dark) { :root {
-  --page: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
-  --hairline: #2c2c2a; --border: rgba(255,255,255,0.10);
-  --good-text: #0ca30c; --accent: #3987e5; --amber-wash: rgba(250,178,25,0.06);
+  --good-text: #0ca30c; --link: #3987e5; --amber-wash: rgba(250,178,25,0.06);
 } }
 * { box-sizing: border-box; }
 body { margin: 0 auto; padding: 28px 32px 64px; max-width: 1080px; background: var(--page); color: var(--ink);
   font: 14px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
 .top { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; flex-wrap: wrap; margin-bottom: 8px; }
 .brand h1 { font-size: 26px; margin: 0; letter-spacing: -0.02em; display: inline; }
-.tagline { color: var(--muted); margin-left: 10px; font-size: 13px; }
+.tagline { color: var(--ink-3); margin-left: 10px; font-size: 13px; }
 .stats { display: flex; gap: 22px; }
 .stat-n { font-size: 22px; font-weight: 650; letter-spacing: -0.02em; }
-.stat-l { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.stat-l { font-size: 11px; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.06em; }
 .stat.hot .stat-n { color: var(--warning); }
 .stat.calm .stat-n { color: var(--good-text); }
-h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--muted); font-weight: 600;
+h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--ink-3); font-weight: 600;
   margin: 34px 0 10px; padding-top: 14px; border-top: 1px solid var(--hairline); }
 .allclear { color: var(--good-text); font-size: 15px; }
 .groom .gitem { margin: 3px 0; font-size: 12.5px; color: var(--ink-2); }
-.groom .gdetail { color: var(--muted); }
-.tid { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted); white-space: nowrap; }
-.spend { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12px; white-space: nowrap; }
-.badge { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border); white-space: nowrap; }
+.groom .gdetail { color: var(--ink-3); }
+.tid { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--ink-3); white-space: nowrap; }
+.spend { font-variant-numeric: tabular-nums; color: var(--ink-3); font-size: 12px; white-space: nowrap; }
+.badge { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--hairline); white-space: nowrap; }
 .badge.neutral { color: var(--ink-2); }
 .badge.warning { color: #8a5c00; background: var(--amber-wash); border-color: transparent; }
 .badge.serious { color: var(--serious); }
 .badge.critical { color: var(--critical); font-weight: 600; }
-.badge.accent { color: var(--accent); }
-.badge.quiet { color: var(--muted); }
+.badge.accent { color: var(--link); }
+.badge.quiet { color: var(--ink-3); }
 @media (prefers-color-scheme: dark) { .badge.warning { color: var(--warning); } }
-.meta, .rmeta { color: var(--muted); font-size: 12px; }
-.chain { color: var(--muted); font-size: 11px; font-family: ui-monospace, monospace; }
+.meta, .rmeta { color: var(--ink-3); font-size: 12px; }
+.chain { color: var(--ink-3); font-size: 11px; font-family: ui-monospace, monospace; }
 
 /* ---- question cards (the hero) ---- */
-.qcard { background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--warning);
-  border-radius: 10px; padding: 18px 22px; margin: 12px 0; }
+.qcard { background: var(--surface); border: 1px solid var(--hairline); border-left: 3px solid var(--warning);
+  border-radius: var(--radius-card); padding: 18px 22px; margin: 12px 0; }
 .qcard header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .qtitle { font-weight: 600; }
 .situation { color: var(--ink-2); margin: 10px 0 6px; }
 .question { font-size: 19px; font-weight: 650; letter-spacing: -0.01em; margin: 8px 0 12px; }
 .options { display: grid; gap: 6px; margin: 0 0 12px; }
 .option { display: grid; grid-template-columns: 150px 1fr; gap: 12px; padding: 7px 10px;
-  border: 1px solid var(--hairline); border-radius: 8px; }
+  border: 1px solid var(--hairline); border-radius: var(--radius-inner); }
 .opt-label { font-weight: 600; font-size: 13px; }
 .opt-consequence { color: var(--ink-2); font-size: 13px; }
 .rec { margin: 0 0 6px; }
 .rec-mark { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--good-text); font-weight: 650; margin-right: 8px; }
-.silence { color: var(--muted); font-size: 12.5px; margin: 0; }
+.silence { color: var(--ink-3); font-size: 12.5px; margin: 0; }
 
 /* ---- the answer surface (H-90): options are buttons only when an operator is configured ---- */
 button.option { cursor: pointer; text-align: left; background: none; color: inherit; font: inherit; width: 100%; }
-button.option:hover { border-color: var(--accent); }
-button.option.selected { border-color: var(--accent); box-shadow: inset 2px 0 0 var(--accent); }
+button.option:hover { border-color: var(--link); }
+button.option.selected { border-color: var(--link); box-shadow: inset 2px 0 0 var(--link); }
 .answer-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 0 0 12px; padding: 10px 12px;
-  border: 1px solid var(--hairline); border-radius: 8px; background: var(--page); font-size: 13px; }
+  border: 1px solid var(--hairline); border-radius: var(--radius-inner); background: var(--page); font-size: 13px; }
 .af-picked { white-space: nowrap; }
-.af-reason { flex: 1 1 260px; padding: 5px 9px; border: 1px solid var(--hairline); border-radius: 6px;
+.af-reason { flex: 1 1 260px; padding: 5px 9px; border: 1px solid var(--hairline); border-radius: var(--radius-control);
   background: var(--surface); color: var(--ink); font: inherit; }
-.af-res { padding: 5px 6px; border: 1px solid var(--hairline); border-radius: 6px; background: var(--surface); color: var(--ink); font: inherit; }
-.af-send { padding: 5px 14px; border: 1px solid var(--accent); border-radius: 6px; background: var(--accent); color: #fff;
+.af-res { padding: 5px 6px; border: 1px solid var(--hairline); border-radius: var(--radius-control); background: var(--surface); color: var(--ink); font: inherit; }
+.af-send { padding: 5px 14px; border: 1px solid var(--link); border-radius: var(--radius-control); background: var(--link); color: #fff;
   font: inherit; font-weight: 600; cursor: pointer; }
 .af-send:disabled { opacity: 0.5; cursor: default; }
-.af-status { color: var(--muted); font-size: 12.5px; }
+.af-status { color: var(--ink-3); font-size: 12.5px; }
 .af-status.err { color: var(--critical); }
 
 /* ---- in-motion cards ---- */
-.mcard { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 13px 18px; margin: 10px 0; }
+.mcard { background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius-card); padding: 13px 18px; margin: 10px 0; }
 .mcard header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .mtitle { font-weight: 600; }
-.holder { color: var(--accent); font-weight: 600; }
+.holder { color: var(--link); font-weight: 600; }
 .note { color: var(--ink-2); margin: 8px 0 0; font-size: 13.5px;
   display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 
@@ -427,26 +448,26 @@ button.option.selected { border-color: var(--accent); box-shadow: inset 2px 0 0 
 .rmeta { margin-left: auto; text-align: right; }
 .evrow { flex-basis: 100%; display: flex; gap: 12px; flex-wrap: wrap; padding-left: 44px; }
 .ev { font-size: 12px; color: var(--ink-2); }
-a.ev { color: var(--accent); text-decoration: none; }
+a.ev { color: var(--link); text-decoration: none; }
 a.ev:hover { text-decoration: underline; }
 
 /* ---- shared detail ---- */
 details.more { margin-top: 10px; }
-details.more summary { font-size: 12px; color: var(--muted); cursor: pointer; }
+details.more summary { font-size: 12px; color: var(--ink-3); cursor: pointer; }
 .body { white-space: pre-wrap; color: var(--ink-2); font-size: 13px; background: var(--page);
-  border: 1px solid var(--hairline); border-radius: 8px; padding: 10px 14px; margin: 8px 0; }
+  border: 1px solid var(--hairline); border-radius: var(--radius-inner); padding: 10px 14px; margin: 8px 0; }
 .trow .body { background: var(--surface); }
 .uncertain { color: var(--serious); font-size: 13px; margin: 6px 0; }
 .dep { font-size: 12.5px; color: var(--ink-2); margin: 2px 0; }
-.dep-label { color: var(--muted); text-transform: uppercase; font-size: 10.5px; letter-spacing: 0.05em; margin-right: 6px; }
+.dep-label { color: var(--ink-3); text-transform: uppercase; font-size: 10.5px; letter-spacing: 0.05em; margin-right: 6px; }
 .tl-wrap { margin: 10px 0 4px; border-left: 2px solid var(--hairline); padding-left: 14px; }
 .tl { margin: 7px 0; font-size: 12.5px; }
-.tl-when { color: var(--muted); margin-right: 8px; font-variant-numeric: tabular-nums; }
-.tl-who { color: var(--accent); font-weight: 600; margin-right: 8px; }
-.tl-what { color: var(--muted); font-style: italic; margin-right: 8px; }
+.tl-when { color: var(--ink-3); margin-right: 8px; font-variant-numeric: tabular-nums; }
+.tl-who { color: var(--link); font-weight: 600; margin-right: 8px; }
+.tl-what { color: var(--ink-3); font-style: italic; margin-right: 8px; }
 .tl-dash { color: var(--hot, #b45309); font-weight: 600; }
 .tl-note { color: var(--ink-2); display: block; margin-top: 1px; }
-footer { margin-top: 48px; color: var(--muted); font-size: 11.5px; border-top: 1px solid var(--hairline); padding-top: 12px; }
+footer { margin-top: 48px; color: var(--ink-3); font-size: 11.5px; border-top: 1px solid var(--hairline); padding-top: 12px; }
 `;
 
 // Refresh by replacement, preserving scroll and open disclosures — and paused

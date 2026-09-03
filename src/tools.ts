@@ -36,6 +36,7 @@ function compact(t: Ticket) {
     type: t.type, assignee: t.assignee, blast_radius: t.blast_radius, updated_at: t.updated_at,
     ...(t.project ? { project: t.project } : {}),
     ...(t.schedule ? { schedule: t.schedule } : {}),
+    ...(t.not_before ? { not_before: t.not_before } : {}),
   };
 }
 
@@ -62,6 +63,9 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
         priority: z.number().int().min(0).max(3).optional().describe('0 critical, 1 high, 2 normal (default), 3 low'),
         status: z.enum(['open', 'in_progress']).optional().describe("'open' (default) or 'in_progress' if you are starting it now. Starting your own ticket in the same call is legitimate; once it sits as open backlog, the triage rule holds it from you until a human or another agent touches it"),
         assignee: z.string().optional().describe('Reserve for a named agent without starting it; leave unset for the pool'),
+        not_before: z.string().optional().describe(
+          "Withhold this ticket from ready queues until a date — 'YYYY-MM-DD' (opens 00:00 UTC that day) or a full ISO instant. Use it when the work genuinely CANNOT start yet: it needs a week of data, a deadline has to pass, a dependency lands on a known day. Without it the only way to say so is shouting in the body, and every agent reading the queue pays a full ticket read to learn it must not act. This is not priority — priority says how much the work matters, not whether it can be started.",
+        ),
         deps: z.array(z.object({ to: z.string(), type: z.enum(DEP_TYPES) })).optional(),
         schedule: z.string().optional().describe(
           "Makes this a RECURRING TEMPLATE: 'every <N><m|h|d>' or 5-field cron (UTC). The template itself is standing work — never ready, never claimed. Due instances spawn automatically on queue reads, linked to the template via a parent dep, and a new instance is skipped while a previous one is still open. Retire the template by cancelling it.",
@@ -121,7 +125,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
         `Query tickets. Key filters: ready: true (open tickets with no open blockers that are unassigned or reserved for you — use this to find work you can start), status, workstream, assignee, type, priority_max. Returns compact rows sorted live work first (done and cancelled last), then priority, then age; paginated (limit default 20, cursor = offset).\n\n` +
         `Start every loop iteration with {assignee: <your name>} — this returns both work you're mid-way through (in_progress) and work handed to you that you haven't started (open + reserved). Then {ready: true} for new work. Answered questions come back as unassigned open tickets — the ready queue surfaces them; you don't need to have been the agent who asked.\n\n` +
         `Triage duty: if you pass over a ready ticket BECAUSE it needs something only the human can supply (a missing input, an unrecorded location, a decision), do not route around it silently — file its question with helmo_return_to_human first (no claim needed), then take other work. Helmo cannot see that kind of blockage; only you can. A known-blocked ticket left quietly in the ready queue stalls until someone else rediscovers what you already knew.\n\n` +
-        `The response's 'workstreams' carry the human's steering where set: 'goal' states what done means for the whole stream — check candidate work against it, and treat a met goal as a stop signal, not an invitation to polish; 'budget_usd'/'spent_usd'/'remaining_usd' disclose the stream's budget, which is a plan — front-load the highest-value work so stopping at any point is safe. Ready-queue triage rule: tickets you filed yourself are withheld from your own ready queue until a human or another agent touches them; they appear under 'awaiting_triage' (and stay available to everyone else).`,
+        `The response's 'workstreams' carry the human's steering where set: 'goal' states what done means for the whole stream — check candidate work against it, and treat a met goal as a stop signal, not an invitation to polish; 'budget_usd'/'spent_usd'/'remaining_usd' disclose the stream's budget, which is a plan — front-load the highest-value work so stopping at any point is safe. Ready-queue triage rule: tickets you filed yourself are withheld from your own ready queue until a human or another agent touches them; they appear under 'awaiting_triage' (and stay available to everyone else). Date gate: a ticket carrying 'not_before' is withheld from every ready queue until that instant and listed under 'gated' with its release date — so passing over it costs you one line, not a ticket read.`,
       inputSchema: {
         ready: z.boolean().optional(),
         status: z.enum(STATUSES).optional(),
@@ -145,6 +149,9 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
           ...(w.budget_usd !== null ? { budget_usd: w.budget_usd, spent_usd: w.spent_usd, remaining_usd: w.remaining_usd } : {}),
         }));
         const awaitingTriage = filter.ready && caller ? store.selfFiledPending(caller) : [];
+        // Withheld, not hidden (H-732): the gate says come back on this date,
+        // which is the whole saving — one line instead of a ticket read.
+        const gated = filter.ready && caller ? store.gatedPending(caller) : [];
         // The standing notice rides along like workstream steering (H-172):
         // the human's one-line current priority, disclosure not tasking.
         const notice = store.getNotice();
@@ -154,6 +161,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
           workstreams,
           ...(notice ? { notice } : {}),
           ...(awaitingTriage.length ? { awaiting_triage: awaitingTriage } : {}),
+          ...(gated.length ? { gated } : {}),
         });
       } catch (e) {
         return fail(e);
@@ -190,6 +198,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
         labels: z.array(z.string()).optional(),
         workstream: z.string().optional(),
         project: z.string().optional().describe("Set or change the project tag; '' clears it"),
+        not_before: z.string().optional().describe("Set or move the date gate that withholds this ticket from ready queues — 'YYYY-MM-DD' or a full ISO instant; '' opens it now"),
         actor: actorSchema,
       },
     },

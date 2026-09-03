@@ -1187,3 +1187,99 @@ describe('id collision recovery (H-448)', () => {
     expect(s.hygiene().some((f) => f.check === 'orphan_ticket')).toBe(false);
   });
 });
+
+describe('date gate (H-732)', () => {
+  const future = new Date(Date.now() + 7 * 86_400_000).toISOString();
+  const past = new Date(Date.now() - 86_400_000).toISOString();
+
+  it('withholds a ticket from the ready queue until its date, then offers it', () => {
+    const s = freshStore();
+    const t = create(s, { not_before: future });
+    triage(s, t.id);
+    expect(s.listTickets({ ready: true }).map((x) => x.id)).not.toContain(t.id);
+    // Moving the gate into the past is the only difference — nothing else changes.
+    s.updateTicket(orch, { ticket_id: t.id, note: 'the week of data is in', not_before: past });
+    expect(s.listTickets({ ready: true }).map((x) => x.id)).toContain(t.id);
+  });
+
+  it('a gated ticket stays visible everywhere else — withheld, not hidden', () => {
+    const s = freshStore();
+    const t = create(s, { not_before: future, assignee: 'builder-loop' });
+    expect(s.listTickets({}).map((x) => x.id)).toContain(t.id);
+    expect(s.listTickets({ assignee: 'builder-loop' }).map((x) => x.id)).toContain(t.id);
+    expect(s.getTicket(t.id).not_before).toBe(future);
+  });
+
+  it('reports the gate with its release date instead of costing a ticket read', () => {
+    const s = freshStore();
+    const t = create(s, { not_before: future });
+    triage(s, t.id);
+    expect(s.gatedPending('reviewer-loop')).toEqual([{ id: t.id, not_before: future }]);
+    expect(s.readyCount(undefined, 'reviewer-loop')).toBe(0);
+  });
+
+  it('names one reason per withheld ticket: a gated self-filing is not also awaiting triage', () => {
+    const s = freshStore();
+    const t = create(s, { not_before: future }); // filed by builder, untouched by anyone else
+    expect(s.selfFiledPending('builder-loop')).not.toContain(t.id);
+    expect(s.gatedPending('builder-loop').map((g) => g.id)).toContain(t.id);
+  });
+
+  it('does not block the claim — a human or an agent with cause can still work it early', () => {
+    const s = freshStore();
+    const t = create(s, { not_before: future });
+    triage(s, t.id);
+    expect(s.updateTicket(reviewer, { ticket_id: t.id, note: 'starting early, deliberately' , status: 'in_progress' }).ticket.status).toBe('in_progress');
+  });
+
+  it('reads a bare date as 00:00 UTC that day, and rejects what is not a date', () => {
+    const s = freshStore();
+    expect(create(s, { not_before: '2099-09-10' }).not_before).toBe('2099-09-10T00:00:00.000Z');
+    expect(() => create(s, { not_before: 'next tuesday' })).toThrow(/not a date/);
+    // Unpadded, the host parser would read this as LOCAL midnight, not UTC.
+    expect(() => create(s, { not_before: '2099-9-10' })).toThrow(/not a date/);
+    const t = create(s, { not_before: future });
+    expect(() => s.updateTicket(orch, { ticket_id: t.id, note: 'oops', not_before: 'every 14d' })).toThrow(/not a date/);
+  });
+
+  it("'' opens the gate now, and the change is on the record", () => {
+    const s = freshStore();
+    const t = create(s, { not_before: future });
+    const { ticket } = s.updateTicket(orch, { ticket_id: t.id, note: 'gate lifted — the data landed early', not_before: '' });
+    expect(ticket.not_before).toBeNull();
+    expect(s.listTickets({ ready: true }).map((x) => x.id)).toContain(t.id);
+    const diffs = s.getEvents(t.id).at(-1)!.payload['diffs'] as Record<string, { from: unknown; to: unknown }>;
+    expect(diffs['not_before']).toEqual({ from: future, to: null });
+  });
+
+  it('survives replay from the event log', () => {
+    const s = freshStore();
+    const t = create(s, { not_before: future });
+    s.updateTicket(orch, { ticket_id: t.id, note: 'slipping a day', not_before: '2099-01-02' });
+    s.rebuild();
+    expect(s.getTicket(t.id).not_before).toBe('2099-01-02T00:00:00.000Z');
+  });
+});
+
+describe('date gate migration (H-732)', () => {
+  it('a store written before the column gains it on open, ungated', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'helmo-migrate-'));
+    const path = join(dir, 'helmo.db');
+    try {
+      const before = new Store(path);
+      const t = create(before);
+      // Drop the column back off to reproduce a store written by older code.
+      (before as unknown as { db: { exec(sql: string): void } }).db.exec('ALTER TABLE tickets DROP COLUMN not_before');
+      before.close();
+
+      const after = new Store(path);
+      expect(after.getTicket(t.id).not_before).toBeNull();
+      expect(after.listTickets({ ready: true }).map((x) => x.id)).toContain(t.id);
+      after.updateTicket(orch, { ticket_id: t.id, note: 'gating it now', not_before: '2099-01-01' });
+      expect(after.listTickets({ ready: true }).map((x) => x.id)).not.toContain(t.id);
+      after.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

@@ -171,6 +171,7 @@ try {
         assignee: flag('assignee'),
         deps: flag('dep') ? [{ to: flag('dep')!, type: (flag('dep-type') as DepType) ?? 'relates' }] : undefined,
         schedule: flag('schedule'),
+        not_before: flag('not-before'),
       });
       out({ id: t.id });
       break;
@@ -187,6 +188,7 @@ try {
         tokens: flag('tokens') !== undefined ? Number(flag('tokens')) : undefined,
         cost_usd: flag('cost-usd') !== undefined ? Number(flag('cost-usd')) : undefined,
         handoff_to: flag('handoff-to'),
+        not_before: flag('not-before'),
         takeover: has('takeover'),
       });
       out({ id: ticket.id, status: ticket.status, warnings });
@@ -219,8 +221,8 @@ try {
   workstream     --name W                                      (goal, budget, spend-to-date; read-only)
   rename-workstream --from X --to Y --note N   (relabel every ticket incl. closed; one evented rename)
   workstream-set --name W [--goal G] [--budget-usd X]          (operator steering; actor kind human/orchestrator only)
-  create         --title T --body B --workstream W --type TY [--priority P] [--status S] [--assignee A] [--dep H-n --dep-type TY] [--schedule 'every 30m' | '0 0 * * *']
-  update         --ticket H-n --note N [--status S] [--evidence-kind K --evidence-ref R] [--confidence C] [--blast-radius B] [--tokens N] [--cost-usd X] [--handoff-to A] [--takeover]
+  create         --title T --body B --workstream W --type TY [--priority P] [--status S] [--assignee A] [--dep H-n --dep-type TY] [--schedule 'every 30m' | '0 0 * * *'] [--not-before 2026-09-10]
+  update         --ticket H-n --note N [--status S] [--evidence-kind K --evidence-ref R] [--confidence C] [--blast-radius B] [--tokens N] [--cost-usd X] [--handoff-to A] [--not-before 2026-09-10 | ''] [--takeover]
   return         --ticket H-n --situation S --question Q --options '[{"label":..,"consequence":..}]' --recommendation R [--if-unanswered U]
 Writes read identity from HELMO_ACTOR env or --actor JSON. DB path from HELMO_DB (default ~/.helmo/helmo.db).`);
       process.exit(cmd ? 1 : 0);

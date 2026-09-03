@@ -21,7 +21,17 @@ orchestrator meetings and the read-only view. Product intent:
   Mangled-write gate (H-71): free-text fields carrying tool-call parameter
   markup are rejected at the door — that markup is the signature of a
   mis-serialized call whose later fields would be silently swallowed;
-  deliberate quoting must break the tag. Ready routing rule (H-661): in a
+  deliberate quoting must break the tag. Date gate (H-732): a ticket carrying `not_before` is
+  withheld from every ready queue until that instant and reported alongside
+  `awaiting_triage` under `gated`, with its release date — withheld, not
+  hidden. It exists because the only way to say "cannot start yet" was
+  shouting it in the body, and every queue reader paid a full ticket read to
+  learn it must not act (H-718 was claimed and released seven times in one
+  day). The gate does NOT block the claim: a human, or an agent with cause,
+  can still work it early — the queue's job is to stop offering, not to
+  forbid. It also does not touch `scopeChangedSince`, deliberately: a gate
+  opens on a clock tick, not an event, so a wake suppressed on gated tickets
+  would never fire when the date arrives. Ready routing rule (H-661): in a
   caller's ready queue a workstream filter scopes only the unassigned pool —
   a ticket assigned to the caller is ready wherever it lives. ANDing the
   filter over the assignee clause left cross-workstream assignments invisible

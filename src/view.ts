@@ -140,6 +140,11 @@ function chain(t: Ticket): string {
     : '';
 }
 
+/** True while the ticket's own date gate is still shut (H-732). */
+function gated(t: Ticket): boolean {
+  return !!t.not_before && t.not_before > new Date().toISOString();
+}
+
 function blockedBy(t: Ticket): string[] {
   return store
     .getDeps(t.id)
@@ -263,6 +268,7 @@ function row(t: Ticket, opts: { showDone?: boolean } = {}): string {
       ${prioBadge(t)}
       ${waits.length ? `<span class="badge serious">⛔ waits on ${esc(waits.join(', '))}</span>` : ''}
       ${t.schedule ? `<span class="badge">↻ ${esc(t.schedule)}</span>` : ''}
+      ${gated(t) ? `<span class="badge">⏰ not before ${esc(t.not_before!.slice(0, 10))}</span>` : ''}
       ${noEv ? '<span class="badge critical">✱ no evidence</span>' : ''}
       ${confBadge(t)} ${blastBadge(t)}
       <span class="rmeta">${esc(t.workstream)}${t.project ? ` · ${esc(t.project)}` : ''} · ${esc(t.type)}${t.assignee ? ` · ${esc(t.assignee)}` : ''} ${money(t)} · ${esc(
@@ -335,8 +341,11 @@ function page(): string {
   const motion = by('in_progress');
   const standing = by('open').filter((t) => t.schedule); // recurring templates (H-22)
   const open = by('open').filter((t) => !t.schedule);
-  const ready = open.filter((t) => !store.isBlocked(t.id));
-  const blocked = open.filter((t) => store.isBlocked(t.id));
+  // A date gate blocks as surely as a dep does, so it belongs on the blocked
+  // side: the 'ready' stat is read as "what an agent could pick up now", and a
+  // gated ticket is exactly what the queue will not offer (H-732).
+  const ready = open.filter((t) => !store.isBlocked(t.id) && !gated(t));
+  const blocked = open.filter((t) => store.isBlocked(t.id) || gated(t));
   const done = by('done');
   const cancelled = by('cancelled');
   const spend = all.reduce((s, t) => s + (t.cost_usd_total || 0), 0);

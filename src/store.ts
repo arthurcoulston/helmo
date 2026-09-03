@@ -28,6 +28,7 @@ export interface CreateInput {
   assignee?: string;
   deps?: { to: string; type: DepType }[];
   schedule?: string; // makes this a recurring template
+  not_before?: string; // withhold from ready queues until this date/instant
   spawned_from?: string; // internal: set by materializeDue on instances
   due?: string; // internal: the slot this instance was spawned for
 }
@@ -50,6 +51,7 @@ export interface UpdateInput {
   labels?: string[];
   workstream?: string;
   project?: string | null; // '' clears the tag
+  not_before?: string | null; // '' clears the gate
 }
 
 export interface ListFilter {
@@ -111,6 +113,7 @@ CREATE TABLE IF NOT EXISTS tickets (
   tokens_total   INTEGER NOT NULL DEFAULT 0,
   cost_usd_total REAL NOT NULL DEFAULT 0,
   schedule       TEXT,
+  not_before     TEXT,
   created_at     TEXT NOT NULL,
   updated_at     TEXT NOT NULL,
   closed_at      TEXT
@@ -149,6 +152,27 @@ CREATE TABLE IF NOT EXISTS hygiene_dispositions (
 
 function now(): string {
   return new Date().toISOString();
+}
+
+// A date-only value means the start of that day, UTC — the shape an agent
+// actually writes ("not before 2026-09-10"). Everything is normalized to a
+// full ISO instant so the queue's comparison can stay a lexicographic one.
+// A string Date cannot read is rejected at the door, like a bad schedule:
+// stored unchecked it would become a gate that never opens, and nothing
+// would say so.
+function parseNotBefore(value: string): string {
+  const v = value.trim();
+  // The zero-padding is not pedantry: '2026-9-10' misses the ISO date form and
+  // falls through to the host's own parser, which reads it as LOCAL midnight —
+  // a gate quietly off by a timezone, in the one direction nobody checks.
+  const dateOnly = !v.includes('T') && !v.includes(':');
+  const d = dateOnly && !/^\d{4}-\d{2}-\d{2}$/.test(v) ? new Date(NaN) : new Date(dateOnly ? `${v}T00:00:00.000Z` : v);
+  if (Number.isNaN(d.getTime())) {
+    throw new HelmoError(
+      `not_before "${value}" is not a date. Use 'YYYY-MM-DD' (zero-padded; the gate opens at 00:00 UTC that day) or a full ISO instant like '2026-09-10T14:00:00Z'.`,
+    );
+  }
+  return d.toISOString();
 }
 
 function validateActor(actor: Actor): void {
@@ -216,6 +240,12 @@ export class Store {
     // Additive migration for stores created before the project tag (H-172).
     try {
       this.db.exec('ALTER TABLE tickets ADD COLUMN project TEXT');
+    } catch {
+      /* column already exists */
+    }
+    // Additive migration for stores created before the date gate (H-732).
+    try {
+      this.db.exec('ALTER TABLE tickets ADD COLUMN not_before TEXT');
     } catch {
       /* column already exists */
     }
@@ -325,6 +355,12 @@ export class Store {
     if (filter.ready) {
       clauses.push("status = 'open'");
       clauses.push('schedule IS NULL'); // templates are standing work, never claimable
+      // Date gate (H-732): work that genuinely cannot start until a date is
+      // withheld rather than offered. Shouting it in the body was the only
+      // tool available, and it cost every reader a full ticket read to learn
+      // it must not act — H-718 was read and released seven times in one day.
+      clauses.push('(not_before IS NULL OR not_before <= ?)');
+      params.push(now());
       if (routedReady) {
         clauses.push('((workstream = ? AND assignee IS NULL) OR assignee = ?)');
         params.push(filter.workstream, filter.caller);
@@ -386,10 +422,30 @@ export class Store {
    *  returned alongside the queue so the filer sees why, instead of wondering
    *  where their ticket went. */
   selfFiledPending(caller: string): string[] {
+    // A gated ticket is reported under its gate instead, even when the filer
+    // is also the caller: it already names the date that releases it, which is
+    // the more useful of the two answers, and one id in two lists just makes
+    // the reader check both for the same ticket.
     const rows = this.db
-      .prepare("SELECT id FROM tickets WHERE status = 'open' AND schedule IS NULL AND (assignee IS NULL OR assignee = ?) ORDER BY priority ASC, created_at ASC")
-      .all(caller) as { id: string }[];
+      .prepare("SELECT id FROM tickets WHERE status = 'open' AND schedule IS NULL AND (not_before IS NULL OR not_before <= ?) AND (assignee IS NULL OR assignee = ?) ORDER BY priority ASC, created_at ASC")
+      .all(now(), caller) as { id: string }[];
     return rows.map((r) => r.id).filter((id) => !this.isBlocked(id) && this.selfFiledUntouched(id, caller));
+  }
+
+  /** The tickets a date gate is withholding from `caller`'s ready queue, each
+   *  with the instant that releases it — returned alongside the queue so a
+   *  reader learns "come back on the 10th" from one line rather than paying a
+   *  ticket read to find it shouted in a body (H-732). Withheld, not hidden. */
+  gatedPending(caller: string): { id: string; not_before: string }[] {
+    const rows = this.db
+      .prepare(
+        `SELECT id, not_before FROM tickets
+         WHERE status = 'open' AND schedule IS NULL AND not_before > ?
+           AND (assignee IS NULL OR assignee = ?)
+         ORDER BY not_before ASC, priority ASC`,
+      )
+      .all(now(), caller) as { id: string; not_before: string }[];
+    return rows.filter((r) => !this.isBlocked(r.id));
   }
 
   /** Record hygiene that needs no judgment and no tokens (H-23): deterministic
@@ -894,6 +950,7 @@ export class Store {
       parseSchedule(input.schedule); // reject bad expressions at the door
       if (input.status === 'in_progress') throw new HelmoError('A recurring template is standing work — it cannot be in_progress; its instances are.');
     }
+    if (input.not_before) input = { ...input, not_before: parseNotBefore(input.not_before) };
     const status = input.status ?? 'open';
     if (status === 'in_progress' && !input.assignee) input = { ...input, assignee: actor.name };
     for (const d of input.deps ?? []) this.getTicket(d.to); // existence check before mint
@@ -914,6 +971,7 @@ export class Store {
       };
       if (input.project) payload['project'] = input.project;
       if (input.schedule) payload['schedule'] = input.schedule;
+      if (input.not_before) payload['not_before'] = input.not_before;
       if (input.spawned_from) { payload['spawned_from'] = input.spawned_from; payload['due'] = input.due; }
       this.append(ts, id, 'created', actor, payload);
       this.applyCreated(ts, payload);
@@ -1019,7 +1077,10 @@ export class Store {
 
     // An empty-string project clears the tag; the column goes back to NULL.
     if (input.project === '') input = { ...input, project: null };
-    for (const field of ['title', 'body', 'priority', 'workstream', 'project', 'confidence', 'uncertainty_note'] as const) {
+    // Same for the date gate — '' opens it now, a date moves it (H-732).
+    if (input.not_before === '') input = { ...input, not_before: null };
+    else if (input.not_before) input = { ...input, not_before: parseNotBefore(input.not_before) };
+    for (const field of ['title', 'body', 'priority', 'workstream', 'project', 'not_before', 'confidence', 'uncertainty_note'] as const) {
       const v = input[field];
       if (v !== undefined && v !== (t as unknown as Record<string, unknown>)[field]) {
         diffs[field] = { from: (t as unknown as Record<string, unknown>)[field], to: v };
@@ -1333,13 +1394,13 @@ export class Store {
   private applyCreated(ts: string, p: Record<string, unknown>): void {
     this.db
       .prepare(
-        `INSERT INTO tickets (id, title, body, workstream, project, type, labels, status, priority, assignee, schedule, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO tickets (id, title, body, workstream, project, type, labels, status, priority, assignee, schedule, not_before, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         p['id'], p['title'], p['body'], p['workstream'], p['project'] ?? null, p['type'],
         JSON.stringify(p['labels'] ?? []), p['status'] ?? 'open', p['priority'] ?? 2, p['assignee'] ?? null,
-        p['schedule'] ?? null, ts, ts,
+        p['schedule'] ?? null, p['not_before'] ?? null, ts, ts,
       );
   }
 
@@ -1349,7 +1410,7 @@ export class Store {
     const params: unknown[] = [ts];
     const jsonFields = new Set(['labels', 'evidence']);
     for (const [field, d] of Object.entries(diffs)) {
-      if (!['title', 'body', 'workstream', 'project', 'type', 'labels', 'status', 'priority', 'assignee', 'evidence', 'confidence', 'uncertainty_note', 'blast_radius'].includes(field)) continue;
+      if (!['title', 'body', 'workstream', 'project', 'type', 'labels', 'status', 'priority', 'assignee', 'evidence', 'confidence', 'uncertainty_note', 'blast_radius', 'not_before'].includes(field)) continue;
       sets.push(`${field} = ?`);
       params.push(jsonFields.has(field) ? JSON.stringify(d.to) : (d.to as never));
     }

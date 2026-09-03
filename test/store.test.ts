@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../src/store.js';
-import { Actor, HelmoError } from '../src/types.js';
+import { Actor, ActorKind, HelmoError } from '../src/types.js';
 
 const builder: Actor = { name: 'builder-loop', kind: 'agent', model: 'claude-sonnet-5', version: '1.0' };
 const reviewer: Actor = { name: 'reviewer-loop', kind: 'agent', model: 'gpt-6-codex', version: '2.1' };
@@ -200,6 +200,59 @@ describe('handoff', () => {
     expect(chain[0]).toContain('builder-loop');
     expect(chain[0]).toContain('claude-sonnet-5');
     expect(chain[chain.length - 1]).toContain('reviewer-loop');
+  });
+});
+
+describe('actor kinds', () => {
+  // What the view draws an actor's frame from (R-11 H-713). A wrong answer here
+  // renders a human as an agent or the reverse, on a page where nothing else
+  // states the kind — so it would be wrong and silent.
+  const human: Actor = { name: 'arthur', kind: 'human' };
+
+  it('reports the kind each name last wrote under', () => {
+    const s = freshStore();
+    const t = create(s);
+    s.updateTicket(orch, { ticket_id: t.id, note: 'triaged' });
+    s.updateTicket(human, { ticket_id: t.id, note: 'go ahead' });
+    const kinds = s.actorKinds();
+    expect(kinds.get('builder-loop')).toBe('agent');
+    expect(kinds.get('helmo-orchestrator')).toBe('orchestrator');
+    expect(kinds.get('arthur')).toBe('human');
+    expect(kinds.get('nobody')).toBeUndefined();
+  });
+
+  it('drops a kind that is not one of the three', () => {
+    // The Store does not police actor.kind — the MCP layer's schema does — so a
+    // row written by an older or sloppier path can hold anything. The view turns
+    // this answer straight into a symbol id, and a `<use>` at a symbol that does
+    // not exist draws an empty box with no error anywhere. Better to hand back
+    // nothing and let the actor render as a bare name.
+    const s = freshStore();
+    const t = create(s);
+    s.updateTicket({ name: 'ghost', kind: 'daemon' as ActorKind }, { ticket_id: t.id, note: 'from somewhere else' });
+    expect(s.actorKinds().get('ghost')).toBeUndefined();
+  });
+
+  it('is store-wide, not per ticket', () => {
+    // The view asks once per render and draws actors from every ticket on the
+    // board, so a name that has never written on THIS ticket still needs a kind.
+    const s = freshStore();
+    create(s);
+    const other = s.createTicket(human, {
+      title: 'Decide the venue', body: 'x', workstream: 'helmo-dev', type: 'planning',
+    });
+    expect(other.id).not.toBe('H-1');
+    expect(s.actorKinds().get('arthur')).toBe('human');
+  });
+
+  it('lets a name change kind, and answers with the latest', () => {
+    // A crew member whose harness changes is a real event, not corruption. The
+    // old records stay true of when they were written; a dashboard is asking
+    // about now.
+    const s = freshStore();
+    const t = create(s);
+    s.updateTicket({ ...builder, kind: 'orchestrator' }, { ticket_id: t.id, note: 'now driving' });
+    expect(s.actorKinds().get('builder-loop')).toBe('orchestrator');
   });
 });
 

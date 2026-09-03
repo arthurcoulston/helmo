@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { parseSchedule } from './schedule.js';
 import {
-  Actor, Answer, BlastRadius, BLAST_RADII, Confidence, Dep, DepType, Evidence,
+  Actor, ActorKind, ACTOR_KINDS, Answer, BlastRadius, BLAST_RADII, Confidence, Dep, DepType, Evidence,
   HelmoError, HelmoEvent, Notice, Question, Status, Ticket, Workstream, WorkstreamInfo,
 } from './types.js';
 
@@ -263,6 +263,35 @@ export class Store {
       if (chain[chain.length - 1] !== label) chain.push(label);
     }
     return chain;
+  }
+
+  /** Every actor name this store has ever recorded, mapped to the kind their
+   *  most recent event declared. Store-wide and read once per page render.
+   *
+   *  The view needs a kind to draw an actor: an agent and a human wear
+   *  different frames (R-11 H-713). Tickets carry only an assignee *name*, so
+   *  without this the view would have to guess a kind from the name, which is
+   *  exactly the assertion the design system forbids — the first agent to run
+   *  under a human's name, or a crew member who gained an orchestrator
+   *  harness, would be drawn wrong and nothing would say so. Here the kind is
+   *  read from the record that stated it.
+   *
+   *  Most recent wins because a name's kind can legitimately change; the old
+   *  events are still true of when they were written, and the current answer
+   *  is the one a dashboard is asking for. */
+  actorKinds(): Map<string, ActorKind> {
+    const rows = this.db
+      .prepare(
+        `SELECT json_extract(actor, '$.name') AS name, json_extract(actor, '$.kind') AS kind
+           FROM events WHERE seq IN (SELECT MAX(seq) FROM events GROUP BY json_extract(actor, '$.name'))`,
+      )
+      .all() as { name: string | null; kind: string | null }[];
+    const kinds = new Map<string, ActorKind>();
+    for (const r of rows) {
+      if (!r.name || !r.kind) continue;
+      if ((ACTOR_KINDS as readonly string[]).includes(r.kind)) kinds.set(r.name, r.kind as ActorKind);
+    }
+    return kinds;
   }
 
   isBlocked(id: string): boolean {

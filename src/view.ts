@@ -10,10 +10,11 @@ import { randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { AVATAR_MARKS, ESTATE_AVATARS } from './estate-avatars.generated.js';
 import { ESTATE_TOKENS } from './estate-tokens.generated.js';
 import { Store } from './store.js';
 import { HygieneFinding } from './store.js';
-import { Actor, HelmoError, Ticket, HelmoEvent } from './types.js';
+import { Actor, ActorKind, HelmoError, Ticket, HelmoEvent } from './types.js';
 
 const dbPath = process.env['HELMO_DB'] ?? join(homedir(), '.helmo', 'helmo.db');
 const port = Number(process.env['HELMO_VIEW_PORT'] ?? 4400);
@@ -91,9 +92,52 @@ function evidenceLinks(t: Ticket): string {
     .join('');
 }
 
+// ---------- actors ----------
+
+// Kinds read from the record, rebuilt once per page render. Module-level for
+// the same reason `store` is: every renderer below is a free function, and
+// threading a map through all of them would be the only change of shape here.
+let actorKinds = new Map<string, ActorKind>();
+
+const MARKS = new Set<string>(AVATAR_MARKS);
+
+/** An actor, drawn: the crew mark for their name, framed by the kind the
+ *  record holds, followed by the name itself.
+ *
+ *  THE NAME IS NOT OPTIONAL, and that is the point of having one function.
+ *  A crew hue is a retrieval accelerator, never an identifier — the estate
+ *  measured its own set and found ten members cannot have ten mutually
+ *  distinguishable hues (H-713), so a coloured dot standing alone would be
+ *  exactly the thing the measurement says does not work. Every mark on this
+ *  page comes from here, which is what makes "the name is always beside it"
+ *  a property of the code rather than a habit; test/estate-avatars.test.ts
+ *  holds the rest of the page to it.
+ *
+ *  An actor with no mark and no recorded kind renders as their bare name —
+ *  a new agent, or a name Helmo has never seen write, is not a defect.
+ *
+ *  `known` is the kind the caller already has in hand: an event carries the
+ *  kind its writer declared at the time, which is better than the store-wide
+ *  answer this falls back to. Both are read from the record; neither is a
+ *  guess from the name. */
+function actor(name: string, known?: ActorKind): string {
+  const kind = known ?? actorKinds.get(name);
+  // `person` is the fallback for a human with no role mark; an agent with no
+  // mark gets none. Nothing here maps a member to a kind or invents a mark —
+  // both are read (estate DEV.md, "kind is read, never asserted").
+  const mark = MARKS.has(name) ? name : kind === 'human' && MARKS.has('person') ? 'person' : null;
+  const glyph =
+    mark && kind
+      ? `<svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><use href="#crew-${esc(mark)}-${esc(kind)}"/></svg>`
+      : '';
+  return `<span class="actor">${glyph}${esc(name)}</span>`;
+}
+
 function chain(t: Ticket): string {
   const c = store.agentChain(t.id);
-  return c.length ? `<span class="chain">${esc(c.map((a) => a.split(' ')[0]).join(' → '))}</span>` : '';
+  return c.length
+    ? `<span class="chain">${c.map((a) => actor(a.split(' ')[0] ?? a)).join('<span class="chain-arrow"> → </span>')}</span>`
+    : '';
 }
 
 function blockedBy(t: Ticket): string[] {
@@ -127,7 +171,7 @@ function timeline(events: HelmoEvent[]): string {
       // Dashboard answers are visibly marked so a click here is never mistaken
       // for an answer relayed from a meeting (H-145).
       const whatCls = e.actor.session === 'dashboard' && e.event_type === 'answered' ? 'tl-what tl-dash' : 'tl-what';
-      return `<div class="tl"><span class="tl-when">${esc(rel(e.ts))}</span><span class="tl-who">${esc(e.actor.name)}</span>${
+      return `<div class="tl"><span class="tl-when">${esc(rel(e.ts))}</span><span class="tl-who">${actor(e.actor.name, e.actor.kind)}</span>${
         what ? `<span class="${whatCls}">${what}</span>` : ''
       }${note ? `<span class="tl-note">${esc(note)}</span>` : ''}</div>`;
     });
@@ -202,7 +246,7 @@ function motionCard(t: Ticket): string {
   return `<article class="mcard" id="${esc(t.id)}">
     <header><span class="tid">${esc(t.id)}</span> <span class="mtitle">${esc(t.title)}</span>
       ${prioBadge(t)} ${blastBadge(t)} ${money(t)}
-      <span class="meta">${esc(t.workstream)} · <b class="holder">${esc(t.assignee ?? '?')}</b> · ${esc(rel(t.updated_at))}</span></header>
+      <span class="meta">${esc(t.workstream)} · <b class="holder">${t.assignee ? actor(t.assignee) : '?'}</b> · ${esc(rel(t.updated_at))}</span></header>
     ${note ? `<p class="note">${esc(note)}</p>` : ''}
     <details class="more" id="d-${esc(t.id)}"><summary>ticket detail</summary>${details(t)}</details>
   </article>`;
@@ -282,6 +326,9 @@ function steeringStrip(): string {
 }
 
 function page(): string {
+  // One query per render, not one per actor drawn: the map is store-wide and
+  // the page names the same handful of writers hundreds of times.
+  actorKinds = store.actorKinds();
   const all = store.listTickets({ limit: 1000 });
   const by = (s: string) => all.filter((t) => t.status === s);
   const awaiting = by('awaiting_human');
@@ -301,6 +348,7 @@ function page(): string {
 <title>Helmo</title>
 <style>${CSS}</style>
 <body>
+${ESTATE_AVATARS}
 <header class="top">
   <div class="brand"><h1>Helmo</h1><span class="tagline">${operator ? 'agents write · you read & answer' : 'agents write · you read'}</span></div>
   <div class="stats">
@@ -403,6 +451,17 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; color: 
 .badge.quiet { color: var(--ink-3); }
 .meta, .rmeta { color: var(--ink-3); font-size: 12px; }
 .chain { color: var(--ink-3); font-size: 11px; font-family: ui-monospace, monospace; }
+.chain-arrow { opacity: 0.7; }
+
+/* ---- actors (R-11 H-713): the mark says who, the frame says what kind ---- */
+/* nowrap is load-bearing, not tidiness: the rule the avatar set ships under is
+   that a crew hue never identifies a member on its own, and a mark that wrapped
+   to the end of a line away from its name would be doing exactly that. */
+.actor { white-space: nowrap; }
+/* Sized in em so one rule serves 11px chain text and 14px card meta alike.
+   No colour here — the mark carries its member hue from the sprite, the frame
+   is currentColor at .18, so an actor is whatever ink its context gives it. */
+.mark { width: 1.15em; height: 1.15em; vertical-align: -0.22em; margin-right: 3px; }
 
 /* ---- question cards (the hero) ---- */
 .qcard { background: var(--surface); border: 1px solid var(--hairline); border-left: 3px solid var(--warning);

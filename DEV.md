@@ -132,8 +132,9 @@ orchestrator meetings and the read-only view. Product intent:
 ## Commands
 
 - `npm run build` (tsc → dist/), `npm test` (store + e2e against a temp db).
-- `npm run vendor:tokens` refreshes the vendored estate design tokens; add
-  `-- --check` to fail on drift instead. See below.
+- `npm run vendor:tokens` / `npm run vendor:avatars` refresh the vendored
+  estate design tokens and crew avatar sprite; add `-- --check` to fail on
+  drift instead. See below.
 - View: `node dist/view.js` (port via `HELMO_VIEW_PORT`, default 4400; binds
   127.0.0.1 — `HELMO_VIEW_HOST` to change). Restart it after rebuilding — the
   running process holds old code.
@@ -256,6 +257,48 @@ itself. The same file's prefers-color-scheme assertion was also tightened: the
 token file emits two dark blocks now (surfaces, and the crew mark hues since
 H-713), so the loose form was satisfied by the hues alone while the surfaces
 lost their dark half.
+
+## The crew avatars (R-11 H-714)
+
+`src/estate-avatars.generated.ts` is a second vendored copy, on the same seam
+and for the same reason: the estate's `avatars/crew-avatars.svg`, refreshed by
+`scripts/vendor-estate-avatars.mjs`, checked by `test/estate-avatars.test.ts`.
+The sprite is inlined into the page body and referenced with
+`<use href="#crew-mason-agent">`. No colours come with it — a mark is
+`currentColor` over `var(--crew-<name>)`, which the vendored **token** file
+already defines, so the two copies interlock and neither carries a value the
+other owns.
+
+What the module adds beyond the copy is an *index*: `AVATAR_MARKS` and
+`AVATAR_KINDS` are parsed back out of the composed symbols the sprite actually
+carries, never hand-listed. That matters because everything in this area fails
+silently — a `<use>` at a symbol that is not there draws nothing, with no
+console error, no failed request and a 200 on the page. The vendor script
+refuses a sprite with no composed symbols and a sprite that is missing any
+mark at any kind, for the same reason.
+
+**Shape says kind, colour says who, and the name is always there.** The frame
+comes from `actor.kind` — a rounded square for an agent or orchestrator, a
+circle only for a human. Kind is *read*, never inferred from a name:
+`Store.actorKinds()` answers with the kind each name last wrote under, and the
+timeline passes the kind its own event recorded, which is better still. A name
+Helmo has never seen write gets no mark and renders as bare text; `person` is
+the fallback mark for a human with no role mark, which is why `arthur` has one
+and `helmo-scheduler` does not.
+
+The hue is a retrieval accelerator, not an identifier — the estate measured its
+own set and found ten members cannot have ten mutually distinguishable hues
+(H-713), so a mark must never stand without its name. That is why exactly one
+function, `actor()`, draws one, and why it takes the name it prints:
+`test/estate-avatars.test.ts` asserts there is only one `#crew-` reference in
+`view.ts` and that it sits beside `esc(name)`. `.actor { white-space: nowrap }`
+is part of the same rule, not tidiness — a mark that wrapped away from its name
+would be doing the thing the measurement says does not work.
+
+Marks appear in three places, and deliberately not everywhere: the in-motion
+card's holder, the timeline's actor, and the agent chain on done rows. The
+quiet rows keep their assignee as plain text. Arthur's rail on the set was "be
+measured, it could go too far".
 
 ## Neighbors
 

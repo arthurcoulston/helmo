@@ -10,7 +10,8 @@
     "view": "tsx src/view.ts",
     "mcp": "tsx src/server.ts",
     "demo": "node scripts/demo-seed.mjs",
-    "vendor:tokens": "node scripts/vendor-estate-tokens.mjs"
+    "vendor:tokens": "node scripts/vendor-estate-tokens.mjs",
+    "vendor:avatars": "node scripts/vendor-estate-avatars.mjs"
   },
   "keywords": [
     "ai-agents",

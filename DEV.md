@@ -169,6 +169,11 @@ orchestrator meetings and the read-only view. Product intent:
   refuses with an instant SQLITE_BUSY instead of waiting, so `busy_timeout`
   never applies. Drop an `.immediate()` and concurrent writers start throwing
   again under contention, with every non-contending test still green (H-134).
+  The tests guarding this spawn a real second process to hold the lock, and
+  they wait for that process to print `HELD` rather than sleeping a fixed span.
+  A sleep is a race the harness loses under load — the write then meets no lock,
+  finishes in a millisecond, and the suite reports the store broken when nothing
+  was tested at all (H-681). Any new contention test wants the same handshake.
 
 ## The roadmap seam (H-172)
 

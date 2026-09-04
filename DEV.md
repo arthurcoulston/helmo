@@ -149,6 +149,10 @@ orchestrator meetings and the read-only view. Product intent:
   the feed rides the prefix Helmo is already served at, and this port stays as
   unexposed as it was. `markFor` lives here and `view.ts` draws by it, so the
   JSON and the HTML cannot disagree about who has a face.
+  The optional `progress` field is the latest recorded event note, bounded to
+  280 characters and read for all displayed IDs in one query; spend-only
+  events never replace it. It is a last recorded update with its actor and
+  timestamp, not a claim that any process is currently active.
   That same prefix makes this page a **phone** page (H-880): the shell's Helmo
   view lands on the bounded reading, and its "whole record" tap goes to
   `/s/helmo-view/` — this HTML, at 390px. So every row here has to survive a

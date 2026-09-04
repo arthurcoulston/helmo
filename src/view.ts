@@ -684,7 +684,15 @@ function handleAnswer(
  *  that touches the record and is gated accordingly. */
 function handleFeed(res: { writeHead: (c: number, h: Record<string, string>) => void; end: (s: string) => void }): void {
   try {
-    const body = JSON.stringify(feed(store.listTickets({ limit: 1000 }), store.actorKinds(), new Date(), (id) => store.productAcceptance(id)));
+    const tickets = store.listTickets({ limit: 1000 });
+    const progress = store.latestProgress(tickets.map((t) => t.id));
+    const body = JSON.stringify(feed(
+      tickets,
+      store.actorKinds(),
+      new Date(),
+      (id) => store.productAcceptance(id),
+      (id) => progress.get(id),
+    ));
     // no-store for the same reason the page is not cached: this is a reading
     // of right now, and the shell refreshes it on a timer.
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });

@@ -3,7 +3,7 @@ import { parseSchedule } from './schedule.js';
 import {
   Actor, ActorKind, ACTOR_KINDS, Answer, BlastRadius, BLAST_RADII, Confidence, Dep, DepType, Evidence,
   AcceptanceVerdict, HelmoError, HelmoEvent, Notice, ProductAcceptance, ProductArtifact,
-  ProductCompletion, Question, Status, Ticket, Workstream, WorkstreamInfo,
+  ProductCompletion, Question, Status, Ticket, TicketProgress, Workstream, WorkstreamInfo,
 } from './types.js';
 
 const STALE_CLAIM_HOURS = 24;
@@ -350,6 +350,33 @@ export class Store {
       return { state: 'pending', reason: 'stale_verdict', completion, verdict };
     }
     return { state: 'accepted', reason: 'independently_accepted', completion, verdict };
+  }
+
+  /** Latest recorded human-readable update for each requested ticket. This is
+   *  one bounded query for feed rows, and deliberately excludes spend: meter
+   *  write-back is not progress even when it is the newest event. */
+  latestProgress(ticketIds: string[]): Map<string, TicketProgress> {
+    const ids = [...new Set(ticketIds)];
+    if (!ids.length) return new Map();
+    const placeholders = ids.map(() => '?').join(',');
+    const rows = this.db
+      .prepare(
+        `SELECT e.ticket_id, e.ts, e.actor, json_extract(e.payload, '$.note') AS note
+           FROM events e
+           JOIN (
+             SELECT ticket_id, MAX(seq) AS seq FROM events
+              WHERE ticket_id IN (${placeholders}) AND event_type != 'spend'
+                AND json_type(payload, '$.note') = 'text'
+                AND TRIM(json_extract(payload, '$.note')) != ''
+              GROUP BY ticket_id
+           ) latest ON latest.seq = e.seq`,
+      )
+      .all(...ids) as { ticket_id: string; ts: string; actor: string; note: string }[];
+    return new Map(rows.map((r) => {
+      const actor = JSON.parse(r.actor) as Actor;
+      const note = Array.from(r.note).slice(0, 280).join('');
+      return [r.ticket_id, { at: r.ts, note, actor: { name: actor.name, kind: actor.kind } }];
+    }));
   }
 
   lastAnswer(ticketId: string): Answer | null {

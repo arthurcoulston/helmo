@@ -74,6 +74,12 @@ export interface ProductAcceptance {
   verdict: AcceptanceVerdict | null;
 }
 
+export interface TicketProgress {
+  at: string;
+  note: string;
+  actor: Pick<Actor, 'name' | 'kind'>;
+}
+
 export interface Question {
   situation: string;
   question: string;

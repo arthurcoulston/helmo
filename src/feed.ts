@@ -26,7 +26,7 @@
 // just closed — and the full record of any ticket in it is one tap away on the
 // page it is served beside.
 import { AVATAR_MARKS } from './estate-avatars.generated.js';
-import { ActorKind, ProductAcceptance, Ticket } from './types.js';
+import { ActorKind, ProductAcceptance, Ticket, TicketProgress } from './types.js';
 
 const MARKS = new Set<string>(AVATAR_MARKS);
 
@@ -73,6 +73,9 @@ export interface FeedTicket {
    *  contract. This is a recorded gate state, never a claim about a live
    *  reviewer process. */
   acceptance?: Pick<ProductAcceptance, 'state' | 'reason'>;
+  /** Latest recorded update, bounded to one note. It says what the record
+   *  last heard; it makes no claim that an actor is currently active. */
+  progress?: TicketProgress;
   updated_at: string;
   closed_at: string | null;
 }
@@ -110,6 +113,7 @@ export function feed(
   kinds: Map<string, ActorKind>,
   now: Date = new Date(),
   acceptanceFor?: (ticketId: string) => ProductAcceptance,
+  progressFor?: (ticketId: string) => TicketProgress | undefined,
 ): Feed {
   const live = all.filter((t) => !TERMINAL.has(t.status));
   const closed = all
@@ -123,6 +127,7 @@ export function feed(
       const kind = t.assignee ? kinds.get(t.assignee) : undefined;
       const mark = t.assignee ? markFor(t.assignee, kind) : null;
       const acceptance = acceptanceFor?.(t.id);
+      const progress = progressFor?.(t.id);
       return {
         id: t.id,
         title: t.title,
@@ -135,6 +140,7 @@ export function feed(
         ...(acceptance && acceptance.state !== 'not_requested'
           ? { acceptance: { state: acceptance.state, reason: acceptance.reason } }
           : {}),
+        ...(progress ? { progress } : {}),
         updated_at: t.updated_at,
         closed_at: t.closed_at,
       };

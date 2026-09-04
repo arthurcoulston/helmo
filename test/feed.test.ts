@@ -124,6 +124,23 @@ describe('what the reading carries', () => {
     expect(row.acceptance).toEqual({ state: 'pending', reason: 'missing_verdict' });
     expect(row).not.toHaveProperty('reviewer_active');
   });
+
+  it('omits progress on a new ticket and bounds the latest recorded note', () => {
+    const s = new Store(':memory:');
+    const fresh = create(s);
+    const changed = create(s);
+    const long = `<updated & recorded> ${'🙂'.repeat(300)}`;
+    s.updateTicket(builder, { ticket_id: changed.id, note: long });
+    s.recordSpend(builder, changed.id, { tokens: 9, note: 'metering is bookkeeping, not progress' });
+    const progress = s.latestProgress([fresh.id, changed.id]);
+    const rows = feed(all(s), s.actorKinds(), new Date(), undefined, (id) => progress.get(id)).tickets;
+    expect(rows.find((r) => r.id === fresh.id)!.progress).toBeUndefined();
+    expect(rows.find((r) => r.id === changed.id)!.progress).toEqual({
+      at: expect.any(String),
+      note: Array.from(long).slice(0, 280).join(''),
+      actor: { name: builder.name, kind: builder.kind },
+    });
+  });
 });
 
 describe('what a ticket asks', () => {
@@ -178,7 +195,9 @@ describe('the route', () => {
       workstream: 'estate-ui',
       type: 'build',
     });
+    seed.updateTicket(builder, { ticket_id: t.id, note: 'last <recorded> & update' });
     seed.returnToHuman(builder, t.id, ask);
+    seed.recordSpend(builder, t.id, { tokens: 1, note: 'metering only' });
     seed.close();
 
     view = spawn(process.execPath, ['--import', 'tsx', 'src/view.ts'], {
@@ -199,10 +218,11 @@ describe('the route', () => {
     expect(res, 'the view never came up').not.toBeNull();
     expect(res!.status).toBe(200);
     expect(res!.headers.get('content-type')).toContain('application/json');
-    const body = (await res!.json()) as { generated_at: string; tickets: { id: string; asks?: string }[] };
+    const body = (await res!.json()) as { generated_at: string; tickets: { id: string; asks?: string; progress?: { note: string } }[] };
     expect(Number.isFinite(Date.parse(body.generated_at))).toBe(true);
     expect(body.tickets.map((x) => x.id)).toEqual([t.id]);
     expect(body.tickets[0]!.asks).toBe(ask.question);
+    expect(body.tickets[0]!.progress?.note).toBe('last <recorded> & update');
 
     // The nonce is the page's CSRF friction (H-145) and it has no business
     // travelling in a feed the shell caches in a browser tab.

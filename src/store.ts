@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { parseSchedule } from './schedule.js';
 import {
-  Actor, ActorKind, ACTOR_KINDS, Answer, BlastRadius, BLAST_RADII, Confidence, Dep, DepType, Evidence,
+  Actor, ActorKind, ACTOR_KINDS, Answer, AnswerEvent, BlastRadius, BLAST_RADII, Confidence, Dep, DepType, Evidence,
   AcceptanceVerdict, HelmoError, HelmoEvent, Notice, ProductAcceptance, ProductArtifact,
   ProductCompletion, Question, Status, Ticket, TicketProgress, Workstream, WorkstreamInfo,
 } from './types.js';
@@ -857,6 +857,43 @@ export class Store {
       .prepare(`SELECT COUNT(*) AS n FROM events WHERE seq > ? AND json_extract(actor, '$.name') = ? ${advancing}`)
       .get(seq, actorName) as { n: number };
     return row.n;
+  }
+
+  /** Answer events since `seq`, oldest first — the record of who answered a
+   *  returned ticket, and how. `session` narrows to one actor session: the
+   *  dashboard's /answer route writes as the operator with session
+   *  'dashboard', and that route is gated only by loopback, so any same-user
+   *  process could forge an approval in the human's name (H-143). Replaying
+   *  those answers daily is how a forged one gets caught — and this method is
+   *  why the sweep doing the replay never opens the store file itself (H-936).
+   *  Read-only; `answer` is truncated to a scannable line. */
+  answersSince(seq: number, session?: string): AnswerEvent[] {
+    const filter = session ? "AND json_extract(actor, '$.session') = ?" : '';
+    const rows = this.db
+      .prepare(
+        `SELECT seq, ts, ticket_id, actor, payload FROM events
+         WHERE seq > ? AND event_type = 'answered' ${filter} ORDER BY seq`,
+      )
+      .all(...(session ? [seq, session] : [seq])) as {
+      seq: number;
+      ts: string;
+      ticket_id: string;
+      actor: string;
+      payload: string;
+    }[];
+    return rows.map((r) => {
+      const a = JSON.parse(r.actor) as Actor;
+      const p = JSON.parse(r.payload) as Answer;
+      return {
+        seq: r.seq,
+        ts: r.ts,
+        ticket_id: r.ticket_id,
+        actor: { name: a.name, kind: a.kind, ...(a.session ? { session: a.session } : {}) },
+        resolution: p.resolution,
+        chosen_option: p.chosen_option,
+        answer: Array.from(p.answer ?? '').slice(0, 200).join(''),
+      };
+    });
   }
 
   /** Tickets `actorName` wrote events on since `seq`, most-touched first — a

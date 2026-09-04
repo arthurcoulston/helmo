@@ -89,6 +89,16 @@ try {
       out({ events: store.actorActivitySince(name, Number(flag('since-seq') ?? 0), has('advancing')) });
       break;
     }
+    case 'answers': {
+      // The daily sweep's dashboard-answer replay (H-143, H-936). max_seq is
+      // returned alongside so the caller can advance its checkpoint from the
+      // same read instead of opening the store file to ask.
+      out({
+        max_seq: store.maxSeq(),
+        answers: store.answersSince(Number(flag('since-seq') ?? 0), flag('session')),
+      });
+      break;
+    }
     case 'hygiene': {
       out({ findings: store.hygiene() });
       break;
@@ -242,6 +252,7 @@ try {
   product-complete --ticket H-n --artifacts '[{"ref":"repo@<40hex>","author":"name"}]' --note N
   acceptance-verdict --ticket H-n --refs '["repo@<40hex>"]' --verdict pass|fail --note N
   acceptance-check --ticket H-n [--refs '["repo@<40hex>"]'] (exit 0 only for independent acceptance of that manifest)
+  answers        --since-seq N [--session S]                    (answers recorded since a cursor, + max_seq; --session dashboard for the sweep's replay)
   hygiene                                                      (deterministic record checks, read-only)
   hygiene-dispose --check C --ticket H-n --reason R  (stop re-reporting a finding on a TERMINAL ticket; evented, append-once)
   workstream     --name W                                      (goal, budget, spend-to-date; read-only)

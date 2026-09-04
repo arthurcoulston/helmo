@@ -94,6 +94,19 @@ export interface Answer {
   resolution: 'resume' | 'done' | 'cancelled';
 }
 
+/** One recorded answer, as the sweep and any auditor read it back: who
+ *  wrote it, on what, and what they said. The actor's session is carried
+ *  because it is the channel — 'dashboard' answers arrive without a meeting. */
+export interface AnswerEvent {
+  seq: number;
+  ts: string;
+  ticket_id: string;
+  actor: Pick<Actor, 'name' | 'kind'> & { session?: string };
+  resolution: Answer['resolution'];
+  chosen_option?: string;
+  answer: string;
+}
+
 export interface Ticket {
   id: string;
   title: string;

@@ -102,7 +102,12 @@ orchestrator meetings and the read-only view. Product intent:
   at zero and marks the event CLAMPED — a negative total is bad arithmetic
   upstream, never a record. `spend` events are
   bookkeeping, not motion: they accept terminal tickets and never touch status
-  or updated_at.
+  or updated_at. `answers --since-seq N [--session S]` replays recorded
+  answers from a cursor and returns `max_seq` from the same read, so a caller
+  advances its checkpoint without a second query: it exists so ward's daily
+  sweep can audit dashboard-session answers — the one channel that writes as
+  the human without a meeting — through this front door instead of opening
+  helmo.db with sqlite3 (H-143 detection, H-936 boundary).
   `acceptance-check --ticket H-n --refs '["repo@<40hex>"]'` is the release
   process seam: it exits zero only when an independent PASS covers that exact
   manifest. `product-complete` and `acceptance-verdict` record the two halves.

@@ -289,6 +289,30 @@ describe('return to human / answer', () => {
     expect(s.lastAnswer(t.id)?.chosen_option).toBe('pay');
   });
 
+  it('answersSince replays answers from a cursor and can narrow to one session (H-936)', () => {
+    const s = freshStore();
+    const dash: Actor = { name: 'arthur', kind: 'human', session: 'dashboard' };
+    const t1 = create(s);
+    s.returnToHuman(builder, t1.id, q);
+    s.answerTicket(orch, t1.id, { answer: 'Relayed in the meeting.', resolution: 'resume' });
+    const cursor = s.maxSeq();
+    const t2 = create(s);
+    s.returnToHuman(builder, t2.id, q);
+    s.answerTicket(dash, t2.id, { answer: 'Pay it.', chosen_option: 'pay', resolution: 'resume' });
+
+    // Everything since the cursor: only the new answer, with its channel.
+    const since = s.answersSince(cursor);
+    expect(since.map((a) => a.ticket_id)).toEqual([t2.id]);
+    expect(since[0]!.actor.session).toBe('dashboard');
+    expect(since[0]!.chosen_option).toBe('pay');
+
+    // From zero, narrowed to the dashboard: the meeting relay is not a click.
+    expect(s.answersSince(0, 'dashboard').map((a) => a.ticket_id)).toEqual([t2.id]);
+    expect(s.answersSince(0).length).toBe(2);
+    // A cursor at the end is caught up — the sweep's steady state.
+    expect(s.answersSince(s.maxSeq(), 'dashboard')).toEqual([]);
+  });
+
   it('answer can close or cancel', () => {
     const s = freshStore();
     const t = create(s);

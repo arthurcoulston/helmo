@@ -10,7 +10,8 @@ import { randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { AVATAR_MARKS, ESTATE_AVATARS } from './estate-avatars.generated.js';
+import { ESTATE_AVATARS } from './estate-avatars.generated.js';
+import { feed, markFor } from './feed.js';
 import { ESTATE_TOKENS } from './estate-tokens.generated.js';
 import { Store } from './store.js';
 import { HygieneFinding } from './store.js';
@@ -99,8 +100,6 @@ function evidenceLinks(t: Ticket): string {
 // threading a map through all of them would be the only change of shape here.
 let actorKinds = new Map<string, ActorKind>();
 
-const MARKS = new Set<string>(AVATAR_MARKS);
-
 /** An actor, drawn: the crew mark for their name, framed by the kind the
  *  record holds, followed by the name itself.
  *
@@ -122,10 +121,9 @@ const MARKS = new Set<string>(AVATAR_MARKS);
  *  guess from the name. */
 function actor(name: string, known?: ActorKind): string {
   const kind = known ?? actorKinds.get(name);
-  // `person` is the fallback for a human with no role mark; an agent with no
-  // mark gets none. Nothing here maps a member to a kind or invents a mark —
-  // both are read (estate DEV.md, "kind is read, never asserted").
-  const mark = MARKS.has(name) ? name : kind === 'human' && MARKS.has('person') ? 'person' : null;
+  // The rule lives in feed.ts because the JSON reading draws the same faces;
+  // two copies of "who has a mark" is two answers to it.
+  const mark = markFor(name, kind);
   const glyph =
     mark && kind
       ? `<svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><use href="#crew-${esc(mark)}-${esc(kind)}"/></svg>`
@@ -652,6 +650,28 @@ function handleAnswer(
   }
 }
 
+/** The queue reading as JSON (R-11 H-832), for the estate shell to compose on
+ *  its own origin — see src/feed.ts for why this is the one view the shell
+ *  draws itself instead of proxying.
+ *
+ *  It reads and never writes, whatever method asks — like the page it sits
+ *  beside, and unlike /answer above, which is the one route on this server
+ *  that touches the record and is gated accordingly. */
+function handleFeed(res: { writeHead: (c: number, h: Record<string, string>) => void; end: (s: string) => void }): void {
+  try {
+    const body = JSON.stringify(feed(store.listTickets({ limit: 1000 }), store.actorKinds()));
+    // no-store for the same reason the page is not cached: this is a reading
+    // of right now, and the shell refreshes it on a timer.
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+    res.end(body);
+  } catch (e) {
+    // Named, not generic: an unreadable feed sends whoever is holding a phone
+    // looking for which of five services is down, and this one can say.
+    res.writeHead(500, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+    res.end(JSON.stringify({ error: `helmo tickets.json failed — ${e instanceof Error ? e.message : String(e)}` }));
+  }
+}
+
 createServer((req, res) => {
   if (req.method === 'POST' && req.url === '/answer') {
     let body = '';
@@ -659,6 +679,7 @@ createServer((req, res) => {
     req.on('end', () => handleAnswer(req.headers, body, res));
     return;
   }
+  if (req.url?.split('?')[0] === '/tickets.json') return handleFeed(res);
   try {
     // Render BEFORE the headers go out. Writing 200 first meant any error in
     // page() hit a catch that could no longer set a status — the writeHead(500)

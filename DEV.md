@@ -117,6 +117,26 @@ orchestrator meetings and the read-only view. Product intent:
   dispositions there are refused — nothing live can be masked). Also H-81:
   done_without_evidence exempts question tickets the human closed via
   helmo_answer_ticket — the recorded answer is the closure evidence.
+- `feed.ts` — the queue reading as JSON, served by `view.ts` at
+  `GET /tickets.json` (R-11 H-832). It exists for ONE consumer, the estate
+  shell, and for one reason: the shell proxies every other product view
+  untouched, but Arthur's Meeting B decisions land Helmo's phone view on a
+  filter and replace its answer control with a line of prose — neither of
+  which you can do to someone else's HTML from outside it. So Helmo hands over
+  the data and lets the shell draw it, rather than the shell opening this
+  store and taking a second hand on the record. Same shape as the health page
+  reading rev's loop states at :4500 rather than re-deriving them.
+  **It is not an API for agents** — they have the MCP tools, which write as
+  well as read and enforce the actor identity this cannot — and it is not a
+  mirror of the record: no body, no evidence, no events, no answer nonce.
+  Bounded at the source (everything live plus the `CLOSED_TAIL` most recently
+  closed, ~12KB on Arthur's store), because closed work is history and the
+  record of it is the page beside it. `asks` is keyed on the STATUS rather
+  than on the question column: "asks you" is a claim about now. It needs no
+  new route in the shell — `/s/helmo-view/` is already proxied GET-only, so
+  the feed rides the prefix Helmo is already served at, and this port stays as
+  unexposed as it was. `markFor` lives here and `view.ts` draws by it, so the
+  JSON and the HTML cannot disagree about who has a face.
 - Evidence ref form (H-95): commit = `repo@sha` (`crew@24e8003`), one commit
   per item; file = absolute or `repo:relative/path`, never bare-relative; url
   as-is; other/draft free text. Prose belongs in the item's `note`. The point
@@ -314,6 +334,10 @@ measured, it could go too far".
 
 Rev (formerly Capstan), a sibling project, supervises the bash loops that draw work from this
 record; it consumes the helmo-cli contract and injects the MCP server into
-agent sessions. Operators keep their own agent identities and estate maps
+agent sessions. The estate shell (`~/projects/estate`, :4300) is the one
+reader of `GET /tickets.json`; it also owns the design tokens and avatar
+sprite this repo vendors. That seam is one-way and read-only — nothing in the
+estate writes here, and the shell's own 405 is what makes that structural
+rather than a promise. Operators keep their own agent identities and estate maps
 outside this repo. helmo-roadmap is a client of this repo's MCP surface and
 holds no code path into it; the seam above is the whole coupling.

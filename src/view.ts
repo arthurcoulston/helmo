@@ -478,8 +478,24 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; color: 
 .situation { color: var(--ink-2); margin: 10px 0 6px; }
 .question { font-size: 19px; font-weight: 650; letter-spacing: -0.01em; margin: 8px 0 12px; }
 .options { display: grid; gap: 6px; margin: 0 0 12px; }
-.option { display: grid; grid-template-columns: 150px 1fr; gap: 12px; padding: 7px 10px;
+/* minmax(0, 1fr) rather than 1fr, and the stack below (R-11 H-889). A bare
+   plain 1fr track is minmax(auto, 1fr): its floor is the min-content width of
+   the consequence, so a card 278px wide laid out a 343px option and dragged
+   the whole page sideways at 390px — 400px of document in a 390px viewport, on
+   the one page Arthur answers questions from. minmax(0, …) lets it shrink
+   to whatever is there, which is what makes long consequence text wrap instead
+   of push. */
+.option { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 12px; padding: 7px 10px;
   border: 1px solid var(--hairline); border-radius: var(--radius-inner); }
+/* The first breakpoint in this file, and it is content that decided it, not a
+   device: a 150px label column plus the gap and the padding leaves the
+   consequence under 100px on a phone — a ribbon three words wide that shrinking
+   correctly does not make readable. Below 480px the label sits above its
+   consequence and both get the full card. Same call rev's loop table makes:
+   two columns of this width do not fit a phone and should not try to. */
+@media (max-width: 480px) {
+  .option { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+}
 .opt-label { font-weight: 600; font-size: 13px; }
 .opt-consequence { color: var(--ink-2); font-size: 13px; }
 .rec { margin: 0 0 6px; }

@@ -141,11 +141,19 @@ orchestrator meetings and the read-only view. Product intent:
   view lands on the bounded reading, and its "whole record" tap goes to
   `/s/helmo-view/` — this HTML, at 390px. So every row here has to survive a
   phone width; the stat bar wraps and evidence refs break rather than pushing
-  the document wider. Nothing checks it — the estate's route × viewport sweep
-  covers the shell's own views, not the product pages it proxies — so a new
-  `white-space: nowrap` or a fixed-width row is the shape to watch, and
+  the document wider. Something checks it now (H-889): `npm run smoke` in the
+  estate repo drives this page and the other products at 390px in both themes.
+  It is a real-smoke against the running fleet, so it lives there and not here —
+  this repo stays zero-dependency and does not grow a browser. Run it after
+  touching this file's HTML or CSS. Its first run found what the hand-sweep had
+  missed: the answer options laid out a 343px card in a 278px parent and
+  dragged the document to 400px, because a bare `1fr` grid track is
+  `minmax(auto, 1fr)` and its floor is the min-content width of the consequence
+  text. `minmax(0, 1fr)` plus this file's one media query — options stack below
+  480px — is the fix, and a new `white-space: nowrap`, a fixed-width row or a
+  fresh `1fr` track is the shape to watch. To see one page:
   `node tools/shoot.mjs http://localhost:4400/ out.png --w 390 --fold` from the
-  estate repo is how to see it.
+  estate repo.
 - Evidence ref form (H-95): commit = `repo@sha` (`crew@24e8003`), one commit
   per item; file = absolute or `repo:relative/path`, never bare-relative; url
   as-is; other/draft free text. Prose belongs in the item's `note`. The point

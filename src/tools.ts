@@ -104,6 +104,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
           deps,
           agent_chain: store.agentChain(ticket_id),
           last_answer: store.lastAnswer(ticket_id),
+          product_acceptance: store.productAcceptance(ticket_id),
           // The stream's steering rides along so the claimer weighs the ticket
           // against the goal and budget before spending anything (H-55).
           ...(ws.goal || ws.budget_usd !== null
@@ -323,6 +324,68 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
     async ({ actor, ...input }) => {
       try {
         return ok({ notice: store.setNotice(resolveActor(actor as Actor | undefined), input) });
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    'helmo_record_product_completion',
+    {
+      description:
+        `Record that a product build is ready for independent acceptance. This is separate from ticket status: closing a generic review remains legitimate, while a product ship gate reads only this explicit record. Name every reviewed source snapshot as repo@ plus the full 40-character commit hash and name that commit's author. A later completion supersedes every earlier verdict and returns acceptance to pending, which is the remediation handback. This write is append-only and is allowed on terminal tickets.`,
+      inputSchema: {
+        ticket_id: z.string(),
+        artifacts: z.array(z.object({ ref: z.string(), author: z.string() })).min(1),
+        note: z.string(),
+        actor: actorSchema,
+      },
+    },
+    async ({ actor, ...input }) => {
+      try {
+        return ok(store.recordProductCompletion(resolveActor(actor as Actor | undefined), input));
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    'helmo_record_acceptance_verdict',
+    {
+      description:
+        `Record PASS or FAIL from a non-author reviewer against the latest product completion's exact immutable refs. The store rejects a missing completion, a ref mismatch, or a reviewer who authored any reviewed commit. FAIL is a first-class acceptance state; after remediation, the builder records a new completion and the gate returns to pending until another non-author verdict. Prose saying PASS and ticket status done never count as acceptance. This write is append-only and is allowed on terminal tickets.`,
+      inputSchema: {
+        ticket_id: z.string(),
+        refs: z.array(z.string()).min(1),
+        verdict: z.enum(['pass', 'fail']),
+        note: z.string(),
+        actor: actorSchema,
+      },
+    },
+    async ({ actor, ...input }) => {
+      try {
+        return ok(store.recordAcceptanceVerdict(resolveActor(actor as Actor | undefined), input));
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    'helmo_check_product_acceptance',
+    {
+      description:
+        `Read the explicit product acceptance gate for one ticket. Only state "accepted" may ship. No completion is not_requested; a missing, stale, or self-authored verdict is pending; FAIL is failed. Generic ticket type and status do not affect this gate. For a process exit suitable for release scripts, use helmo-cli acceptance-check.`,
+      inputSchema: {
+        ticket_id: z.string(),
+        refs: z.array(z.string()).optional().describe('Optional exact release manifest; when supplied, acceptance of any other refs remains pending/stale'),
+      },
+    },
+    async ({ ticket_id, refs }) => {
+      try {
+        return ok(store.productAcceptance(ticket_id, refs));
       } catch (e) {
         return fail(e);
       }

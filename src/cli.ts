@@ -157,7 +157,30 @@ try {
     case 'get': {
       const id = flag('ticket') ?? args[0];
       if (!id) throw new HelmoError('get requires a ticket id');
-      out({ ...store.getTicket(id), last_answer: store.lastAnswer(id), agent_chain: store.agentChain(id) });
+      out({ ...store.getTicket(id), last_answer: store.lastAnswer(id), agent_chain: store.agentChain(id), product_acceptance: store.productAcceptance(id) });
+      break;
+    }
+    case 'product-complete': {
+      out(store.recordProductCompletion(actor(), {
+        ticket_id: req('ticket'),
+        artifacts: JSON.parse(req('artifacts')),
+        note: req('note'),
+      }));
+      break;
+    }
+    case 'acceptance-verdict': {
+      out(store.recordAcceptanceVerdict(actor(), {
+        ticket_id: req('ticket'),
+        refs: JSON.parse(req('refs')),
+        verdict: req('verdict') as 'pass' | 'fail',
+        note: req('note'),
+      }));
+      break;
+    }
+    case 'acceptance-check': {
+      const acceptance = store.productAcceptance(req('ticket'), flag('refs') ? JSON.parse(flag('refs')!) : undefined);
+      out(acceptance);
+      if (acceptance.state !== 'accepted') process.exitCode = 1;
       break;
     }
     case 'create': {
@@ -216,6 +239,9 @@ try {
   record-spend   --ticket H-n [--tokens N] [--cost-usd X] --note N   (metered spend; terminal tickets accepted)
   list           [--ready] [--status S] [--workstream W] [--assignee A] [--limit N]
   get            <ticket-id>
+  product-complete --ticket H-n --artifacts '[{"ref":"repo@<40hex>","author":"name"}]' --note N
+  acceptance-verdict --ticket H-n --refs '["repo@<40hex>"]' --verdict pass|fail --note N
+  acceptance-check --ticket H-n [--refs '["repo@<40hex>"]'] (exit 0 only for independent acceptance of that manifest)
   hygiene                                                      (deterministic record checks, read-only)
   hygiene-dispose --check C --ticket H-n --reason R  (stop re-reporting a finding on a TERMINAL ticket; evented, append-once)
   workstream     --name W                                      (goal, budget, spend-to-date; read-only)

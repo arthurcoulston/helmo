@@ -2,7 +2,8 @@ import Database from 'better-sqlite3';
 import { parseSchedule } from './schedule.js';
 import {
   Actor, ActorKind, ACTOR_KINDS, Answer, BlastRadius, BLAST_RADII, Confidence, Dep, DepType, Evidence,
-  HelmoError, HelmoEvent, Notice, Question, Status, Ticket, Workstream, WorkstreamInfo,
+  AcceptanceVerdict, HelmoError, HelmoEvent, Notice, ProductAcceptance, ProductArtifact,
+  ProductCompletion, Question, Status, Ticket, Workstream, WorkstreamInfo,
 } from './types.js';
 
 const STALE_CLAIM_HOURS = 24;
@@ -206,6 +207,33 @@ function rejectSwallowedMarkup(fields: Record<string, string | undefined | null>
   }
 }
 
+const IMMUTABLE_COMMIT_REF = /^[^\s@]+@[0-9a-f]{40}$/;
+
+function normalizeArtifacts(input: ProductArtifact[] | undefined): ProductArtifact[] {
+  if (!input?.length) throw new HelmoError('Product completion requires at least one artifact: {ref: "repo@<full 40-character commit>", author: "name"}.');
+  const artifacts = input.map((a) => ({ ref: a.ref?.trim(), author: a.author?.trim() }));
+  for (const a of artifacts) {
+    if (!IMMUTABLE_COMMIT_REF.test(a.ref)) {
+      throw new HelmoError(`Artifact ref "${a.ref}" is not immutable. Use repo@ followed by the full 40-character lowercase commit hash.`);
+    }
+    if (!a.author) throw new HelmoError(`Artifact ${a.ref} is missing its author name.`);
+  }
+  if (new Set(artifacts.map((a) => a.ref)).size !== artifacts.length) throw new HelmoError('Each completed ref must appear once.');
+  return artifacts.sort((a, b) => a.ref.localeCompare(b.ref));
+}
+
+function normalizeRefs(input: string[] | undefined): string[] {
+  if (!input?.length) throw new HelmoError('Acceptance verdict requires the exact refs reviewed.');
+  const refs = input.map((r) => r.trim()).sort();
+  for (const ref of refs) {
+    if (!IMMUTABLE_COMMIT_REF.test(ref)) {
+      throw new HelmoError(`Verdict ref "${ref}" is not immutable. Use repo@ followed by the full 40-character lowercase commit hash.`);
+    }
+  }
+  if (new Set(refs).size !== refs.length) throw new HelmoError('Each reviewed ref must appear once.');
+  return refs;
+}
+
 export class Store {
   private db: Database.Database;
 
@@ -275,6 +303,53 @@ export class Store {
   getEvents(ticketId: string): HelmoEvent[] {
     const rows = this.db.prepare('SELECT * FROM events WHERE ticket_id = ? ORDER BY seq').all(ticketId) as Record<string, unknown>[];
     return rows.map(rowToEvent);
+  }
+
+  /** Current product acceptance for a ticket. Generic ticket status and type
+   *  do not participate: acceptance exists only after an explicit completion
+   *  event. A newer completion always invalidates an older verdict. */
+  productAcceptance(ticketId: string, expectedRefs?: string[]): ProductAcceptance {
+    this.getTicket(ticketId);
+    const rows = this.db
+      .prepare("SELECT * FROM events WHERE ticket_id = ? AND event_type IN ('product_completed','acceptance_verdict') ORDER BY seq")
+      .all(ticketId) as Record<string, unknown>[];
+    const events = rows.map(rowToEvent);
+    const completionEvent = events.filter((e) => e.event_type === 'product_completed').at(-1);
+    if (!completionEvent) {
+      return { state: 'not_requested', reason: 'no_completion', completion: null, verdict: null };
+    }
+    const completion: ProductCompletion = {
+      seq: completionEvent.seq,
+      ts: completionEvent.ts,
+      actor: completionEvent.actor,
+      artifacts: completionEvent.payload['artifacts'] as ProductArtifact[],
+      note: completionEvent.payload['note'] as string,
+    };
+    const verdictEvent = events.filter((e) => e.event_type === 'acceptance_verdict' && e.seq > completion.seq).at(-1);
+    if (!verdictEvent) {
+      const anyEarlierVerdict = events.some((e) => e.event_type === 'acceptance_verdict');
+      return { state: 'pending', reason: anyEarlierVerdict ? 'stale_verdict' : 'missing_verdict', completion, verdict: null };
+    }
+    const verdict: AcceptanceVerdict = {
+      seq: verdictEvent.seq,
+      ts: verdictEvent.ts,
+      actor: verdictEvent.actor,
+      refs: verdictEvent.payload['refs'] as string[],
+      verdict: verdictEvent.payload['verdict'] as 'pass' | 'fail',
+      note: verdictEvent.payload['note'] as string,
+    };
+    const refs = completion.artifacts.map((a) => a.ref).sort();
+    if (JSON.stringify(verdict.refs.slice().sort()) !== JSON.stringify(refs)) {
+      return { state: 'pending', reason: 'stale_verdict', completion, verdict };
+    }
+    if (completion.actor.name === verdict.actor.name || completion.artifacts.some((a) => a.author === verdict.actor.name)) {
+      return { state: 'pending', reason: 'self_authored_verdict', completion, verdict };
+    }
+    if (verdict.verdict === 'fail') return { state: 'failed', reason: 'review_failed', completion, verdict };
+    if (expectedRefs && JSON.stringify(normalizeRefs(expectedRefs)) !== JSON.stringify(refs)) {
+      return { state: 'pending', reason: 'stale_verdict', completion, verdict };
+    }
+    return { state: 'accepted', reason: 'independently_accepted', completion, verdict };
   }
 
   lastAnswer(ticketId: string): Answer | null {
@@ -864,6 +939,46 @@ export class Store {
   }
 
   // ---------- writes (every write = append event + materialize, atomically) ----------
+
+  /** Record the exact source snapshots a builder says are complete. This is
+   *  separate from closing a ticket: generic reviews retain their ordinary
+   *  lifecycle, while product acceptance gains a deliberately invoked gate. */
+  recordProductCompletion(actor: Actor, input: { ticket_id: string; artifacts: ProductArtifact[]; note: string }): ProductAcceptance {
+    validateActor(actor);
+    this.getTicket(input.ticket_id); // terminal tickets remain writable through this append-only record
+    if (!input.note?.trim()) throw new HelmoError('note is required on product completion: say what is ready for independent review.');
+    rejectSwallowedMarkup({ note: input.note });
+    const artifacts = normalizeArtifacts(input.artifacts);
+    return this.db.transaction(() => {
+      this.append(now(), input.ticket_id, 'product_completed', actor, { artifacts, note: input.note });
+      return this.productAcceptance(input.ticket_id);
+    }).immediate();
+  }
+
+  /** Record an independent verdict against the latest completion's exact
+   *  refs. Ref mismatch and authors reviewing their own commits are rejected;
+   *  no prose PASS or generic done status can reach accepted state. */
+  recordAcceptanceVerdict(actor: Actor, input: { ticket_id: string; refs: string[]; verdict: 'pass' | 'fail'; note: string }): ProductAcceptance {
+    validateActor(actor);
+    this.getTicket(input.ticket_id);
+    if (!input.note?.trim()) throw new HelmoError('note is required on an acceptance verdict: say what the review established.');
+    if (input.verdict !== 'pass' && input.verdict !== 'fail') throw new HelmoError('verdict must be "pass" or "fail".');
+    rejectSwallowedMarkup({ note: input.note });
+    const current = this.productAcceptance(input.ticket_id);
+    if (!current.completion) throw new HelmoError(`${input.ticket_id} has no product completion to review. Record immutable refs and authors first.`);
+    const refs = normalizeRefs(input.refs);
+    const expected = current.completion.artifacts.map((a) => a.ref).sort();
+    if (JSON.stringify(refs) !== JSON.stringify(expected)) {
+      throw new HelmoError(`Verdict refs do not match the latest completion exactly. Expected ${JSON.stringify(expected)}; got ${JSON.stringify(refs)}. Review the current refs or record a new completion.`);
+    }
+    if (current.completion.actor.name === actor.name || current.completion.artifacts.some((a) => a.author === actor.name)) {
+      throw new HelmoError(`Actor "${actor.name}" recorded this completion or is named as an artifact author and cannot accept it. Hand the exact refs to a non-author reviewer.`);
+    }
+    return this.db.transaction(() => {
+      this.append(now(), input.ticket_id, 'acceptance_verdict', actor, { refs, verdict: input.verdict, note: input.note });
+      return this.productAcceptance(input.ticket_id);
+    }).immediate();
+  }
 
   /** Set a workstream's goal and/or budget — the human's steering (H-55).
    *  Agent-kind writes are rejected in the store, not just the tool docs: an

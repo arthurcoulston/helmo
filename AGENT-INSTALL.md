@@ -66,7 +66,7 @@ Serves read-only at `http://localhost:4400`, bound to 127.0.0.1 (override port w
 node <helmo-path>/scripts/check-connection.mjs
 ```
 
-Must print the 7 tools and `CONNECTION OK`. Also confirm your platform sees it (Claude Code: `claude mcp list` shows `helmo: ✔ Connected`).
+Must print the tool inventory and `CONNECTION OK`. Also confirm your platform sees it (Claude Code: `claude mcp list` shows `helmo: ✔ Connected`).
 
 ### 6. Report back to the human
 

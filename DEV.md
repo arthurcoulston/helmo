@@ -40,6 +40,15 @@ orchestrator meetings and the read-only view. Product intent:
   reports each in_progress ticket in a name with the actor that claimed it —
   the claiming actor's `session` stamp is how rev's same-seat guard tells a
   loop's own mid-flight work from a desk session sharing the crew name.
+  Product acceptance (H-884) is a second, explicitly invoked read over that
+  event log: `product_completed` names immutable full `repo@commit` refs and
+  their authors; `acceptance_verdict` records a non-author PASS or FAIL against
+  exactly the latest refs. A new completion makes every older verdict stale.
+  Ticket status and type are deliberately outside this calculation, so generic
+  reviews can close normally and neither `done` nor prose saying PASS can stand
+  in for product acceptance. Both events may be appended to terminal tickets;
+  they never reopen or rewrite history. Caller identities and authors are
+  provenance assertions, not authenticated identities.
 - `tools.ts` — the MCP tool surface, registered identically by both entry
   points below (H-116). **Tool descriptions carry the behavioral contract for
   every agent** (triage duty, evidence rules, question quality); treat
@@ -94,6 +103,9 @@ orchestrator meetings and the read-only view. Product intent:
   upstream, never a record. `spend` events are
   bookkeeping, not motion: they accept terminal tickets and never touch status
   or updated_at.
+  `acceptance-check --ticket H-n --refs '["repo@<40hex>"]'` is the release
+  process seam: it exits zero only when an independent PASS covers that exact
+  manifest. `product-complete` and `acceptance-verdict` record the two halves.
 - `view.ts` — the dashboard at :4400 (H-2). The constitutional line, restated
   with Arthur in H-90: the page carries no record DATA-ENTRY (agents write
   the record), but answering an awaiting_human question is operator steering
@@ -179,6 +191,10 @@ orchestrator meetings and the read-only view. Product intent:
 ## Commands
 
 - `npm run build` (tsc → dist/), `npm test` (store + e2e against a temp db).
+- `npm run smoke` drives a create → claim → return → answer lifecycle with
+  different truthful fixture actors, asserts every state and event, then
+  proves a rejected CLI operation exits nonzero. It always uses a fresh temp
+  database and never falls through to the live record.
 - `npm run vendor:tokens` / `npm run vendor:avatars` refresh the vendored
   estate design tokens and crew avatar sprite; add `-- --check` to fail on
   drift instead. See below.
@@ -208,6 +224,11 @@ orchestrator meetings and the read-only view. Product intent:
   must never steer its own stream).
 - Tool-description changes deploy on the next session spawn (loops get them
   immediately; running sessions keep the old text).
+- Product acceptance is opt-in and exact-ref: no completion is
+  `not_requested`; a completion without a current verdict is `pending`; FAIL is
+  `failed`; only a current non-author PASS is `accepted`. A caller checking a
+  different release manifest gets `pending/stale_verdict`, even if the record
+  still contains an accepted older candidate.
 - `listTickets` sorts terminal statuses last, then priority, then age — agents
   are told to open every iteration with `{assignee: <name>}`, and a first page
   of closed tickets reads as an empty queue (H-258, then H-669). The view

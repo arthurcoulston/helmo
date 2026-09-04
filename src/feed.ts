@@ -26,7 +26,7 @@
 // just closed — and the full record of any ticket in it is one tap away on the
 // page it is served beside.
 import { AVATAR_MARKS } from './estate-avatars.generated.js';
-import { ActorKind, Ticket } from './types.js';
+import { ActorKind, ProductAcceptance, Ticket } from './types.js';
 
 const MARKS = new Set<string>(AVATAR_MARKS);
 
@@ -69,6 +69,10 @@ export interface FeedTicket {
    *  it, and a queue that says "asks you" about settled work is worse than one
    *  that says nothing. */
   asks?: string;
+  /** Present only when this ticket explicitly entered the product acceptance
+   *  contract. This is a recorded gate state, never a claim about a live
+   *  reviewer process. */
+  acceptance?: Pick<ProductAcceptance, 'state' | 'reason'>;
   updated_at: string;
   closed_at: string | null;
 }
@@ -101,7 +105,12 @@ const seq = (t: Ticket) => Number.parseInt(t.id.replace(/^\D+/, ''), 10) || 0;
  * re-sorts is free to; one that does not still gets the two groups it asked
  * for in the order Arthur asked for them.
  */
-export function feed(all: Ticket[], kinds: Map<string, ActorKind>, now: Date = new Date()): Feed {
+export function feed(
+  all: Ticket[],
+  kinds: Map<string, ActorKind>,
+  now: Date = new Date(),
+  acceptanceFor?: (ticketId: string) => ProductAcceptance,
+): Feed {
   const live = all.filter((t) => !TERMINAL.has(t.status));
   const closed = all
     .filter((t) => TERMINAL.has(t.status))
@@ -113,6 +122,7 @@ export function feed(all: Ticket[], kinds: Map<string, ActorKind>, now: Date = n
     tickets: [...live, ...closed].map((t) => {
       const kind = t.assignee ? kinds.get(t.assignee) : undefined;
       const mark = t.assignee ? markFor(t.assignee, kind) : null;
+      const acceptance = acceptanceFor?.(t.id);
       return {
         id: t.id,
         title: t.title,
@@ -122,6 +132,9 @@ export function feed(all: Ticket[], kinds: Map<string, ActorKind>, now: Date = n
         assignee: t.assignee,
         ...(mark && kind ? { actor: { mark, kind } } : {}),
         ...(t.status === 'awaiting_human' && t.question ? { asks: t.question.question } : {}),
+        ...(acceptance && acceptance.state !== 'not_requested'
+          ? { acceptance: { state: acceptance.state, reason: acceptance.reason } }
+          : {}),
         updated_at: t.updated_at,
         closed_at: t.closed_at,
       };

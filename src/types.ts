@@ -43,6 +43,37 @@ export interface Evidence {
   note?: string;
 }
 
+export interface ProductArtifact {
+  /** Immutable source snapshot. Full commit hashes are required so an
+   *  acceptance remains tied to one unambiguous tree. */
+  ref: string;
+  author: string;
+}
+
+export interface ProductCompletion {
+  seq: number;
+  ts: string;
+  actor: Actor;
+  artifacts: ProductArtifact[];
+  note: string;
+}
+
+export interface AcceptanceVerdict {
+  seq: number;
+  ts: string;
+  actor: Actor;
+  refs: string[];
+  verdict: 'pass' | 'fail';
+  note: string;
+}
+
+export interface ProductAcceptance {
+  state: 'not_requested' | 'pending' | 'failed' | 'accepted';
+  reason: 'no_completion' | 'missing_verdict' | 'stale_verdict' | 'self_authored_verdict' | 'review_failed' | 'independently_accepted';
+  completion: ProductCompletion | null;
+  verdict: AcceptanceVerdict | null;
+}
+
 export interface Question {
   situation: string;
   question: string;
@@ -88,7 +119,7 @@ export interface Dep {
   type: DepType;
 }
 
-export type EventType = 'created' | 'updated' | 'returned' | 'answered' | 'linked' | 'unlinked' | 'spend' | 'workstream_set' | 'workstream_renamed' | 'hygiene_disposed' | 'notice_set';
+export type EventType = 'created' | 'updated' | 'returned' | 'answered' | 'linked' | 'unlinked' | 'spend' | 'workstream_set' | 'workstream_renamed' | 'hygiene_disposed' | 'notice_set' | 'product_completed' | 'acceptance_verdict';
 
 /** The standing notice: a one-line current priority with its provenance,
  *  riding along on every ticket-queue response the way workstream steering

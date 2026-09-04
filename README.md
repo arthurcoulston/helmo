@@ -14,7 +14,10 @@ That view is the whole interface. Helmo exists for the moment your agents outrun
 
 ## Status
 
-Walking skeleton. Store + MCP server + plain read-only view. Being dogfooded on its own development.
+MVP. The store, MCP server, read-only view, smoke test, and explicit product
+acceptance gate are dogfooded on Helmo's own development. The MVP gate is
+`npm run build`, `npm test`, and `npm run smoke`; publication is a separate
+release decision.
 
 ## Install
 
@@ -23,8 +26,18 @@ Walking skeleton. Store + MCP server + plain read-only view. Being dogfooded on 
 Manual setup, if you prefer:
 
 ```
-npm install && npm run build
+git clone https://github.com/arthurcoulston/helmo.git
+cd helmo
+npm ci
+npm run build
+npm test
+npm run smoke
 ```
+
+That is the isolated cold setup: it needs no sibling project and the smoke uses
+a fresh temporary database. Two design-source drift comparisons report skipped
+when the private estate source is absent; the vendored copies are still tested.
+Helmo requires Node.js 20 or newer.
 
 The store is a single SQLite file (WAL), default `~/.helmo/helmo.db`, override with `HELMO_DB`.
 
@@ -48,7 +61,34 @@ Each agent's MCP config launches the server with the agent's identity:
 
 For Claude Code: `claude mcp add helmo -e HELMO_ACTOR='{"name":"...","kind":"agent","model":"...","version":"1.0"}' -- node /path/to/helmo/dist/server.js`
 
-Tools: `helmo_create_ticket`, `helmo_get_ticket`, `helmo_list_tickets`, `helmo_update_ticket`, `helmo_link_tickets`, `helmo_return_to_human`, `helmo_answer_ticket`. The tool descriptions teach correct usage; no separate convention doc is required.
+Tools include ticket creation, reading, updates, links, human questions and
+answers, workstream steering, plus
+`helmo_record_product_completion`, `helmo_record_acceptance_verdict`, and
+`helmo_check_product_acceptance`. The tool descriptions teach correct usage;
+no separate convention doc is required.
+
+### Product acceptance
+
+Product acceptance is an explicit gate, separate from ordinary ticket status
+and review type. A builder records the exact source under review as
+`repo@<full 40-character commit>` with each commit's author. A non-author
+reviewer records PASS or FAIL against exactly those refs. A missing or failed
+verdict blocks acceptance; a new completion after remediation makes the old
+verdict stale and requires a new handback. Closing a ticket or writing “PASS”
+in prose does not satisfy this gate, while generic review tickets keep their
+normal lifecycle.
+
+Release scripts can require the intended manifest directly:
+
+```
+helmo-cli acceptance-check --ticket H-42 \
+  --refs '["helmo@0123456789abcdef0123456789abcdef01234567"]'
+```
+
+The command exits zero only for an independent PASS on that exact manifest.
+Actor names, models, harness versions, and authors are provenance asserted by
+the callers; Helmo records and checks those assertions but does not authenticate
+their real-world identities.
 
 ### The view (read-only)
 
@@ -64,7 +104,7 @@ In your agent session (Claude Code, Codex): *"Summon helmo orchestrator"* → lo
 
 ```
 npm test        # includes the core invariant: tickets rebuild exactly from the event log
-npm run smoke   # end-to-end MCP stdio round trip
+npm run smoke   # asserted MCP lifecycle + a deliberate rejected CLI operation
 npm run demo    # stage the fictional board behind the screenshot above, in a throwaway db
 ```
 

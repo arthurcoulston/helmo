@@ -111,6 +111,19 @@ describe('what the reading carries', () => {
     // record is one tap away on the page this is served beside.
     expect(JSON.stringify(reading(s))).not.toContain('import CSVs');
   });
+
+  it('carries explicit acceptance state without implying a reviewer is active', () => {
+    const s = new Store(':memory:');
+    const t = create(s, { status: 'in_progress' });
+    s.recordProductCompletion(builder, {
+      ticket_id: t.id,
+      artifacts: [{ ref: `helmo@${'a'.repeat(40)}`, author: builder.name }],
+      note: 'Ready for independent review.',
+    });
+    const row = feed(all(s), s.actorKinds(), new Date(), (id) => s.productAcceptance(id)).tickets[0]!;
+    expect(row.acceptance).toEqual({ state: 'pending', reason: 'missing_verdict' });
+    expect(row).not.toHaveProperty('reviewer_active');
+  });
 });
 
 describe('what a ticket asks', () => {

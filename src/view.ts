@@ -82,6 +82,15 @@ function prioBadge(t: Ticket): string {
   return '';
 }
 
+function acceptanceBadge(t: Ticket): string {
+  const acceptance = store.productAcceptance(t.id);
+  if (acceptance.state === 'not_requested') return '';
+  const cls = acceptance.state === 'accepted' ? 'accent' : acceptance.state === 'failed' ? 'critical' : 'warning';
+  const label = acceptance.state === 'accepted' ? 'accepted' : acceptance.state === 'failed' ? 'acceptance failed' : 'acceptance pending';
+  const mark = acceptance.state === 'accepted' ? '✓' : acceptance.state === 'failed' ? '✕' : '◌';
+  return `<span class="badge ${cls}" title="${esc(acceptance.reason.replaceAll('_', ' '))}">${mark} ${label}</span>`;
+}
+
 function evidenceLinks(t: Ticket): string {
   return t.evidence
     .map((e) => {
@@ -216,7 +225,7 @@ function questionCard(t: Ticket): string {
       : `<div class="option"><span class="opt-label">${esc(o.label)}</span><span class="opt-consequence">${esc(o.consequence)}</span></div>`;
   return `<article class="qcard" id="${esc(t.id)}" data-ticket="${esc(t.id)}">
     <header><span class="tid">${esc(t.id)}</span> <span class="qtitle">${esc(t.title)}</span>
-      <span class="meta">${esc(t.workstream)} · asked ${esc(rel(t.updated_at))} ${blastBadge(t)}</span></header>
+      <span class="meta">${esc(t.workstream)} · asked ${esc(rel(t.updated_at))} ${blastBadge(t)} ${acceptanceBadge(t)}</span></header>
     <p class="situation">${esc(q.situation)}</p>
     <p class="question">${esc(q.question)}</p>
     <div class="options">${q.options.map(opt).join('')}</div>
@@ -248,7 +257,7 @@ function motionCard(t: Ticket): string {
   const note = lastNote(t);
   return `<article class="mcard" id="${esc(t.id)}">
     <header><span class="tid">${esc(t.id)}</span> <span class="mtitle">${esc(t.title)}</span>
-      ${prioBadge(t)} ${blastBadge(t)} ${money(t)}
+      ${prioBadge(t)} ${blastBadge(t)} ${acceptanceBadge(t)} ${money(t)}
       <span class="meta">${esc(t.workstream)} · <b class="holder">${t.assignee ? actor(t.assignee) : '?'}</b> · ${esc(rel(t.updated_at))}</span></header>
     ${note ? `<p class="note">${esc(note)}</p>` : ''}
     <details class="more" id="d-${esc(t.id)}"><summary>ticket detail</summary>${details(t)}</details>
@@ -268,7 +277,7 @@ function row(t: Ticket, opts: { showDone?: boolean } = {}): string {
       ${t.schedule ? `<span class="badge">↻ ${esc(t.schedule)}</span>` : ''}
       ${gated(t) ? `<span class="badge">⏰ not before ${esc(t.not_before!.slice(0, 10))}</span>` : ''}
       ${noEv ? '<span class="badge critical">✱ no evidence</span>' : ''}
-      ${confBadge(t)} ${blastBadge(t)}
+      ${confBadge(t)} ${blastBadge(t)} ${acceptanceBadge(t)}
       <span class="rmeta">${esc(t.workstream)}${t.project ? ` · ${esc(t.project)}` : ''} · ${esc(t.type)}${t.assignee ? ` · ${esc(t.assignee)}` : ''} ${money(t)} · ${esc(
         rel(opts.showDone ? (t.closed_at ?? t.updated_at) : t.updated_at)
       )}</span>
@@ -675,7 +684,7 @@ function handleAnswer(
  *  that touches the record and is gated accordingly. */
 function handleFeed(res: { writeHead: (c: number, h: Record<string, string>) => void; end: (s: string) => void }): void {
   try {
-    const body = JSON.stringify(feed(store.listTickets({ limit: 1000 }), store.actorKinds()));
+    const body = JSON.stringify(feed(store.listTickets({ limit: 1000 }), store.actorKinds(), new Date(), (id) => store.productAcceptance(id)));
     // no-store for the same reason the page is not cached: this is a reading
     // of right now, and the shell refreshes it on a timer.
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });

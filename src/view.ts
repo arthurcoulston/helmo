@@ -553,7 +553,9 @@ a.ev:hover { text-decoration: underline; }
 /* ---- shared detail ---- */
 details.more { margin-top: 10px; }
 details.more summary { font-size: 12px; color: var(--ink-3); cursor: pointer; }
-.body { white-space: pre-wrap; color: var(--ink-2); font-size: 13px; background: var(--page);
+/* pre-wrap alone breaks at spaces, and bodies carry absolute paths and refs
+   that have none — at 390px one of those pushes the whole document wide. */
+.body { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; color: var(--ink-2); font-size: 13px; background: var(--page);
   border: 1px solid var(--hairline); border-radius: var(--radius-inner); padding: 10px 14px; margin: 8px 0; }
 .trow .body { background: var(--surface); }
 .uncertain { color: var(--serious); font-size: 13px; margin: 6px 0; }

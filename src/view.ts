@@ -437,7 +437,7 @@ body { margin: 0 auto; padding: 28px 32px 64px; max-width: 1080px; background: v
 .top { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; flex-wrap: wrap; margin-bottom: 8px; }
 .brand h1 { font-size: 26px; margin: 0; letter-spacing: -0.02em; display: inline; }
 .tagline { color: var(--ink-3); margin-left: 10px; font-size: 13px; }
-.stats { display: flex; gap: 22px; }
+.stats { display: flex; gap: 12px 22px; flex-wrap: wrap; }
 .stat-n { font-size: 22px; font-weight: 650; letter-spacing: -0.02em; }
 .stat-l { font-size: 11px; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.06em; }
 .stat.hot .stat-n { color: var(--warning); }
@@ -518,7 +518,7 @@ button.option.selected { border-color: var(--link); box-shadow: inset 2px 0 0 va
 .rtitle { font-weight: 500; }
 .rmeta { margin-left: auto; text-align: right; }
 .evrow { flex-basis: 100%; display: flex; gap: 12px; flex-wrap: wrap; padding-left: 44px; }
-.ev { font-size: 12px; color: var(--ink-2); }
+.ev { font-size: 12px; color: var(--ink-2); min-width: 0; overflow-wrap: anywhere; }
 a.ev { color: var(--link); text-decoration: none; }
 a.ev:hover { text-decoration: underline; }
 

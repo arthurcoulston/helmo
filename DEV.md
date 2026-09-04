@@ -137,6 +137,15 @@ orchestrator meetings and the read-only view. Product intent:
   the feed rides the prefix Helmo is already served at, and this port stays as
   unexposed as it was. `markFor` lives here and `view.ts` draws by it, so the
   JSON and the HTML cannot disagree about who has a face.
+  That same prefix makes this page a **phone** page (H-880): the shell's Helmo
+  view lands on the bounded reading, and its "whole record" tap goes to
+  `/s/helmo-view/` — this HTML, at 390px. So every row here has to survive a
+  phone width; the stat bar wraps and evidence refs break rather than pushing
+  the document wider. Nothing checks it — the estate's route × viewport sweep
+  covers the shell's own views, not the product pages it proxies — so a new
+  `white-space: nowrap` or a fixed-width row is the shape to watch, and
+  `node tools/shoot.mjs http://localhost:4400/ out.png --w 390 --fold` from the
+  estate repo is how to see it.
 - Evidence ref form (H-95): commit = `repo@sha` (`crew@24e8003`), one commit
   per item; file = absolute or `repo:relative/path`, never bare-relative; url
   as-is; other/draft free text. Prose belongs in the item's `note`. The point

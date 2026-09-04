@@ -242,11 +242,13 @@ function answerForm(): string {
   return `<div class="answer-form" hidden>
     <div class="af-picked">answering <b class="af-label"></b></div>
     <input class="af-reason" placeholder="reasoning / constraints (optional — agents learn from the why)">
-    <select class="af-res">
-      <option value="resume">answer & reopen for the crew</option>
-      <option value="done">answer settles it — close done</option>
-      <option value="cancelled">answer kills it — cancel</option>
-    </select>
+    <label class="af-resolution">then
+      <select class="af-res">
+        <option value="resume">answer & reopen for the crew</option>
+        <option value="done">answer settles it — close done</option>
+        <option value="cancelled">answer kills it — cancel</option>
+      </select>
+    </label>
     <button type="button" class="af-send">Answer as ${esc(operator)}</button>
     <span class="af-status" role="status"></span>
   </div>`;
@@ -281,9 +283,9 @@ function row(t: Ticket, opts: { showDone?: boolean } = {}): string {
       <span class="rmeta">${esc(t.workstream)}${t.project ? ` · ${esc(t.project)}` : ''} · ${esc(t.type)}${t.assignee ? ` · ${esc(t.assignee)}` : ''} ${money(t)} · ${esc(
         rel(opts.showDone ? (t.closed_at ?? t.updated_at) : t.updated_at)
       )}</span>
-      ${opts.showDone ? `<span class="evrow">${evidenceLinks(t)}</span>` : ''}
       ${opts.showDone ? chain(t) : ''}
     </summary>
+    ${opts.showDone ? `<div class="evrow">${evidenceLinks(t)}</div>` : ''}
     ${details(t)}
   </details>`;
 }
@@ -520,6 +522,7 @@ button.option.selected { border-color: var(--link); box-shadow: inset 2px 0 0 va
 .af-picked { white-space: nowrap; }
 .af-reason { flex: 1 1 260px; padding: 5px 9px; border: 1px solid var(--hairline); border-radius: var(--radius-control);
   background: var(--surface); color: var(--ink); font: inherit; }
+.af-resolution { display: flex; align-items: center; gap: 6px; color: var(--ink-3); }
 .af-res { padding: 5px 6px; border: 1px solid var(--hairline); border-radius: var(--radius-control); background: var(--surface); color: var(--ink); font: inherit; }
 .af-send { padding: 5px 14px; border: 1px solid var(--link); border-radius: var(--radius-control); background: var(--link); color: var(--link-ink);
   font: inherit; font-weight: 600; cursor: pointer; }
@@ -578,6 +581,10 @@ const JS = `
 let last = Date.now();
 setInterval(async () => {
   if (document.querySelector('.answer-form:not([hidden])')) return; // composing: hands off
+  // A focused disclosure, link or form control belongs to the reader until
+  // they leave it. Replacing the body beneath keyboard focus would reset their
+  // place even though the open disclosures and scroll position are preserved.
+  if (document.activeElement && document.activeElement !== document.body) return;
   try {
     const r = await fetch(location.pathname, { cache: 'no-store' });
     if (!r.ok) return;

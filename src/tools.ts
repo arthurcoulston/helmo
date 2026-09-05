@@ -215,6 +215,44 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
   );
 
   server.registerTool(
+    'helmo_hygiene',
+    {
+      description:
+        `Run Helmo's deterministic record checks. Returns current findings only; it changes nothing and makes no judgment about them. Use this for cultivation sweeps instead of reading the store directly. Live-ticket findings clear by acting on the ticket. A finding on a terminal ticket that has been examined and needs no further work can be recorded once with helmo_dispose_hygiene_finding.`,
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        return ok({ findings: store.hygiene() });
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    'helmo_dispose_hygiene_finding',
+    {
+      description:
+        `Record that one hygiene finding on a DONE or CANCELLED ticket was examined and dealt with, so later sweeps stop reporting it. This is append-once judgment, not deletion: give the exact check and ticket returned by helmo_hygiene, plus a reason another agent can audit. Live-ticket findings cannot be disposed; act on the ticket instead. Workstream-level findings have no ticket_id and cannot be disposed.`,
+      inputSchema: {
+        check: z.string(),
+        ticket_id: z.string(),
+        reason: z.string(),
+        actor: actorSchema,
+      },
+    },
+    async ({ actor, ...input }) => {
+      try {
+        store.disposeHygieneFinding(resolveActor(actor as Actor | undefined), input);
+        return ok({ disposed: `${input.check} on ${input.ticket_id}` });
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
+
+  server.registerTool(
     'helmo_link_tickets',
     {
       description:

@@ -141,6 +141,9 @@ orchestrator meetings and the read-only view. Product intent:
   dispositions there are refused — nothing live can be masked). Also H-81:
   done_without_evidence exempts question tickets the human closed via
   helmo_answer_ticket — the recorded answer is the closure evidence.
+  H-758 exposes both halves to loop agents as `helmo_hygiene` and
+  `helmo_dispose_hygiene_finding`; they need neither shell access nor a second
+  path into the store.
 - `feed.ts` — the queue reading as JSON, served by `view.ts` at
   `GET /tickets.json` (R-11 H-832). It exists for ONE consumer, the estate
   shell, and for one reason: the shell proxies every other product view

@@ -92,3 +92,31 @@ describe('the seat stamp survives an explicit actor (H-687)', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 });
+
+describe('hygiene through the MCP surface (H-758)', () => {
+  it('lists findings and records a terminal-ticket disposition with the caller identity', async () => {
+    const store = new Store(':memory:');
+    const ticket = store.createTicket(orch, {
+      title: 'Conversational deliverable', body: 'The answer was given live.', workstream: 'helmo-dev', type: 'writing',
+    });
+    store.updateTicket(orch, { ticket_id: ticket.id, note: 'finished in the meeting', status: 'done' });
+
+    const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+    const server = buildServer(store, seat);
+    const client = new Client({ name: 'test-agent', version: '0' });
+    await Promise.all([server.connect(serverSide), client.connect(clientSide)]);
+
+    const scan = await client.callTool({ name: 'helmo_hygiene', arguments: {} });
+    expect(JSON.stringify(scan)).toContain('done_without_evidence');
+    const disposed = await client.callTool({
+      name: 'helmo_dispose_hygiene_finding',
+      arguments: { check: 'done_without_evidence', ticket_id: ticket.id, reason: 'accepted live', actor: stated },
+    });
+    expect(JSON.stringify(disposed)).toContain(`done_without_evidence on ${ticket.id}`);
+    expect(store.hygiene()).toEqual([]);
+    expect(store.getEvents(ticket.id).at(-1)?.actor).toEqual({ ...stated, session: 'rev:builder-loop' });
+
+    await client.close();
+    store.close();
+  });
+});

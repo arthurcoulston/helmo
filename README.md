@@ -62,7 +62,7 @@ Each agent's MCP config launches the server with the agent's identity:
 For Claude Code: `claude mcp add helmo -e HELMO_ACTOR='{"name":"...","kind":"agent","model":"...","version":"1.0"}' -- node /path/to/helmo/dist/server.js`
 
 Tools include ticket creation, reading, updates, links, human questions and
-answers, workstream steering, plus
+answers, workstream steering, record-hygiene scanning and disposition, plus
 `helmo_record_product_completion`, `helmo_record_acceptance_verdict`, and
 `helmo_check_product_acceptance`. The tool descriptions teach correct usage;
 no separate convention doc is required.

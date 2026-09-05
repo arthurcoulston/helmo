@@ -43,6 +43,9 @@ orchestrator meetings and the read-only view. Product intent:
   session, fell back to a pool nobody watched, and the seat idled on its own
   work. Returning to the unassigned pool is still real and now explicit:
   `handoff_to: ''`, spelled the way `project`/`not_before` already clear.
+  Human direction relayed by an orchestrator is judgment even when the relay
+  carries the same agent name that filed the ticket (H-829); otherwise the
+  name-only self-triage check makes Arthur's recorded answer invisible.
   Seat holds (H-558): `seatHolds`/`seat-check`
   reports each in_progress ticket in a name with the actor that claimed it —
   the claiming actor's `session` stamp is how rev's same-seat guard tells a

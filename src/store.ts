@@ -497,9 +497,11 @@ export class Store {
     return tickets;
   }
 
-  /** True when `caller` created this ticket and no other actor has written any
-   *  event on it since. Scheduler-spawned instances are judged by their
-   *  template: standing work an agent set up for itself is still self-filed. */
+  /** True when `caller` created this ticket and nobody else has judged it.
+   *  Human and orchestrator events count even when the orchestrator relaying
+   *  the decision shares the filer's name. Scheduler-spawned instances are
+   *  judged by their template: standing work an agent set up for itself is
+   *  still self-filed. */
   private selfFiledUntouched(id: string, caller: string): boolean {
     const created = this.db
       .prepare(
@@ -515,7 +517,10 @@ export class Store {
     const others = this.db
       .prepare("SELECT COUNT(*) AS n FROM events WHERE ticket_id = ? AND event_type != 'spend' AND json_extract(actor, '$.name') NOT IN (?, 'helmo-scheduler')")
       .get(id, caller) as { n: number };
-    if (others.n > 0) return false;
+    const directed = this.db
+      .prepare("SELECT COUNT(*) AS n FROM events WHERE ticket_id = ? AND event_type != 'spend' AND json_extract(actor, '$.name') != 'helmo-scheduler' AND json_extract(actor, '$.kind') IN ('human', 'orchestrator')")
+      .get(id) as { n: number };
+    if (others.n > 0 || directed.n > 0) return false;
     if (created.template) return this.selfFiledUntouched(created.template, caller);
     return created.creator === caller;
   }
@@ -1208,7 +1213,7 @@ export class Store {
       // Agents only — a human or orchestrator IS the second pair of eyes.
       if (input.status === 'in_progress' && t.status === 'open' && actor.kind === 'agent' && this.selfFiledUntouched(t.id, actor.name)) {
         throw new HelmoError(
-          `${t.id} is your own filing, untouched by anyone else — executing your own discoveries takes a second pair of eyes first (the same triage rule that withholds it from your ready queue). Any event by a human or another agent releases it: a meeting answer, a note, a handoff, a priority change. takeover does not apply — it exists for stale claims, not self-triage. If this cannot wait, helmo_return_to_human with the case for urgency; if you are starting genuinely new work, create the ticket with status 'in_progress' in the same call instead of filing it and drawing it back later.`,
+          `${t.id} is your own filing, untouched by anyone else — executing your own discoveries takes a second pair of eyes first (the same triage rule that withholds it from your ready queue). Any event by a human, an orchestrator relaying the human, or another agent releases it: a meeting answer, a note, a handoff, a priority change. takeover does not apply — it exists for stale claims, not self-triage. If this cannot wait, helmo_return_to_human with the case for urgency; if you are starting genuinely new work, create the ticket with status 'in_progress' in the same call instead of filing it and drawing it back later.`,
         );
       }
       if (input.status === 'in_progress' && t.status === 'open' && t.assignee && t.assignee !== actor.name && !input.takeover) {

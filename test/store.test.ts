@@ -9,6 +9,7 @@ import { Actor, ActorKind, HelmoError } from '../src/types.js';
 const builder: Actor = { name: 'builder-loop', kind: 'agent', model: 'claude-sonnet-5', version: '1.0' };
 const reviewer: Actor = { name: 'reviewer-loop', kind: 'agent', model: 'gpt-6-codex', version: '2.1' };
 const orch: Actor = { name: 'helmo-orchestrator', kind: 'orchestrator', model: 'claude-fable-5', version: '0.1' };
+const relayedHuman: Actor = { name: 'builder-loop', kind: 'orchestrator', model: 'claude-fable-5', version: '0.1' };
 
 function freshStore(): Store {
   return new Store(':memory:');
@@ -825,6 +826,13 @@ describe('self-filed tickets need triage (H-55)', () => {
     expect(s.listTickets({ ready: true, caller: 'builder-loop' }).map((x) => x.id)).toContain(t.id);
     expect(s.selfFiledPending('builder-loop')).toEqual([]);
   });
+  it('a human decision relayed by the filer releases it', () => {
+    const s = freshStore();
+    const t = create(s);
+    s.updateTicket(relayedHuman, { ticket_id: t.id, note: 'Arthur said to start this now' });
+    expect(s.listTickets({ ready: true, caller: 'builder-loop' }).map((x) => x.id)).toContain(t.id);
+    expect(s.selfFiledPending('builder-loop')).toEqual([]);
+  });
   it('a metered spend event is bookkeeping, not a second pair of eyes (H-242)', () => {
     const s = freshStore();
     const t = create(s); // filed by builder
@@ -869,6 +877,12 @@ describe('triage rule enforced on claims (H-56)', () => {
     const s = freshStore();
     const t = create(s);
     s.updateTicket(orch, { ticket_id: t.id, note: 'triaged in meeting: yes, worth doing' });
+    expect(s.updateTicket(builder, { ticket_id: t.id, note: 'claiming', status: 'in_progress' }).ticket.status).toBe('in_progress');
+  });
+  it('a human decision relayed by the filer releases the claim path too', () => {
+    const s = freshStore();
+    const t = create(s);
+    s.updateTicket(relayedHuman, { ticket_id: t.id, note: 'Arthur said to start this now' });
     expect(s.updateTicket(builder, { ticket_id: t.id, note: 'claiming', status: 'in_progress' }).ticket.status).toBe('in_progress');
   });
   it('creating with in_progress stays legitimate — the rule guards backlog, not work started in the same breath', () => {

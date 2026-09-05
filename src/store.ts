@@ -1223,7 +1223,12 @@ export class Store {
       }
       diffs['status'] = { from: t.status, to: input.status };
       if (input.status === 'in_progress') diffs['assignee'] = { from: t.assignee, to: actor.name };
-      if (input.status === 'open') diffs['assignee'] = { from: t.assignee, to: null };
+      // Putting work down is not giving it up (H-954). Releasing to 'open'
+      // drops the claim and leaves the reservation standing, so work routed to
+      // a seat is still that seat's when its next session starts. Clearing the
+      // assignee here returned H-952 to a pool no builder watched: the loop
+      // woke on its own unfinished work, its ready query said 0, and it idled.
+      // Repooling is real, so it is now said out loud — handoff_to ''.
       if (input.status === 'done') {
         const hasEvidence = t.evidence.length > 0 || (input.evidence?.length ?? 0) > 0;
         if (!hasEvidence) {
@@ -1232,7 +1237,11 @@ export class Store {
       }
     }
 
-    if (input.handoff_to) {
+    // An empty handoff_to is the deliberate return to the pool: same field, no
+    // named receiver. It is spelled the way this store already clears a field
+    // (project '', not_before ''), and it keeps repooling explicit now that
+    // releasing a claim no longer does it silently.
+    if (input.handoff_to !== undefined) {
       if (t.status === 'in_progress' && t.assignee && t.assignee !== actor.name) {
         throw new HelmoError(`${t.id} is held by "${t.assignee}"; only the holder can hand it off.`);
       }
@@ -1240,7 +1249,7 @@ export class Store {
         throw new HelmoError(`${t.id} is awaiting_human; it cannot be handed off until answered.`);
       }
       diffs['status'] = { from: t.status, to: 'open' };
-      diffs['assignee'] = { from: t.assignee, to: input.handoff_to };
+      diffs['assignee'] = { from: t.assignee, to: input.handoff_to || null };
     }
 
     if (input.blast_radius) {
@@ -1281,7 +1290,7 @@ export class Store {
       if (input.tokens) payload['tokens'] = input.tokens;
       if (input.cost_usd) payload['cost_usd'] = input.cost_usd;
       if (input.takeover) payload['takeover'] = true;
-      if (input.handoff_to) payload['handoff_to'] = input.handoff_to;
+      if (input.handoff_to !== undefined) payload['handoff_to'] = input.handoff_to;
       this.append(ts, t.id, 'updated', actor, payload);
       this.applyUpdated(ts, t.id, payload);
       return { ticket: this.getTicket(t.id), warnings };

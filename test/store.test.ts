@@ -184,6 +184,44 @@ describe('handoff', () => {
     const claimed = s.updateTicket(reviewer, { ticket_id: t.id, note: 'reviewing', status: 'in_progress' });
     expect(claimed.ticket.assignee).toBe('reviewer-loop');
   });
+  // The H-952 episode (H-954): publishing work was reserved to mason, worked by
+  // one loop session, released to 'open' so a fresh session would continue —
+  // and vanished, because releasing cleared the assignee and mason's queue is
+  // scoped to (its own stream, unassigned) OR (assigned to mason). The loop
+  // woke on its own unfinished work, read ready=0, and idled.
+  it('releasing a claim keeps out-of-stream work reserved for the same seat', () => {
+    const s = freshStore();
+    const t = create(s, { workstream: 'publishing', assignee: 'builder-loop' });
+    triage(s, t.id);
+    s.updateTicket(builder, { ticket_id: t.id, note: 'claiming the queued work', status: 'in_progress' });
+    const { ticket } = s.updateTicket(builder, { ticket_id: t.id, note: 'spec written; a fresh session builds from it', status: 'open' });
+    expect(ticket.status).toBe('open');
+    expect(ticket.assignee).toBe('builder-loop');
+    // The next session of that seat, watching its own default stream, still sees it.
+    const next = s.listTickets({ ready: true, caller: 'builder-loop', workstream: 'helmo-dev' });
+    expect(next.map((x) => x.id)).toContain(t.id);
+    // And no other seat has been handed work that was routed to someone.
+    expect(s.listTickets({ ready: true, caller: 'reviewer-loop' }).map((x) => x.id)).not.toContain(t.id);
+  });
+  it('returning to the pool still works, said out loud', () => {
+    const s = freshStore();
+    const t = create(s, { assignee: 'builder-loop' });
+    triage(s, t.id);
+    s.updateTicket(builder, { ticket_id: t.id, note: 'claiming', status: 'in_progress' });
+    const { ticket } = s.updateTicket(builder, { ticket_id: t.id, note: 'not mine after all — anyone can take this', handoff_to: '' });
+    expect(ticket.status).toBe('open');
+    expect(ticket.assignee).toBeNull();
+    expect(s.listTickets({ ready: true, caller: 'reviewer-loop' }).map((x) => x.id)).toContain(t.id);
+  });
+  it('repooling is recorded in the log, so replay lands in the same place', () => {
+    const s = freshStore();
+    const t = create(s, { assignee: 'builder-loop' });
+    triage(s, t.id);
+    s.updateTicket(builder, { ticket_id: t.id, note: 'claiming', status: 'in_progress' });
+    s.updateTicket(builder, { ticket_id: t.id, note: 'back to the pool', handoff_to: '' });
+    const last = s.getEvents(t.id).at(-1)!;
+    expect(last.payload['diffs']).toMatchObject({ assignee: { from: 'builder-loop', to: null } });
+  });
   it('only the holder can hand off', () => {
     const s = freshStore();
     const t = create(s);

@@ -36,7 +36,14 @@ orchestrator meetings and the read-only view. Product intent:
   a ticket assigned to the caller is ready wherever it lives. ANDing the
   filter over the assignee clause left cross-workstream assignments invisible
   to rev loops forever: the wake fired (scopeChangedSince ORs the same
-  clauses) while ready said 0. Seat holds (H-558): `seatHolds`/`seat-check`
+  clauses) while ready said 0. Releasing a claim (H-954) keeps that routing:
+  `status: 'open'` drops the claim and leaves the assignee standing, so a seat
+  that puts unfinished work down finds it again next session. Clearing it made
+  H-661's own fix moot for one iteration — H-952 was released for a fresh
+  session, fell back to a pool nobody watched, and the seat idled on its own
+  work. Returning to the unassigned pool is still real and now explicit:
+  `handoff_to: ''`, spelled the way `project`/`not_before` already clear.
+  Seat holds (H-558): `seatHolds`/`seat-check`
   reports each in_progress ticket in a name with the actor that claimed it —
   the claiming actor's `session` stamp is how rev's same-seat guard tells a
   loop's own mid-flight work from a desk session sharing the crew name.

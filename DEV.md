@@ -31,7 +31,14 @@ orchestrator meetings and the read-only view. Product intent:
   can still work it early — the queue's job is to stop offering, not to
   forbid. It also does not touch `scopeChangedSince`, deliberately: a gate
   opens on a clock tick, not an event, so a wake suppressed on gated tickets
-  would never fire when the date arrives. Ready routing rule (H-661): in a
+  would never fire when the date arrives. Capacity holds are the separate
+  deliberate-spending gate: reason, authorization provenance, and a concrete
+  reconsideration condition travel with the ticket. Held work remains visible
+  under `capacity_held`, but is excluded from ready/wake counts and direct
+  claims until a separate recorded update releases it; priority is unchanged.
+  A later priority change releases the hold so changed urgency cannot remain
+  concealed by an older spending judgment.
+  Ready routing rule (H-661): in a
   caller's ready queue a workstream filter scopes only the unassigned pool —
   a ticket assigned to the caller is ready wherever it lives. ANDing the
   filter over the assignee clause left cross-workstream assignments invisible

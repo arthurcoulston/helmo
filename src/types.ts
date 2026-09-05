@@ -138,9 +138,16 @@ export interface Ticket {
   cost_usd_total: number;
   schedule: string | null; // set = recurring template (spawns instances, never ready itself)
   not_before: string | null; // ISO instant before which the ticket is withheld from ready queues (H-732)
+  capacity_hold: CapacityHold | null; // deliberate spending hold; visible, never ready or directly claimable
   created_at: string;
   updated_at: string;
   closed_at: string | null;
+}
+
+export interface CapacityHold {
+  reason: string;
+  provenance: string;
+  reconsider_when: string;
 }
 
 export interface Dep {

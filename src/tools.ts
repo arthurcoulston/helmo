@@ -37,6 +37,7 @@ function compact(t: Ticket) {
     ...(t.project ? { project: t.project } : {}),
     ...(t.schedule ? { schedule: t.schedule } : {}),
     ...(t.not_before ? { not_before: t.not_before } : {}),
+    ...(t.capacity_hold ? { capacity_hold: t.capacity_hold } : {}),
   };
 }
 
@@ -126,7 +127,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
         `Query tickets. Key filters: ready: true (open tickets with no open blockers that are unassigned or reserved for you — use this to find work you can start), status, workstream, assignee, type, priority_max. Returns compact rows sorted live work first (done and cancelled last), then priority, then age; paginated (limit default 20, cursor = offset).\n\n` +
         `Start every loop iteration with {assignee: <your name>} — this returns both work you're mid-way through (in_progress) and work handed to you that you haven't started (open + reserved). Then {ready: true} for new work. Answered questions come back as unassigned open tickets — the ready queue surfaces them; you don't need to have been the agent who asked.\n\n` +
         `Triage duty: if you pass over a ready ticket BECAUSE it needs something only the human can supply (a missing input, an unrecorded location, a decision), do not route around it silently — file its question with helmo_return_to_human first (no claim needed), then take other work. Helmo cannot see that kind of blockage; only you can. A known-blocked ticket left quietly in the ready queue stalls until someone else rediscovers what you already knew.\n\n` +
-        `The response's 'workstreams' carry the human's steering where set: 'goal' states what done means for the whole stream — check candidate work against it, and treat a met goal as a stop signal, not an invitation to polish; 'budget_usd'/'spent_usd'/'remaining_usd' disclose the stream's budget, which is a plan — front-load the highest-value work so stopping at any point is safe. Ready-queue triage rule: tickets you filed yourself are withheld from your own ready queue until a human, an orchestrator relaying the human, or another agent touches them; they appear under 'awaiting_triage' (and stay available to everyone else). Date gate: a ticket carrying 'not_before' is withheld from every ready queue until that instant and listed under 'gated' with its release date — so passing over it costs you one line, not a ticket read.`,
+        `The response's 'workstreams' carry the human's steering where set: 'goal' states what done means for the whole stream — check candidate work against it, and treat a met goal as a stop signal, not an invitation to polish; 'budget_usd'/'spent_usd'/'remaining_usd' disclose the stream's budget, which is a plan — front-load the highest-value work so stopping at any point is safe. Ready-queue triage rule: tickets you filed yourself are withheld from your own ready queue until a human, an orchestrator relaying the human, or another agent touches them; they appear under 'awaiting_triage' (and stay available to everyone else). Date-gated work appears under 'gated'. Deliberate spending holds appear under 'capacity_held': they stay visible but never enter the executable queue until a separate update releases the hold.`,
       inputSchema: {
         ready: z.boolean().optional(),
         status: z.enum(STATUSES).optional(),
@@ -153,6 +154,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
         // Withheld, not hidden (H-732): the gate says come back on this date,
         // which is the whole saving — one line instead of a ticket read.
         const gated = filter.ready && caller ? store.gatedPending(caller) : [];
+        const capacityHeld = filter.ready && caller ? store.capacityHeldPending(caller) : [];
         // The standing notice rides along like workstream steering (H-172):
         // the human's one-line current priority, disclosure not tasking.
         const notice = store.getNotice();
@@ -163,6 +165,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
           ...(notice ? { notice } : {}),
           ...(awaitingTriage.length ? { awaiting_triage: awaitingTriage } : {}),
           ...(gated.length ? { gated } : {}),
+          ...(capacityHeld.length ? { capacity_held: capacityHeld } : {}),
         });
       } catch (e) {
         return fail(e);
@@ -201,6 +204,11 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
         workstream: z.string().optional(),
         project: z.string().optional().describe("Set or change the project tag; '' clears it"),
         not_before: z.string().optional().describe("Set or move the date gate that withholds this ticket from ready queues — 'YYYY-MM-DD' or a full ISO instant; '' opens it now"),
+        capacity_hold: z.object({
+          reason: z.string().describe('Why worthwhile work must not start under the current spending posture'),
+          provenance: z.string().describe('Who authorized the hold and where that direction was recorded'),
+          reconsider_when: z.string().describe('The concrete change that requires this hold to be reviewed'),
+        }).nullable().optional().describe('Set a deliberate capacity hold, or pass null to release it. Held work stays visible but is excluded from ready/wake counts and cannot be claimed until a separate release update.'),
         actor: actorSchema,
       },
     },

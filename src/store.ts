@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { parseSchedule } from './schedule.js';
 import {
-  Actor, ActorKind, ACTOR_KINDS, Answer, AnswerEvent, BlastRadius, BLAST_RADII, Confidence, Dep, DepType, Evidence,
+  Actor, ActorKind, ACTOR_KINDS, Answer, AnswerEvent, BlastRadius, BLAST_RADII, CapacityHold, Confidence, Dep, DepType, Evidence,
   AcceptanceVerdict, HelmoError, HelmoEvent, Notice, ProductAcceptance, ProductArtifact,
   ProductCompletion, Question, QuestionInput, Status, Ticket, TicketProgress, Workstream, WorkstreamInfo,
 } from './types.js';
@@ -53,6 +53,7 @@ export interface UpdateInput {
   workstream?: string;
   project?: string | null; // '' clears the tag
   not_before?: string | null; // '' clears the gate
+  capacity_hold?: CapacityHold | null; // null releases the deliberate hold
 }
 
 export interface ListFilter {
@@ -115,6 +116,7 @@ CREATE TABLE IF NOT EXISTS tickets (
   cost_usd_total REAL NOT NULL DEFAULT 0,
   schedule       TEXT,
   not_before     TEXT,
+  capacity_hold  TEXT,
   created_at     TEXT NOT NULL,
   updated_at     TEXT NOT NULL,
   closed_at      TEXT
@@ -274,6 +276,11 @@ export class Store {
     // Additive migration for stores created before the date gate (H-732).
     try {
       this.db.exec('ALTER TABLE tickets ADD COLUMN not_before TEXT');
+    } catch {
+      /* column already exists */
+    }
+    try {
+      this.db.exec('ALTER TABLE tickets ADD COLUMN capacity_hold TEXT');
     } catch {
       /* column already exists */
     }
@@ -463,6 +470,7 @@ export class Store {
       // it must not act — H-718 was read and released seven times in one day.
       clauses.push('(not_before IS NULL OR not_before <= ?)');
       params.push(now());
+      clauses.push('capacity_hold IS NULL');
       if (routedReady) {
         clauses.push('((workstream = ? AND assignee IS NULL) OR assignee = ?)');
         params.push(filter.workstream, filter.caller);
@@ -553,6 +561,20 @@ export class Store {
       )
       .all(now(), caller) as { id: string; not_before: string }[];
     return rows.filter((r) => !this.isBlocked(r.id));
+  }
+
+  /** Deliberate spending holds stay disclosed beside a ready query, but never
+   *  enter its executable set. This is independent of ticket priority. */
+  capacityHeldPending(caller: string): { id: string; capacity_hold: CapacityHold }[] {
+    const rows = this.db
+      .prepare(
+        `SELECT id, capacity_hold FROM tickets
+         WHERE status = 'open' AND schedule IS NULL AND capacity_hold IS NOT NULL
+           AND (assignee IS NULL OR assignee = ?)
+         ORDER BY priority ASC, created_at ASC`,
+      )
+      .all(caller) as { id: string; capacity_hold: string }[];
+    return rows.map((r) => ({ id: r.id, capacity_hold: JSON.parse(r.capacity_hold) as CapacityHold }));
   }
 
   /** Record hygiene that needs no judgment and no tokens (H-23): deterministic
@@ -1186,6 +1208,17 @@ export class Store {
     if (input.handoff_to && input.status) {
       throw new HelmoError('Pass either handoff_to or status, not both — a handoff sets status itself (open, reserved for the receiver).');
     }
+    if (input.capacity_hold) {
+      rejectSwallowedMarkup({
+        reason: input.capacity_hold.reason,
+        provenance: input.capacity_hold.provenance,
+        reconsider_when: input.capacity_hold.reconsider_when,
+      });
+      for (const [field, value] of Object.entries(input.capacity_hold)) {
+        if (!value.trim()) throw new HelmoError(`capacity_hold.${field} is required.`);
+      }
+      if (t.status !== 'open') throw new HelmoError(`Only open work can be held for capacity; ${t.id} is ${t.status}.`);
+    }
 
     if (t.schedule && (input.status === 'in_progress' || input.status === 'done')) {
       const live = this.db
@@ -1215,6 +1248,9 @@ export class Store {
         throw new HelmoError(
           `${t.id} is your own filing, untouched by anyone else — executing your own discoveries takes a second pair of eyes first (the same triage rule that withholds it from your ready queue). Any event by a human, an orchestrator relaying the human, or another agent releases it: a meeting answer, a note, a handoff, a priority change. takeover does not apply — it exists for stale claims, not self-triage. If this cannot wait, helmo_return_to_human with the case for urgency; if you are starting genuinely new work, create the ticket with status 'in_progress' in the same call instead of filing it and drawing it back later.`,
         );
+      }
+      if (input.status === 'in_progress' && t.capacity_hold) {
+        throw new HelmoError(`${t.id} is held for capacity: ${t.capacity_hold.reason} Release the hold in a separate recorded update before claiming it.`);
       }
       if (input.status === 'in_progress' && t.status === 'open' && t.assignee && t.assignee !== actor.name && !input.takeover) {
         const age = hoursSince(t.updated_at);
@@ -1293,6 +1329,15 @@ export class Store {
     }
     if (input.labels !== undefined && JSON.stringify(input.labels) !== JSON.stringify(t.labels)) {
       diffs['labels'] = { from: t.labels, to: input.labels };
+    }
+    if (input.capacity_hold !== undefined && JSON.stringify(input.capacity_hold) !== JSON.stringify(t.capacity_hold)) {
+      diffs['capacity_hold'] = { from: t.capacity_hold, to: input.capacity_hold };
+    }
+    // A priority change is the store-level signal that urgency changed. It
+    // cannot silently leave an old spending judgment masking newly urgent
+    // work; a fresh hold can be recorded in the same update if still right.
+    if (t.capacity_hold && input.priority !== undefined && input.priority !== t.priority && input.capacity_hold === undefined) {
+      diffs['capacity_hold'] = { from: t.capacity_hold, to: null };
     }
     if (input.evidence?.length) {
       diffs['evidence'] = { from: t.evidence, to: [...t.evidence, ...input.evidence] };
@@ -1625,9 +1670,9 @@ export class Store {
     const params: unknown[] = [ts];
     const jsonFields = new Set(['labels', 'evidence']);
     for (const [field, d] of Object.entries(diffs)) {
-      if (!['title', 'body', 'workstream', 'project', 'type', 'labels', 'status', 'priority', 'assignee', 'evidence', 'confidence', 'uncertainty_note', 'blast_radius', 'not_before'].includes(field)) continue;
+      if (!['title', 'body', 'workstream', 'project', 'type', 'labels', 'status', 'priority', 'assignee', 'evidence', 'confidence', 'uncertainty_note', 'blast_radius', 'not_before', 'capacity_hold'].includes(field)) continue;
       sets.push(`${field} = ?`);
-      params.push(jsonFields.has(field) ? JSON.stringify(d.to) : (d.to as never));
+      params.push(jsonFields.has(field) || field === 'capacity_hold' ? (d.to === null ? null : JSON.stringify(d.to)) : (d.to as never));
     }
     const status = diffs['status']?.to as string | undefined;
     if (status === 'done' || status === 'cancelled') { sets.push('closed_at = ?'); params.push(ts); }
@@ -1718,6 +1763,7 @@ function rowToTicket(row: Record<string, unknown>): Ticket {
     labels: JSON.parse(row['labels'] as string),
     evidence: JSON.parse(row['evidence'] as string),
     question: row['question'] ? JSON.parse(row['question'] as string) : null,
+    capacity_hold: row['capacity_hold'] ? JSON.parse(row['capacity_hold'] as string) : null,
   };
 }
 

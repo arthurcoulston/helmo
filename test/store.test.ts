@@ -392,6 +392,39 @@ describe('return to human / answer', () => {
 });
 
 describe('ready queue and blocking', () => {
+  it('keeps capacity-held work visible but out of ready and direct claim paths', () => {
+    const s = freshStore();
+    const t = create(s);
+    triage(s, t.id);
+    const hold = { reason: 'Preserve Arthur\'s session reserve.', provenance: 'Arthur, capacity check-in 2026-09-05', reconsider_when: 'Arthur declares normal posture or urgency changes.' };
+    s.updateTicket(orch, { ticket_id: t.id, note: 'holding worthwhile work for the capacity check-in', capacity_hold: hold });
+
+    expect(s.getTicket(t.id).capacity_hold).toEqual(hold);
+    expect(s.listTickets({ ready: true, caller: builder.name }).map((x) => x.id)).not.toContain(t.id);
+    expect(s.capacityHeldPending(builder.name)).toEqual([{ id: t.id, capacity_hold: hold }]);
+    expect(s.readyCount('helmo-dev', builder.name)).toBe(0);
+    expect(() => s.updateTicket(builder, { ticket_id: t.id, note: 'trying to claim held work', status: 'in_progress' })).toThrow(/held for capacity/);
+
+    s.updateTicket(orch, { ticket_id: t.id, note: 'Arthur released this ticket in the bounded batch', capacity_hold: null });
+    expect(s.listTickets({ ready: true, caller: builder.name }).map((x) => x.id)).toContain(t.id);
+    expect(s.updateTicket(builder, { ticket_id: t.id, note: 'claiming released work', status: 'in_progress' }).ticket.status).toBe('in_progress');
+  });
+
+  it('releases a capacity hold when urgency changes', () => {
+    const s = freshStore();
+    const t = create(s, { priority: 3 });
+    triage(s, t.id);
+    s.updateTicket(orch, {
+      ticket_id: t.id,
+      note: 'holding low-priority work',
+      capacity_hold: { reason: 'Conserve posture.', provenance: 'Arthur check-in', reconsider_when: 'Urgency changes.' },
+    });
+
+    const changed = s.updateTicket(reviewer, { ticket_id: t.id, note: 'Deadline now makes this urgent.', priority: 1 }).ticket;
+    expect(changed.capacity_hold).toBeNull();
+    expect(s.listTickets({ ready: true, caller: reviewer.name }).map((x) => x.id)).toContain(t.id);
+  });
+
   it('blocked tickets are not ready; unblock on done or cancelled', () => {
     const s = freshStore();
     const a = create(s, { title: 'Parent' });

@@ -687,6 +687,18 @@ describe('recurring templates (lazy materialization)', () => {
     const s = freshStore();
     expect(() => template(s, 'whenever')).toThrow(/neither/);
   });
+  it('templates cannot be claimed or completed; cancellation retires them', () => {
+    const s = freshStore();
+    const t = template(s);
+    expect(() => s.updateTicket(builder, { ticket_id: t.id, note: 'claiming', status: 'in_progress' })).toThrow(
+      `${t.id} is a recurring template; templates retire only by cancelling`,
+    );
+    const [instance] = s.materializeDue(new Date(Date.now() + 31 * 60_000));
+    expect(() => s.updateTicket(builder, { ticket_id: t.id, note: 'finished', status: 'done' })).toThrow(
+      `${t.id} is a recurring template — work its instance ${instance}; templates retire only by cancelling`,
+    );
+    expect(s.updateTicket(builder, { ticket_id: t.id, note: 'retiring', status: 'cancelled' }).ticket.status).toBe('cancelled');
+  });
   it('templates never appear in the ready queue; due instances do', () => {
     const s = freshStore();
     const t = template(s);

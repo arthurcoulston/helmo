@@ -1182,6 +1182,18 @@ export class Store {
       throw new HelmoError('Pass either handoff_to or status, not both — a handoff sets status itself (open, reserved for the receiver).');
     }
 
+    if (t.schedule && (input.status === 'in_progress' || input.status === 'done')) {
+      const live = this.db
+        .prepare(
+          `SELECT i.id FROM deps d JOIN tickets i ON i.id = d.from_id
+           WHERE d.to_id = ? AND d.type = 'parent' AND i.status IN ('open','in_progress','awaiting_human')
+           ORDER BY i.created_at DESC LIMIT 1`,
+        )
+        .get(t.id) as { id: string } | undefined;
+      const instance = live ? ` — work its instance ${live.id}` : '';
+      throw new HelmoError(`${t.id} is a recurring template${instance}; templates retire only by cancelling.`);
+    }
+
     // status transitions
     if (input.status) {
       if (t.status === 'awaiting_human') {

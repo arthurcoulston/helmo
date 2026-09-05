@@ -3,7 +3,7 @@ import { parseSchedule } from './schedule.js';
 import {
   Actor, ActorKind, ACTOR_KINDS, Answer, AnswerEvent, BlastRadius, BLAST_RADII, Confidence, Dep, DepType, Evidence,
   AcceptanceVerdict, HelmoError, HelmoEvent, Notice, ProductAcceptance, ProductArtifact,
-  ProductCompletion, Question, Status, Ticket, TicketProgress, Workstream, WorkstreamInfo,
+  ProductCompletion, Question, QuestionInput, Status, Ticket, TicketProgress, Workstream, WorkstreamInfo,
 } from './types.js';
 
 const STALE_CLAIM_HOURS = 24;
@@ -1363,7 +1363,7 @@ export class Store {
     }).immediate();
   }
 
-  returnToHuman(actor: Actor, ticketId: string, q: Question): Ticket {
+  returnToHuman(actor: Actor, ticketId: string, q: QuestionInput): Ticket {
     validateActor(actor);
     const t = this.getTicket(ticketId);
     if (t.status !== 'open' && t.status !== 'in_progress') {
@@ -1374,19 +1374,29 @@ export class Store {
         throw new HelmoError(`${field} is required. The human works these in batched meetings; an incomplete question wastes the attention Helmo exists to protect.`);
       }
     }
-    if (!q.options || q.options.length < 2 || q.options.length > 4) {
-      throw new HelmoError('options: provide 2-4, each {label, consequence}. The human should be able to answer by saying a label.');
+    // None, two, or three (H-939). Options used to be mandatory, and the cost
+    // of that showed up in the meetings: an asker whose recommendation stood on
+    // its own still had to name a second course to satisfy the schema, and the
+    // human then read a manufactured alternative as a real one. One option is
+    // that same problem with the disguise off. Four is past what anyone holds
+    // in their head while being asked to pick — and past the a/b/c the reading
+    // surfaces letter.
+    const options = q.options ?? [];
+    if (options.length === 1 || options.length > 3) {
+      throw new HelmoError('options: give 2 or 3 genuinely equal choices, each {label, consequence} — or none at all. When your recommendation is the answer, leave options out and let it stand; do not manufacture alternatives to fill the field.');
     }
-    for (const o of q.options) {
+    for (const o of options) {
       if (!o.label?.trim() || !o.consequence?.trim()) throw new HelmoError('Every option needs both label and consequence (what happens if chosen, including cost/risk).');
     }
     rejectSwallowedMarkup({ situation: q.situation, question: q.question, recommendation: q.recommendation, if_unanswered: q.if_unanswered });
+    // Normalised on the way in: every reader downstream sees an array.
+    const stored: Question = { ...q, options };
     return this.db.transaction(() => {
       const ts = now();
-      this.append(ts, t.id, 'returned', actor, q as unknown as Record<string, unknown>);
+      this.append(ts, t.id, 'returned', actor, stored as unknown as Record<string, unknown>);
       this.db
         .prepare("UPDATE tickets SET status = 'awaiting_human', assignee = NULL, question = ?, updated_at = ? WHERE id = ?")
-        .run(JSON.stringify(q), ts, t.id);
+        .run(JSON.stringify(stored), ts, t.id);
       return this.getTicket(t.id);
     }).immediate();
   }

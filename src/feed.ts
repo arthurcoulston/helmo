@@ -26,7 +26,7 @@
 // just closed — and the full record of any ticket in it is one tap away on the
 // page it is served beside.
 import { AVATAR_MARKS } from './estate-avatars.generated.js';
-import { ActorKind, ProductAcceptance, Ticket, TicketProgress } from './types.js';
+import { ActorKind, ProductAcceptance, Question, Ticket, TicketProgress } from './types.js';
 
 const MARKS = new Set<string>(AVATAR_MARKS);
 
@@ -51,6 +51,41 @@ export const CLOSED_TAIL = 20;
 
 const TERMINAL = new Set(['done', 'cancelled']);
 
+/** The letter an option answers to. Assigned here, once, because Arthur says
+ *  "b" in a meeting and the agent relaying it reads a different surface than
+ *  the one he was looking at — the phone queue, Helmo's own card, the ticket
+ *  itself. Two surfaces lettering independently is two answers to what "b" was.
+ *  Past 'c' this keeps counting rather than throwing: the contract caps a new
+ *  return at three, but a question stored before that cap still has to draw. */
+export const letterFor = (i: number): string => String.fromCharCode(97 + i);
+
+/** The ask a reader draws, from the question the agent wrote. */
+export function ask(q: Question): FeedAsk {
+  return {
+    situation: q.situation,
+    question: q.question,
+    recommendation: q.recommendation,
+    ...(q.options?.length
+      ? { options: q.options.map((o, i) => ({ letter: letterFor(i), label: o.label, consequence: o.consequence })) }
+      : {}),
+    ...(q.if_unanswered ? { if_unanswered: q.if_unanswered } : {}),
+  };
+}
+
+/** One decision as a reader draws it: the issue, then either the
+ *  recommendation on its own or the lettered choices. Same order as the
+ *  Question the agent wrote — this adds the letters and nothing else. */
+export interface FeedAsk {
+  situation: string;
+  question: string;
+  recommendation: string;
+  /** Absent when the recommendation stands alone, which is the common shape.
+   *  Never an empty array: a reader testing `asks.options` should be testing
+   *  whether there is a choice, not whether the list happens to be long. */
+  options?: { letter: string; label: string; consequence: string }[];
+  if_unanswered?: string;
+}
+
 export interface FeedTicket {
   id: string;
   title: string;
@@ -61,14 +96,20 @@ export interface FeedTicket {
   /** The assignee drawn: the sprite symbol and the frame, both read from the
    *  record. Absent when there is no assignee or no mark for their name. */
   actor?: { mark: string; kind: ActorKind };
-  /** What this ticket asks the human, on the ones that are STILL asking — the
-   *  question itself, not the situation or the options, because a queue row is
-   *  a reason to open something and the rest of the ask is inside it. Keyed on
-   *  the status rather than on the column: `answerTicket` clears the question,
-   *  but a ticket closed straight out of `awaiting_human` by an update keeps
-   *  it, and a queue that says "asks you" about settled work is worse than one
-   *  that says nothing. */
-  asks?: string;
+  /** The whole ask, on the tickets that are STILL asking (H-939).
+   *
+   *  It used to be the question string alone, on the reasoning that a queue row
+   *  is a reason to open something. It is not: Arthur answers these out loud in
+   *  a meeting, and a row that carried the question without the context or the
+   *  choices made him open the ticket to answer any of them. So the reading
+   *  carries what he decides on — and nothing beyond it. No body, no evidence,
+   *  no history; the record of all that is still one tap away.
+   *
+   *  Keyed on the status rather than on the column: `answerTicket` clears the
+   *  question, but a ticket closed straight out of `awaiting_human` by an
+   *  update keeps it, and a queue that says "asks you" about settled work is
+   *  worse than one that says nothing. */
+  asks?: FeedAsk;
   /** Present only when this ticket explicitly entered the product acceptance
    *  contract. This is a recorded gate state, never a claim about a live
    *  reviewer process. */
@@ -136,7 +177,7 @@ export function feed(
         priority: t.priority,
         assignee: t.assignee,
         ...(mark && kind ? { actor: { mark, kind } } : {}),
-        ...(t.status === 'awaiting_human' && t.question ? { asks: t.question.question } : {}),
+        ...(t.status === 'awaiting_human' && t.question ? { asks: ask(t.question) } : {}),
         ...(acceptance && acceptance.state !== 'not_requested'
           ? { acceptance: { state: acceptance.state, reason: acceptance.reason } }
           : {}),

@@ -80,6 +80,13 @@ export interface TicketProgress {
   actor: Pick<Actor, 'name' | 'kind'>;
 }
 
+/** What one return asks the human, in the order it is read (H-939). The issue
+ *  first — `situation` then `question` — and then EITHER the recommendation on
+ *  its own OR two or three genuinely equal choices. Options are optional
+ *  because requiring them made every asker invent alternatives to satisfy the
+ *  schema, and a manufactured choice costs the reader the same attention as a
+ *  real one. Stored normalised: an asker who sends none gets `[]`, never
+ *  undefined, so no reader has two shapes to handle. */
 export interface Question {
   situation: string;
   question: string;
@@ -87,6 +94,10 @@ export interface Question {
   recommendation: string;
   if_unanswered?: string;
 }
+
+/** What an asker may send: `options` omitted entirely when the recommendation
+ *  stands on its own. The stored Question always carries the array. */
+export type QuestionInput = Omit<Question, 'options'> & { options?: Question['options'] };
 
 export interface Answer {
   answer: string;

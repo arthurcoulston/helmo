@@ -98,6 +98,44 @@ cli(
   '--recommendation', 'Plausible — the no-banner experience fits the launch story',
 );
 
+// Awaiting the human with NO options — the common shape since H-939, and the
+// one the surfaces used to have no way to draw: a recommendation that stands on
+// its own, with nothing manufactured beside it to make it look like a choice.
+const dns = create(
+  forge,
+  '--title', 'Point the apex domain at the new host',
+  '--body', 'The new site is built and staged; the cutover is a DNS change nobody but the operator can authorise.',
+  '--workstream', 'site-launch', '--type', 'ops', '--status', 'in_progress',
+);
+cli(
+  'return', '--actor', forge, '--ticket', dns,
+  '--situation', 'Staging has been green for three days and the old host is paid up to the end of the month.',
+  '--question', 'Cut the apex domain over to the new host tonight?',
+  '--recommendation', 'Yes — traffic is lowest after 9pm and the old host stays up for a month if we need to go back',
+  '--if-unanswered', 'The launch post is written and cannot go out until the domain moves.',
+);
+
+// Awaiting the human with three — the widest a return may carry, and the case
+// the a/b/c lettering exists for.
+const support = create(
+  quill,
+  '--title', 'Decide who answers support mail after launch',
+  '--body', 'Launch will bring first-time users to an inbox nobody currently owns.',
+  '--workstream', 'site-launch', '--type', 'planning', '--status', 'in_progress',
+);
+cli(
+  'return', '--actor', quill, '--ticket', support,
+  '--situation', 'Support mail goes to a shared inbox two of us can see and neither of us owns; launch week will be the first real volume.',
+  '--question', 'Who answers support mail in launch week?',
+  '--options', JSON.stringify([
+    { label: 'an agent drafts, you send', consequence: 'nothing goes out unread, but every reply waits on you' },
+    { label: 'an agent answers the routine ones', consequence: 'fast replies; a wrong one reaches a customer before you see it' },
+    { label: 'hold the inbox until week two', consequence: 'no risk and no replies; early users get silence' },
+  ]),
+  '--recommendation', 'Draft-and-send for launch week — the volume is small enough that you can clear it daily, and week one is when a wrong reply costs the most',
+  '--if-unanswered', 'Launch week starts Monday and the inbox is already receiving mail.',
+);
+
 // P1 ready while lower-priority work is in motion: trips the
 // priority-inversion hygiene flag on purpose.
 create(

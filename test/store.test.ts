@@ -271,8 +271,31 @@ describe('return to human / answer', () => {
   it('enforces the structured question', () => {
     const s = freshStore();
     const t = create(s);
-    expect(() => s.returnToHuman(builder, t.id, { ...q, options: [] })).toThrow(/2-4/);
     expect(() => s.returnToHuman(builder, t.id, { ...q, recommendation: '' })).toThrow(/recommendation/);
+    expect(() => s.returnToHuman(builder, t.id, { ...q, situation: '' })).toThrow(/situation/);
+  });
+
+  it('takes none, two or three options — never one, never four (H-939)', () => {
+    const s = freshStore();
+    const three = [...q.options, { label: 'defer', consequence: 'the date goes to whoever asks next' }];
+    // A lone option is a recommendation wearing a list's clothes, and a fourth
+    // is past what anyone holds in their head while being asked to pick.
+    expect(() => s.returnToHuman(builder, create(s).id, { ...q, options: [q.options[0]!] })).toThrow(/2 or 3/);
+    expect(() => s.returnToHuman(builder, create(s).id, { ...q, options: [...three, { label: 'ask again', consequence: 'nothing moves' }] })).toThrow(/2 or 3/);
+    expect(s.returnToHuman(builder, create(s).id, { ...q, options: three }).question?.options).toHaveLength(3);
+    expect(s.returnToHuman(builder, create(s).id, q).question?.options).toHaveLength(2);
+  });
+
+  it('stores an omitted options list as an empty one, so no reader meets two shapes', () => {
+    const s = freshStore();
+    const t = create(s);
+    const returned = s.returnToHuman(builder, t.id, { ...q, options: undefined });
+    expect(returned.status).toBe('awaiting_human');
+    expect(returned.question?.options).toEqual([]);
+    // And the event carries what the column does: an auditor replaying the log
+    // should see the same ask the ticket shows.
+    const returnedEvent = s.getEvents(t.id).find((e) => e.event_type === 'returned')!;
+    expect(returnedEvent.payload['options']).toEqual([]);
   });
 
   it('answer with resume reopens unassigned and preserves the answer', () => {

@@ -233,6 +233,17 @@ orchestrator meetings and the read-only view. Product intent:
   must never steer its own stream).
 - Tool-description changes deploy on the next session spawn (loops get them
   immediately; running sessions keep the old text).
+- A return carries an issue and a recommendation; options are OPTIONAL, and
+  when present there are two or three of them (H-939). Requiring them is what
+  the store used to do, and it bought a meeting full of manufactured
+  alternatives — an asker whose recommendation stood on its own still had to
+  name a second course to satisfy the schema. Anything that reads a question
+  handles both shapes: `feed.ts` omits the `options` key entirely rather than
+  sending an empty array, and the view draws an "answer this" button in place
+  of the option buttons, because on that page the options ARE the answer
+  surface and a question without them would otherwise be unanswerable from the
+  dashboard. Questions written before the cap can still hold four; readers
+  letter what they are given rather than refusing to draw it.
 - Product acceptance is opt-in and exact-ref: no completion is
   `not_requested`; a completion without a current verdict is `pending`; FAIL is
   `failed`; only a current non-author PASS is `accepted`. A caller checking a

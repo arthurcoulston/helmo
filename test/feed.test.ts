@@ -8,7 +8,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CLOSED_TAIL, feed, markFor } from '../src/feed.js';
+import { CLOSED_TAIL, feed, markFor, type FeedAsk } from '../src/feed.js';
 import { Store } from '../src/store.js';
 import { Actor, Question } from '../src/types.js';
 
@@ -144,11 +144,61 @@ describe('what the reading carries', () => {
 });
 
 describe('what a ticket asks', () => {
-  it('carries the question while it is still asking', () => {
+  it('carries the whole decision while it is still asking', () => {
     const s = new Store(':memory:');
     const t = create(s);
     s.returnToHuman(builder, t.id, ask);
-    expect(reading(s).tickets[0]!.asks).toBe(ask.question);
+    // Everything Arthur decides on, in the order he reads it. If this ever
+    // shrinks back to the question alone, he has to open the ticket to answer
+    // it — which is the thing H-939 was filed about.
+    expect(reading(s).tickets[0]!.asks).toEqual({
+      situation: ask.situation,
+      question: ask.question,
+      recommendation: ask.recommendation,
+      options: [
+        { letter: 'a', label: 'yes', consequence: 'one more read route on a port nothing fronts' },
+        { letter: 'b', label: 'no', consequence: 'the shell opens the store itself' },
+      ],
+    });
+  });
+
+  it('leaves options out entirely when the recommendation stands alone', () => {
+    const s = new Store(':memory:');
+    const t = create(s);
+    s.returnToHuman(builder, t.id, { ...ask, options: undefined });
+    const asks = reading(s).tickets[0]!.asks!;
+    // Absent, not empty: a reader asking "is there a choice here" should be
+    // reading one key, not measuring a list.
+    expect(asks.options).toBeUndefined();
+    expect(asks.recommendation).toBe(ask.recommendation);
+  });
+
+  it('letters three options a, b, c', () => {
+    const s = new Store(':memory:');
+    const t = create(s);
+    s.returnToHuman(builder, t.id, {
+      ...ask,
+      options: [
+        { label: 'yes', consequence: 'one route' },
+        { label: 'no', consequence: 'the shell opens the store' },
+        { label: 'later', consequence: 'the phone lands on nothing until then' },
+      ],
+    });
+    expect(reading(s).tickets[0]!.asks!.options!.map((o) => o.letter)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('letters a question stored before the cap rather than refusing to draw it', () => {
+    // The contract caps a new return at three. A question written when four
+    // were allowed is still in the record, and the reading is not the place it
+    // gets dropped — the queue would just stop showing what it asks.
+    const four: Question = {
+      ...ask,
+      options: ['w', 'x', 'y', 'z'].map((label) => ({ label, consequence: `picks ${label}` })),
+    };
+    const s = new Store(':memory:');
+    const t = create(s);
+    const stale = { ...s.getTicket(create(s).id), id: t.id, status: 'awaiting_human' as const, question: four };
+    expect(feed([stale], s.actorKinds()).tickets[0]!.asks!.options!.map((o) => o.letter)).toEqual(['a', 'b', 'c', 'd']);
   });
 
   it('drops it once answered', () => {
@@ -218,10 +268,12 @@ describe('the route', () => {
     expect(res, 'the view never came up').not.toBeNull();
     expect(res!.status).toBe(200);
     expect(res!.headers.get('content-type')).toContain('application/json');
-    const body = (await res!.json()) as { generated_at: string; tickets: { id: string; asks?: string; progress?: { note: string } }[] };
+    const body = (await res!.json()) as { generated_at: string; tickets: { id: string; asks?: FeedAsk; progress?: { note: string } }[] };
     expect(Number.isFinite(Date.parse(body.generated_at))).toBe(true);
     expect(body.tickets.map((x) => x.id)).toEqual([t.id]);
-    expect(body.tickets[0]!.asks).toBe(ask.question);
+    expect(body.tickets[0]!.asks!.question).toBe(ask.question);
+    expect(body.tickets[0]!.asks!.recommendation).toBe(ask.recommendation);
+    expect(body.tickets[0]!.asks!.options!.map((o) => o.letter)).toEqual(['a', 'b']);
     expect(body.tickets[0]!.progress?.note).toBe('last <recorded> & update');
 
     // The nonce is the page's CSRF friction (H-145) and it has no business

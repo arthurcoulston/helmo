@@ -231,7 +231,9 @@ try {
       const t = store.returnToHuman(actor(), req('ticket'), {
         situation: req('situation'),
         question: req('question'),
-        options: JSON.parse(req('options')),
+        // Optional, like the tool (H-939): a recommendation that stands on its
+        // own is the normal ask, not a degenerate one.
+        options: flag('options') ? JSON.parse(flag('options') as string) : [],
         recommendation: req('recommendation'),
         if_unanswered: flag('if-unanswered'),
       });
@@ -260,7 +262,7 @@ try {
   workstream-set --name W [--goal G] [--budget-usd X]          (operator steering; actor kind human/orchestrator only)
   create         --title T --body B --workstream W --type TY [--priority P] [--status S] [--assignee A] [--dep H-n --dep-type TY] [--schedule 'every 30m' | '0 0 * * *'] [--not-before 2026-09-10]
   update         --ticket H-n --note N [--status S] [--evidence-kind K --evidence-ref R] [--confidence C] [--blast-radius B] [--tokens N] [--cost-usd X] [--handoff-to A] [--not-before 2026-09-10 | ''] [--takeover]
-  return         --ticket H-n --situation S --question Q --options '[{"label":..,"consequence":..}]' --recommendation R [--if-unanswered U]
+  return         --ticket H-n --situation S --question Q --recommendation R [--options '[{"label":..,"consequence":..}]' (2-3, only for a real choice)] [--if-unanswered U]
 Writes read identity from HELMO_ACTOR env or --actor JSON. DB path from HELMO_DB (default ~/.helmo/helmo.db).`);
       process.exit(cmd ? 1 : 0);
   }

@@ -24,6 +24,16 @@ describe('view accessibility', () => {
     expect(form).toMatch(/<label class="af-resolution">[^]*<select class="af-res">[^]*<\/select>[^]*<\/label>/);
   });
 
+  it('keeps the answer form hidden until an option is chosen', () => {
+    // A class in this file outranks the UA stylesheet's [hidden] rule, so the
+    // attribute the markup carries hides nothing on its own. Asserted on the
+    // CSS because that is where the bug was and where it would come back — a
+    // later `.answer-form { display: … }` without this override puts every
+    // card's form back on screen at once (H-939).
+    expect(view).toMatch(/\.answer-form\[hidden\]\s*\{\s*display:\s*none/);
+    expect(view.indexOf('.answer-form[hidden]')).toBeGreaterThan(view.indexOf('.answer-form {'));
+  });
+
   it('does not replace the page while a reader has keyboard focus', () => {
     expect(view).toContain('document.activeElement !== document.body');
     expect(view.indexOf('document.activeElement !== document.body')).toBeLessThan(view.indexOf('document.body.replaceWith(doc.body)'));

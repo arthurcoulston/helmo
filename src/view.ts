@@ -11,7 +11,7 @@ import { createServer } from 'node:http';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { ESTATE_AVATARS } from './estate-avatars.generated.js';
-import { feed, markFor } from './feed.js';
+import { ask, feed, markFor } from './feed.js';
 import { ESTATE_TOKENS } from './estate-tokens.generated.js';
 import { Store } from './store.js';
 import { HygieneFinding } from './store.js';
@@ -216,20 +216,35 @@ function details(t: Ticket): string {
 
 // The hero: a question awaiting the human. Everything the agent prepared is
 // shown; with an operator configured, the options are the answer surface (H-90).
+//
+// The letters are the feed's (H-939), not this card's own: Arthur says "b" in a
+// meeting and whoever relays it may be reading the phone queue rather than this
+// page. One function letters both, so "b" means one option wherever it is said.
 function questionCard(t: Ticket): string {
   const q = t.question;
   if (!q) return '';
-  const opt = (o: { label: string; consequence: string }) =>
-    operator
-      ? `<button type="button" class="option" data-label="${esc(o.label)}"><span class="opt-label">${esc(o.label)}</span><span class="opt-consequence">${esc(o.consequence)}</span></button>`
-      : `<div class="option"><span class="opt-label">${esc(o.label)}</span><span class="opt-consequence">${esc(o.consequence)}</span></div>`;
+  const a = ask(q);
+  const opt = (o: { letter: string; label: string; consequence: string }) => {
+    const inner = `<span class="opt-label"><span class="opt-letter">${esc(o.letter)}</span>${esc(o.label)}</span><span class="opt-consequence">${esc(o.consequence)}</span>`;
+    return operator
+      ? `<button type="button" class="option" data-label="${esc(o.label)}">${inner}</button>`
+      : `<div class="option">${inner}</div>`;
+  };
+  // A question with no options is the common shape now (H-939), and on this
+  // page the options ARE the answer buttons — so without one of these, the
+  // recommendation Arthur most often just wants to accept would be the one
+  // thing he could not answer from here.
+  const freeAnswer = operator
+    ? `<div class="options"><button type="button" class="option free" data-free="1"><span class="opt-label">answer this</span><span class="opt-consequence">accept the recommendation, or say what to do instead</span></button></div>`
+    : '';
   return `<article class="qcard" id="${esc(t.id)}" data-ticket="${esc(t.id)}">
     <header><span class="tid">${esc(t.id)}</span> <span class="qtitle">${esc(t.title)}</span>
       <span class="meta">${esc(t.workstream)} · asked ${esc(rel(t.updated_at))} ${blastBadge(t)} ${acceptanceBadge(t)}</span></header>
     <p class="situation">${esc(q.situation)}</p>
     <p class="question">${esc(q.question)}</p>
-    <div class="options">${q.options.map(opt).join('')}</div>
+    ${a.options ? `<div class="options">${a.options.map(opt).join('')}</div>` : ''}
     <p class="rec"><span class="rec-mark">agent recommends</span> ${esc(q.recommendation)}</p>
+    ${a.options ? '' : freeAnswer}
     ${q.if_unanswered ? `<p class="silence">⏱ If unanswered: ${esc(q.if_unanswered)}</p>` : ''}
     ${operator ? answerForm() : ''}
     <details class="more" id="d-${esc(t.id)}"><summary>ticket detail</summary>${details(t)}</details>
@@ -508,6 +523,10 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; color: 
   .option { grid-template-columns: minmax(0, 1fr); gap: 2px; }
 }
 .opt-label { font-weight: 600; font-size: 13px; }
+/* The letter is what Arthur says out loud, so it leads the label and holds its
+   own column width — ragged letters read as a list of labels that happen to
+   start with a letter. */
+.opt-letter { display: inline-block; min-width: 1.1em; color: var(--ink-3); font-weight: 650; }
 .opt-consequence { color: var(--ink-2); font-size: 13px; }
 .rec { margin: 0 0 6px; }
 .rec-mark { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--good-text); font-weight: 650; margin-right: 8px; }
@@ -519,6 +538,14 @@ button.option:hover { border-color: var(--link); }
 button.option.selected { border-color: var(--link); box-shadow: inset 2px 0 0 var(--link); }
 .answer-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 0 0 12px; padding: 10px 12px;
   border: 1px solid var(--hairline); border-radius: var(--radius-inner); background: var(--page); font-size: 13px; }
+/* The hidden attribute alone does not hide it: the browser's own rule for
+   [hidden] is display:none from the UA stylesheet, which any class in this file
+   outranks. So every card's form was on screen at once, each labelled
+   'answering' with nothing after it, and the refresh-pause that keys on
+   .answer-form:not([hidden]) never fired either. It read as clutter rather
+   than as a fault while the server refused an answer with no chosen option —
+   and it stopped being harmless the moment one became legitimate (H-939). */
+.answer-form[hidden] { display: none; }
 .af-picked { white-space: nowrap; }
 .af-reason { flex: 1 1 260px; padding: 5px 9px; border: 1px solid var(--hairline); border-radius: var(--radius-control);
   background: var(--surface); color: var(--ink); font: inherit; }
@@ -605,14 +632,19 @@ setInterval(() => {
 }, 5000);
 
 document.addEventListener('click', async (e) => {
-  const opt = e.target.closest('button.option[data-label]');
+  const opt = e.target.closest('button.option[data-label], button.option[data-free]');
   if (opt) {
     const card = opt.closest('.qcard');
     card.querySelectorAll('button.option').forEach((o) => o.classList.toggle('selected', o === opt));
     const form = card.querySelector('.answer-form');
     form.hidden = false;
-    form.dataset.label = opt.dataset.label;
-    form.querySelector('.af-label').textContent = opt.dataset.label;
+    // No option to pick means the words ARE the answer, so the field that is
+    // optional beside a chosen label is the whole record here.
+    form.dataset.label = opt.dataset.label || '';
+    form.querySelector('.af-label').textContent = opt.dataset.label || 'in your own words';
+    form.querySelector('.af-reason').placeholder = opt.dataset.label
+      ? 'reasoning / constraints (optional — agents learn from the why)'
+      : 'your answer, and the why with it';
     form.querySelector('.af-reason').focus();
     return;
   }
@@ -622,6 +654,11 @@ document.addEventListener('click', async (e) => {
     const card = form.closest('.qcard');
     const status = form.querySelector('.af-status');
     const reason = form.querySelector('.af-reason').value.trim();
+    if (!form.dataset.label && !reason) {
+      status.classList.add('err');
+      status.textContent = 'say what you decided — there is no option to stand in for it';
+      return;
+    }
     send.disabled = true;
     status.classList.remove('err');
     status.textContent = 'recording…';
@@ -631,7 +668,7 @@ document.addEventListener('click', async (e) => {
         headers: { 'content-type': 'application/json', 'x-helmo-answer': document.documentElement.dataset.answer },
         body: JSON.stringify({
           ticket_id: card.dataset.ticket,
-          chosen_option: form.dataset.label,
+          chosen_option: form.dataset.label || undefined,
           reasoning: reason || undefined,
           resolution: form.querySelector('.af-res').value,
         }),
@@ -673,11 +710,15 @@ function handleAnswer(
   if (h(ANSWER_HEADER) !== answerNonce) return json(403, { error: 'missing or stale answer token — reload the dashboard' });
   try {
     const p = JSON.parse(body) as { ticket_id?: string; chosen_option?: string; reasoning?: string; resolution?: string };
-    if (!p.ticket_id || !p.chosen_option) return json(400, { error: 'ticket_id and chosen_option are required.' });
+    // A chosen option is no longer required, because a question no longer has
+    // to carry options (H-939) — but SOMETHING has to be said, or the record
+    // gets an answer event that answers nothing.
+    const chosen = p.chosen_option?.trim() || undefined;
+    const answer = [chosen, p.reasoning?.trim()].filter(Boolean).join(' — ');
+    if (!p.ticket_id || !answer) return json(400, { error: 'ticket_id, and either a chosen option or an answer in words, are required.' });
     const actor: Actor = { name: operator, kind: 'human', session: 'dashboard' };
-    const answer = p.reasoning?.trim() ? `${p.chosen_option} — ${p.reasoning.trim()}` : p.chosen_option;
     const resolution = (['resume', 'done', 'cancelled'].includes(p.resolution ?? '') ? p.resolution : 'resume') as 'resume' | 'done' | 'cancelled';
-    const t = store.answerTicket(actor, p.ticket_id, { answer, chosen_option: p.chosen_option, resolution });
+    const t = store.answerTicket(actor, p.ticket_id, { answer, ...(chosen ? { chosen_option: chosen } : {}), resolution });
     return json(200, { ok: true, id: t.id, status: t.status });
   } catch (e) {
     return json(e instanceof HelmoError ? 400 : 500, { error: e instanceof Error ? e.message : String(e) });

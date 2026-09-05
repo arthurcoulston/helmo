@@ -470,7 +470,8 @@ export class Store {
       // it must not act — H-718 was read and released seven times in one day.
       clauses.push('(not_before IS NULL OR not_before <= ?)');
       params.push(now());
-      clauses.push('capacity_hold IS NULL');
+      clauses.push("(capacity_hold IS NULL OR json_extract(capacity_hold, '$.release.until') > ?)");
+      params.push(now());
       if (routedReady) {
         clauses.push('((workstream = ? AND assignee IS NULL) OR assignee = ?)');
         params.push(filter.workstream, filter.caller);
@@ -542,8 +543,8 @@ export class Store {
     // the more useful of the two answers, and one id in two lists just makes
     // the reader check both for the same ticket.
     const rows = this.db
-      .prepare("SELECT id FROM tickets WHERE status = 'open' AND schedule IS NULL AND (not_before IS NULL OR not_before <= ?) AND (assignee IS NULL OR assignee = ?) ORDER BY priority ASC, created_at ASC")
-      .all(now(), caller) as { id: string }[];
+      .prepare("SELECT id FROM tickets WHERE status = 'open' AND schedule IS NULL AND (not_before IS NULL OR not_before <= ?) AND (capacity_hold IS NULL OR json_extract(capacity_hold, '$.release.until') > ?) AND (assignee IS NULL OR assignee = ?) ORDER BY priority ASC, created_at ASC")
+      .all(now(), now(), caller) as { id: string }[];
     return rows.map((r) => r.id).filter((id) => !this.isBlocked(id) && this.selfFiledUntouched(id, caller));
   }
 
@@ -570,10 +571,11 @@ export class Store {
       .prepare(
         `SELECT id, capacity_hold FROM tickets
          WHERE status = 'open' AND schedule IS NULL AND capacity_hold IS NOT NULL
+           AND (json_extract(capacity_hold, '$.release.until') IS NULL OR json_extract(capacity_hold, '$.release.until') <= ?)
            AND (assignee IS NULL OR assignee = ?)
          ORDER BY priority ASC, created_at ASC`,
       )
-      .all(caller) as { id: string; capacity_hold: string }[];
+      .all(now(), caller) as { id: string; capacity_hold: string }[];
     return rows.map((r) => ({ id: r.id, capacity_hold: JSON.parse(r.capacity_hold) as CapacityHold }));
   }
 
@@ -1214,8 +1216,26 @@ export class Store {
         provenance: input.capacity_hold.provenance,
         reconsider_when: input.capacity_hold.reconsider_when,
       });
-      for (const [field, value] of Object.entries(input.capacity_hold)) {
-        if (!value.trim()) throw new HelmoError(`capacity_hold.${field} is required.`);
+      for (const field of ['reason', 'provenance', 'reconsider_when'] as const) {
+        if (!input.capacity_hold[field].trim()) throw new HelmoError(`capacity_hold.${field} is required.`);
+      }
+      if (input.capacity_hold.release) {
+        rejectSwallowedMarkup({
+          batch_id: input.capacity_hold.release.batch_id,
+          until: input.capacity_hold.release.until,
+          stop_conditions: input.capacity_hold.release.stop_conditions,
+          shared_reserve: input.capacity_hold.release.shared_reserve,
+        });
+        for (const field of ['batch_id', 'until', 'stop_conditions', 'shared_reserve'] as const) {
+          if (!input.capacity_hold.release[field].trim()) throw new HelmoError(`capacity_hold.release.${field} is required.`);
+        }
+        input = {
+          ...input,
+          capacity_hold: {
+            ...input.capacity_hold,
+            release: { ...input.capacity_hold.release, until: parseNotBefore(input.capacity_hold.release.until) },
+          },
+        };
       }
       if (t.status !== 'open') throw new HelmoError(`Only open work can be held for capacity; ${t.id} is ${t.status}.`);
     }
@@ -1249,8 +1269,8 @@ export class Store {
           `${t.id} is your own filing, untouched by anyone else — executing your own discoveries takes a second pair of eyes first (the same triage rule that withholds it from your ready queue). Any event by a human, an orchestrator relaying the human, or another agent releases it: a meeting answer, a note, a handoff, a priority change. takeover does not apply — it exists for stale claims, not self-triage. If this cannot wait, helmo_return_to_human with the case for urgency; if you are starting genuinely new work, create the ticket with status 'in_progress' in the same call instead of filing it and drawing it back later.`,
         );
       }
-      if (input.status === 'in_progress' && t.capacity_hold) {
-        throw new HelmoError(`${t.id} is held for capacity: ${t.capacity_hold.reason} Release the hold in a separate recorded update before claiming it.`);
+      if (input.status === 'in_progress' && t.capacity_hold && !capacityReleased(t.capacity_hold)) {
+        throw new HelmoError(`${t.id} is held for capacity: ${t.capacity_hold.reason} Record a fresh bounded release or remove the hold in a separate update before claiming it.`);
       }
       if (input.status === 'in_progress' && t.status === 'open' && t.assignee && t.assignee !== actor.name && !input.takeover) {
         const age = hoursSince(t.updated_at);
@@ -1765,6 +1785,10 @@ function rowToTicket(row: Record<string, unknown>): Ticket {
     question: row['question'] ? JSON.parse(row['question'] as string) : null,
     capacity_hold: row['capacity_hold'] ? JSON.parse(row['capacity_hold'] as string) : null,
   };
+}
+
+function capacityReleased(hold: CapacityHold): boolean {
+  return !!hold.release && hold.release.until > now();
 }
 
 function rowToEvent(row: Record<string, unknown>): HelmoEvent {

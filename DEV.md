@@ -37,7 +37,11 @@ orchestrator meetings and the read-only view. Product intent:
   under `capacity_held`, but is excluded from ready/wake counts and direct
   claims until a separate recorded update releases it; priority is unchanged.
   A later priority change releases the hold so changed urgency cannot remain
-  concealed by an older spending judgment.
+  concealed by an older spending judgment. A finite manual batch leaves that
+  hold in place and adds a release carrying a shared batch id, expiry, stop
+  conditions, and operator reserve. Only tickets explicitly given that release
+  become ready; expiry makes open work held again without disturbing work
+  already claimed. Date/dependency/human/reviewer gates remain independent.
   Ready routing rule (H-661): in a
   caller's ready queue a workstream filter scopes only the unassigned pool —
   a ticket assigned to the caller is ready wherever it lives. ANDing the

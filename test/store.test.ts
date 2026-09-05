@@ -425,6 +425,78 @@ describe('ready queue and blocking', () => {
     expect(s.listTickets({ ready: true, caller: reviewer.name }).map((x) => x.id)).toContain(t.id);
   });
 
+  it('opens only a finite capacity batch and restores its holds on expiry', () => {
+    const s = freshStore();
+    const selected = create(s, { priority: 3 });
+    const unselected = create(s, { priority: 3 });
+    for (const t of [selected, unselected]) {
+      triage(s, t.id);
+      s.updateTicket(orch, {
+        ticket_id: t.id,
+        note: 'holding worthwhile discretionary work',
+        capacity_hold: { reason: 'Conserve posture.', provenance: 'Arthur capacity check-in', reconsider_when: 'Urgency or posture changes.' },
+      });
+    }
+
+    const release = {
+      batch_id: 'surplus-2026-09-05-a',
+      until: '2099-09-06T07:00:00.000Z',
+      stop_conditions: 'Stop new starts if shared reserve falls below the stated floor.',
+      shared_reserve: 'Keep one operator session and all urgent work clear.',
+    };
+    s.updateTicket(orch, {
+      ticket_id: selected.id,
+      note: 'selected for Arthur\'s finite surplus batch',
+      capacity_hold: { reason: 'Conserve posture.', provenance: 'Arthur capacity check-in', reconsider_when: 'Urgency or posture changes.', release },
+    });
+
+    expect(s.listTickets({ ready: true, caller: builder.name }).map((x) => x.id)).toContain(selected.id);
+    expect(s.listTickets({ ready: true, caller: builder.name }).map((x) => x.id)).not.toContain(unselected.id);
+    expect(s.capacityHeldPending(builder.name).map((x) => x.id)).toEqual([unselected.id]);
+
+    s.updateTicket(orch, {
+      ticket_id: selected.id,
+      note: 'recording the same batch after its expiry for the clock-path proof',
+      capacity_hold: { reason: 'Conserve posture.', provenance: 'Arthur capacity check-in', reconsider_when: 'Urgency or posture changes.', release: { ...release, until: '2000-01-01T00:00:00Z' } },
+    });
+    expect(s.listTickets({ ready: true, caller: builder.name }).map((x) => x.id)).not.toContain(selected.id);
+    expect(() => s.updateTicket(builder, { ticket_id: selected.id, note: 'late claim', status: 'in_progress' })).toThrow(/held for capacity/);
+    expect(s.capacityHeldPending(builder.name).map((x) => x.id)).toEqual([selected.id, unselected.id]);
+  });
+
+  it('keeps ordinary prerequisites in force during a capacity release', () => {
+    const s = freshStore();
+    const prerequisite = create(s);
+    const selected = create(s, { deps: [{ to: prerequisite.id, type: 'blocks' }] });
+    triage(s, selected.id);
+    s.updateTicket(orch, {
+      ticket_id: selected.id,
+      note: 'selected for a bounded batch',
+      capacity_hold: {
+        reason: 'Conserve posture.', provenance: 'Arthur capacity check-in', reconsider_when: 'Urgency changes.',
+        release: { batch_id: 'batch-a', until: '2099-01-01T00:00:00Z', stop_conditions: 'Stop on changed posture.', shared_reserve: 'One operator session.' },
+      },
+    });
+    expect(s.listTickets({ ready: true, caller: builder.name }).map((x) => x.id)).not.toContain(selected.id);
+  });
+
+  it('lets already-started batch work finish with its hold record intact', () => {
+    const s = freshStore();
+    const selected = create(s);
+    triage(s, selected.id);
+    s.updateTicket(orch, {
+      ticket_id: selected.id,
+      note: 'selected for a bounded batch',
+      capacity_hold: {
+        reason: 'Conserve posture.', provenance: 'Arthur capacity check-in', reconsider_when: 'Urgency changes.',
+        release: { batch_id: 'batch-a', until: '2099-01-01T00:00:00Z', stop_conditions: 'Stop on changed posture.', shared_reserve: 'One operator session.' },
+      },
+    });
+    const claimed = s.updateTicket(builder, { ticket_id: selected.id, note: 'starting inside the release window', status: 'in_progress' }).ticket;
+    expect(claimed.capacity_hold?.release?.batch_id).toBe('batch-a');
+    expect(s.updateTicket(builder, { ticket_id: selected.id, note: 'finished safely', status: 'done', evidence: [{ kind: 'other', ref: 'fixture' }] }).ticket.status).toBe('done');
+  });
+
   it('blocked tickets are not ready; unblock on done or cancelled', () => {
     const s = freshStore();
     const a = create(s, { title: 'Parent' });

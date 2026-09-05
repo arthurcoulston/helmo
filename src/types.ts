@@ -148,6 +148,14 @@ export interface CapacityHold {
   reason: string;
   provenance: string;
   reconsider_when: string;
+  release?: CapacityRelease;
+}
+
+export interface CapacityRelease {
+  batch_id: string;
+  until: string;
+  stop_conditions: string;
+  shared_reserve: string;
 }
 
 export interface Dep {

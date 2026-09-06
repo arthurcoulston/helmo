@@ -25,6 +25,26 @@ function complete(s: Store, id: string, ref = sha('a'), author = builder.name) {
 }
 
 describe('explicit product acceptance', () => {
+  it('lets a non-author review the current completion without taking the builder\'s claim', () => {
+    const s = new Store(':memory:');
+    const t = ticket(s);
+    const pending = complete(s, t.id);
+    const refs = pending.completion!.artifacts.map((artifact) => artifact.ref);
+
+    expect(() => s.updateTicket(proof, {
+      ticket_id: t.id,
+      note: 'Trying to take the builder\'s held ticket.',
+      status: 'in_progress',
+    })).toThrow(/held by "mason"/);
+    expect(s.recordAcceptanceVerdict(proof, {
+      ticket_id: t.id,
+      refs,
+      verdict: 'pass',
+      note: 'The current completed source passes independently.',
+    })).toMatchObject({ state: 'accepted', reason: 'independently_accepted' });
+    expect(s.getTicket(t.id)).toMatchObject({ status: 'in_progress', assignee: 'mason' });
+  });
+
   it('accepts only a non-author verdict against the exact completed refs', () => {
     const s = new Store(':memory:');
     const t = ticket(s);

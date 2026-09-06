@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.3.0 — 2026-09-05
+## v0.3.0 — 2026-09-06
 
 ### Work routing and stewardship
 
@@ -24,7 +24,8 @@
 ### Product and operator surfaces
 
 - Product completion and independent acceptance are explicit, immutable-ref
-  gates rather than implications of ticket status (H-884).
+  gates rather than implications of ticket status, including while a builder
+  still holds the ticket (H-884, H-1006).
 - The roadmap seam adds project tags, project filtering, and a provenance-bearing
   standing notice (H-172, H-413).
 - A bounded JSON reading lets the estate shell compose Helmo without gaining a
@@ -58,8 +59,9 @@
 
 ### Commit coverage
 
-Every commit after v0.2.0 is represented above. This manifest makes that claim
-auditable without relying on ticket-title conventions:
+Every commit after v0.2.0 and before this final release record is represented
+above. This manifest makes that claim auditable without relying on ticket-title
+conventions:
 
 - `d613ab5`, `05a1202`, `6df5fba`, `04dbcbd`, `ae6a7e0`, `1081e46`,
   `1f1ceab`, `ad96582`, `fc3c5ca`, `ac7f5c2`
@@ -70,6 +72,7 @@ auditable without relying on ticket-title conventions:
 - `6a9a6f8`, `303d0ef`, `f53ac8a`, `4d70f92`, `8ae5b66`, `087bb84`,
   `d84741c`, `3105aed`, `a275ed5`, `afa8c7c`
 - `6ceb6bc`, `aa3d42b`, `081a9c2`, `31b2f15`, `6e590be`, `4ec3816`
+- `6ecc1e7`, `71f2bf4`, `fc41885`
 
 ## v0.2.0 — 2026-08-06
 

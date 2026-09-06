@@ -112,6 +112,12 @@ describe('what the reading carries', () => {
     expect(JSON.stringify(reading(s))).not.toContain('import CSVs');
   });
 
+  it('identifies recurring templates for readers that separate standing work', () => {
+    const s = new Store(':memory:');
+    const template = create(s, { schedule: 'every 1d' });
+    expect(reading(s).tickets.find((t) => t.id === template.id)!.schedule).toBe('every 1d');
+  });
+
   it('carries explicit acceptance state without implying a reviewer is active', () => {
     const s = new Store(':memory:');
     const t = create(s, { status: 'in_progress' });

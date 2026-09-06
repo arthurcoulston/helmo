@@ -856,13 +856,13 @@ describe('recurring templates (lazy materialization)', () => {
     expect(s.materializeDue(later(65)).length).toBe(0); // open again, but carries a human answer
     expect(s.getTicket(first!).status).toBe('open');
   });
-  it('instances spawn unassigned even from a reserved template (H-171)', () => {
+  it('an explicit template assignee routes its instances (H-1034)', () => {
     const s = freshStore();
     s.createTicket(builder, {
       title: 'Daily listen', body: 'standing', workstream: 'helmo-dev', type: 'ops', schedule: 'every 1d', assignee: 'reviewer-loop',
     });
     const [inst] = s.materializeDue(new Date(Date.now() + 25 * 60 * 60_000));
-    expect(s.getTicket(inst!).assignee).toBeNull();
+    expect(s.getTicket(inst!).assignee).toBe('reviewer-loop');
   });
   it('after downtime only the latest missed slot spawns, and cancelling the template retires it', () => {
     const s = freshStore();
@@ -1516,7 +1516,7 @@ describe('workstream seats (H-1026)', () => {
     // An explicit assignee wins over the seat.
     expect(create(s, { workstream: 'rev-dev', assignee: 'reviewer-loop' }).assignee).toBe('reviewer-loop');
   });
-  it('recurring instances take the seat; templates themselves do not', () => {
+  it('recurring instances take the seat unless the template names another assignee', () => {
     const s = freshStore();
     s.setWorkstream(orch, { name: 'ops', seat: 'reviewer-loop' });
     const t = create(s, { workstream: 'ops', type: 'ops', schedule: 'every 30m' });
@@ -1524,6 +1524,10 @@ describe('workstream seats (H-1026)', () => {
     const [inst] = s.materializeDue(new Date(Date.now() + 31 * 60_000));
     expect(s.getTicket(inst!).assignee).toBe('reviewer-loop');
     expect(s.listTickets({ ready: true, workstream: 'elsewhere', caller: 'reviewer-loop' }).map((x) => x.id)).toEqual([inst]);
+
+    const routed = create(s, { workstream: 'ops', type: 'ops', schedule: 'every 30m', assignee: 'builder-loop' });
+    const [routedInst] = s.materializeDue(new Date(Date.now() + 31 * 60_000));
+    expect(s.getTicket(routedInst!).assignee).toBe('builder-loop');
   });
   it("seat '' clears; goal and budget survive a seat write; replay reproduces it", () => {
     const s = freshStore();

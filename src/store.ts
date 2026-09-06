@@ -812,10 +812,9 @@ export class Store {
             note: `Superseded by the ${dueIso.slice(0, 16)}Z slot of ${t.id} — still unclaimed when the next occurrence came due (H-618).`,
           });
         }
-        // Instances never inherit the template's own assignee: a reserved
-        // template re-created a reservation on every spawn and stalled three
-        // listens in a row (H-171). They do take the workstream's seat, like
-        // any other unassigned filing — createTicket applies it (H-1026).
+        // An explicit template assignee is deliberate routing and wins over
+        // the workstream's default seat, as it does for ordinary filings.
+        // Unassigned templates take the workstream seat through createTicket.
         return this.createTicket(SCHEDULER_ACTOR, {
           title: `${t.title} — ${dueIso.slice(0, 16)}Z`,
           body: `${t.body}\n\n(Instance of recurring ${t.id}, due ${dueIso}; schedule '${t.schedule}'.)`,
@@ -823,6 +822,7 @@ export class Store {
           type: t.type,
           labels: t.labels,
           priority: t.priority,
+          assignee: t.assignee ?? undefined,
           deps: [{ to: t.id, type: 'parent' }],
           spawned_from: t.id,
           due: dueIso,

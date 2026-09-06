@@ -57,7 +57,9 @@ orchestrator meetings and the read-only view. Product intent:
   Workstream seats (H-1026): a workstream may carry a `seat` — operator
   steering like goal and budget, set by `workstream-set --seat` — and every
   unassigned filing in it, recurring instances included, is reserved to that
-  seat at creation. The reason is the loop side: a rev loop draws only from
+  seat at creation. An explicit assignee on a recurring template is deliberate
+  instance routing and wins over the stream default. The reason is the loop
+  side: a rev loop draws only from
   its bound workstream's pool plus tickets in its name, so a pool in a stream
   nobody is bound to was ready to no one (fourteen clean tickets sat for days,
   H-1024). Seats do not bypass self-triage — the filer's own ticket still waits
@@ -223,8 +225,9 @@ orchestrator meetings and the read-only view. Product intent:
 - `schedule.ts` — recurring-ticket schedules (H-22): 'every N<m|h|d>' or 5-field
   cron, UTC. A ticket with `schedule` set is a TEMPLATE — standing work, never
   ready itself. Instances spawn lazily on ticket-list reads (the read path is
-  the clock; no daemon), linked via parent dep, actor `helmo-scheduler`,
-  always unassigned (a reserved template stalled three listens, H-171).
+  the clock; no daemon), linked via parent dep, actor `helmo-scheduler`.
+  Instances inherit an explicit template assignee; otherwise the workstream
+  seat routes them, and a stream without either leaves them unassigned.
   Skip-if-in-motion, checked and inserted in ONE immediate transaction (two
   readers spawned twins, H-169); after downtime only the latest missed slot
   spawns. An instance in_progress, awaiting_human, or carrying a human answer

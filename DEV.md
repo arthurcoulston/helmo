@@ -126,11 +126,14 @@ orchestrator meetings and the read-only view. Product intent:
   is a human's call, not this store's.
 - `cli.ts` — programmatic write path for non-MCP writers (H-10); Rev uses
   it for wake-checks, escalations, and spend write-back (`record-spend` +
-  `actor-tickets`, H-19; `actor-activity --advancing` answers "did this
+  `actor-tickets`, H-19; their optional `--session` filter lets Rev isolate
+  its stamped loop session from desk work under the same actor name (H-878);
+  `actor-activity --advancing` answers "did this
   actor MOVE anything" — a note-only update is excluded, because a harness
   that counts "still blocked, nothing to do" as production re-certifies its
   loop as busy and buys another iteration, H-412; `actor-spend` lets the meter net out what the agent
-  self-reported so a session lands in the totals exactly once, H-57 — negative
+  self-reported so a session lands in the totals exactly once, H-57; it carries
+  the same session filter — negative
   spend events are reconciliations, keep accepting them; `by_ticket` lets the
   meter cancel each guess where it sits, H-187). `record-spend` floors a total
   at zero and marks the event CLAMPED — a negative total is bad arithmetic

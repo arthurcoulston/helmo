@@ -904,15 +904,16 @@ export class Store {
    *  nothing to do" is the cheapest possible event and, counted as production,
    *  it re-certifies a loop as busy and buys it another whole iteration —
    *  which is how rev's ladder lost the chance to idle (H-412). */
-  actorActivitySince(actorName: string, seq: number, advancingOnly = false): number {
+  actorActivitySince(actorName: string, seq: number, advancingOnly = false, session?: string): number {
     const advancing = advancingOnly
       ? `AND NOT (event_type = 'updated'
                   AND (json_extract(payload, '$.diffs') IS NULL
                        OR json_extract(payload, '$.diffs') = '{}'))`
       : '';
+    const sessionFilter = session ? "AND json_extract(actor, '$.session') = ?" : '';
     const row = this.db
-      .prepare(`SELECT COUNT(*) AS n FROM events WHERE seq > ? AND json_extract(actor, '$.name') = ? ${advancing}`)
-      .get(seq, actorName) as { n: number };
+      .prepare(`SELECT COUNT(*) AS n FROM events WHERE seq > ? AND json_extract(actor, '$.name') = ? ${sessionFilter} ${advancing}`)
+      .get(...(session ? [seq, actorName, session] : [seq, actorName])) as { n: number };
     return row.n;
   }
 
@@ -955,28 +956,30 @@ export class Store {
 
   /** Tickets `actorName` wrote events on since `seq`, most-touched first — a
    *  harness's spend-attribution window. */
-  actorTicketsSince(actorName: string, seq: number): { id: string; events: number }[] {
+  actorTicketsSince(actorName: string, seq: number, session?: string): { id: string; events: number }[] {
+    const sessionFilter = session ? "AND json_extract(actor, '$.session') = ?" : '';
     return this.db
       .prepare(
         `SELECT ticket_id AS id, COUNT(*) AS events FROM events
-         WHERE seq > ? AND json_extract(actor, '$.name') = ?
+         WHERE seq > ? AND json_extract(actor, '$.name') = ? ${sessionFilter}
          GROUP BY ticket_id ORDER BY events DESC, MIN(seq) ASC`,
       )
-      .all(seq, actorName) as { id: string; events: number }[];
+      .all(...(session ? [seq, actorName, session] : [seq, actorName])) as { id: string; events: number }[];
   }
 
   /** Spend `actorName` self-reported on its own writes since `seq` (meter
    *  'spend' events excluded) — what a harness nets out of its metered figure
    *  so a session lands in the totals exactly once (H-57). */
-  actorSelfSpendSince(actorName: string, seq: number): { tokens: number; cost_usd: number } {
+  actorSelfSpendSince(actorName: string, seq: number, session?: string): { tokens: number; cost_usd: number } {
+    const sessionFilter = session ? "AND json_extract(actor, '$.session') = ?" : '';
     const row = this.db
       .prepare(
         `SELECT COALESCE(SUM(json_extract(payload, '$.tokens')), 0) AS tokens,
                 COALESCE(SUM(json_extract(payload, '$.cost_usd')), 0) AS cost
          FROM events
-         WHERE seq > ? AND event_type != 'spend' AND json_extract(actor, '$.name') = ?`,
+         WHERE seq > ? AND event_type != 'spend' AND json_extract(actor, '$.name') = ? ${sessionFilter}`,
       )
-      .get(seq, actorName) as { tokens: number; cost: number };
+      .get(...(session ? [seq, actorName, session] : [seq, actorName])) as { tokens: number; cost: number };
     return { tokens: row.tokens, cost_usd: row.cost };
   }
 
@@ -984,18 +987,19 @@ export class Store {
    *  guess on the ticket that carries it rather than pushing one session-wide
    *  correction onto whichever ticket it charges (H-187: that left a ticket at
    *  −62k tokens while its neighbour kept the +80k guess). */
-  actorSelfSpendByTicketSince(actorName: string, seq: number): { id: string; tokens: number; cost_usd: number }[] {
+  actorSelfSpendByTicketSince(actorName: string, seq: number, session?: string): { id: string; tokens: number; cost_usd: number }[] {
+    const sessionFilter = session ? "AND json_extract(actor, '$.session') = ?" : '';
     return this.db
       .prepare(
         `SELECT ticket_id AS id,
                 COALESCE(SUM(json_extract(payload, '$.tokens')), 0) AS tokens,
                 COALESCE(SUM(json_extract(payload, '$.cost_usd')), 0) AS cost_usd
          FROM events
-         WHERE seq > ? AND event_type != 'spend' AND json_extract(actor, '$.name') = ?
+         WHERE seq > ? AND event_type != 'spend' AND json_extract(actor, '$.name') = ? ${sessionFilter}
          GROUP BY ticket_id HAVING tokens != 0 OR cost_usd != 0
          ORDER BY MIN(seq) ASC`,
       )
-      .all(seq, actorName) as { id: string; tokens: number; cost_usd: number }[];
+      .all(...(session ? [seq, actorName, session] : [seq, actorName])) as { id: string; tokens: number; cost_usd: number }[];
   }
 
   listWorkstreams(): string[] {

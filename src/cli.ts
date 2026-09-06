@@ -86,7 +86,7 @@ try {
     case 'actor-activity': {
       const name = flag('name');
       if (!name) throw new HelmoError('actor-activity requires --name <actor name>');
-      out({ events: store.actorActivitySince(name, Number(flag('since-seq') ?? 0), has('advancing')) });
+      out({ events: store.actorActivitySince(name, Number(flag('since-seq') ?? 0), has('advancing'), flag('session')) });
       break;
     }
     case 'answers': {
@@ -130,7 +130,7 @@ try {
     case 'actor-tickets': {
       const name = flag('name');
       if (!name) throw new HelmoError('actor-tickets requires --name <actor name>');
-      out({ tickets: store.actorTicketsSince(name, Number(flag('since-seq') ?? 0)) });
+      out({ tickets: store.actorTicketsSince(name, Number(flag('since-seq') ?? 0), flag('session')) });
       break;
     }
     case 'rename-workstream': {
@@ -141,7 +141,8 @@ try {
       const name = flag('name');
       if (!name) throw new HelmoError('actor-spend requires --name <actor name>');
       const since = Number(flag('since-seq') ?? 0);
-      out({ ...store.actorSelfSpendSince(name, since), by_ticket: store.actorSelfSpendByTicketSince(name, since) });
+      const session = flag('session');
+      out({ ...store.actorSelfSpendSince(name, since, session), by_ticket: store.actorSelfSpendByTicketSince(name, since, session) });
       break;
     }
     case 'record-spend': {
@@ -246,9 +247,9 @@ try {
   wake-check     --workstream W --assignee A --since-seq N     (read-only harness poll)
   seat-check     --assignee A                                  (in_progress holds in a name + claiming actor; rev's same-seat guard)
   purge-orphan   --ticket H-n --confirm                          (remove a row with NO events — a write that came from outside)
-  actor-activity --name A --since-seq N [--advancing]          (did this actor write events? --advancing: only ones that moved something)
-  actor-tickets  --name A --since-seq N                        (which tickets, most-touched first)
-  actor-spend    --name A --since-seq N                        (spend A self-reported in the window, total + by_ticket)
+  actor-activity --name A --since-seq N [--session S] [--advancing] (did this actor/session write events?)
+  actor-tickets  --name A --since-seq N [--session S]          (which tickets, most-touched first)
+  actor-spend    --name A --since-seq N [--session S]          (self-reported spend in the window, total + by_ticket)
   record-spend   --ticket H-n [--tokens N] [--cost-usd X] --note N   (metered spend; terminal tickets accepted)
   list           [--ready] [--status S] [--workstream W] [--assignee A] [--limit N]
   get            <ticket-id>

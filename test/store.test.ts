@@ -620,6 +620,20 @@ describe('recordSpend (harness metering)', () => {
     ]);
     expect(s.actorTicketsSince('reviewer-loop', seq)).toEqual([]);
   });
+  it('actor accounting can be narrowed to one session sharing an actor name', () => {
+    const s = freshStore();
+    const loop: Actor = { ...builder, session: 'rev:builder-loop' };
+    const desk: Actor = { ...builder, session: 'desk' };
+    const a = s.createTicket(loop, { title: 'Loop work', body: 'x', workstream: 'helmo-dev', type: 'build', status: 'in_progress' });
+    const b = s.createTicket(desk, { title: 'Desk work', body: 'x', workstream: 'helmo-dev', type: 'build', status: 'in_progress' });
+    const seq = s.maxSeq();
+    s.updateTicket(loop, { ticket_id: a.id, note: 'loop progress', tokens: 12, priority: 1 });
+    s.updateTicket(desk, { ticket_id: b.id, note: 'desk progress', tokens: 99 });
+    expect(s.actorActivitySince(builder.name, seq, true, loop.session)).toBe(1);
+    expect(s.actorTicketsSince(builder.name, seq, loop.session)).toEqual([{ id: a.id, events: 1 }]);
+    expect(s.actorSelfSpendSince(builder.name, seq, loop.session)).toEqual({ tokens: 12, cost_usd: 0 });
+    expect(s.actorSelfSpendByTicketSince(builder.name, seq, loop.session)).toEqual([{ id: a.id, tokens: 12, cost_usd: 0 }]);
+  });
   it('actorSelfSpendSince sums self-reported spend, excluding meter spend events', () => {
     const s = freshStore();
     const t = create(s);

@@ -122,6 +122,7 @@ try {
           name: req('name'),
           goal: flag('goal'),
           budget_usd: flag('budget-usd') !== undefined ? Number(flag('budget-usd')) : undefined,
+          seat: flag('seat'),
         }),
       );
       break;
@@ -259,7 +260,7 @@ try {
   hygiene-dispose --check C --ticket H-n --reason R  (stop re-reporting a finding on a TERMINAL ticket; evented, append-once)
   workstream     --name W                                      (goal, budget, spend-to-date; read-only)
   rename-workstream --from X --to Y --note N   (relabel every ticket incl. closed; one evented rename)
-  workstream-set --name W [--goal G] [--budget-usd X]          (operator steering; actor kind human/orchestrator only)
+  workstream-set --name W [--goal G] [--budget-usd X] [--seat A | --seat '']   (operator steering; actor kind human/orchestrator only; seat = agent unassigned filings are reserved to)
   create         --title T --body B --workstream W --type TY [--priority P] [--status S] [--assignee A] [--dep H-n --dep-type TY] [--schedule 'every 30m' | '0 0 * * *'] [--not-before 2026-09-10]
   update         --ticket H-n --note N [--status S] [--evidence-kind K --evidence-ref R] [--confidence C] [--blast-radius B] [--tokens N] [--cost-usd X] [--handoff-to A] [--not-before 2026-09-10 | ''] [--takeover]
   return         --ticket H-n --situation S --question Q --recommendation R [--options '[{"label":..,"consequence":..}]' (2-3, only for a real choice)] [--if-unanswered U]

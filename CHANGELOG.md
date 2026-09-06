@@ -6,6 +6,9 @@
 
 - Ready queues honor cross-workstream reservations, and released claims retain
   their assignee until explicitly returned to the pool (H-661, H-954).
+- Workstreams can carry a seat; unassigned filings and recurring instances in a
+  seated workstream are reserved to it at creation, and hygiene reports pools
+  that no seat covers (H-1026).
 - Agents cannot reclaim their own filings through metering events; relayed human
   decisions still release those filings for work (H-242, H-829).
 - Tickets can carry date gates, explicit capacity holds, and expiring bounded

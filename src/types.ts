@@ -183,6 +183,7 @@ export interface Workstream {
   name: string;
   goal: string | null;
   budget_usd: number | null;
+  seat: string | null; // the agent unassigned filings here are reserved to at creation (H-1026)
   updated_at: string;
 }
 

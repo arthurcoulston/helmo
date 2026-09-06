@@ -147,6 +147,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
         const tickets = store.listTickets({ ...filter, caller });
         const workstreams = store.listWorkstreamInfo().map((w) => ({
           name: w.name,
+          ...(w.seat ? { seat: w.seat } : {}),
           ...(w.goal ? { goal: w.goal } : {}),
           ...(w.budget_usd !== null ? { budget_usd: w.budget_usd, spent_usd: w.spent_usd, remaining_usd: w.remaining_usd } : {}),
         }));
@@ -347,12 +348,13 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
     'helmo_set_workstream',
     {
       description:
-        `Set a workstream's goal ("done means…") and/or budget_usd — the human's steering surface. Call this ONLY to relay a decision the human stated explicitly; the write requires actor kind 'human' or 'orchestrator', and agent-kind writes are rejected: an agent must never set or raise the goal or budget of the stream it draws work from.\n\n` +
-        `The goal is what lets every agent answer "is this stream's purpose already met?" — phrase it as the end state, not activities (e.g. "the operator has a confirmed, emailable outreach shortlist", not "research contacts"). The budget is a disclosed plan, not a kill switch: agents see remaining balance on every queue read and are expected to front-load the highest-value work and close out honestly when it is spent. Partial updates are fine — a field you omit keeps its current value.`,
+        `Set a workstream's goal ("done means…"), budget_usd, and/or seat — the human's steering surface. Call this ONLY to relay a decision the human stated explicitly; the write requires actor kind 'human' or 'orchestrator', and agent-kind writes are rejected: an agent must never set or raise the goal or budget of the stream it draws work from, nor route the stream to itself.\n\n` +
+        `The goal is what lets every agent answer "is this stream's purpose already met?" — phrase it as the end state, not activities (e.g. "the operator has a confirmed, emailable outreach shortlist", not "research contacts"). The budget is a disclosed plan, not a kill switch: agents see remaining balance on every queue read and are expected to front-load the highest-value work and close out honestly when it is spent. The seat is the agent every unassigned filing in the stream (recurring instances included) is reserved to at creation, so a loop bound elsewhere still finds it; a stream with no seat is ready to no loop, and hygiene reports it as unseated_pool. Partial updates are fine — a field you omit keeps its current value; seat '' clears the seat.`,
       inputSchema: {
         name: z.string().describe('The workstream being steered'),
         goal: z.string().optional().describe('What done means for the whole stream, as an end state'),
         budget_usd: z.number().min(0).optional().describe('Total budget for the stream in USD; spend already recorded counts against it'),
+        seat: z.string().optional().describe("Agent name unassigned filings here are reserved to at creation; '' clears it"),
         actor: actorSchema,
       },
     },

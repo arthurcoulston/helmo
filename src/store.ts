@@ -77,7 +77,7 @@ export interface UpdateResult {
 export const HYGIENE_CHECKS = [
   'stale_claim', 'done_without_evidence', 'phantom_block', 'aging_question',
   'spend_anomaly', 'priority_inversion', 'budget_pressure', 'silent_assignee',
-  'orphan_ticket',] as const;
+  'orphan_ticket', 'unseated_pool',] as const;
 
 export interface HygieneFinding {
   check: (typeof HYGIENE_CHECKS)[number];
@@ -135,6 +135,7 @@ CREATE TABLE IF NOT EXISTS workstreams (
   name       TEXT PRIMARY KEY,
   goal       TEXT,
   budget_usd REAL,
+  seat       TEXT,
   updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS notice (
@@ -281,6 +282,12 @@ export class Store {
     }
     try {
       this.db.exec('ALTER TABLE tickets ADD COLUMN capacity_hold TEXT');
+    } catch {
+      /* column already exists */
+    }
+    // Additive migration for stores created before workstream seats (H-1026).
+    try {
+      this.db.exec('ALTER TABLE workstreams ADD COLUMN seat TEXT');
     } catch {
       /* column already exists */
     }
@@ -718,6 +725,25 @@ export class Store {
       });
     }
 
+    // Unseated pools (H-1026): open, unassigned, non-template work in a
+    // workstream with no seat is ready to no loop — rev loops draw only from
+    // their bound stream's pool and tickets in their name. One finding per
+    // stream: the fix is a seat, not a disposition per ticket.
+    for (const r of this.db
+      .prepare(
+        `SELECT t.workstream, COUNT(*) AS n FROM tickets t
+         WHERE t.status = 'open' AND t.assignee IS NULL AND t.schedule IS NULL
+           AND NOT EXISTS (SELECT 1 FROM workstreams w WHERE w.name = t.workstream AND w.seat IS NOT NULL)
+         GROUP BY t.workstream`,
+      )
+      .all() as { workstream: string; n: number }[]) {
+      findings.push({
+        check: 'unseated_pool',
+        workstream: r.workstream,
+        detail: `${r.n} unassigned open ticket${r.n === 1 ? '' : 's'} in '${r.workstream}', which has no seat — a loop bound elsewhere never sees them; set a seat with workstream-set or reserve each by hand`,
+      });
+    }
+
     // Priority inversions: a high-priority ready ticket sits while lower-priority work in the same workstream is in motion.
     for (const r of this.db
       .prepare(
@@ -786,8 +812,10 @@ export class Store {
             note: `Superseded by the ${dueIso.slice(0, 16)}Z slot of ${t.id} — still unclaimed when the next occurrence came due (H-618).`,
           });
         }
-        // Instances enter the pool unassigned: a reserved template re-created a
-        // reservation on every spawn and stalled three listens in a row (H-171).
+        // Instances never inherit the template's own assignee: a reserved
+        // template re-created a reservation on every spawn and stalled three
+        // listens in a row (H-171). They do take the workstream's seat, like
+        // any other unassigned filing — createTicket applies it (H-1026).
         return this.createTicket(SCHEDULER_ACTOR, {
           title: `${t.title} — ${dueIso.slice(0, 16)}Z`,
           body: `${t.body}\n\n(Instance of recurring ${t.id}, due ${dueIso}; schedule '${t.schedule}'.)`,
@@ -1019,6 +1047,7 @@ export class Store {
       name,
       goal: row?.goal ?? null,
       budget_usd: budget,
+      seat: row?.seat ?? null,
       updated_at: row?.updated_at ?? '',
       spent_usd: spent.s,
       remaining_usd: budget === null ? null : budget - spent.s,
@@ -1078,16 +1107,16 @@ export class Store {
    *  agent must never set or raise the budget of the stream it draws from.
    *  Events ride the log under ticket_id `ws:<name>` so steering stays
    *  derivable and attributed like everything else. */
-  setWorkstream(actor: Actor, input: { name: string; goal?: string; budget_usd?: number }): WorkstreamInfo {
+  setWorkstream(actor: Actor, input: { name: string; goal?: string; budget_usd?: number; seat?: string }): WorkstreamInfo {
     validateActor(actor);
     if (actor.kind === 'agent') {
       throw new HelmoError(
-        'Workstream goals and budgets are operator steering — writable only by kind "human" or "orchestrator" (relaying a decision the human stated explicitly). An agent setting its own stream\'s goal or budget is the failure this field exists to prevent.',
+        'Workstream goals, budgets and seats are operator steering — writable only by kind "human" or "orchestrator" (relaying a decision the human stated explicitly). An agent setting its own stream\'s goal, budget or seat is the failure this field exists to prevent.',
       );
     }
     if (!input.name?.trim()) throw new HelmoError('name is required: which workstream is being steered.');
-    if (input.goal === undefined && input.budget_usd === undefined) {
-      throw new HelmoError('Provide goal and/or budget_usd — an empty steering write is noise.');
+    if (input.goal === undefined && input.budget_usd === undefined && input.seat === undefined) {
+      throw new HelmoError('Provide goal, budget_usd and/or seat — an empty steering write is noise.');
     }
     if (input.budget_usd !== undefined && !(input.budget_usd >= 0)) {
       throw new HelmoError('budget_usd must be a non-negative number (0 clears the pressure checks but keeps disclosure).');
@@ -1098,6 +1127,8 @@ export class Store {
       const payload: Record<string, unknown> = { name: input.name };
       if (input.goal !== undefined) payload['goal'] = input.goal;
       if (input.budget_usd !== undefined) payload['budget_usd'] = input.budget_usd;
+      // '' clears the seat, spelled the way handoff_to '' returns a ticket to the pool.
+      if (input.seat !== undefined) payload['seat'] = input.seat.trim();
       this.append(ts, `ws:${input.name}`, 'workstream_set', actor, payload);
       this.applyWorkstreamSet(ts, payload);
       return this.getWorkstreamInfo(input.name);
@@ -1161,6 +1192,15 @@ export class Store {
     if (input.not_before) input = { ...input, not_before: parseNotBefore(input.not_before) };
     const status = input.status ?? 'open';
     if (status === 'in_progress' && !input.assignee) input = { ...input, assignee: actor.name };
+    // Workstream seat (H-1026): an unassigned filing is reserved to the
+    // stream's seat at the door, so it is ready for that seat's loop from the
+    // moment it exists. Rev loops see only their bound stream's pool plus
+    // tickets in their name; a pool nobody is bound to was ready to no one.
+    // Self-triage still applies — the filer's own ticket waits for a touch.
+    if (!input.assignee && !input.schedule) {
+      const seat = this.getWorkstreamInfo(input.workstream).seat;
+      if (seat) input = { ...input, assignee: seat };
+    }
     for (const d of input.deps ?? []) this.getTicket(d.to); // existence check before mint
 
     return this.db.transaction(() => {
@@ -1727,13 +1767,15 @@ export class Store {
     // log reproduces exactly the same partial-update semantics.
     this.db
       .prepare(
-        `INSERT INTO workstreams (name, goal, budget_usd, updated_at) VALUES (?, ?, ?, ?)
+        `INSERT INTO workstreams (name, goal, budget_usd, seat, updated_at) VALUES (?, ?, ?, ?, ?)
          ON CONFLICT(name) DO UPDATE SET
            goal = COALESCE(excluded.goal, workstreams.goal),
            budget_usd = COALESCE(excluded.budget_usd, workstreams.budget_usd),
+           seat = CASE WHEN excluded.seat IS NULL THEN workstreams.seat
+                       WHEN excluded.seat = '' THEN NULL ELSE excluded.seat END,
            updated_at = excluded.updated_at`,
       )
-      .run(p['name'], p['goal'] ?? null, p['budget_usd'] ?? null, ts);
+      .run(p['name'], p['goal'] ?? null, p['budget_usd'] ?? null, p['seat'] ?? null, ts);
   }
 
   private applyNoticeSet(ts: string, p: Record<string, unknown>): void {

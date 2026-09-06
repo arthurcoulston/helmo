@@ -54,6 +54,17 @@ orchestrator meetings and the read-only view. Product intent:
   session, fell back to a pool nobody watched, and the seat idled on its own
   work. Returning to the unassigned pool is still real and now explicit:
   `handoff_to: ''`, spelled the way `project`/`not_before` already clear.
+  Workstream seats (H-1026): a workstream may carry a `seat` — operator
+  steering like goal and budget, set by `workstream-set --seat` — and every
+  unassigned filing in it, recurring instances included, is reserved to that
+  seat at creation. The reason is the loop side: a rev loop draws only from
+  its bound workstream's pool plus tickets in its name, so a pool in a stream
+  nobody is bound to was ready to no one (fourteen clean tickets sat for days,
+  H-1024). Seats do not bypass self-triage — the filer's own ticket still waits
+  for another actor's touch. Hygiene reports `unseated_pool` once per stream
+  that has unassigned open work and no seat. `seat: ''` clears it. Templates
+  themselves stay unassigned (the H-171 stall was an inherited reservation to
+  a loopless seat; a seat is a deliberate binding to a looped one).
   Human direction relayed by an orchestrator is judgment even when the relay
   carries the same agent name that filed the ticket (H-829); otherwise the
   name-only self-triage check makes Arthur's recorded answer invisible.

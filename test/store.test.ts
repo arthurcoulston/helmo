@@ -1097,6 +1097,7 @@ describe('hygiene dispositions (H-81)', () => {
   }
   it('a disposed finding stops re-reporting; others on the same ticket are untouched', () => {
     const s = freshStore();
+    s.setWorkstream(orch, { name: 'helmo-dev', seat: 'builder-loop' }); // seated: no unseated_pool finding in the mix (H-1026)
     const t = doneWithoutEvidence(s);
     s.recordSpend(builder, t.id, { cost_usd: 20, note: 'metered' });
     const t2 = create(s); const t3 = create(s);
@@ -1497,5 +1498,53 @@ describe('date gate migration (H-732)', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('workstream seats (H-1026)', () => {
+  it('an unassigned filing in a seated workstream is reserved to the seat at creation', () => {
+    const s = freshStore();
+    expect(() => s.setWorkstream(builder, { name: 'rev-dev', seat: 'builder-loop' })).toThrow(/operator steering/);
+    expect(s.setWorkstream(orch, { name: 'rev-dev', seat: 'builder-loop' }).seat).toBe('builder-loop');
+    const t = create(s, { workstream: 'rev-dev' }); // filed by builder-loop
+    expect(t.assignee).toBe('builder-loop');
+    // Routing does not bypass self-triage: the filer's own ticket waits for a touch...
+    expect(s.listTickets({ ready: true, workstream: 'estate-ui', caller: 'builder-loop' }).map((x) => x.id)).toEqual([]);
+    triage(s, t.id);
+    // ...then it is ready for the seat from a loop bound to ANY workstream (H-661 routing).
+    expect(s.listTickets({ ready: true, workstream: 'estate-ui', caller: 'builder-loop' }).map((x) => x.id)).toEqual([t.id]);
+    // An explicit assignee wins over the seat.
+    expect(create(s, { workstream: 'rev-dev', assignee: 'reviewer-loop' }).assignee).toBe('reviewer-loop');
+  });
+  it('recurring instances take the seat; templates themselves do not', () => {
+    const s = freshStore();
+    s.setWorkstream(orch, { name: 'ops', seat: 'reviewer-loop' });
+    const t = create(s, { workstream: 'ops', type: 'ops', schedule: 'every 30m' });
+    expect(t.assignee).toBeNull();
+    const [inst] = s.materializeDue(new Date(Date.now() + 31 * 60_000));
+    expect(s.getTicket(inst!).assignee).toBe('reviewer-loop');
+    expect(s.listTickets({ ready: true, workstream: 'elsewhere', caller: 'reviewer-loop' }).map((x) => x.id)).toEqual([inst]);
+  });
+  it("seat '' clears; goal and budget survive a seat write; replay reproduces it", () => {
+    const s = freshStore();
+    s.setWorkstream(orch, { name: 'rev-dev', goal: 'g', budget_usd: 5 });
+    s.setWorkstream(orch, { name: 'rev-dev', seat: 'builder-loop' });
+    expect(s.getWorkstreamInfo('rev-dev')).toMatchObject({ goal: 'g', budget_usd: 5, seat: 'builder-loop' });
+    s.setWorkstream(orch, { name: 'rev-dev', seat: '' });
+    expect(s.getWorkstreamInfo('rev-dev')).toMatchObject({ goal: 'g', budget_usd: 5, seat: null });
+    s.setWorkstream(orch, { name: 'rev-dev', seat: 'builder-loop' });
+    s.rebuild();
+    expect(s.getWorkstreamInfo('rev-dev').seat).toBe('builder-loop');
+  });
+  it('hygiene reports an unseated pool once per workstream, and a seat clears it', () => {
+    const s = freshStore();
+    create(s, { workstream: 'rev-dev' });
+    create(s, { workstream: 'rev-dev' });
+    create(s, { workstream: 'rev-dev', assignee: 'reviewer-loop' }); // reserved: not pool
+    create(s, { workstream: 'rev-dev', type: 'ops', schedule: 'every 30m' }); // standing: not pool
+    const pools = () => s.hygiene().filter((f) => f.check === 'unseated_pool');
+    expect(pools()).toEqual([expect.objectContaining({ workstream: 'rev-dev', detail: expect.stringMatching(/^2 unassigned open tickets/) })]);
+    s.setWorkstream(orch, { name: 'rev-dev', seat: 'builder-loop' });
+    expect(pools()).toEqual([]);
   });
 });

@@ -172,12 +172,12 @@ orchestrator meetings and the read-only view. Product intent:
 - `feed.ts` — the queue reading as JSON, served by `view.ts` at
   `GET /tickets.json` (R-11 H-832). It exists for ONE consumer, the estate
   shell, and for one reason: the shell proxies every other product view
-  untouched, but Arthur's Meeting B decisions land Helmo's phone view on a
-  filter and replace its answer control with a line of prose — neither of
-  which you can do to someone else's HTML from outside it. So Helmo hands over
+  untouched, but Helmo's phone view is a filtered reading and deliberately
+  omits answer controls — neither transformation can be applied to another
+  product's HTML from outside it. So Helmo hands over
   the data and lets the shell draw it, rather than the shell opening this
   store and taking a second hand on the record. Same shape as the health page
-  reading rev's loop states at :4500 rather than re-deriving them.
+  reading Rev's loop states from Rev rather than re-deriving them.
   **It is not an API for agents** — they have the MCP tools, which write as
   well as read and enforce the actor identity this cannot — and it is not a
   mirror of the record: no body, no evidence, no events, no answer nonce.
@@ -427,7 +427,7 @@ measured, it could go too far".
 
 Rev (formerly Capstan), a sibling project, supervises the bash loops that draw work from this
 record; it consumes the helmo-cli contract and injects the MCP server into
-agent sessions. The estate shell (`~/projects/estate`, :4300) is the one
+agent sessions. The estate shell (`~/projects/estate`) is the one
 reader of `GET /tickets.json`; it also owns the design tokens and avatar
 sprite this repo vendors. That seam is one-way and read-only — nothing in the
 estate writes here, and the shell's own 405 is what makes that structural

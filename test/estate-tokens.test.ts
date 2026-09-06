@@ -24,6 +24,12 @@ import { SOURCE, VENDORED, render } from '../scripts/vendor-estate-tokens.mjs';
 describe('vendored estate tokens', () => {
   const haveSource = existsSync(SOURCE);
 
+  it('retains the shadcn MIT notice beside the vendored copy', () => {
+    const notice = readFileSync(new URL('../THIRD_PARTY_NOTICES.md', import.meta.url), 'utf8');
+    expect(notice).toContain('Copyright (c) 2023 shadcn');
+    expect(notice).toContain('The above copyright notice and this permission notice');
+  });
+
   it.skipIf(!haveSource)('is the estate token file verbatim', () => {
     expect(readFileSync(VENDORED, 'utf8')).toBe(render(readFileSync(SOURCE, 'utf8')));
   });

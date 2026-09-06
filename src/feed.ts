@@ -2,15 +2,15 @@
 // that renders it as HTML.
 //
 // WHY THIS EXISTS AT ALL. The estate shell composes the other product views by
-// proxying their HTML untouched, and that is the whole design (R-11 spec,
-// decision 3) — except for this one. Arthur's Meeting B decisions put Helmo's
-// phone landing on a filter rather than the whole record, and replace the
-// answer control with a line of prose, and neither is something you can do to
-// someone else's HTML from outside it. So Helmo hands over the data and lets
-// the shell draw it. The alternative was the shell opening this store itself,
-// which would give a second process a hand on the record and cost it the
-// zero-dependency bargain it keeps for exactly the reasons this file does.
-// Same shape as health at :4600 reading rev's loop state at :4500 rather than
+// proxying their HTML untouched, and that is the whole design — except for
+// this one. Helmo's phone landing is a filtered reading rather than the whole
+// record and deliberately omits answer controls; neither transformation can
+// be applied to another product's HTML from outside it. So Helmo hands over
+// the data and lets the shell draw it. The alternative was the shell opening
+// this store itself, which would give a second process a hand on the record
+// and cost it the zero-dependency bargain it keeps for exactly the reasons
+// this file does.
+// Same shape as health reading Rev's loop state from Rev rather than
 // re-deriving it: the service that owns the truth serves it.
 //
 // It needs no new route in the shell. `/s/helmo-view/` is already proxied,
@@ -44,9 +44,9 @@ export function markFor(name: string, kind: ActorKind | undefined): string | nul
 /** How many closed tickets ride along. Closed work is history, not state, and
  *  the record of it is this page — but a queue with no recently-finished work
  *  in it reads as though nothing has been done, so the reading carries a tail.
- *  Twenty is the top of the band Arthur asked for (Meeting B decision 5: "the
- *  active, the ready, and the last 10–20"); a consumer wanting fewer can take
- *  fewer, and one wanting more wants the page. */
+ *  Twenty keeps enough recent context to show motion while bounding the feed;
+ *  a consumer wanting fewer can take fewer, and one wanting more wants the
+ *  page. */
 export const CLOSED_TAIL = 20;
 
 const TERMINAL = new Set(['done', 'cancelled']);

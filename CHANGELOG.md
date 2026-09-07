@@ -20,6 +20,11 @@
   duplicate or stranded recurring work (H-169, H-171).
 - Seat checks identify the process that claimed work, while explicit actors
   retain the environment's seat stamp (H-558, H-687).
+- An explicit assignee on a recurring template routes its instances; without
+  one they take the workstream seat (H-1034).
+- Work needing a sitting with the operator is typed as such: it stays open,
+  is withheld from every agent ready queue, and is reported separately from
+  questions waiting on an answer (H-1028).
 
 ### Product and operator surfaces
 
@@ -40,6 +45,10 @@
 - Recorded answers have a read-only CLI door, hygiene is available through MCP,
   and human-return prompts allow a recommendation without manufactured options
   (H-936, H-758, H-939).
+- The feed marks recurring templates, so a reader can keep standing work out of
+  the live queue as Helmo's own view does (H-1027).
+- The vendored shadcn-derived design tokens carry their upstream MIT notice,
+  and the package ships THIRD_PARTY_NOTICES.md (H-1007).
 
 ### Reliability and record integrity
 
@@ -56,6 +65,8 @@
 - Store recovery detects counters behind the table, reports orphan rows without
   taking down the dashboard, and provides a deliberately narrow, confirmed
   purge path for rows absent from the event log (H-448, H-463).
+- The harness accounting queries take a session filter, so a metered loop
+  session is not netted against desk work under the same actor name (H-878).
 
 ### Commit coverage
 
@@ -71,8 +82,9 @@ conventions:
   `19d916d`, `420ee89`, `d7a8c4b`, `364d951`
 - `6a9a6f8`, `303d0ef`, `f53ac8a`, `4d70f92`, `8ae5b66`, `087bb84`,
   `d84741c`, `3105aed`, `a275ed5`, `afa8c7c`
-- `6ceb6bc`, `aa3d42b`, `081a9c2`, `31b2f15`, `6e590be`, `4ec3816`
-- `6ecc1e7`, `71f2bf4`, `fc41885`
+- `6ceb6bc`, `aa3d42b`, `081a9c2`, `31b2f15`, `6e590be`, `4ec3816`,
+  `6ecc1e7`, `71f2bf4`, `fc41885`, `9279b00`
+- `ff819f6`, `bff1ba4`, `e9e6513`, `073983c`, `ed02a37`
 
 ## v0.2.0 — 2026-08-06
 

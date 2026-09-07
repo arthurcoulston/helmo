@@ -53,4 +53,19 @@ describe('view accessibility', () => {
     expect(view).toContain('document.activeElement !== document.body');
     expect(view.indexOf('document.activeElement !== document.body')).toBeLessThan(view.indexOf('document.body.replaceWith(doc.body)'));
   });
+
+  it('labels recorded progress truthfully on every live row shape', () => {
+    expect(bodyOf('progressLine')).toContain('last recorded update');
+    expect(bodyOf('progressLine')).toContain('progress.actor.name');
+    expect(bodyOf('questionCard')).toContain('progressLine(t)');
+    expect(bodyOf('motionCard')).toContain('progressLine(t)');
+    expect(bodyOf('row')).toContain('progressLine(t)');
+  });
+
+  it('makes deep terminal history an explicit whole-record choice', () => {
+    const page = bodyOf('page');
+    expect(page).toContain('recordTickets(completeRecord, wholeRecord)');
+    expect(page).toContain('href="?whole=1"');
+    expect(view).toContain("url.searchParams.get('whole') === '1'");
+  });
 });

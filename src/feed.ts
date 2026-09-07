@@ -165,6 +165,17 @@ const when = (t: Ticket) => t.closed_at ?? t.updated_at;
  *  place a bad row takes the phone down. */
 const seq = (t: Ticket) => Number.parseInt(t.id.replace(/^\D+/, ''), 10) || 0;
 
+/** The default record shown to a reader: all current/standing work followed
+ *  by a small, newest-first tail of terminal history. `whole` is the explicit
+ *  escape hatch for the HTML record; the JSON reading stays bounded. */
+export function recordTickets(all: Ticket[], whole = false): Ticket[] {
+  const live = all.filter((t) => !TERMINAL.has(t.status));
+  const closed = all
+    .filter((t) => TERMINAL.has(t.status))
+    .sort((a, b) => when(b).localeCompare(when(a)) || seq(b) - seq(a));
+  return [...live, ...(whole ? closed : closed.slice(0, CLOSED_TAIL))];
+}
+
 /**
  * The reading, from tickets the caller has already listed.
  *
@@ -184,15 +195,9 @@ export function feed(
   acceptanceFor?: (ticketId: string) => ProductAcceptance,
   progressFor?: (ticketId: string) => TicketProgress | undefined,
 ): Feed {
-  const live = all.filter((t) => !TERMINAL.has(t.status));
-  const closed = all
-    .filter((t) => TERMINAL.has(t.status))
-    .sort((a, b) => when(b).localeCompare(when(a)) || seq(b) - seq(a))
-    .slice(0, CLOSED_TAIL);
-
   return {
     generated_at: now.toISOString(),
-    tickets: [...live, ...closed].map((t) => {
+    tickets: recordTickets(all).map((t) => {
       const kind = t.assignee ? kinds.get(t.assignee) : undefined;
       const mark = t.assignee ? markFor(t.assignee, kind) : null;
       const acceptance = acceptanceFor?.(t.id);

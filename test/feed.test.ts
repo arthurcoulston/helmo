@@ -8,7 +8,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CLOSED_TAIL, feed, markFor, questionFingerprint, type FeedAsk } from '../src/feed.js';
+import { CLOSED_TAIL, feed, markFor, questionFingerprint, recordTickets, type FeedAsk } from '../src/feed.js';
 import { Store } from '../src/store.js';
 import { Actor, Question } from '../src/types.js';
 
@@ -102,6 +102,18 @@ describe('what the reading carries', () => {
     expect(got.length).toBe(CLOSED_TAIL);
     expect(got[0]).toBe(closed.at(-1));
     expect(got).toEqual([...closed].reverse().slice(0, CLOSED_TAIL));
+  });
+
+  it('opens the whole terminal record only when explicitly requested', () => {
+    const s = new Store(':memory:');
+    const closed = Array.from({ length: CLOSED_TAIL + 3 }, () => {
+      const t = create(s);
+      s.updateTicket(builder, { ticket_id: t.id, note: 'done', status: 'done' });
+      return t.id;
+    });
+    const allTickets = all(s);
+    expect(recordTickets(allTickets).map((t) => t.id)).toEqual([...closed].reverse().slice(0, CLOSED_TAIL));
+    expect(recordTickets(allTickets, true).map((t) => t.id)).toEqual([...closed].reverse());
   });
 
   it('counts cancelled work as closed, not as live', () => {

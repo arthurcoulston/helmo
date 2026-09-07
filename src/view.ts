@@ -12,11 +12,11 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { ANSWER_HEADER, answerRequest } from './answer.js';
 import { ESTATE_AVATARS } from './estate-avatars.generated.js';
-import { ask, feed, markFor } from './feed.js';
+import { ask, CLOSED_TAIL, feed, markFor, recordTickets } from './feed.js';
 import { ESTATE_TOKENS } from './estate-tokens.generated.js';
 import { Store } from './store.js';
 import { HygieneFinding } from './store.js';
-import { Actor, ActorKind, HelmoError, Ticket, HelmoEvent } from './types.js';
+import { Actor, ActorKind, HelmoError, Ticket, HelmoEvent, TicketProgress } from './types.js';
 
 const dbPath = process.env['HELMO_DB'] ?? join(homedir(), '.helmo', 'helmo.db');
 const port = Number(process.env['HELMO_VIEW_PORT'] ?? 4400);
@@ -108,6 +108,7 @@ function evidenceLinks(t: Ticket): string {
 // the same reason `store` is: every renderer below is a free function, and
 // threading a map through all of them would be the only change of shape here.
 let actorKinds = new Map<string, ActorKind>();
+let latestProgress = new Map<string, TicketProgress>();
 
 /** An actor, drawn: the crew mark for their name, framed by the kind the
  *  record holds, followed by the name itself.
@@ -190,13 +191,11 @@ function timeline(events: HelmoEvent[]): string {
   return items.length ? `<div class="tl-wrap">${items.join('')}</div>` : '';
 }
 
-function lastNote(t: Ticket): string {
-  const ev = store.getEvents(t.id);
-  for (let i = ev.length - 1; i >= 0; i--) {
-    const n = ev[i]?.payload?.['note'] as string | undefined;
-    if (n?.trim()) return n;
-  }
-  return '';
+function progressLine(t: Ticket): string {
+  if (t.status === 'done' || t.status === 'cancelled') return '';
+  const progress = latestProgress.get(t.id);
+  if (!progress) return '';
+  return `<p class="progress">last recorded update ${esc(rel(progress.at))} by ${actor(progress.actor.name, progress.actor.kind)}: ${esc(progress.note)}</p>`;
 }
 
 function details(t: Ticket): string {
@@ -237,6 +236,7 @@ function questionCard(t: Ticket): string {
     <p class="rec"><span class="decision-label recommends">Recommends</span>${esc(q.recommendation)}</p>
     ${operator ? `<button type="button" class="ratify">Ratify recommendation</button><span class="ratify-status" role="status"></span>` : ''}
     ${q.if_unanswered ? `<p class="silence">⏱ If unanswered: ${esc(q.if_unanswered)}</p>` : ''}
+    ${progressLine(t)}
     <details class="context"><summary>Context</summary><p class="situation">${esc(q.situation)}</p></details>
     <details class="more" id="d-${esc(t.id)}"><summary>ticket detail</summary>${details(t)}</details>
   </article>`;
@@ -244,12 +244,11 @@ function questionCard(t: Ticket): string {
 
 // In motion: who holds it, what they last said, how far it reaches.
 function motionCard(t: Ticket): string {
-  const note = lastNote(t);
   return `<article class="mcard" id="${esc(t.id)}">
     <header><span class="tid">${esc(t.id)}</span> <span class="mtitle">${esc(t.title)}</span>
       ${prioBadge(t)} ${blastBadge(t)} ${acceptanceBadge(t)} ${money(t)}
       <span class="meta">${esc(t.workstream)} · <b class="holder">${t.assignee ? actor(t.assignee) : '?'}</b> · ${esc(rel(t.updated_at))}</span></header>
-    ${note ? `<p class="note">${esc(note)}</p>` : ''}
+    ${progressLine(t)}
     <details class="more" id="d-${esc(t.id)}"><summary>ticket detail</summary>${details(t)}</details>
   </article>`;
 }
@@ -274,6 +273,7 @@ function row(t: Ticket, opts: { showDone?: boolean } = {}): string {
       )}</span>
       ${opts.showDone ? chain(t) : ''}
     </summary>
+    ${progressLine(t)}
     ${opts.showDone ? `<div class="evrow">${evidenceLinks(t)}</div>` : ''}
     ${details(t)}
   </details>`;
@@ -330,11 +330,13 @@ function steeringStrip(): string {
   </section>`;
 }
 
-function page(): string {
+function page(wholeRecord = false): string {
   // One query per render, not one per actor drawn: the map is store-wide and
   // the page names the same handful of writers hundreds of times.
   actorKinds = store.actorKinds();
-  const all = store.listTickets({ limit: 1000 });
+  const completeRecord = store.listTickets({ limit: -1 });
+  const all = recordTickets(completeRecord, wholeRecord);
+  latestProgress = store.latestProgress(all.filter((t) => t.status !== 'done' && t.status !== 'cancelled').map((t) => t.id));
   const by = (s: string) => all.filter((t) => t.status === s);
   const awaiting = by('awaiting_human');
   const withHuman = by('open').filter((t) => t.needs_human);
@@ -369,6 +371,10 @@ ${ESTATE_AVATARS}
     ${spend ? `<div class="stat"><div class="stat-n">$${spend.toFixed(0)}</div><div class="stat-l">spend</div></div>` : ''}
   </div>
 </header>
+
+<nav class="record-scope">${wholeRecord
+  ? `Whole record · <a href="?">return to current record</a>`
+  : `Current record · every live ticket and the newest ${CLOSED_TAIL} closed · <a href="?whole=1">whole record</a>`}</nav>
 
 <section class="hero">
   <h2>Awaiting you</h2>
@@ -459,6 +465,8 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; color: 
 .badge.accent { color: var(--link); }
 .badge.quiet { color: var(--ink-3); }
 .meta, .rmeta { color: var(--ink-3); font-size: 12px; }
+.record-scope { margin: 14px 0 0; color: var(--ink-3); font-size: 12px; }
+.record-scope a { color: var(--link); }
 .chain { color: var(--ink-3); font-size: 11px; font-family: ui-monospace, monospace; }
 .chain-arrow { opacity: 0.7; }
 
@@ -523,7 +531,7 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; color: 
 .mcard header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .mtitle { font-weight: 600; }
 .holder { color: var(--link); font-weight: 600; }
-.note { color: var(--ink-2); margin: 8px 0 0; font-size: 13.5px;
+.progress { color: var(--ink-2); margin: 8px 0 0; font-size: 13.5px;
   display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 
 /* ---- quiet rows ---- */
@@ -669,7 +677,8 @@ createServer((req, res) => {
     // page() hit a catch that could no longer set a status — the writeHead(500)
     // threw ERR_HTTP_HEADERS_SENT, unhandled, and took the whole view process
     // down. A render bug should be a 500 you can read, not a dead dashboard.
-    const html = page();
+    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+    const html = page(url.searchParams.get('whole') === '1');
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     res.end(html);
   } catch (e) {

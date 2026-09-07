@@ -26,6 +26,7 @@
 // for the shell's narrow ratification path. It is a QUEUE READING — what is live, plus a short tail of what
 // just closed — and the full record of any ticket in it is one tap away on the
 // page it is served beside.
+import { createHash } from 'node:crypto';
 import { AVATAR_MARKS } from './estate-avatars.generated.js';
 import { ActorKind, ProductAcceptance, Question, Ticket, TicketProgress } from './types.js';
 
@@ -60,9 +61,29 @@ const TERMINAL = new Set(['done', 'cancelled']);
  *  return at three, but a question stored before that cap still has to draw. */
 export const letterFor = (i: number): string => String.fromCharCode(97 + i);
 
+/** A fingerprint of the pending question, so a click can say WHICH ask it is
+ *  consenting to (H-1053). A card sits on a phone for as long as it sits, and
+ *  in that time another session can answer the ticket and the agent can come
+ *  back with a different question — the ratify button would then record
+ *  Arthur's name against a recommendation he never read. The fingerprint
+ *  covers everything the reader was shown, in a fixed order so two processes
+ *  computing it agree, and the answer route refuses a mismatch.
+ *  Not a secret and not a signature: an integrity check on what was on screen. */
+export function questionFingerprint(q: Question): string {
+  const canonical = JSON.stringify([
+    q.situation,
+    q.question,
+    q.recommendation,
+    q.if_unanswered ?? '',
+    (q.options ?? []).map((o) => [o.label, o.consequence]),
+  ]);
+  return createHash('sha256').update(canonical).digest('hex').slice(0, 16);
+}
+
 /** The ask a reader draws, from the question the agent wrote. */
 export function ask(q: Question): FeedAsk {
   return {
+    fingerprint: questionFingerprint(q),
     situation: q.situation,
     question: q.question,
     recommendation: q.recommendation,
@@ -77,6 +98,8 @@ export function ask(q: Question): FeedAsk {
  *  recommendation on its own or the lettered choices. Same order as the
  *  Question the agent wrote — this adds the letters and nothing else. */
 export interface FeedAsk {
+  /** Identifies this exact ask; a ratification carries it back (H-1053). */
+  fingerprint: string;
   situation: string;
   question: string;
   recommendation: string;

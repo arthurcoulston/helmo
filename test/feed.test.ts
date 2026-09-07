@@ -8,7 +8,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CLOSED_TAIL, feed, markFor, type FeedAsk } from '../src/feed.js';
+import { CLOSED_TAIL, feed, markFor, questionFingerprint, type FeedAsk } from '../src/feed.js';
 import { Store } from '../src/store.js';
 import { Actor, Question } from '../src/types.js';
 
@@ -166,6 +166,7 @@ describe('what a ticket asks', () => {
     // shrinks back to the question alone, he has to open the ticket to answer
     // it — which is the thing H-939 was filed about.
     expect(reading(s).tickets[0]!.asks).toEqual({
+      fingerprint: questionFingerprint(ask),
       situation: ask.situation,
       question: ask.question,
       recommendation: ask.recommendation,
@@ -174,6 +175,27 @@ describe('what a ticket asks', () => {
         { letter: 'b', label: 'no', consequence: 'the shell opens the store itself' },
       ],
     });
+  });
+
+  it('fingerprints the ask, so a click can say which question it answered', () => {
+    // The estate shell sends this back with a ratification and Helmo refuses a
+    // mismatch (H-1053): a card can sit on a phone while the ticket is
+    // answered and asked again, and consent belongs to the ask it was given
+    // for. So every part a reader was shown has to move the value.
+    const base = questionFingerprint(ask);
+    expect(questionFingerprint({ ...ask })).toBe(base);
+    expect(questionFingerprint({ ...ask, recommendation: 'no, wait' })).not.toBe(base);
+    expect(questionFingerprint({ ...ask, question: 'Pay it late?' })).not.toBe(base);
+    expect(questionFingerprint({ ...ask, situation: 'The venue has moved the deadline.' })).not.toBe(base);
+    expect(questionFingerprint({ ...ask, if_unanswered: 'the date goes' })).not.toBe(base);
+    expect(questionFingerprint({ ...ask, options: [ask.options[1]!, ask.options[0]!] })).not.toBe(base);
+    expect(questionFingerprint({ ...ask, options: [{ ...ask.options[0]!, consequence: 'something else' }, ask.options[1]!] })).not.toBe(base);
+    // And it survives the round trip through the store, or the value the page
+    // draws would never match the one the route computes.
+    const s = new Store(':memory:');
+    const t = create(s);
+    s.returnToHuman(builder, t.id, ask);
+    expect(reading(s).tickets[0]!.asks!.fingerprint).toBe(questionFingerprint(s.getTicket(t.id).question!));
   });
 
   it('leaves options out entirely when the recommendation stands alone', () => {
@@ -291,11 +313,19 @@ describe('the route', () => {
     expect(body.tickets[0]!.progress?.note).toBe('last <recorded> & update');
 
     expect(body.answer_nonce).toMatch(/^[0-9a-f]{32}$/);
-    const answered = await fetch(`http://127.0.0.1:${port}/answer`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-helmo-answer': body.answer_nonce },
-      body: JSON.stringify({ ticket_id: t.id, ratify: true }),
-    });
+    const post = (payload: unknown) =>
+      fetch(`http://127.0.0.1:${port}/answer`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-helmo-answer': body.answer_nonce },
+        body: JSON.stringify(payload),
+      });
+    // Over the wire as well as in the unit: a ratification that names another
+    // question is refused, and the old free-text payload no longer writes.
+    const stale = await post({ ticket_id: t.id, ratify: true, question_fingerprint: '0'.repeat(16) });
+    expect(stale.status).toBe(409);
+    const legacy = await post({ ticket_id: t.id, reasoning: 'drop it', resolution: 'cancelled' });
+    expect(legacy.status).toBe(400);
+    const answered = await post({ ticket_id: t.id, ratify: true, question_fingerprint: body.tickets[0]!.asks!.fingerprint });
     expect(answered.status).toBe(200);
     expect(await answered.json()).toMatchObject({ ok: true, id: t.id, status: 'open' });
     const inspect = new Store(db);

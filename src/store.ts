@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { questionFingerprint } from './feed.js';
 import { parseSchedule } from './schedule.js';
 import {
   Actor, ActorKind, ACTOR_KINDS, Answer, AnswerEvent, BlastRadius, BLAST_RADII, CapacityHold, Confidence, Dep, DepType, Evidence,
@@ -1554,7 +1555,13 @@ export class Store {
     }).immediate();
   }
 
-  answerTicket(actor: Actor, ticketId: string, a: Answer): Ticket {
+  /** `expectQuestion` is the fingerprint of the ask the answerer was looking at
+   *  (feed.ts `questionFingerprint`). It is checked INSIDE the write
+   *  transaction, because the gap between drawing a card and clicking it is
+   *  long enough for another session to answer the ticket and the agent to
+   *  return a fresh question — and consent belongs to the ask it was given
+   *  for, not to the ticket id (H-1053). */
+  answerTicket(actor: Actor, ticketId: string, a: Answer, expectQuestion?: string): Ticket {
     validateActor(actor);
     const t = this.getTicket(ticketId);
     if (t.status !== 'awaiting_human') {
@@ -1565,6 +1572,12 @@ export class Store {
     const resolution = a.resolution ?? 'resume';
     return this.db.transaction(() => {
       const ts = now();
+      if (expectQuestion !== undefined) {
+        const cur = this.getTicket(t.id);
+        if (cur.status !== 'awaiting_human' || !cur.question || questionFingerprint(cur.question) !== expectQuestion) {
+          throw new HelmoError(`${t.id} is no longer asking what was on screen — reload and read the current question before answering.`);
+        }
+      }
       this.append(ts, t.id, 'answered', actor, { ...a, resolution } as unknown as Record<string, unknown>);
       if (resolution === 'resume') {
         this.db.prepare("UPDATE tickets SET status = 'open', assignee = NULL, question = NULL, updated_at = ? WHERE id = ?").run(ts, t.id);

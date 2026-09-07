@@ -162,7 +162,18 @@ orchestrator meetings and the read-only view. Product intent:
   preflight the server never answers, Origin/Sec-Fetch-Site are checked when
   present, and a per-boot nonce the page carries must be echoed — friction
   against a forged one-liner, NOT a wall against local agents (same-user
-  box; ward's threat model). Dashboard answers render marked as such. Everything else
+  box; ward's threat model). The route itself lives in `answer.ts` so its
+  refusals are testable without a socket (`test/answer.test.ts`), and since
+  H-1053 it does exactly ONE thing: ratify the pending recommendation. It
+  takes `{ticket_id, ratify: true, question_fingerprint}` and nothing else —
+  the free-text/resolution payload of the removed form is gone, because a
+  route reachable from the phone that can close or cancel a ticket as Arthur
+  is a capability the UI's shape does not narrow (ward's review). The
+  fingerprint (`feed.questionFingerprint`, carried in `asks.fingerprint`) is
+  the ask the clicker was looking at; `answerTicket` re-checks it INSIDE the
+  write transaction, so a card answered and re-asked while it sat on a phone
+  cannot have the new question ratified in the human's name. Disagreement is
+  a meeting, which is how Arthur said he works. Dashboard answers render marked as such. Everything else
   stays disclosure toggles and evidence links; add no other write affordance. Shows the
   needs-grooming strip from `store.hygiene()` (H-23) — eight deterministic
   record checks (silent_assignee, H-61, watches open reservations whose
@@ -190,7 +201,9 @@ orchestrator meetings and the read-only view. Product intent:
   H-1052 adds the operator-configured per-boot answer nonce to this reading:
   the shell uses it only for one-click ratification through Helmo's existing
   `/answer` route. Helmo re-reads the recommendation and records the dashboard
-  answer as the human; the shell never holds or writes the store.
+  answer as the human; the shell never holds or writes the store. Each `asks`
+  also carries a `fingerprint` of the question, which a ratification sends
+  back so consent is bound to the ask that was drawn (H-1053).
   **It is not an API for agents** — they have the MCP tools, which write as
   well as read and enforce the actor identity this cannot — and it is not a
   mirror of the record: no body, no evidence, no events, no answer nonce.

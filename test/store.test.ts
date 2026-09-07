@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { questionFingerprint } from '../src/feed.js';
 import { Store } from '../src/store.js';
 import { Actor, ActorKind, HelmoError } from '../src/types.js';
 
@@ -349,6 +350,31 @@ describe('return to human / answer', () => {
     expect(after.assignee).toBeNull();
     expect(after.question).toBeNull();
     expect(s.lastAnswer(t.id)?.chosen_option).toBe('pay');
+  });
+
+  it('refuses an answer whose expected question is not the one on the ticket (H-1053)', () => {
+    // The check lives inside the write transaction because the caller's read
+    // and its write are two moments: a dashboard card can be answered and
+    // re-asked between them, and an answer recorded against the new question
+    // would carry the human's name onto words they never saw.
+    const s = freshStore();
+    const t = create(s);
+    const asked = s.returnToHuman(builder, t.id, q);
+    const fingerprint = questionFingerprint(asked.question!);
+    s.answerTicket(orch, t.id, { answer: 'Pay it.', resolution: 'resume' });
+    s.returnToHuman(builder, t.id, { ...q, recommendation: 'walk away instead' });
+    expect(() => s.answerTicket(orch, t.id, { answer: 'Ratified from the dashboard', resolution: 'resume' }, fingerprint)).toThrow(
+      /no longer asking/,
+    );
+    expect(s.getTicket(t.id).status).toBe('awaiting_human');
+    // The fingerprint of what is being asked NOW goes through.
+    const current = questionFingerprint(s.getTicket(t.id).question!);
+    expect(s.answerTicket(orch, t.id, { answer: 'Ratified from the dashboard', resolution: 'resume' }, current).status).toBe('open');
+    // And a second click, with the same fingerprint, has nothing left to answer.
+    expect(() => s.answerTicket(orch, t.id, { answer: 'Ratified from the dashboard', resolution: 'resume' }, current)).toThrow(
+      /not awaiting_human/,
+    );
+    expect(s.getEvents(t.id).filter((e) => e.event_type === 'answered')).toHaveLength(2);
   });
 
   it('answersSince replays answers from a cursor and can narrow to one session (H-936)', () => {

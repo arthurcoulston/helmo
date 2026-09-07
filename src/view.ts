@@ -10,6 +10,7 @@ import { randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { ANSWER_HEADER, answerRequest } from './answer.js';
 import { ESTATE_AVATARS } from './estate-avatars.generated.js';
 import { ask, feed, markFor } from './feed.js';
 import { ESTATE_TOKENS } from './estate-tokens.generated.js';
@@ -27,7 +28,6 @@ const operator = process.env['HELMO_OPERATOR']?.trim() || null;
 // read-then-impersonate, which is the kind of act the constitution and
 // injection defences catch. Friction, not a gate; keep the comment honest.
 const answerNonce = randomBytes(16).toString('hex');
-const ANSWER_HEADER = 'x-helmo-answer';
 const sameOrigin = new Set([`http://127.0.0.1:${port}`, `http://localhost:${port}`]);
 const store = new Store(dbPath);
 
@@ -228,7 +228,7 @@ function questionCard(t: Ticket): string {
     const inner = `<span class="opt-label"><span class="opt-letter">${esc(o.letter)}</span>${esc(o.label)}</span><span class="opt-consequence">${esc(o.consequence)}</span>`;
     return `<div class="option">${inner}</div>`;
   };
-  return `<article class="qcard" id="${esc(t.id)}" data-ticket="${esc(t.id)}">
+  return `<article class="qcard" id="${esc(t.id)}" data-ticket="${esc(t.id)}" data-ask="${esc(a.fingerprint)}">
     <header><span class="tid">${esc(t.id)}</span> <span class="qtitle">${esc(t.title)}</span>
       <span class="meta">${esc(t.workstream)} · asked ${esc(rel(t.updated_at))} ${blastBadge(t)} ${acceptanceBadge(t)}</span></header>
     <p class="situation">${esc(q.situation)}</p>
@@ -602,6 +602,7 @@ document.addEventListener('click', async (e) => {
         body: JSON.stringify({
           ticket_id: card.dataset.ticket,
           ratify: true,
+          question_fingerprint: card.dataset.ask,
         }),
       });
       const out = await r.json();
@@ -616,57 +617,6 @@ document.addEventListener('click', async (e) => {
   }
 });
 `;
-
-// The one write route (H-90). The visible path ratifies the recorded
-// recommendation; the older free-text payload remains for compatible clients.
-function handleAnswer(
-  headers: Record<string, string | string[] | undefined>,
-  body: string,
-  res: { writeHead: (c: number, h: Record<string, string>) => void; end: (s: string) => void },
-): void {
-  const json = (code: number, v: unknown) => {
-    res.writeHead(code, { 'content-type': 'application/json' });
-    res.end(JSON.stringify(v));
-  };
-  if (!operator) return json(403, { error: 'No operator configured: set HELMO_OPERATOR to enable answering from the dashboard.' });
-  // Browser CSRF gate (H-145). A cross-origin page can send a "simple" POST
-  // without preflight; a custom header and a JSON content-type both force a
-  // preflight, which this server never answers — so the browser never sends
-  // it. Origin is checked when present as belt-and-braces.
-  const h = (k: string) => (Array.isArray(headers[k]) ? headers[k]![0] : headers[k]) ?? '';
-  if (!h('content-type').toLowerCase().startsWith('application/json')) return json(403, { error: 'answers must be application/json' });
-  if (h('origin') && !sameOrigin.has(h('origin'))) return json(403, { error: 'cross-origin answer refused' });
-  if (h('sec-fetch-site') && h('sec-fetch-site') !== 'same-origin' && h('sec-fetch-site') !== 'none') return json(403, { error: 'cross-site answer refused' });
-  if (h(ANSWER_HEADER) !== answerNonce) return json(403, { error: 'missing or stale answer token — reload the dashboard' });
-  try {
-    const p = JSON.parse(body) as { ticket_id?: string; chosen_option?: string; reasoning?: string; resolution?: string; ratify?: boolean };
-    if (p.ratify) {
-      if (!p.ticket_id) return json(400, { error: 'ticket_id is required.' });
-      const pending = store.getTicket(p.ticket_id);
-      const recommendation = pending.question?.recommendation?.trim();
-      if (!recommendation) return json(400, { error: 'the ticket has no pending recommendation to ratify.' });
-      const actor: Actor = { name: operator, kind: 'human', session: 'dashboard' };
-      const t = store.answerTicket(actor, p.ticket_id, {
-        answer: 'Ratified from the dashboard',
-        chosen_option: recommendation,
-        resolution: 'resume',
-      });
-      return json(200, { ok: true, id: t.id, status: t.status });
-    }
-    // A chosen option is no longer required, because a question no longer has
-    // to carry options (H-939) — but SOMETHING has to be said, or the record
-    // gets an answer event that answers nothing.
-    const chosen = p.chosen_option?.trim() || undefined;
-    const answer = [chosen, p.reasoning?.trim()].filter(Boolean).join(' — ');
-    if (!p.ticket_id || !answer) return json(400, { error: 'ticket_id, and either a chosen option or an answer in words, are required.' });
-    const actor: Actor = { name: operator, kind: 'human', session: 'dashboard' };
-    const resolution = (['resume', 'done', 'cancelled'].includes(p.resolution ?? '') ? p.resolution : 'resume') as 'resume' | 'done' | 'cancelled';
-    const t = store.answerTicket(actor, p.ticket_id, { answer, ...(chosen ? { chosen_option: chosen } : {}), resolution });
-    return json(200, { ok: true, id: t.id, status: t.status });
-  } catch (e) {
-    return json(e instanceof HelmoError ? 400 : 500, { error: e instanceof Error ? e.message : String(e) });
-  }
-}
 
 /** The queue reading as JSON (R-11 H-832), for the estate shell to compose on
  *  its own origin — see src/feed.ts for why this is the one view the shell
@@ -702,7 +652,11 @@ createServer((req, res) => {
   if (req.method === 'POST' && req.url === '/answer') {
     let body = '';
     req.on('data', (c) => (body += c));
-    req.on('end', () => handleAnswer(req.headers, body, res));
+    req.on('end', () => {
+      const out = answerRequest(req.headers, body, { operator, nonce: answerNonce, sameOrigin, store });
+      res.writeHead(out.code, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(out.body));
+    });
     return;
   }
   if (req.url?.split('?')[0] === '/tickets.json') return handleFeed(res);

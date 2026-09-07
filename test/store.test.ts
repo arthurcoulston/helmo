@@ -1669,13 +1669,51 @@ describe('workstream seats (H-1026)', () => {
     s.setWorkstream(orch, { name: 'ops', seat: 'reviewer-loop' });
     const t = create(s, { workstream: 'ops', type: 'ops', schedule: 'every 30m' });
     expect(t.assignee).toBeNull();
-    const [inst] = s.materializeDue(new Date(Date.now() + 31 * 60_000));
+    const due = new Date(Date.now() + 31 * 60_000);
+    const [inst] = s.materializeDue(due);
     expect(s.getTicket(inst!).assignee).toBe('reviewer-loop');
     expect(s.listTickets({ ready: true, workstream: 'elsewhere', caller: 'reviewer-loop' }).map((x) => x.id)).toEqual([inst]);
+    s.rebuild();
+    expect(s.getTicket(inst!).assignee).toBe('reviewer-loop');
+    expect(s.materializeDue(due)).toEqual([]);
 
     const routed = create(s, { workstream: 'ops', type: 'ops', schedule: 'every 30m', assignee: 'builder-loop' });
     const [routedInst] = s.materializeDue(new Date(Date.now() + 31 * 60_000));
     expect(s.getTicket(routedInst!).assignee).toBe('builder-loop');
+  });
+  it('assignment clears return seated work to its owner, not to every caller', () => {
+    const s = freshStore();
+    s.setWorkstream(orch, { name: 'rev-dev', seat: 'builder-loop' });
+    const t = create(s, { workstream: 'rev-dev', assignee: 'reviewer-loop' });
+    const { ticket } = s.updateTicket(reviewer, { ticket_id: t.id, note: 'review complete; return this to its stream', handoff_to: '' });
+    expect(ticket.assignee).toBe('builder-loop');
+    expect(s.listTickets({ ready: true, workstream: 'rev-dev', caller: 'reviewer-loop' })).toEqual([]);
+    expect(s.getEvents(t.id).at(-1)!.payload['diffs']).toMatchObject({ assignee: { from: 'reviewer-loop', to: 'builder-loop' } });
+    s.rebuild();
+    expect(s.getTicket(t.id).assignee).toBe('builder-loop');
+  });
+  it('a resumed human question returns to the stream seat and replays exactly', () => {
+    const s = freshStore();
+    s.setWorkstream(orch, { name: 'rev-dev', seat: 'builder-loop' });
+    const t = create(s, { workstream: 'rev-dev', assignee: 'reviewer-loop' });
+    s.returnToHuman(reviewer, t.id, {
+      situation: 'The implementation choice needs operator direction.',
+      question: 'Proceed with the narrow change?',
+      recommendation: 'yes — it preserves the existing contract',
+    });
+    expect(s.answerTicket(orch, t.id, { answer: 'Yes, keep it narrow.', resolution: 'resume' }).assignee).toBe('builder-loop');
+    expect(s.getEvents(t.id).at(-1)!.payload['assignee']).toBe('builder-loop');
+    s.rebuild();
+    expect(s.getTicket(t.id)).toMatchObject({ status: 'open', assignee: 'builder-loop' });
+  });
+  it('moving unassigned work into a seated stream reserves it there', () => {
+    const s = freshStore();
+    s.setWorkstream(orch, { name: 'rev-dev', seat: 'builder-loop' });
+    const t = create(s, { workstream: 'elsewhere' });
+    expect(t.assignee).toBeNull();
+    expect(s.updateTicket(orch, { ticket_id: t.id, note: 'corrected the stream', workstream: 'rev-dev' }).ticket.assignee).toBe('builder-loop');
+    s.rebuild();
+    expect(s.getTicket(t.id)).toMatchObject({ workstream: 'rev-dev', assignee: 'builder-loop' });
   });
   it("seat '' clears; goal and budget survive a seat write; replay reproduces it", () => {
     const s = freshStore();

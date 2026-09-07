@@ -1191,7 +1191,8 @@ export class Store {
       const payload: Record<string, unknown> = { name: input.name };
       if (input.goal !== undefined) payload['goal'] = input.goal;
       if (input.budget_usd !== undefined) payload['budget_usd'] = input.budget_usd;
-      // '' clears the seat, spelled the way handoff_to '' returns a ticket to the pool.
+      // '' clears the seat, matching the empty-string convention for clearing
+      // project, not_before, and a named handoff receiver.
       if (input.seat !== undefined) payload['seat'] = input.seat.trim();
       this.append(ts, `ws:${input.name}`, 'workstream_set', actor, payload);
       this.applyWorkstreamSet(ts, payload);
@@ -1263,7 +1264,7 @@ export class Store {
     // tickets in their name; a pool nobody is bound to was ready to no one.
     // Self-triage still applies — the filer's own ticket waits for a touch.
     if (!input.assignee && !input.schedule) {
-      const seat = this.getWorkstreamInfo(input.workstream).seat;
+      const seat = this.workstreamSeat(input.workstream);
       if (seat) input = { ...input, assignee: seat };
     }
     for (const d of input.deps ?? []) this.getTicket(d.to); // existence check before mint
@@ -1417,10 +1418,9 @@ export class Store {
       }
     }
 
-    // An empty handoff_to is the deliberate return to the pool: same field, no
-    // named receiver. It is spelled the way this store already clears a field
-    // (project '', not_before ''), and it keeps repooling explicit now that
-    // releasing a claim no longer does it silently.
+    // An empty handoff_to clears the named receiver. In a seated workstream the
+    // pool has one deterministic owner, so the stream seat becomes the new
+    // reservation; an unseated stream still returns to the shared pool.
     if (input.handoff_to !== undefined) {
       if (t.status === 'in_progress' && t.assignee && t.assignee !== actor.name) {
         throw new HelmoError(`${t.id} is held by "${t.assignee}"; only the holder can hand it off.`);
@@ -1429,7 +1429,9 @@ export class Store {
         throw new HelmoError(`${t.id} is awaiting_human; it cannot be handed off until answered.`);
       }
       diffs['status'] = { from: t.status, to: 'open' };
-      diffs['assignee'] = { from: t.assignee, to: input.handoff_to || null };
+      const workstream = input.workstream ?? t.workstream;
+      const assignee = input.handoff_to || this.workstreamSeat(workstream);
+      diffs['assignee'] = { from: t.assignee, to: assignee };
     }
 
     if (input.blast_radius) {
@@ -1453,6 +1455,12 @@ export class Store {
       if (v !== undefined && v !== (t as unknown as Record<string, unknown>)[field]) {
         diffs[field] = { from: (t as unknown as Record<string, unknown>)[field], to: v };
       }
+    }
+    // Moving genuinely unassigned work into a seated stream is another way it
+    // can enter that pool. Keep the same ownership invariant at this door.
+    if (input.workstream && input.workstream !== t.workstream && !t.assignee && input.handoff_to === undefined) {
+      const seat = this.workstreamSeat(input.workstream);
+      if (seat) diffs['assignee'] = { from: null, to: seat };
     }
     if (input.labels !== undefined && JSON.stringify(input.labels) !== JSON.stringify(t.labels)) {
       diffs['labels'] = { from: t.labels, to: input.labels };
@@ -1622,9 +1630,10 @@ export class Store {
           throw new HelmoError(`${t.id} is no longer asking what was on screen — reload and read the current question before answering.`);
         }
       }
-      this.append(ts, t.id, 'answered', actor, { ...a, resolution } as unknown as Record<string, unknown>);
+      const assignee = resolution === 'resume' ? this.workstreamSeat(t.workstream) : null;
+      this.append(ts, t.id, 'answered', actor, { ...a, resolution, assignee } as unknown as Record<string, unknown>);
       if (resolution === 'resume') {
-        this.db.prepare("UPDATE tickets SET status = 'open', assignee = NULL, question = NULL, updated_at = ? WHERE id = ?").run(ts, t.id);
+        this.db.prepare("UPDATE tickets SET status = 'open', assignee = ?, question = NULL, updated_at = ? WHERE id = ?").run(assignee, ts, t.id);
       } else {
         this.db
           .prepare('UPDATE tickets SET status = ?, assignee = NULL, question = NULL, updated_at = ?, closed_at = ? WHERE id = ?')
@@ -1687,7 +1696,8 @@ export class Store {
           case 'answered': {
             const res = (ev.payload['resolution'] as string) ?? 'resume';
             if (res === 'resume') {
-              this.db.prepare("UPDATE tickets SET status = 'open', assignee = NULL, question = NULL, updated_at = ? WHERE id = ?").run(ev.ts, ev.ticket_id);
+              this.db.prepare("UPDATE tickets SET status = 'open', assignee = ?, question = NULL, updated_at = ? WHERE id = ?")
+                .run(ev.payload['assignee'] ?? null, ev.ts, ev.ticket_id);
             } else {
               this.db
                 .prepare('UPDATE tickets SET status = ?, assignee = NULL, question = NULL, updated_at = ?, closed_at = ? WHERE id = ?')
@@ -1788,6 +1798,10 @@ export class Store {
     this.db
       .prepare('INSERT INTO events (ts, ticket_id, event_type, actor, payload) VALUES (?, ?, ?, ?, ?)')
       .run(ts, ticketId, type, JSON.stringify(actor), JSON.stringify(payload));
+  }
+
+  private workstreamSeat(name: string): string | null {
+    return this.getWorkstreamInfo(name).seat ?? null;
   }
 
   private applyCreated(ts: string, p: Record<string, unknown>): void {

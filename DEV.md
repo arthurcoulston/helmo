@@ -64,11 +64,13 @@ orchestrator meetings and the read-only view. Product intent:
   session, fell back to a pool nobody watched, and the seat idled on its own
   work. Returning to the unassigned pool is still real and now explicit:
   `handoff_to: ''`, spelled the way `project`/`not_before` already clear.
-  Workstream seats (H-1026): a workstream may carry a `seat` — operator
+  Workstream seats (H-1026, H-1096): a workstream may carry a `seat` — operator
   steering like goal and budget, set by `workstream-set --seat` — and every
   unassigned filing in it, recurring instances included, is reserved to that
-  seat at creation. An explicit assignee on a recurring template is deliberate
-  instance routing and wins over the stream default. The reason is the loop
+  seat at creation. Clearing a named receiver, resuming a human-returned ticket,
+  or moving unassigned work into a seated stream applies the same default; the
+  recorded assignment makes replay exact. An explicit assignee on a recurring
+  template is deliberate instance routing and wins over the stream default. The reason is the loop
   side: a rev loop draws only from
   its bound workstream's pool plus tickets in its name, so a pool in a stream
   nobody is bound to was ready to no one (fourteen clean tickets sat for days,

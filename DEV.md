@@ -209,7 +209,9 @@ orchestrator meetings and the read-only view. Product intent:
   helmo_answer_ticket — the recorded answer is the closure evidence.
   H-758 exposes both halves to loop agents as `helmo_hygiene` and
   `helmo_dispose_hygiene_finding`; they need neither shell access nor a second
-  path into the store.
+  path into the store. `spend_anomaly` compares one-off tickets only: recurring
+  templates accumulate every run's cost indefinitely, so they are neither
+  candidates nor peers for a per-ticket norm (H-1124).
 - `presentation.ts` — the dashboard's shared presentation rules: actor marks,
   option letters, question fingerprints, and the bounded terminal tail.
   `view.ts` owns the only reading. The estate shell frames that HTML whole at

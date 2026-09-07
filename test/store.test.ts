@@ -1225,6 +1225,18 @@ describe('hygiene checks (deterministic, read-only)', () => {
     s.updateTicket(builder, { ticket_id: t1.id, note: 'working the P2 instead', status: 'in_progress' });
     expect(s.hygiene()).toContainEqual(expect.objectContaining({ check: 'priority_inversion', ticket_id: p1.id }));
   });
+  it('recurring templates neither flag as spend anomalies nor distort the one-off norm', () => {
+    const s = freshStore();
+    const ordinary = [create(s), create(s), create(s)];
+    for (const t of ordinary) s.recordSpend(builder, t.id, { cost_usd: 1, note: 'metered' });
+    const template = create(s, { schedule: 'every 1d' });
+    s.recordSpend(builder, template.id, { cost_usd: 100, note: 'metered across many runs' });
+    expect(s.hygiene().filter((x) => x.check === 'spend_anomaly')).toEqual([]);
+    s.recordSpend(builder, ordinary[2].id, { cost_usd: 19, note: 'one-off overrun' });
+    expect(s.hygiene().filter((x) => x.check === 'spend_anomaly')).toEqual([
+      expect.objectContaining({ ticket_id: ordinary[2].id }),
+    ]);
+  });
   it('silent assignees: never-written names flag while the store is live; quiet weeks flag nobody', () => {
     const s = freshStore();
     const typo = create(s, { assignee: 'mastr-at-arms' });

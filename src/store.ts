@@ -727,8 +727,10 @@ export class Store {
     }
 
     // Spend anomalies: cost far above the workstream norm (H-19 made cost real).
+    // Recurring templates accumulate the cost of every run forever, so they
+    // are neither a comparable unit nor a useful peer for one-off tickets.
     const spent = this.db
-      .prepare('SELECT id, workstream, cost_usd_total AS cost FROM tickets WHERE cost_usd_total > 0')
+      .prepare('SELECT id, workstream, cost_usd_total AS cost FROM tickets WHERE cost_usd_total > 0 AND schedule IS NULL')
       .all() as { id: string; workstream: string; cost: number }[];
     const byWs = new Map<string, { id: string; cost: number }[]>();
     for (const s of spent) {

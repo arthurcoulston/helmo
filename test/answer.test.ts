@@ -6,7 +6,7 @@
 // origin could record any answer, or close and cancel a ticket, as Arthur.
 import { describe, expect, it } from 'vitest';
 import { answerRequest, ANSWER_HEADER } from '../src/answer.js';
-import { questionFingerprint } from '../src/feed.js';
+import { questionFingerprint } from '../src/presentation.js';
 import { Store } from '../src/store.js';
 import { Actor, Question } from '../src/types.js';
 

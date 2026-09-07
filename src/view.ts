@@ -12,7 +12,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { ANSWER_HEADER, answerRequest } from './answer.js';
 import { ESTATE_AVATARS } from './estate-avatars.generated.js';
-import { ask, CLOSED_TAIL, feed, markFor, recordTickets } from './feed.js';
+import { ask, CLOSED_TAIL, markFor, recordTickets } from './presentation.js';
 import { ESTATE_TOKENS } from './estate-tokens.generated.js';
 import { Store } from './store.js';
 import { HygieneFinding } from './store.js';
@@ -131,8 +131,7 @@ let latestProgress = new Map<string, TicketProgress>();
  *  guess from the name. */
 function actor(name: string, known?: ActorKind): string {
   const kind = known ?? actorKinds.get(name);
-  // The rule lives in feed.ts because the JSON reading draws the same faces;
-  // two copies of "who has a mark" is two answers to it.
+  // One rule decides who has a mark wherever the page draws an actor.
   const mark = markFor(name, kind);
   const glyph =
     mark && kind
@@ -217,7 +216,7 @@ function details(t: Ticket): string {
 // supporting situation stays one disclosure below it (H-974). With an operator
 // configured, ratifying the recommendation is the answer surface (H-90).
 //
-// The letters are the feed's (H-939), not this card's own: Arthur says "b" in a
+// The letters are shared presentation logic (H-939), not this card's own: Arthur says "b" in a
 // meeting and whoever relays it may be reading the phone queue rather than this
 // page. One function letters both, so "b" means one option wherever it is said.
 function questionCard(t: Ticket): string {
@@ -702,36 +701,6 @@ document.addEventListener('click', async (e) => {
 });
 `;
 
-/** The queue reading as JSON (R-11 H-832), for the estate shell to compose on
- *  its own origin — see src/feed.ts for why this is the one view the shell
- *  draws itself instead of proxying.
- *
- *  With HELMO_OPERATOR configured it also carries the per-boot nonce needed
- *  to reach /answer through the estate shell. The nonce is CSRF friction, not
- *  authority; /answer remains the sole route that touches the record. */
-function handleFeed(res: { writeHead: (c: number, h: Record<string, string>) => void; end: (s: string) => void }): void {
-  try {
-    const tickets = store.listTickets({ limit: 1000 });
-    const progress = store.latestProgress(tickets.map((t) => t.id));
-    const body = JSON.stringify({ ...feed(
-      tickets,
-      store.actorKinds(),
-      new Date(),
-      (id) => store.productAcceptance(id),
-      (id) => progress.get(id),
-    ), ...(operator ? { answer_nonce: answerNonce } : {}) });
-    // no-store for the same reason the page is not cached: this is a reading
-    // of right now, and the shell refreshes it on a timer.
-    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
-    res.end(body);
-  } catch (e) {
-    // Named, not generic: an unreadable feed sends whoever is holding a phone
-    // looking for which of five services is down, and this one can say.
-    res.writeHead(500, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
-    res.end(JSON.stringify({ error: `helmo tickets.json failed — ${e instanceof Error ? e.message : String(e)}` }));
-  }
-}
-
 createServer((req, res) => {
   if (req.method === 'POST' && req.url === '/answer') {
     let body = '';
@@ -743,7 +712,6 @@ createServer((req, res) => {
     });
     return;
   }
-  if (req.url?.split('?')[0] === '/tickets.json') return handleFeed(res);
   try {
     // Render BEFORE the headers go out. Writing 200 first meant any error in
     // page() hit a catch that could no longer set a status — the writeHead(500)

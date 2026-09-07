@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { questionFingerprint } from './feed.js';
+import { questionFingerprint } from './presentation.js';
 import { parseSchedule } from './schedule.js';
 import {
   Actor, ActorKind, ACTOR_KINDS, Answer, AnswerEvent, BlastRadius, BLAST_RADII, CapacityHold, Confidence, Dep, DepType, Evidence,
@@ -1565,7 +1565,7 @@ export class Store {
   }
 
   /** `expectQuestion` is the fingerprint of the ask the answerer was looking at
-   *  (feed.ts `questionFingerprint`). It is checked INSIDE the write
+   *  (`presentation.ts` `questionFingerprint`). It is checked INSIDE the write
    *  transaction, because the gap between drawing a card and clicking it is
    *  long enough for another session to answer the ticket and the agent to
    *  return a fresh question — and consent belongs to the ask it was given

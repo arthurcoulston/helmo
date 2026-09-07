@@ -8,7 +8,7 @@
 // record arbitrary answers and close or cancel tickets as Arthur, now from
 // anywhere the shell is reachable. Disagreement is a meeting, by Arthur's own
 // account of how he works, so the route says the one thing the button says.
-import { questionFingerprint } from './feed.js';
+import { questionFingerprint } from './presentation.js';
 import { Store } from './store.js';
 import { Actor, HelmoError } from './types.js';
 

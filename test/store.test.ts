@@ -3,7 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { questionFingerprint } from '../src/feed.js';
+import { questionFingerprint } from '../src/presentation.js';
 import { Store } from '../src/store.js';
 import { Actor, ActorKind, HelmoError } from '../src/types.js';
 

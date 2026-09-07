@@ -195,66 +195,23 @@ orchestrator meetings and the read-only view. Product intent:
   H-758 exposes both halves to loop agents as `helmo_hygiene` and
   `helmo_dispose_hygiene_finding`; they need neither shell access nor a second
   path into the store.
-- `feed.ts` — the queue reading as JSON, served by `view.ts` at
-  `GET /tickets.json` (R-11 H-832). It exists for ONE consumer, the estate
-  shell, and for one reason: the shell proxies every other product view
-  untouched, but Helmo's phone view is a filtered reading and deliberately
-  omits answer controls — neither transformation can be applied to another
-  product's HTML from outside it. So Helmo hands over
-  the data and lets the shell draw it, rather than the shell opening this
-  store and taking a second hand on the record. Same shape as the health page
-  reading Rev's loop states from Rev rather than re-deriving them.
-  H-1052 adds the operator-configured per-boot answer nonce to this reading:
-  the shell uses it only for one-click ratification through Helmo's existing
-  `/answer` route. Helmo re-reads the recommendation and records the dashboard
-  answer as the human; the shell never holds or writes the store. Each `asks`
-  also carries a `fingerprint` of the question, which a ratification sends
-  back so consent is bound to the ask that was drawn (H-1053).
-  **It is not an API for agents** — they have the MCP tools, which write as
-  well as read and enforce the actor identity this cannot — and it is not a
-  mirror of the record: no body, no evidence, no events, no answer nonce.
-  Bounded at the source (everything live plus the `CLOSED_TAIL` most recently
-  closed, ~12KB on Arthur's store), because closed work is history and the
-  record of it is the page beside it. `asks` is keyed on the STATUS rather
-  than on the question column: "asks you" is a claim about now. It needs no
-  new route in the shell — `/s/helmo-view/` is already proxied GET-only, so
-  the feed rides the prefix Helmo is already served at, and this port stays as
-  unexposed as it was. `markFor` lives here and `view.ts` draws by it, so the
-  JSON and the HTML cannot disagree about who has a face.
-  The optional `progress` field is the latest recorded event note, bounded to
-  280 characters and read for all displayed IDs in one query; spend-only
-  events never replace it. It is a last recorded update with its actor and
-  timestamp, not a claim that any process is currently active.
-  That same prefix makes this page a **phone** page (H-880): the shell's Helmo
-  view lands on the bounded reading, and its "whole record" tap goes to
-  `/s/helmo-view/` — this HTML, at 390px. So every row here has to survive a
-  phone width; the phone rules are the default, with the brand above a two-column
-  stat grid, metadata stacked below rows, and badges wrapping rather than pushing
-  the document wider. An explicit `.light` or `.dark` class on the document wins
-  over the system preference so the shell can keep an embedded page in theme.
-  Automatic refresh keeps the last good body on failure and marks that reading
-  stale in the footer with its time; a failed HTTP response counts as failure,
-  not only a broken connection. Something checks the layout now (H-889): `npm run smoke` in the
-  estate repo drives this page and the other products at 390px in both themes.
-  It is a real-smoke against the running fleet, so it lives there and not here —
-  this repo stays zero-dependency and does not grow a browser. Run it after
-  touching this file's HTML or CSS. Its first run found what the hand-sweep had
-  missed: the answer options laid out a 343px card in a 278px parent and
-  dragged the document to 400px, because a bare `1fr` grid track is
-  `minmax(auto, 1fr)` and its floor is the min-content width of the consequence
-  text. `minmax(0, 1fr)` plus this file's one media query — options stack below
-  480px — is the fix, and a new `white-space: nowrap`, a fixed-width row or a
-  fresh `1fr` track is the shape to watch. To see one page:
-  `node tools/shoot.mjs http://localhost:4400/ out.png --w 390 --fold` from the
-  estate repo.
-  `GET /?section=awaiting` is the same page narrowed to its Awaiting-you
-  section for the estate landing (H-1064): the same question and row renderers,
-  CSS, answer nonce, relative ratify route, and query-preserving refresh. Its
-  body and hero expose `data-count`; while framed, it posts
+- `presentation.ts` — the dashboard's shared presentation rules: actor marks,
+  option letters, question fingerprints, and the bounded terminal tail.
+  `view.ts` owns the only reading. The estate shell frames that HTML whole at
+  `/s/helmo-view/` and embeds its `?section=awaiting` section on the landing;
+  it does not fetch, redraw, or interpret Helmo tickets (H-1066). The same
+  question renderer, per-boot answer nonce, relative ratification route,
+  refresh behavior, and CSS therefore serve both places.
+  The section's body and hero expose `data-count`; while framed, it posts
   `helmo:section-size` with the count and document height to its same-origin
   parent, and tracks later disclosure/refresh height changes with a
   `ResizeObserver`. The shell sizes the iframe from that contract and never
   reads ticket markup.
+  This page is phone-first (H-880): every row must survive 390px, and an
+  explicit `.light` or `.dark` class wins over the system preference so the
+  shell keeps an embedded page in theme. `npm run smoke` in the estate repo
+  drives this page and the other products at 390px in both themes. Run it
+  after touching this file's HTML or CSS.
 - Evidence ref form (H-95): commit = `repo@sha` (`crew@24e8003`), one commit
   per item; file = absolute or `repo:relative/path`, never bare-relative; url
   as-is; other/draft free text. Prose belongs in the item's `note`. The point
@@ -319,7 +276,7 @@ orchestrator meetings and the read-only view. Product intent:
   the store used to do, and it bought a meeting full of manufactured
   alternatives — an asker whose recommendation stood on its own still had to
   name a second course to satisfy the schema. Anything that reads a question
-  handles both shapes: `feed.ts` omits the `options` key entirely rather than
+  handles both shapes: `presentation.ts` omits the `options` key entirely rather than
   sending an empty array, and the view draws an "answer this" button in place
   of the option buttons, because on that page the options ARE the answer
   surface and a question without them would otherwise be unanswerable from the
@@ -471,12 +428,11 @@ measured, it could go too far".
 
 ## Neighbors
 
-Rev (formerly Capstan), a sibling project, supervises the bash loops that draw work from this
-record; it consumes the helmo-cli contract and injects the MCP server into
-agent sessions. The estate shell (`~/projects/estate`) is the one
-reader of `GET /tickets.json`; it also owns the design tokens and avatar
-sprite this repo vendors. That seam is one-way and read-only — nothing in the
-estate writes here, and the shell's own 405 is what makes that structural
-rather than a promise. Operators keep their own agent identities and estate maps
-outside this repo. helmo-roadmap is a client of this repo's MCP surface and
-holds no code path into it; the seam above is the whole coupling.
+Rev (formerly Capstan), a sibling project, supervises the bash loops that draw
+work from this record; it consumes the helmo-cli contract and injects the MCP
+server into agent sessions. The estate shell (`~/projects/estate`) frames this
+view whole and embeds its Awaiting-you section; Helmo remains the sole renderer
+and record owner. Estate also owns the design tokens and avatar sprite this repo
+vendors. Operators keep their own agent identities and estate maps outside this
+repo. helmo-roadmap is a client of this repo's MCP surface and holds no code
+path into it; the seam above is the whole coupling.

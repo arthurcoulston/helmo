@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../src/store.js';
 import { Actor } from '../src/types.js';
+import { ANSWER_HEADER } from '../src/answer.js';
 
 const builder: Actor = { name: 'mason', kind: 'agent', model: 'test', version: '1', session: 'rev:mason' };
 
@@ -30,9 +31,14 @@ describe('Awaiting-you section route', () => {
     seed.returnToHuman(builder, ticket.id, {
       situation: 'There are two routes.',
       question: 'Use one?',
+      options: [
+        { label: 'yes', consequence: 'the shell keeps Helmo semantics' },
+        { label: 'no', consequence: 'the shell owns a second renderer' },
+      ],
       recommendation: 'yes — one renderer keeps the meanings together.',
       if_unanswered: 'The landing stays split.',
     });
+    seed.updateTicket(builder, { ticket_id: ticket.id, note: 'last <recorded> & update' });
     seed.close();
 
     view = spawn(process.execPath, ['--import', 'tsx', 'src/view.ts'], {
@@ -57,6 +63,11 @@ describe('Awaiting-you section route', () => {
     expect(html).toContain('class="section-reading" data-helmo-section="awaiting" data-count="1"');
     expect(html).toContain('<section class="hero" data-helmo-section="awaiting" data-count="1">');
     expect(html).toContain('class="qcard"');
+    expect(html).toContain('<span class="opt-letter">a</span>yes');
+    expect(html).toContain('<span class="opt-letter">b</span>no');
+    expect(html).toContain('yes — one renderer keeps the meanings together.');
+    expect(html).toContain('If unanswered: The landing stays split.');
+    expect(html).toContain('last &lt;recorded&gt; &amp; update');
     expect(html).toContain('Ratify recommendation');
     expect(html).not.toContain('<header class="top">');
     expect(html).not.toContain('Needs grooming');
@@ -64,5 +75,41 @@ describe('Awaiting-you section route', () => {
 
     const unknown = await fetch(`http://127.0.0.1:${port}/?section=missing`);
     expect(unknown.status).toBe(404);
+
+    const nonce = html.match(/data-answer="([0-9a-f]{32})"/)?.[1];
+    const fingerprint = html.match(/data-ask="([0-9a-f]{16})"/)?.[1];
+    expect(nonce).toBeTruthy();
+    expect(fingerprint).toBeTruthy();
+    const stale = await fetch(`http://127.0.0.1:${port}/answer`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', [ANSWER_HEADER]: nonce! },
+      body: JSON.stringify({ ticket_id: ticket.id, ratify: true, question_fingerprint: '0'.repeat(16) }),
+    });
+    expect(stale.status).toBe(409);
+    const legacy = await fetch(`http://127.0.0.1:${port}/answer`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', [ANSWER_HEADER]: nonce! },
+      body: JSON.stringify({ ticket_id: ticket.id, reasoning: 'drop it', resolution: 'cancelled' }),
+    });
+    expect(legacy.status).toBe(400);
+    const answered = await fetch(`http://127.0.0.1:${port}/answer`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', [ANSWER_HEADER]: nonce! },
+      body: JSON.stringify({ ticket_id: ticket.id, ratify: true, question_fingerprint: fingerprint }),
+    });
+    expect(answered.status).toBe(200);
+    expect(await answered.json()).toMatchObject({ ok: true, id: ticket.id, status: 'open' });
+    const inspect = new Store(db);
+    expect(inspect.lastAnswer(ticket.id)).toMatchObject({
+      answer: 'Ratified from the dashboard',
+      chosen_option: 'yes — one renderer keeps the meanings together.',
+      resolution: 'resume',
+    });
+    expect(inspect.getEvents(ticket.id).find((event) => event.event_type === 'answered')?.actor).toMatchObject({
+      name: 'arthur', kind: 'human', session: 'dashboard',
+    });
+    inspect.close();
+    const after = await (await fetch(url)).text();
+    expect(after).not.toContain(`data-ticket="${ticket.id}"`);
   });
 });

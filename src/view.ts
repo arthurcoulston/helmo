@@ -226,17 +226,8 @@ function questionCard(t: Ticket): string {
   const a = ask(q);
   const opt = (o: { letter: string; label: string; consequence: string }) => {
     const inner = `<span class="opt-label"><span class="opt-letter">${esc(o.letter)}</span>${esc(o.label)}</span><span class="opt-consequence">${esc(o.consequence)}</span>`;
-    return operator
-      ? `<button type="button" class="option" data-label="${esc(o.label)}">${inner}</button>`
-      : `<div class="option">${inner}</div>`;
+    return `<div class="option">${inner}</div>`;
   };
-  // A question with no options is the common shape now (H-939), and on this
-  // page the options ARE the answer buttons — so without one of these, the
-  // recommendation Arthur most often just wants to accept would be the one
-  // thing he could not answer from here.
-  const freeAnswer = operator
-    ? `<div class="options"><button type="button" class="option free" data-free="1"><span class="opt-label">answer this</span><span class="opt-consequence">accept the recommendation, or say what to do instead</span></button></div>`
-    : '';
   return `<article class="qcard" id="${esc(t.id)}" data-ticket="${esc(t.id)}">
     <header><span class="tid">${esc(t.id)}</span> <span class="qtitle">${esc(t.title)}</span>
       <span class="meta">${esc(t.workstream)} · asked ${esc(rel(t.updated_at))} ${blastBadge(t)} ${acceptanceBadge(t)}</span></header>
@@ -244,29 +235,10 @@ function questionCard(t: Ticket): string {
     <p class="question">${esc(q.question)}</p>
     ${a.options ? `<div class="options">${a.options.map(opt).join('')}</div>` : ''}
     <p class="rec"><span class="rec-mark">agent recommends</span> ${esc(q.recommendation)}</p>
-    ${a.options ? '' : freeAnswer}
+    ${operator ? `<button type="button" class="ratify">Ratify recommendation</button><span class="ratify-status" role="status"></span>` : ''}
     ${q.if_unanswered ? `<p class="silence">⏱ If unanswered: ${esc(q.if_unanswered)}</p>` : ''}
-    ${operator ? answerForm() : ''}
     <details class="more" id="d-${esc(t.id)}"><summary>ticket detail</summary>${details(t)}</details>
   </article>`;
-}
-
-// Hidden until an option is clicked. The answer goes through store.answerTicket
-// unchanged — same validation, eventing, and semantics as a meeting answer.
-function answerForm(): string {
-  return `<div class="answer-form" hidden>
-    <div class="af-picked">answering <b class="af-label"></b></div>
-    <input class="af-reason" placeholder="reasoning / constraints (optional — agents learn from the why)">
-    <label class="af-resolution">then
-      <select class="af-res">
-        <option value="resume">answer & reopen for the crew</option>
-        <option value="done">answer settles it — close done</option>
-        <option value="cancelled">answer kills it — cancel</option>
-      </select>
-    </label>
-    <button type="button" class="af-send">Answer as ${esc(operator)}</button>
-    <span class="af-status" role="status"></span>
-  </div>`;
 }
 
 // In motion: who holds it, what they last said, how far it reaches.
@@ -535,30 +507,12 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; color: 
 .rec-mark { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--good-text); font-weight: 650; margin-right: 8px; }
 .silence { color: var(--ink-3); font-size: 12.5px; margin: 0; }
 
-/* ---- the answer surface (H-90): options are buttons only when an operator is configured ---- */
-button.option { cursor: pointer; text-align: left; background: none; color: inherit; font: inherit; width: 100%; }
-button.option:hover { border-color: var(--link); }
-button.option.selected { border-color: var(--link); box-shadow: inset 2px 0 0 var(--link); }
-.answer-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 0 0 12px; padding: 10px 12px;
-  border: 1px solid var(--hairline); border-radius: var(--radius-inner); background: var(--page); font-size: 13px; }
-/* The hidden attribute alone does not hide it: the browser's own rule for
-   [hidden] is display:none from the UA stylesheet, which any class in this file
-   outranks. So every card's form was on screen at once, each labelled
-   'answering' with nothing after it, and the refresh-pause that keys on
-   .answer-form:not([hidden]) never fired either. It read as clutter rather
-   than as a fault while the server refused an answer with no chosen option —
-   and it stopped being harmless the moment one became legitimate (H-939). */
-.answer-form[hidden] { display: none; }
-.af-picked { white-space: nowrap; }
-.af-reason { flex: 1 1 260px; padding: 5px 9px; border: 1px solid var(--hairline); border-radius: var(--radius-control);
-  background: var(--surface); color: var(--ink); font: inherit; }
-.af-resolution { display: flex; align-items: center; gap: 6px; color: var(--ink-3); }
-.af-res { padding: 5px 6px; border: 1px solid var(--hairline); border-radius: var(--radius-control); background: var(--surface); color: var(--ink); font: inherit; }
-.af-send { padding: 5px 14px; border: 1px solid var(--link); border-radius: var(--radius-control); background: var(--link); color: var(--link-ink);
+/* ---- the answer surface (H-90): one deliberate acceptance, disagreement stays a meeting ---- */
+.ratify { min-height: 44px; padding: 5px 14px; border: 1px solid var(--link); border-radius: var(--radius-control); background: var(--link); color: var(--link-ink);
   font: inherit; font-weight: 600; cursor: pointer; }
-.af-send:disabled { opacity: 0.5; cursor: default; }
-.af-status { color: var(--ink-3); font-size: 12.5px; }
-.af-status.err { color: var(--critical); }
+.ratify:disabled { opacity: 0.5; cursor: default; }
+.ratify-status { margin-left: 8px; color: var(--ink-3); font-size: 12.5px; }
+.ratify-status.err { color: var(--critical); }
 
 /* ---- in-motion cards ---- */
 .mcard { background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius-card); padding: 13px 18px; margin: 10px 0; }
@@ -612,7 +566,6 @@ footer { margin-top: 48px; color: var(--ink-3); font-size: 11.5px; border-top: 1
 const JS = `
 let last = Date.now();
 setInterval(async () => {
-  if (document.querySelector('.answer-form:not([hidden])')) return; // composing: hands off
   // A focused disclosure, link or form control belongs to the reader until
   // they leave it. Replacing the body beneath keyboard focus would reset their
   // place even though the open disclosures and scroll position are preserved.
@@ -635,33 +588,10 @@ setInterval(() => {
 }, 5000);
 
 document.addEventListener('click', async (e) => {
-  const opt = e.target.closest('button.option[data-label], button.option[data-free]');
-  if (opt) {
-    const card = opt.closest('.qcard');
-    card.querySelectorAll('button.option').forEach((o) => o.classList.toggle('selected', o === opt));
-    const form = card.querySelector('.answer-form');
-    form.hidden = false;
-    // No option to pick means the words ARE the answer, so the field that is
-    // optional beside a chosen label is the whole record here.
-    form.dataset.label = opt.dataset.label || '';
-    form.querySelector('.af-label').textContent = opt.dataset.label || 'in your own words';
-    form.querySelector('.af-reason').placeholder = opt.dataset.label
-      ? 'reasoning / constraints (optional — agents learn from the why)'
-      : 'your answer, and the why with it';
-    form.querySelector('.af-reason').focus();
-    return;
-  }
-  const send = e.target.closest('.af-send');
+  const send = e.target.closest('.ratify');
   if (send) {
-    const form = send.closest('.answer-form');
-    const card = form.closest('.qcard');
-    const status = form.querySelector('.af-status');
-    const reason = form.querySelector('.af-reason').value.trim();
-    if (!form.dataset.label && !reason) {
-      status.classList.add('err');
-      status.textContent = 'say what you decided — there is no option to stand in for it';
-      return;
-    }
+    const card = send.closest('.qcard');
+    const status = card.querySelector('.ratify-status');
     send.disabled = true;
     status.classList.remove('err');
     status.textContent = 'recording…';
@@ -671,9 +601,7 @@ document.addEventListener('click', async (e) => {
         headers: { 'content-type': 'application/json', 'x-helmo-answer': document.documentElement.dataset.answer },
         body: JSON.stringify({
           ticket_id: card.dataset.ticket,
-          chosen_option: form.dataset.label || undefined,
-          reasoning: reason || undefined,
-          resolution: form.querySelector('.af-res').value,
+          ratify: true,
         }),
       });
       const out = await r.json();
@@ -689,9 +617,8 @@ document.addEventListener('click', async (e) => {
 });
 `;
 
-// The one write route (H-90). It exists only when HELMO_OPERATOR is set, and
-// it does nothing the store's answerTicket wouldn't allow an orchestrator to
-// relay in a meeting — the dashboard just lets the human say it directly.
+// The one write route (H-90). The visible path ratifies the recorded
+// recommendation; the older free-text payload remains for compatible clients.
 function handleAnswer(
   headers: Record<string, string | string[] | undefined>,
   body: string,
@@ -712,7 +639,20 @@ function handleAnswer(
   if (h('sec-fetch-site') && h('sec-fetch-site') !== 'same-origin' && h('sec-fetch-site') !== 'none') return json(403, { error: 'cross-site answer refused' });
   if (h(ANSWER_HEADER) !== answerNonce) return json(403, { error: 'missing or stale answer token — reload the dashboard' });
   try {
-    const p = JSON.parse(body) as { ticket_id?: string; chosen_option?: string; reasoning?: string; resolution?: string };
+    const p = JSON.parse(body) as { ticket_id?: string; chosen_option?: string; reasoning?: string; resolution?: string; ratify?: boolean };
+    if (p.ratify) {
+      if (!p.ticket_id) return json(400, { error: 'ticket_id is required.' });
+      const pending = store.getTicket(p.ticket_id);
+      const recommendation = pending.question?.recommendation?.trim();
+      if (!recommendation) return json(400, { error: 'the ticket has no pending recommendation to ratify.' });
+      const actor: Actor = { name: operator, kind: 'human', session: 'dashboard' };
+      const t = store.answerTicket(actor, p.ticket_id, {
+        answer: 'Ratified from the dashboard',
+        chosen_option: recommendation,
+        resolution: 'resume',
+      });
+      return json(200, { ok: true, id: t.id, status: t.status });
+    }
     // A chosen option is no longer required, because a question no longer has
     // to carry options (H-939) — but SOMETHING has to be said, or the record
     // gets an answer event that answers nothing.
@@ -732,20 +672,20 @@ function handleAnswer(
  *  its own origin — see src/feed.ts for why this is the one view the shell
  *  draws itself instead of proxying.
  *
- *  It reads and never writes, whatever method asks — like the page it sits
- *  beside, and unlike /answer above, which is the one route on this server
- *  that touches the record and is gated accordingly. */
+ *  With HELMO_OPERATOR configured it also carries the per-boot nonce needed
+ *  to reach /answer through the estate shell. The nonce is CSRF friction, not
+ *  authority; /answer remains the sole route that touches the record. */
 function handleFeed(res: { writeHead: (c: number, h: Record<string, string>) => void; end: (s: string) => void }): void {
   try {
     const tickets = store.listTickets({ limit: 1000 });
     const progress = store.latestProgress(tickets.map((t) => t.id));
-    const body = JSON.stringify(feed(
+    const body = JSON.stringify({ ...feed(
       tickets,
       store.actorKinds(),
       new Date(),
       (id) => store.productAcceptance(id),
       (id) => progress.get(id),
-    ));
+    ), ...(operator ? { answer_nonce: answerNonce } : {}) });
     // no-store for the same reason the page is not cached: this is a reading
     // of right now, and the shell refreshes it on a timer.
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });

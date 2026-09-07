@@ -187,6 +187,10 @@ orchestrator meetings and the read-only view. Product intent:
   the data and lets the shell draw it, rather than the shell opening this
   store and taking a second hand on the record. Same shape as the health page
   reading Rev's loop states from Rev rather than re-deriving them.
+  H-1052 adds the operator-configured per-boot answer nonce to this reading:
+  the shell uses it only for one-click ratification through Helmo's existing
+  `/answer` route. Helmo re-reads the recommendation and records the dashboard
+  answer as the human; the shell never holds or writes the store.
   **It is not an API for agents** — they have the MCP tools, which write as
   well as read and enforce the actor identity this cannot — and it is not a
   mirror of the record: no body, no evidence, no events, no answer nonce.

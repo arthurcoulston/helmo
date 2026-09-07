@@ -21,8 +21,9 @@
 //
 // WHAT IT IS NOT. Not an API for agents: they have the MCP tools, which write
 // as well as read and enforce the actor identity this cannot. Not a mirror of
-// the record: it carries no body, no evidence, no event history and not the
-// answer nonce. It is a QUEUE READING — what is live, plus a short tail of what
+// the record: it carries no body, no evidence or event history. When the
+// operator switch is on, view.ts adds its per-boot nonce beside this reading
+// for the shell's narrow ratification path. It is a QUEUE READING — what is live, plus a short tail of what
 // just closed — and the full record of any ticket in it is one tap away on the
 // page it is served beside.
 import { AVATAR_MARKS } from './estate-avatars.generated.js';

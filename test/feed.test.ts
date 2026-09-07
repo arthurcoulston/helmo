@@ -266,7 +266,7 @@ describe('the route', () => {
 
     view = spawn(process.execPath, ['--import', 'tsx', 'src/view.ts'], {
       cwd: new URL('..', import.meta.url).pathname,
-      env: { ...process.env, HELMO_DB: db, HELMO_VIEW_PORT: String(port), HELMO_VIEW_HOST: '127.0.0.1' },
+      env: { ...process.env, HELMO_DB: db, HELMO_VIEW_PORT: String(port), HELMO_VIEW_HOST: '127.0.0.1', HELMO_OPERATOR: 'arthur' },
       stdio: 'ignore',
     });
 
@@ -282,7 +282,7 @@ describe('the route', () => {
     expect(res, 'the view never came up').not.toBeNull();
     expect(res!.status).toBe(200);
     expect(res!.headers.get('content-type')).toContain('application/json');
-    const body = (await res!.json()) as { generated_at: string; tickets: { id: string; asks?: FeedAsk; progress?: { note: string } }[] };
+    const body = (await res!.json()) as { generated_at: string; answer_nonce: string; tickets: { id: string; asks?: FeedAsk; progress?: { note: string } }[] };
     expect(Number.isFinite(Date.parse(body.generated_at))).toBe(true);
     expect(body.tickets.map((x) => x.id)).toEqual([t.id]);
     expect(body.tickets[0]!.asks!.question).toBe(ask.question);
@@ -290,10 +290,25 @@ describe('the route', () => {
     expect(body.tickets[0]!.asks!.options!.map((o) => o.letter)).toEqual(['a', 'b']);
     expect(body.tickets[0]!.progress?.note).toBe('last <recorded> & update');
 
-    // The nonce is the page's CSRF friction (H-145) and it has no business
-    // travelling in a feed the shell caches in a browser tab.
-    const raw = await (await fetch(url)).text();
-    expect(raw).not.toContain('data-answer');
-    expect(raw.length).toBeLessThan(4000);
+    expect(body.answer_nonce).toMatch(/^[0-9a-f]{32}$/);
+    const answered = await fetch(`http://127.0.0.1:${port}/answer`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-helmo-answer': body.answer_nonce },
+      body: JSON.stringify({ ticket_id: t.id, ratify: true }),
+    });
+    expect(answered.status).toBe(200);
+    expect(await answered.json()).toMatchObject({ ok: true, id: t.id, status: 'open' });
+    const inspect = new Store(db);
+    expect(inspect.lastAnswer(t.id)).toMatchObject({
+      answer: 'Ratified from the dashboard',
+      chosen_option: ask.recommendation,
+      resolution: 'resume',
+    });
+    expect(inspect.getEvents(t.id).find((event) => event.event_type === 'answered')?.actor).toMatchObject({
+      name: 'arthur', kind: 'human', session: 'dashboard',
+    });
+    inspect.close();
+    const after = (await (await fetch(url)).json()) as { tickets: { id: string; asks?: FeedAsk }[] };
+    expect(after.tickets[0]).not.toHaveProperty('asks');
   }, 30_000);
 });

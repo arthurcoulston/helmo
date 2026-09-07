@@ -19,19 +19,9 @@ describe('view accessibility', () => {
     expect(row.indexOf('evidenceLinks(t)')).toBeGreaterThan(summaryEnd);
   });
 
-  it('gives the answer resolution select a visible label', () => {
-    const form = bodyOf('answerForm');
-    expect(form).toMatch(/<label class="af-resolution">[^]*<select class="af-res">[^]*<\/select>[^]*<\/label>/);
-  });
-
-  it('keeps the answer form hidden until an option is chosen', () => {
-    // A class in this file outranks the UA stylesheet's [hidden] rule, so the
-    // attribute the markup carries hides nothing on its own. Asserted on the
-    // CSS because that is where the bug was and where it would come back — a
-    // later `.answer-form { display: … }` without this override puts every
-    // card's form back on screen at once (H-939).
-    expect(view).toMatch(/\.answer-form\[hidden\]\s*\{\s*display:\s*none/);
-    expect(view.indexOf('.answer-form[hidden]')).toBeGreaterThan(view.indexOf('.answer-form {'));
+  it('keeps the one-click answer control touch-sized', () => {
+    expect(view).toMatch(/\.ratify\s*\{[^}]*min-height:\s*44px/);
+    expect(bodyOf('questionCard')).toContain('Ratify recommendation');
   });
 
   it('does not replace the page while a reader has keyboard focus', () => {

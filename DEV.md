@@ -228,8 +228,13 @@ orchestrator meetings and the read-only view. Product intent:
   That same prefix makes this page a **phone** page (H-880): the shell's Helmo
   view lands on the bounded reading, and its "whole record" tap goes to
   `/s/helmo-view/` — this HTML, at 390px. So every row here has to survive a
-  phone width; the stat bar wraps and evidence refs break rather than pushing
-  the document wider. Something checks it now (H-889): `npm run smoke` in the
+  phone width; the phone rules are the default, with the brand above a two-column
+  stat grid, metadata stacked below rows, and badges wrapping rather than pushing
+  the document wider. An explicit `.light` or `.dark` class on the document wins
+  over the system preference so the shell can keep an embedded page in theme.
+  Automatic refresh keeps the last good body on failure and marks that reading
+  stale in the footer with its time; a failed HTTP response counts as failure,
+  not only a broken connection. Something checks the layout now (H-889): `npm run smoke` in the
   estate repo drives this page and the other products at 390px in both themes.
   It is a real-smoke against the running fleet, so it lives there and not here —
   this repo stays zero-dependency and does not grow a browser. Run it after

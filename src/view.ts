@@ -393,7 +393,9 @@ ${standing.length ? `<section><h2>Standing</h2>${standing.map((t) => row(t)).joi
 ${done.length ? `<section><h2>Done</h2>${done.map((t) => row(t, { showDone: true })).join('')}</section>` : ''}
 ${cancelled.length ? `<section><h2>Cancelled (${cancelled.length})</h2>${cancelled.map((t) => row(t)).join('')}</section>` : ''}
 
-<footer>${operator ? `answers write as ${esc(operator)} (human) · everything else read-only` : 'read-only · set HELMO_OPERATOR to answer from here'} · ${esc(dbPath)} · refreshed <span id="age">just now</span></footer>
+<footer>${operator ? `answers write as ${esc(operator)} (human) · everything else read-only` : 'read-only · set HELMO_OPERATOR to answer from here'} · ${esc(dbPath)} · refreshed <span id="age">just now</span>
+  <span id="refresh-warning" class="refresh-warning" role="status" hidden>⚠ refresh failed · showing last good reading from <time id="last-good"></time></span>
+</footer>
 <script>${JS}</script>
 </body></html>`;
 }
@@ -439,13 +441,15 @@ ${ESTATE_TOKENS}
      estate's own contrast test rather than by looking at it. */
   --link-ink: var(--interactive-foreground);
 }
+:root.light { color-scheme: light; }
+:root.dark { color-scheme: dark; }
 * { box-sizing: border-box; }
-body { margin: 0 auto; padding: 28px 32px 64px; max-width: 1080px; background: var(--page); color: var(--ink);
+body { margin: 0 auto; padding: 18px 16px 48px; max-width: 1080px; background: var(--page); color: var(--ink);
   font: 14px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
-.top { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; flex-wrap: wrap; margin-bottom: 8px; }
+.top { display: grid; gap: 18px; margin-bottom: 8px; }
 .brand h1 { font-size: 26px; margin: 0; letter-spacing: -0.02em; display: inline; }
-.tagline { color: var(--ink-3); margin-left: 10px; font-size: 13px; }
-.stats { display: flex; gap: 12px 22px; flex-wrap: wrap; }
+.tagline { display: block; color: var(--ink-3); margin-top: 2px; font-size: 13px; }
+.stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 18px; width: 100%; }
 .stat-n { font-size: 22px; font-weight: 650; letter-spacing: -0.02em; }
 .stat-l { font-size: 11px; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.06em; }
 .stat.hot .stat-n { color: var(--warning); }
@@ -457,7 +461,8 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; color: 
 .groom .gdetail { color: var(--ink-3); }
 .tid { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--ink-3); white-space: nowrap; }
 .spend { font-variant-numeric: tabular-nums; color: var(--ink-3); font-size: 12px; white-space: nowrap; }
-.badge { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--hairline); white-space: nowrap; }
+.badge { display: inline-block; max-width: 100%; font-size: 11px; line-height: 1.35; padding: 2px 7px; border-radius: 999px;
+  border: 1px solid var(--hairline); white-space: normal; overflow-wrap: anywhere; vertical-align: middle; }
 .badge.neutral { color: var(--ink-2); }
 .badge.warning { color: var(--amber-ink); background: var(--amber-wash); border-color: transparent; }
 .badge.serious { color: var(--serious); }
@@ -482,7 +487,7 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; color: 
 
 /* ---- question cards (the hero) ---- */
 .qcard { background: var(--surface); border: 1px solid var(--hairline); border-left: 3px solid var(--warning);
-  border-radius: var(--radius-card); padding: 18px 22px; margin: 12px 0; }
+  border-radius: var(--radius-card); padding: 16px 14px; margin: 12px 0; }
 .qcard header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .qtitle { font-weight: 600; }
 .question { font-size: 19px; font-weight: 650; letter-spacing: -0.01em; margin: 8px 0 12px; }
@@ -505,6 +510,13 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; color: 
    two columns of this width do not fit a phone and should not try to. */
 @media (max-width: 480px) {
   .option { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+}
+@media (min-width: 700px) {
+  body { padding: 28px 32px 64px; }
+  .top { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; }
+  .tagline { display: inline; margin: 0 0 0 10px; }
+  .stats { display: flex; gap: 12px 22px; width: auto; flex-wrap: wrap; }
+  .qcard { padding: 18px 22px; }
 }
 .opt-label { font-weight: 600; font-size: 13px; }
 /* The letter is what Arthur says out loud, so it leads the label and holds its
@@ -540,8 +552,8 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; color: 
 .trow summary::-webkit-details-marker { display: none; }
 .trow summary:hover { background: var(--surface); }
 .rtitle { font-weight: 500; }
-.rmeta { margin-left: auto; text-align: right; }
-.evrow { flex-basis: 100%; display: flex; gap: 12px; flex-wrap: wrap; padding-left: 44px; }
+.rmeta { flex-basis: 100%; text-align: left; }
+.evrow { flex-basis: 100%; display: flex; gap: 12px; flex-wrap: wrap; }
 .ev { font-size: 12px; color: var(--ink-2); min-width: 0; overflow-wrap: anywhere; }
 a.ev { color: var(--link); text-decoration: none; }
 a.ev:hover { text-decoration: underline; }
@@ -568,6 +580,12 @@ details.more summary { font-size: 12px; color: var(--ink-3); cursor: pointer; }
 .tl-dash { color: var(--warning); font-weight: 600; }
 .tl-note { color: var(--ink-2); display: block; margin-top: 1px; }
 footer { margin-top: 48px; color: var(--ink-3); font-size: 11.5px; border-top: 1px solid var(--hairline); padding-top: 12px; }
+.refresh-warning { display: block; margin-top: 6px; color: var(--critical); font-weight: 600; }
+.refresh-warning[hidden] { display: none; }
+@media (min-width: 700px) {
+  .rmeta { flex-basis: auto; margin-left: auto; text-align: right; }
+  .evrow { padding-left: 44px; }
+}
 `;
 
 // Refresh by replacement, preserving scroll and open disclosures — and paused
@@ -576,7 +594,16 @@ footer { margin-top: 48px; color: var(--ink-3); font-size: 11.5px; border-top: 1
 // survives body replacement. The ONLY non-GET this page ever sends is
 // POST /answer, and only from the click flow below (H-90).
 const JS = `
-let last = Date.now();
+let lastGood = Date.now();
+function showRefreshFailure() {
+  const warning = document.getElementById('refresh-warning');
+  const time = document.getElementById('last-good');
+  if (!warning || !time) return;
+  const reading = new Date(lastGood);
+  time.dateTime = reading.toISOString();
+  time.textContent = reading.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+  warning.hidden = false;
+}
 setInterval(async () => {
   // A focused disclosure, link or form control belongs to the reader until
   // they leave it. Replacing the body beneath keyboard focus would reset their
@@ -584,19 +611,21 @@ setInterval(async () => {
   if (document.activeElement && document.activeElement !== document.body) return;
   try {
     const r = await fetch(location.pathname, { cache: 'no-store' });
-    if (!r.ok) return;
+    if (!r.ok) throw new Error('refresh returned ' + r.status);
     const doc = new DOMParser().parseFromString(await r.text(), 'text/html');
     const open = new Set([...document.querySelectorAll('details[open]')].map((d) => d.id).filter(Boolean));
     for (const id of open) doc.getElementById(id)?.setAttribute('open', '');
     const y = scrollY;
     document.body.replaceWith(doc.body);
     scrollTo(0, y);
-    last = Date.now();
-  } catch {}
+    lastGood = Date.now();
+  } catch {
+    showRefreshFailure();
+  }
 }, 15000);
 setInterval(() => {
   const el = document.getElementById('age');
-  if (el) el.textContent = Math.round((Date.now() - last) / 1000) + 's ago';
+  if (el) el.textContent = Math.round((Date.now() - lastGood) / 1000) + 's ago';
 }, 5000);
 
 document.addEventListener('click', async (e) => {

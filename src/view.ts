@@ -214,8 +214,9 @@ function details(t: Ticket): string {
 
 // ---------- the three display shapes ----------
 
-// The hero: a question awaiting the human. Everything the agent prepared is
-// shown; with an operator configured, the options are the answer surface (H-90).
+// The hero: a question awaiting the human. The decision comes first; its
+// supporting situation stays one disclosure below it (H-974). With an operator
+// configured, ratifying the recommendation is the answer surface (H-90).
 //
 // The letters are the feed's (H-939), not this card's own: Arthur says "b" in a
 // meeting and whoever relays it may be reading the phone queue rather than this
@@ -231,12 +232,12 @@ function questionCard(t: Ticket): string {
   return `<article class="qcard" id="${esc(t.id)}" data-ticket="${esc(t.id)}" data-ask="${esc(a.fingerprint)}">
     <header><span class="tid">${esc(t.id)}</span> <span class="qtitle">${esc(t.title)}</span>
       <span class="meta">${esc(t.workstream)} · asked ${esc(rel(t.updated_at))} ${blastBadge(t)} ${acceptanceBadge(t)}</span></header>
-    <p class="situation">${esc(q.situation)}</p>
-    <p class="question">${esc(q.question)}</p>
+    <p class="question"><span class="decision-label">Issue</span>${esc(q.question)}</p>
     ${a.options ? `<div class="options">${a.options.map(opt).join('')}</div>` : ''}
-    <p class="rec"><span class="rec-mark">agent recommends</span> ${esc(q.recommendation)}</p>
+    <p class="rec"><span class="decision-label recommends">Recommends</span>${esc(q.recommendation)}</p>
     ${operator ? `<button type="button" class="ratify">Ratify recommendation</button><span class="ratify-status" role="status"></span>` : ''}
     ${q.if_unanswered ? `<p class="silence">⏱ If unanswered: ${esc(q.if_unanswered)}</p>` : ''}
+    <details class="context"><summary>Context</summary><p class="situation">${esc(q.situation)}</p></details>
     <details class="more" id="d-${esc(t.id)}"><summary>ticket detail</summary>${details(t)}</details>
   </article>`;
 }
@@ -476,8 +477,8 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; color: 
   border-radius: var(--radius-card); padding: 18px 22px; margin: 12px 0; }
 .qcard header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .qtitle { font-weight: 600; }
-.situation { color: var(--ink-2); margin: 10px 0 6px; }
 .question { font-size: 19px; font-weight: 650; letter-spacing: -0.01em; margin: 8px 0 12px; }
+.decision-label { color: var(--ink-3); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 650; margin-right: 8px; }
 .options { display: grid; gap: 6px; margin: 0 0 12px; }
 /* minmax(0, 1fr) rather than 1fr, and the stack below (R-11 H-889). A bare
    plain 1fr track is minmax(auto, 1fr): its floor is the min-content width of
@@ -504,8 +505,11 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; color: 
 .opt-letter { display: inline-block; min-width: 1.1em; color: var(--ink-3); font-weight: 650; }
 .opt-consequence { color: var(--ink-2); font-size: 13px; }
 .rec { margin: 0 0 6px; }
-.rec-mark { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--good-text); font-weight: 650; margin-right: 8px; }
+.decision-label.recommends { color: var(--good-text); }
 .silence { color: var(--ink-3); font-size: 12.5px; margin: 0; }
+.context { margin-top: 8px; }
+.context summary { color: var(--ink-3); cursor: pointer; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+.situation { color: var(--ink-2); margin: 6px 0 0; }
 
 /* ---- the answer surface (H-90): one deliberate acceptance, disagreement stays a meeting ---- */
 .ratify { min-height: 44px; padding: 5px 14px; border: 1px solid var(--link); border-radius: var(--radius-control); background: var(--link); color: var(--link-ink);
@@ -596,7 +600,7 @@ document.addEventListener('click', async (e) => {
     status.classList.remove('err');
     status.textContent = 'recording…';
     try {
-      const r = await fetch('/answer', {
+      const r = await fetch('answer', {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-helmo-answer': document.documentElement.dataset.answer },
         body: JSON.stringify({

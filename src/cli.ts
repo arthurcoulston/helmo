@@ -50,9 +50,14 @@ try {
       const since = Number(flag('since-seq') ?? 0);
       const workstream = flag('workstream');
       const assignee = flag('assignee');
+      const readyIds = store.readyIds(workstream, assignee);
+      const newlyReadyIds = assignee ? store.newlyReadySince(since, workstream, assignee) : [];
       out({
         max_seq: store.maxSeq(),
-        ready_count: store.readyCount(workstream, assignee),
+        ready_count: readyIds.length,
+        ready_ids: readyIds,
+        newly_ready_count: newlyReadyIds.length,
+        newly_ready_ids: newlyReadyIds,
         // held_count only when the caller is identified: work already in hand.
         // With ready_count it lets a harness spot the probe case — nothing to
         // draw, nothing mid-flight — and run that pass cheap (rev H-412).

@@ -905,6 +905,11 @@ export class Store {
     return this.listTickets({ ready: true, workstream, caller, limit: 1000 }).length;
   }
 
+  /** Bounded current-ready IDs for harness reconciliation. */
+  readyIds(workstream?: string, caller?: string): string[] {
+    return this.listTickets({ ready: true, workstream, caller, limit: 1000 }).map((ticket) => ticket.id);
+  }
+
   /** Currently-ready tickets whose route or gate opened after `seq`.
    *
    *  The current-ready query remains the authority for routing, blockers,

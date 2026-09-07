@@ -122,6 +122,15 @@ const cliEnv = {
   HELMO_DB: smokeDb,
   HELMO_ACTOR: JSON.stringify({ name: 'smoke-builder', kind: 'agent', model: 'gpt-5.6-sol', version: 'smoke 1.0', session: 'rev:smoke-agent' }),
 };
+const wake = spawnSync(process.execPath, ['--import', 'tsx', 'src/cli.ts', 'wake-check', '--workstream', 'helmo-dev', '--assignee', 'smoke-builder', '--since-seq', '0'], {
+  cwd: join(import.meta.dirname, '..'), encoding: 'utf8', env: cliEnv,
+});
+assert.equal(wake.status, 0, `wake-check exited nonzero: ${wake.stderr}`);
+const wakeBody = JSON.parse(wake.stdout);
+assert.equal(wakeBody.ready_count, wakeBody.ready_ids.length);
+assert.equal(wakeBody.newly_ready_count, wakeBody.newly_ready_ids.length);
+assert(wakeBody.ready_ids.includes(id), 'wake-check omitted the current ready ticket');
+assert(wakeBody.newly_ready_ids.includes(id), 'wake-check omitted the newly ready ticket');
 const accepted = spawnSync(process.execPath, ['--import', 'tsx', 'src/cli.ts', 'acceptance-check', '--ticket', id, '--refs', JSON.stringify([sourceRef])], {
   cwd: join(import.meta.dirname, '..'), encoding: 'utf8', env: cliEnv,
 });

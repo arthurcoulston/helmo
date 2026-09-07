@@ -12,7 +12,6 @@ const builder: Actor = { name: 'mason', kind: 'agent', model: 'test', version: '
 describe('Awaiting-you section route', () => {
   const dir = mkdtempSync(join(tmpdir(), 'helmo-section-'));
   const db = join(dir, 'helmo.db');
-  const port = 4481;
   let view: ChildProcess | null = null;
 
   afterAll(() => {
@@ -43,8 +42,19 @@ describe('Awaiting-you section route', () => {
 
     view = spawn(process.execPath, ['--import', 'tsx', 'src/view.ts'], {
       cwd: new URL('..', import.meta.url).pathname,
-      env: { ...process.env, HELMO_DB: db, HELMO_VIEW_PORT: String(port), HELMO_VIEW_HOST: '127.0.0.1', HELMO_OPERATOR: 'arthur' },
-      stdio: 'ignore',
+      env: { ...process.env, HELMO_DB: db, HELMO_VIEW_PORT: '0', HELMO_VIEW_HOST: '127.0.0.1', HELMO_OPERATOR: 'arthur' },
+      stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+    });
+
+    const port = await new Promise<number>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('the view never reported ready')), 15_000);
+      view!.once('error', reject);
+      view!.once('exit', (code) => reject(new Error(`the view exited before ready (${code})`)));
+      view!.on('message', (message) => {
+        if (!message || typeof message !== 'object' || !('type' in message) || message.type !== 'helmo-view-ready') return;
+        clearTimeout(timer);
+        resolve((message as { port: number }).port);
+      });
     });
 
     const url = `http://127.0.0.1:${port}/?section=awaiting`;

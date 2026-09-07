@@ -28,7 +28,7 @@ const operator = process.env['HELMO_OPERATOR']?.trim() || null;
 // read-then-impersonate, which is the kind of act the constitution and
 // injection defences catch. Friction, not a gate; keep the comment honest.
 const answerNonce = randomBytes(16).toString('hex');
-const sameOrigin = new Set([`http://127.0.0.1:${port}`, `http://localhost:${port}`]);
+const sameOrigin = new Set<string>();
 const store = new Store(dbPath);
 
 const esc = (s: unknown) =>
@@ -702,7 +702,7 @@ document.addEventListener('click', async (e) => {
 });
 `;
 
-createServer((req, res) => {
+const server = createServer((req, res) => {
   if (req.method === 'POST' && req.url === '/answer') {
     let body = '';
     req.on('data', (c) => (body += c));
@@ -732,6 +732,13 @@ createServer((req, res) => {
     res.writeHead(500, { 'content-type': 'text/plain' });
     res.end(String(e instanceof Error ? (e.stack ?? e.message) : e));
   }
-}).listen(port, host, () =>
-  console.log(`Helmo view: http://localhost:${port} — db: ${dbPath}${operator ? ` — answers enabled for ${operator}` : ' (read-only; set HELMO_OPERATOR to answer)'}`),
-);
+});
+
+server.listen(port, host, () => {
+  const address = server.address();
+  const boundPort = typeof address === 'object' && address ? address.port : port;
+  sameOrigin.add(`http://127.0.0.1:${boundPort}`);
+  sameOrigin.add(`http://localhost:${boundPort}`);
+  process.send?.({ type: 'helmo-view-ready', port: boundPort });
+  console.log(`Helmo view: http://localhost:${boundPort} — db: ${dbPath}${operator ? ` — answers enabled for ${operator}` : ' (read-only; set HELMO_OPERATOR to answer)'}`);
+});

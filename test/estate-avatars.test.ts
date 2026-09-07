@@ -65,8 +65,9 @@ describe('vendored estate avatars', () => {
     // in the document that references them. Drop this one interpolation and
     // every mark on the board disappears at once, with tsc clean, every other
     // test green and the page serving 200.
-    const body = view.slice(view.indexOf('<body>'), view.indexOf('</body>'));
-    expect(body).toContain('${ESTATE_AVATARS}');
+    // Both complete documents — the full dashboard and its awaiting-only
+    // reading — must carry the symbols their shared renderers reference.
+    expect([...view.matchAll(/\$\{ESTATE_AVATARS\}/g)]).toHaveLength(2);
   });
 
   it('does not mistake the frames themselves for a mark', () => {

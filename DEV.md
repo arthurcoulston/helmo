@@ -247,6 +247,14 @@ orchestrator meetings and the read-only view. Product intent:
   fresh `1fr` track is the shape to watch. To see one page:
   `node tools/shoot.mjs http://localhost:4400/ out.png --w 390 --fold` from the
   estate repo.
+  `GET /?section=awaiting` is the same page narrowed to its Awaiting-you
+  section for the estate landing (H-1064): the same question and row renderers,
+  CSS, answer nonce, relative ratify route, and query-preserving refresh. Its
+  body and hero expose `data-count`; while framed, it posts
+  `helmo:section-size` with the count and document height to its same-origin
+  parent, and tracks later disclosure/refresh height changes with a
+  `ResizeObserver`. The shell sizes the iframe from that contract and never
+  reads ticket markup.
 - Evidence ref form (H-95): commit = `repo@sha` (`crew@24e8003`), one commit
   per item; file = absolute or `repo:relative/path`, never bare-relative; url
   as-is; other/draft free text. Prose belongs in the item's `note`. The point

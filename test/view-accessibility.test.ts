@@ -68,4 +68,12 @@ describe('view accessibility', () => {
     expect(page).toContain('href="?whole=1"');
     expect(view).toContain("url.searchParams.get('whole') === '1'");
   });
+
+  it('keeps the section query on refresh and reports its size and count', () => {
+    expect(view).toContain("fetch(location.href, { cache: 'no-store' })");
+    expect(view).toContain("type: 'helmo:section-size'");
+    expect(view).toContain('height: document.documentElement.scrollHeight');
+    expect(view).toContain('count: Number(document.body.dataset.count || 0)');
+    expect(view).toContain('}, location.origin);');
+  });
 });

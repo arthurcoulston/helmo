@@ -330,7 +330,15 @@ function steeringStrip(): string {
   </section>`;
 }
 
-function page(wholeRecord = false): string {
+function awaitingSection(awaiting: Ticket[], withHuman: Ticket[]): string {
+  const count = awaiting.length + withHuman.length;
+  return `<section class="hero" data-helmo-section="awaiting" data-count="${count}">
+  <h2>Awaiting you</h2>
+  ${count ? `${awaiting.map(questionCard).join('')}${withHuman.map((t) => row(t)).join('')}` : '<p class="allclear">✓ Queue is empty. Nothing needs you.</p>'}
+</section>`;
+}
+
+function page(wholeRecord = false, section: 'awaiting' | null = null): string {
   // One query per render, not one per actor drawn: the map is store-wide and
   // the page names the same handful of writers hundreds of times.
   actorKinds = store.actorKinds();
@@ -351,6 +359,23 @@ function page(wholeRecord = false): string {
   const done = by('done');
   const cancelled = by('cancelled');
   const spend = all.reduce((s, t) => s + (t.cost_usd_total || 0), 0);
+  const awaitingHtml = awaitingSection(awaiting, withHuman);
+
+  // The estate landing embeds this reading rather than drawing a second kind
+  // of ticket. It is still a complete document so Helmo's CSS, answer nonce,
+  // relative ratify path and refresh behaviour cross the iframe unchanged.
+  if (section === 'awaiting') {
+    const count = awaiting.length + withHuman.length;
+    return `<!doctype html><html lang="en" data-answer="${answerNonce}"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helmo · Awaiting you</title>
+<style>${CSS}</style>
+<body class="section-reading" data-helmo-section="awaiting" data-count="${count}">
+${ESTATE_AVATARS}
+${awaitingHtml}
+<script>${JS}</script>
+</body></html>`;
+  }
 
   const stat = (n: number, label: string, cls = '') => `<div class="stat ${cls}"><div class="stat-n">${n}</div><div class="stat-l">${label}</div></div>`;
 
@@ -376,10 +401,7 @@ ${ESTATE_AVATARS}
   ? `Whole record · <a href="?">return to current record</a>`
   : `Current record · every live ticket and the newest ${CLOSED_TAIL} closed · <a href="?whole=1">whole record</a>`}</nav>
 
-<section class="hero">
-  <h2>Awaiting you</h2>
-  ${awaiting.length || withHuman.length ? `${awaiting.map(questionCard).join('')}${withHuman.map((t) => row(t)).join('')}` : '<p class="allclear">✓ Queue is empty. Nothing needs you.</p>'}
-</section>
+${awaitingHtml}
 
 ${groomStrip(store.hygiene())}
 
@@ -446,6 +468,8 @@ ${ESTATE_TOKENS}
 * { box-sizing: border-box; }
 body { margin: 0 auto; padding: 18px 16px 48px; max-width: 1080px; background: var(--page); color: var(--ink);
   font: 14px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+.section-reading { padding: 0; max-width: none; }
+.section-reading .hero h2 { margin-top: 0; }
 .top { display: grid; gap: 18px; margin-bottom: 8px; }
 .brand h1 { font-size: 26px; margin: 0; letter-spacing: -0.02em; display: inline; }
 .tagline { display: block; color: var(--ink-3); margin-top: 2px; font-size: 13px; }
@@ -595,6 +619,19 @@ footer { margin-top: 48px; color: var(--ink-3); font-size: 11.5px; border-top: 1
 // POST /answer, and only from the click flow below (H-90).
 const JS = `
 let lastGood = Date.now();
+const embeddedSection = document.body.dataset.helmoSection;
+function reportSectionSize() {
+  if (!embeddedSection || window.parent === window) return;
+  window.parent.postMessage({
+    type: 'helmo:section-size',
+    section: embeddedSection,
+    count: Number(document.body.dataset.count || 0),
+    height: document.documentElement.scrollHeight,
+  }, location.origin);
+}
+const sectionObserver = embeddedSection && 'ResizeObserver' in window ? new ResizeObserver(reportSectionSize) : null;
+if (sectionObserver) sectionObserver.observe(document.body);
+else requestAnimationFrame(reportSectionSize);
 function showRefreshFailure() {
   const warning = document.getElementById('refresh-warning');
   const time = document.getElementById('last-good');
@@ -610,13 +647,19 @@ setInterval(async () => {
   // place even though the open disclosures and scroll position are preserved.
   if (document.activeElement && document.activeElement !== document.body) return;
   try {
-    const r = await fetch(location.pathname, { cache: 'no-store' });
+    const r = await fetch(location.href, { cache: 'no-store' });
     if (!r.ok) throw new Error('refresh returned ' + r.status);
     const doc = new DOMParser().parseFromString(await r.text(), 'text/html');
     const open = new Set([...document.querySelectorAll('details[open]')].map((d) => d.id).filter(Boolean));
     for (const id of open) doc.getElementById(id)?.setAttribute('open', '');
     const y = scrollY;
     document.body.replaceWith(doc.body);
+    if (sectionObserver) {
+      sectionObserver.disconnect();
+      sectionObserver.observe(document.body);
+    } else {
+      requestAnimationFrame(reportSectionSize);
+    }
     scrollTo(0, y);
     lastGood = Date.now();
   } catch {
@@ -707,7 +750,13 @@ createServer((req, res) => {
     // threw ERR_HTTP_HEADERS_SENT, unhandled, and took the whole view process
     // down. A render bug should be a 500 you can read, not a dead dashboard.
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-    const html = page(url.searchParams.get('whole') === '1');
+    const section = url.searchParams.get('section');
+    if (section && section !== 'awaiting') {
+      res.writeHead(404, { 'content-type': 'text/plain' });
+      res.end(`Unknown Helmo section: ${section}`);
+      return;
+    }
+    const html = page(url.searchParams.get('whole') === '1', section === 'awaiting' ? 'awaiting' : null);
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     res.end(html);
   } catch (e) {

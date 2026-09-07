@@ -181,8 +181,11 @@ orchestrator meetings and the read-only view. Product intent:
   cannot have the new question ratified in the human's name. Disagreement is
   a meeting, which is how Arthur said he works. Dashboard answers render marked as such. Everything else
   stays disclosure toggles and evidence links; add no other write affordance. Shows the
-  needs-grooming strip from `store.hygiene()` (H-23) — eight deterministic
-  record checks (silent_assignee, H-61, watches open reservations whose
+  needs-grooming strip from `store.hygiene()` (H-23) — eleven deterministic
+  record checks. `awaiting_second_eyes` (H-1069) makes every currently ready,
+  self-filed ticket visible store-wide until another actor judges it; this
+  closes the gap where reservation to the filer hid the work from both the
+  filer and the cultivating seat. `silent_assignee` (H-61) watches open reservations whose
   assignee has written nothing for 7d or never — typo/rename/retirement in one
   rule), also queryable via `helmo-cli hygiene`; hygiene is judgment-free
   by design, the judgment half of cultivation stays human/agent. Since H-81

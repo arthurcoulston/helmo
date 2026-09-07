@@ -292,6 +292,7 @@ const GROOM_LABEL: Record<HygieneFinding['check'], string> = {
   silent_assignee: '👻 silent assignee',
   orphan_ticket: '⚠ orphan row — not created by Helmo',
   unseated_pool: '🪑 no seat — pool no loop sees',
+  awaiting_second_eyes: '👀 awaiting second eyes',
 };
 
 function groomStrip(findings: HygieneFinding[]): string {

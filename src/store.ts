@@ -87,7 +87,7 @@ export interface UpdateResult {
 export const HYGIENE_CHECKS = [
   'stale_claim', 'done_without_evidence', 'phantom_block', 'aging_question',
   'spend_anomaly', 'priority_inversion', 'budget_pressure', 'silent_assignee',
-  'orphan_ticket', 'unseated_pool',] as const;
+  'orphan_ticket', 'unseated_pool', 'awaiting_second_eyes',] as const;
 
 export interface HygieneFinding {
   check: (typeof HYGIENE_CHECKS)[number];
@@ -558,6 +558,19 @@ export class Store {
     return created.creator === caller;
   }
 
+  /** The agent whose filing judgment governs this ticket. Scheduler instances
+   *  inherit the author of their standing template. */
+  private filingCreator(id: string): string | null {
+    const created = this.db
+      .prepare(
+        `SELECT json_extract(actor, '$.name') AS creator, json_extract(payload, '$.spawned_from') AS template
+         FROM events WHERE ticket_id = ? AND event_type = 'created'`,
+      )
+      .get(id) as { creator: string | null; template: string | null } | undefined;
+    if (!created) return null;
+    return created.template ? this.filingCreator(created.template) : created.creator;
+  }
+
   /** The tickets the triage rule is withholding from `caller`'s ready queue —
    *  returned alongside the queue so the filer sees why, instead of wondering
    *  where their ticket went. */
@@ -646,6 +659,28 @@ export class Store {
         check: 'orphan_ticket',
         ticket_id: r.id,
         detail: 'row has no created event — Helmo did not mint this ticket; something wrote to the table directly',
+      });
+    }
+
+    // Self-filed work withheld from its filer needs another actor's judgment,
+    // but a reservation to that same filer hides it from every other ready
+    // queue. Keep this store-wide so cultivation can supply the second eyes.
+    for (const r of this.db
+      .prepare(
+        `SELECT id, assignee, created_at FROM tickets
+         WHERE status = 'open' AND schedule IS NULL AND needs_human = 0
+           AND (not_before IS NULL OR not_before <= ?)
+           AND (capacity_hold IS NULL OR json_extract(capacity_hold, '$.release.until') > ?)
+         ORDER BY priority ASC, created_at ASC`,
+      )
+      .all(nowTs.toISOString(), nowTs.toISOString()) as { id: string; assignee: string | null; created_at: string }[]) {
+      if (this.isBlocked(r.id)) continue;
+      const creator = this.filingCreator(r.id);
+      if (!creator || !this.selfFiledUntouched(r.id, creator)) continue;
+      findings.push({
+        check: 'awaiting_second_eyes',
+        ticket_id: r.id,
+        detail: `filed by ${creator}, reserved to ${r.assignee ?? 'the unassigned pool'}; untouched by anyone else since ${r.created_at}`,
       });
     }
 

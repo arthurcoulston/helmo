@@ -1083,6 +1083,39 @@ describe('triage rule enforced on claims (H-56)', () => {
 
 describe('hygiene checks (deterministic, read-only)', () => {
   const hrs = (h: number) => new Date(Date.now() + h * 3_600_000);
+  it('surfaces self-filed work store-wide until another actor judges it', () => {
+    const s = freshStore();
+    const t = create(s, { assignee: 'builder-loop' });
+    const finding = s.hygiene().find((f) => f.check === 'awaiting_second_eyes' && f.ticket_id === t.id);
+    expect(finding?.detail).toMatch(/^filed by builder-loop, reserved to builder-loop; untouched by anyone else since /);
+    s.updateTicket(reviewer, { ticket_id: t.id, note: 'independent intake: bounded and worth doing' });
+    expect(s.hygiene().some((f) => f.check === 'awaiting_second_eyes' && f.ticket_id === t.id)).toBe(false);
+  });
+  it('excludes operator filings and work already withheld for a stronger reason', () => {
+    const s = freshStore();
+    const operatorFiled = s.createTicket(orch, { title: 'Meeting action', body: 'Arthur directed this follow-up.', workstream: 'helmo-dev', type: 'ops', assignee: 'builder-loop' });
+    const blocker = create(s, { assignee: 'reviewer-loop' });
+    const blocked = create(s, { assignee: 'builder-loop', deps: [{ to: blocker.id, type: 'blocks' as const }] });
+    const gated = create(s, { assignee: 'builder-loop', not_before: new Date(Date.now() + 86_400_000).toISOString() });
+    const held = create(s, { assignee: 'builder-loop' });
+    s.updateTicket(orch, {
+      ticket_id: held.id,
+      note: 'holding discretionary starts',
+      capacity_hold: { reason: 'budget pause', provenance: 'Arthur in H-1', reconsider_when: 'budget changes' },
+    });
+    const ids = s.hygiene().filter((f) => f.check === 'awaiting_second_eyes').map((f) => f.ticket_id);
+    expect(ids).not.toContain(operatorFiled.id);
+    expect(ids).not.toContain(blocked.id);
+    expect(ids).not.toContain(gated.id);
+    expect(ids).not.toContain(held.id);
+  });
+  it('reports a scheduler instance against its template filer', () => {
+    const s = freshStore();
+    s.createTicket(builder, { title: 'Sweep', body: 'standing', workstream: 'helmo-dev', type: 'ops', schedule: 'every 30m', assignee: 'builder-loop' });
+    const [instance] = s.materializeDue(new Date(Date.now() + 31 * 60_000));
+    const finding = s.hygiene().find((f) => f.check === 'awaiting_second_eyes' && f.ticket_id === instance);
+    expect(finding?.detail).toMatch(/^filed by builder-loop, reserved to builder-loop;/);
+  });
   it('stale claims and aging questions surface after their thresholds', () => {
     const s = freshStore();
     const a = create(s);
@@ -1172,6 +1205,7 @@ describe('hygiene dispositions (H-81)', () => {
     const t = doneWithoutEvidence(s);
     s.recordSpend(builder, t.id, { cost_usd: 20, note: 'metered' });
     const t2 = create(s); const t3 = create(s);
+    triage(s, t2.id); triage(s, t3.id);
     s.recordSpend(builder, t2.id, { cost_usd: 1, note: 'metered' });
     s.recordSpend(builder, t3.id, { cost_usd: 1, note: 'metered' });
     expect(s.hygiene().map((f) => f.check).sort()).toEqual(['done_without_evidence', 'spend_anomaly']);

@@ -30,6 +30,7 @@ export interface CreateInput {
   deps?: { to: string; type: DepType }[];
   schedule?: string; // makes this a recurring template
   not_before?: string; // withhold from ready queues until this date/instant
+  needs_human?: boolean; // requires a sitting with the operator; never agent-ready
   spawned_from?: string; // internal: set by materializeDue on instances
   due?: string; // internal: the slot this instance was spawned for
 }
@@ -53,6 +54,7 @@ export interface UpdateInput {
   workstream?: string;
   project?: string | null; // '' clears the tag
   not_before?: string | null; // '' clears the gate
+  needs_human?: boolean;
   capacity_hold?: CapacityHold | null; // null releases the deliberate hold
 }
 
@@ -116,6 +118,7 @@ CREATE TABLE IF NOT EXISTS tickets (
   cost_usd_total REAL NOT NULL DEFAULT 0,
   schedule       TEXT,
   not_before     TEXT,
+  needs_human    INTEGER NOT NULL DEFAULT 0,
   capacity_hold  TEXT,
   created_at     TEXT NOT NULL,
   updated_at     TEXT NOT NULL,
@@ -282,6 +285,11 @@ export class Store {
     }
     try {
       this.db.exec('ALTER TABLE tickets ADD COLUMN capacity_hold TEXT');
+    } catch {
+      /* column already exists */
+    }
+    try {
+      this.db.exec('ALTER TABLE tickets ADD COLUMN needs_human INTEGER NOT NULL DEFAULT 0');
     } catch {
       /* column already exists */
     }
@@ -471,6 +479,7 @@ export class Store {
     if (filter.ready) {
       clauses.push("status = 'open'");
       clauses.push('schedule IS NULL'); // templates are standing work, never claimable
+      clauses.push('needs_human = 0');
       // Date gate (H-732): work that genuinely cannot start until a date is
       // withheld rather than offered. Shouting it in the body was the only
       // tool available, and it cost every reader a full ticket read to learn
@@ -550,7 +559,7 @@ export class Store {
     // the more useful of the two answers, and one id in two lists just makes
     // the reader check both for the same ticket.
     const rows = this.db
-      .prepare("SELECT id FROM tickets WHERE status = 'open' AND schedule IS NULL AND (not_before IS NULL OR not_before <= ?) AND (capacity_hold IS NULL OR json_extract(capacity_hold, '$.release.until') > ?) AND (assignee IS NULL OR assignee = ?) ORDER BY priority ASC, created_at ASC")
+      .prepare("SELECT id FROM tickets WHERE status = 'open' AND schedule IS NULL AND needs_human = 0 AND (not_before IS NULL OR not_before <= ?) AND (capacity_hold IS NULL OR json_extract(capacity_hold, '$.release.until') > ?) AND (assignee IS NULL OR assignee = ?) ORDER BY priority ASC, created_at ASC")
       .all(now(), now(), caller) as { id: string }[];
     return rows.map((r) => r.id).filter((id) => !this.isBlocked(id) && this.selfFiledUntouched(id, caller));
   }
@@ -563,7 +572,7 @@ export class Store {
     const rows = this.db
       .prepare(
         `SELECT id, not_before FROM tickets
-         WHERE status = 'open' AND schedule IS NULL AND not_before > ?
+         WHERE status = 'open' AND schedule IS NULL AND needs_human = 0 AND not_before > ?
            AND (assignee IS NULL OR assignee = ?)
          ORDER BY not_before ASC, priority ASC`,
       )
@@ -577,13 +586,21 @@ export class Store {
     const rows = this.db
       .prepare(
         `SELECT id, capacity_hold FROM tickets
-         WHERE status = 'open' AND schedule IS NULL AND capacity_hold IS NOT NULL
+         WHERE status = 'open' AND schedule IS NULL AND needs_human = 0 AND capacity_hold IS NOT NULL
            AND (json_extract(capacity_hold, '$.release.until') IS NULL OR json_extract(capacity_hold, '$.release.until') <= ?)
            AND (assignee IS NULL OR assignee = ?)
          ORDER BY priority ASC, created_at ASC`,
       )
       .all(now(), caller) as { id: string; capacity_hold: string }[];
     return rows.map((r) => ({ id: r.id, capacity_hold: JSON.parse(r.capacity_hold) as CapacityHold }));
+  }
+
+  /** Open tickets reserved for a sitting with the operator. */
+  withHumanPending(caller: string): string[] {
+    const rows = this.db.prepare(
+      "SELECT id FROM tickets WHERE status = 'open' AND schedule IS NULL AND needs_human = 1 AND (assignee IS NULL OR assignee = ?) ORDER BY priority ASC, created_at ASC",
+    ).all(caller) as { id: string }[];
+    return rows.map((r) => r.id).filter((id) => !this.isBlocked(id));
   }
 
   /** Record hygiene that needs no judgment and no tokens (H-23): deterministic
@@ -710,7 +727,7 @@ export class Store {
         `SELECT t.id, t.assignee,
                 (SELECT MAX(ts) FROM events WHERE json_extract(actor, '$.name') = t.assignee) AS last
          FROM tickets t
-         WHERE t.status = 'open' AND t.assignee IS NOT NULL AND t.schedule IS NULL
+         WHERE t.status = 'open' AND t.assignee IS NOT NULL AND t.schedule IS NULL AND t.needs_human = 0
            AND EXISTS (SELECT 1 FROM events e WHERE e.ts >= ?
                        AND json_extract(e.actor, '$.name') NOT IN (t.assignee, 'helmo-scheduler'))
          GROUP BY t.id HAVING last IS NULL OR last < ?`,
@@ -732,7 +749,7 @@ export class Store {
     for (const r of this.db
       .prepare(
         `SELECT t.workstream, COUNT(*) AS n FROM tickets t
-         WHERE t.status = 'open' AND t.assignee IS NULL AND t.schedule IS NULL
+         WHERE t.status = 'open' AND t.assignee IS NULL AND t.schedule IS NULL AND t.needs_human = 0
            AND NOT EXISTS (SELECT 1 FROM workstreams w WHERE w.name = t.workstream AND w.seat IS NOT NULL)
          GROUP BY t.workstream`,
       )
@@ -1224,6 +1241,7 @@ export class Store {
       if (input.project) payload['project'] = input.project;
       if (input.schedule) payload['schedule'] = input.schedule;
       if (input.not_before) payload['not_before'] = input.not_before;
+      if (input.needs_human) payload['needs_human'] = true;
       if (input.spawned_from) { payload['spawned_from'] = input.spawned_from; payload['due'] = input.due; }
       this.append(ts, id, 'created', actor, payload);
       this.applyCreated(ts, payload);
@@ -1385,7 +1403,7 @@ export class Store {
     // Same for the date gate — '' opens it now, a date moves it (H-732).
     if (input.not_before === '') input = { ...input, not_before: null };
     else if (input.not_before) input = { ...input, not_before: parseNotBefore(input.not_before) };
-    for (const field of ['title', 'body', 'priority', 'workstream', 'project', 'not_before', 'confidence', 'uncertainty_note'] as const) {
+    for (const field of ['title', 'body', 'priority', 'workstream', 'project', 'not_before', 'needs_human', 'confidence', 'uncertainty_note'] as const) {
       const v = input[field];
       if (v !== undefined && v !== (t as unknown as Record<string, unknown>)[field]) {
         diffs[field] = { from: (t as unknown as Record<string, unknown>)[field], to: v };
@@ -1718,13 +1736,13 @@ export class Store {
   private applyCreated(ts: string, p: Record<string, unknown>): void {
     this.db
       .prepare(
-        `INSERT INTO tickets (id, title, body, workstream, project, type, labels, status, priority, assignee, schedule, not_before, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO tickets (id, title, body, workstream, project, type, labels, status, priority, assignee, schedule, not_before, needs_human, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         p['id'], p['title'], p['body'], p['workstream'], p['project'] ?? null, p['type'],
         JSON.stringify(p['labels'] ?? []), p['status'] ?? 'open', p['priority'] ?? 2, p['assignee'] ?? null,
-        p['schedule'] ?? null, p['not_before'] ?? null, ts, ts,
+        p['schedule'] ?? null, p['not_before'] ?? null, p['needs_human'] ? 1 : 0, ts, ts,
       );
   }
 
@@ -1734,9 +1752,15 @@ export class Store {
     const params: unknown[] = [ts];
     const jsonFields = new Set(['labels', 'evidence']);
     for (const [field, d] of Object.entries(diffs)) {
-      if (!['title', 'body', 'workstream', 'project', 'type', 'labels', 'status', 'priority', 'assignee', 'evidence', 'confidence', 'uncertainty_note', 'blast_radius', 'not_before', 'capacity_hold'].includes(field)) continue;
+      if (!['title', 'body', 'workstream', 'project', 'type', 'labels', 'status', 'priority', 'assignee', 'evidence', 'confidence', 'uncertainty_note', 'blast_radius', 'not_before', 'needs_human', 'capacity_hold'].includes(field)) continue;
       sets.push(`${field} = ?`);
-      params.push(jsonFields.has(field) || field === 'capacity_hold' ? (d.to === null ? null : JSON.stringify(d.to)) : (d.to as never));
+      params.push(
+        field === 'needs_human'
+          ? (d.to ? 1 : 0)
+          : jsonFields.has(field) || field === 'capacity_hold'
+            ? (d.to === null ? null : JSON.stringify(d.to))
+            : (d.to as never),
+      );
     }
     const status = diffs['status']?.to as string | undefined;
     if (status === 'done' || status === 'cancelled') { sets.push('closed_at = ?'); params.push(ts); }
@@ -1830,6 +1854,7 @@ function rowToTicket(row: Record<string, unknown>): Ticket {
     evidence: JSON.parse(row['evidence'] as string),
     question: row['question'] ? JSON.parse(row['question'] as string) : null,
     capacity_hold: row['capacity_hold'] ? JSON.parse(row['capacity_hold'] as string) : null,
+    needs_human: Boolean(row['needs_human']),
   };
 }
 

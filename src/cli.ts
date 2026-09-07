@@ -207,6 +207,7 @@ try {
         deps: flag('dep') ? [{ to: flag('dep')!, type: (flag('dep-type') as DepType) ?? 'relates' }] : undefined,
         schedule: flag('schedule'),
         not_before: flag('not-before'),
+        needs_human: has('needs-human'),
       });
       out({ id: t.id });
       break;
@@ -224,6 +225,7 @@ try {
         cost_usd: flag('cost-usd') !== undefined ? Number(flag('cost-usd')) : undefined,
         handoff_to: flag('handoff-to'),
         not_before: flag('not-before'),
+        needs_human: has('needs-human') ? true : has('no-needs-human') ? false : undefined,
         takeover: has('takeover'),
       });
       out({ id: ticket.id, status: ticket.status, warnings });

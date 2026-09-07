@@ -293,6 +293,7 @@ function row(t: Ticket, opts: { showDone?: boolean } = {}): string {
       ${waits.length ? `<span class="badge serious">⛔ waits on ${esc(waits.join(', '))}</span>` : ''}
       ${t.schedule ? `<span class="badge">↻ ${esc(t.schedule)}</span>` : ''}
       ${gated(t) ? `<span class="badge">⏰ not before ${esc(t.not_before!.slice(0, 10))}</span>` : ''}
+      ${t.needs_human ? '<span class="badge accent">🪑 needs a sitting</span>' : ''}
       ${noEv ? '<span class="badge critical">✱ no evidence</span>' : ''}
       ${confBadge(t)} ${blastBadge(t)} ${acceptanceBadge(t)}
       <span class="rmeta">${esc(t.workstream)}${t.project ? ` · ${esc(t.project)}` : ''} · ${esc(t.type)}${t.assignee ? ` · ${esc(t.assignee)}` : ''} ${money(t)} · ${esc(
@@ -363,9 +364,10 @@ function page(): string {
   const all = store.listTickets({ limit: 1000 });
   const by = (s: string) => all.filter((t) => t.status === s);
   const awaiting = by('awaiting_human');
+  const withHuman = by('open').filter((t) => t.needs_human);
   const motion = by('in_progress');
   const standing = by('open').filter((t) => t.schedule); // recurring templates (H-22)
-  const open = by('open').filter((t) => !t.schedule);
+  const open = by('open').filter((t) => !t.schedule && !t.needs_human);
   // A date gate blocks as surely as a dep does, so it belongs on the blocked
   // side: the 'ready' stat is read as "what an agent could pick up now", and a
   // gated ticket is exactly what the queue will not offer (H-732).
@@ -386,7 +388,7 @@ ${ESTATE_AVATARS}
 <header class="top">
   <div class="brand"><h1>Helmo</h1><span class="tagline">${operator ? 'agents write · you read & answer' : 'agents write · you read'}</span></div>
   <div class="stats">
-    ${stat(awaiting.length, awaiting.length === 1 ? 'awaits you' : 'await you', awaiting.length ? 'hot' : 'calm')}
+    ${stat(awaiting.length + withHuman.length, awaiting.length + withHuman.length === 1 ? 'awaits you' : 'await you', awaiting.length + withHuman.length ? 'hot' : 'calm')}
     ${stat(motion.length, 'in motion')}
     ${stat(ready.length, 'ready')}
     ${stat(blocked.length, 'blocked')}
@@ -397,7 +399,7 @@ ${ESTATE_AVATARS}
 
 <section class="hero">
   <h2>Awaiting you</h2>
-  ${awaiting.length ? awaiting.map(questionCard).join('') : '<p class="allclear">✓ Queue is empty. Nothing needs you.</p>'}
+  ${awaiting.length || withHuman.length ? `${awaiting.map(questionCard).join('')}${withHuman.map((t) => row(t)).join('')}` : '<p class="allclear">✓ Queue is empty. Nothing needs you.</p>'}
 </section>
 
 ${groomStrip(store.hygiene())}

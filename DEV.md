@@ -42,6 +42,10 @@ orchestrator meetings and the read-only view. Product intent:
   conditions, and operator reserve. Only tickets explicitly given that release
   become ready; expiry makes open work held again without disturbing work
   already claimed. Date/dependency/human/reviewer gates remain independent.
+  Human sittings (H-1028) are typed separately from questions: an open ticket
+  with `needs_human` stays open, is withheld from every agent ready queue and
+  reported under `with_human`; both Helmo readings place it below questions in
+  “Awaiting you”. This is presence needed, not a decision waiting for relay.
   Ready routing rule (H-661): in a
   caller's ready queue a workstream filter scopes only the unassigned pool —
   a ticket assigned to the caller is ready wherever it lives. ANDing the

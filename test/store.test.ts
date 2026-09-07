@@ -1419,6 +1419,28 @@ describe('id collision recovery (H-448)', () => {
   });
 });
 
+describe('human sitting gate (H-1028)', () => {
+  it('keeps marked open work out of ready queues and reports it once', () => {
+    const s = freshStore();
+    const t = create(s, { needs_human: true, assignee: 'builder-loop' });
+    triage(s, t.id);
+    expect(s.getTicket(t.id).status).toBe('open');
+    expect(s.listTickets({ ready: true, caller: 'builder-loop' }).map((x) => x.id)).not.toContain(t.id);
+    expect(s.withHumanPending('builder-loop')).toEqual([t.id]);
+    expect(s.selfFiledPending('builder-loop')).not.toContain(t.id);
+    expect(s.gatedPending('builder-loop').map((x) => x.id)).not.toContain(t.id);
+  });
+
+  it('can be cleared and survives event-log replay', () => {
+    const s = freshStore();
+    const t = create(s, { needs_human: true });
+    s.updateTicket(orch, { ticket_id: t.id, note: 'the sitting happened', needs_human: false });
+    s.rebuild();
+    expect(s.getTicket(t.id).needs_human).toBe(false);
+    expect(s.listTickets({ ready: true }).map((x) => x.id)).toContain(t.id);
+  });
+});
+
 describe('date gate (H-732)', () => {
   const future = new Date(Date.now() + 7 * 86_400_000).toISOString();
   const past = new Date(Date.now() - 86_400_000).toISOString();
@@ -1508,6 +1530,27 @@ describe('date gate migration (H-732)', () => {
       expect(after.listTickets({ ready: true }).map((x) => x.id)).toContain(t.id);
       after.updateTicket(orch, { ticket_id: t.id, note: 'gating it now', not_before: '2099-01-01' });
       expect(after.listTickets({ ready: true }).map((x) => x.id)).not.toContain(t.id);
+      after.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('human sitting gate migration (H-1028)', () => {
+  it('adds the column to an older store with tickets unmarked', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'helmo-human-migrate-'));
+    const path = join(dir, 'helmo.db');
+    try {
+      const before = new Store(path);
+      const t = create(before);
+      (before as unknown as { db: { exec(sql: string): void } }).db.exec('ALTER TABLE tickets DROP COLUMN needs_human');
+      before.close();
+
+      const after = new Store(path);
+      expect(after.getTicket(t.id).needs_human).toBe(false);
+      after.updateTicket(orch, { ticket_id: t.id, note: 'Arthur needs to be present', needs_human: true });
+      expect(after.withHumanPending('reviewer-loop')).toEqual([t.id]);
       after.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });

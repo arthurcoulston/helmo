@@ -70,6 +70,14 @@ describe('who has a face', () => {
 });
 
 describe('what the reading carries', () => {
+  it('carries the human-sitting marker without changing open status', () => {
+    const s = new Store(':memory:');
+    const t = create(s, { needs_human: true });
+    const row = reading(s).tickets.find((r) => r.id === t.id)!;
+    expect(row.status).toBe('open');
+    expect(row.needs_human).toBe(true);
+  });
+
   it('puts every live ticket before every closed one, and the closed newest first', () => {
     const s = new Store(':memory:');
     const older = create(s, { title: 'closed first' });

@@ -37,6 +37,7 @@ function compact(t: Ticket) {
     ...(t.project ? { project: t.project } : {}),
     ...(t.schedule ? { schedule: t.schedule } : {}),
     ...(t.not_before ? { not_before: t.not_before } : {}),
+    ...(t.needs_human ? { needs_human: true } : {}),
     ...(t.capacity_hold ? { capacity_hold: t.capacity_hold } : {}),
   };
 }
@@ -67,6 +68,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
         not_before: z.string().optional().describe(
           "Withhold this ticket from ready queues until a date — 'YYYY-MM-DD' (opens 00:00 UTC that day) or a full ISO instant. Use it when the work genuinely CANNOT start yet: it needs a week of data, a deadline has to pass, a dependency lands on a known day. Without it the only way to say so is shouting in the body, and every agent reading the queue pays a full ticket read to learn it must not act. This is not priority — priority says how much the work matters, not whether it can be started.",
         ),
+        needs_human: z.boolean().optional().describe('Mark open work that requires a sitting with the human. It stays open but is withheld from every agent ready queue.'),
         deps: z.array(z.object({ to: z.string(), type: z.enum(DEP_TYPES) })).optional(),
         schedule: z.string().optional().describe(
           "Makes this a RECURRING TEMPLATE: 'every <N><m|h|d>' or 5-field cron (UTC). The template itself is standing work — never ready, never claimed. Due instances spawn automatically on queue reads, linked to the template via a parent dep, and a new instance is skipped while a previous one is still open. Retire the template by cancelling it.",
@@ -127,7 +129,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
         `Query tickets. Key filters: ready: true (open tickets with no open blockers that are unassigned or reserved for you — use this to find work you can start), status, workstream, assignee, type, priority_max. Returns compact rows sorted live work first (done and cancelled last), then priority, then age; paginated (limit default 20, cursor = offset).\n\n` +
         `Start every loop iteration with {assignee: <your name>} — this returns both work you're mid-way through (in_progress) and work handed to you that you haven't started (open + reserved). Then {ready: true} for new work. Answered questions come back as unassigned open tickets — the ready queue surfaces them; you don't need to have been the agent who asked.\n\n` +
         `Triage duty: if you pass over a ready ticket BECAUSE it needs something only the human can supply (a missing input, an unrecorded location, a decision), do not route around it silently — file its question with helmo_return_to_human first (no claim needed), then take other work. Helmo cannot see that kind of blockage; only you can. A known-blocked ticket left quietly in the ready queue stalls until someone else rediscovers what you already knew.\n\n` +
-        `The response's 'workstreams' carry the human's steering where set: 'goal' states what done means for the whole stream — check candidate work against it, and treat a met goal as a stop signal, not an invitation to polish; 'budget_usd'/'spent_usd'/'remaining_usd' disclose the stream's budget, which is a plan — front-load the highest-value work so stopping at any point is safe. Ready-queue triage rule: tickets you filed yourself are withheld from your own ready queue until a human, an orchestrator relaying the human, or another agent touches them; they appear under 'awaiting_triage' (and stay available to everyone else). Date-gated work appears under 'gated'. Deliberate spending holds appear under 'capacity_held': they stay visible but never enter the executable queue until a separate update releases the hold.`,
+        `The response's 'workstreams' carry the human's steering where set: 'goal' states what done means for the whole stream — check candidate work against it, and treat a met goal as a stop signal, not an invitation to polish; 'budget_usd'/'spent_usd'/'remaining_usd' disclose the stream's budget, which is a plan — front-load the highest-value work so stopping at any point is safe. Ready-queue triage rule: tickets you filed yourself are withheld from your own ready queue until a human, an orchestrator relaying the human, or another agent touches them; they appear under 'awaiting_triage' (and stay available to everyone else). Date-gated work appears under 'gated'. Work needing the operator present appears under 'with_human'. Deliberate spending holds appear under 'capacity_held': they stay visible but never enter the executable queue until a separate update releases the hold.`,
       inputSchema: {
         ready: z.boolean().optional(),
         status: z.enum(STATUSES).optional(),
@@ -156,6 +158,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
         // which is the whole saving — one line instead of a ticket read.
         const gated = filter.ready && caller ? store.gatedPending(caller) : [];
         const capacityHeld = filter.ready && caller ? store.capacityHeldPending(caller) : [];
+        const withHuman = filter.ready && caller ? store.withHumanPending(caller) : [];
         // The standing notice rides along like workstream steering (H-172):
         // the human's one-line current priority, disclosure not tasking.
         const notice = store.getNotice();
@@ -167,6 +170,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
           ...(awaitingTriage.length ? { awaiting_triage: awaitingTriage } : {}),
           ...(gated.length ? { gated } : {}),
           ...(capacityHeld.length ? { capacity_held: capacityHeld } : {}),
+          ...(withHuman.length ? { with_human: withHuman } : {}),
         });
       } catch (e) {
         return fail(e);
@@ -205,6 +209,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
         workstream: z.string().optional(),
         project: z.string().optional().describe("Set or change the project tag; '' clears it"),
         not_before: z.string().optional().describe("Set or move the date gate that withholds this ticket from ready queues — 'YYYY-MM-DD' or a full ISO instant; '' opens it now"),
+        needs_human: z.boolean().optional().describe('Set or clear the marker for open work that requires a sitting with the human; marked work is withheld from agent ready queues.'),
         capacity_hold: z.object({
           reason: z.string().describe('Why worthwhile work must not start under the current spending posture'),
           provenance: z.string().describe('Who authorized the hold and where that direction was recorded'),

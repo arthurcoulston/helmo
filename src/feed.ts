@@ -96,6 +96,7 @@ export interface FeedTicket {
   /** Present on recurring templates so readers can keep standing work out of
    *  the ordinary live queue, as Helmo's own view does. */
   schedule?: string;
+  needs_human?: boolean;
   /** The assignee drawn: the sprite symbol and the frame, both read from the
    *  record. Absent when there is no assignee or no mark for their name. */
   actor?: { mark: string; kind: ActorKind };
@@ -180,6 +181,7 @@ export function feed(
         priority: t.priority,
         assignee: t.assignee,
         ...(t.schedule ? { schedule: t.schedule } : {}),
+        ...(t.needs_human ? { needs_human: true } : {}),
         ...(mark && kind ? { actor: { mark, kind } } : {}),
         ...(t.status === 'awaiting_human' && t.question ? { asks: ask(t.question) } : {}),
         ...(acceptance && acceptance.state !== 'not_requested'

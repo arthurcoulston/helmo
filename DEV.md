@@ -11,7 +11,10 @@ orchestrator meetings and the read-only view. Product intent:
   with a global `seq` cursor (Rev's wake signal rides on it), ticket
   materialization, blocking/ready computation, actor validation. Stop
   discipline (H-55): workstream steering (goal + budget_usd, human/orchestrator
-  writes only, evented as `workstream_set` under `ws:<name>`) and the ready-
+  writes only, evented as `workstream_set` under `ws:<name>`; since H-1126 a
+  `goal` belongs only to a STANDING stream with no project behind it — where
+  tickets carry project tags the project body is the intent, and a second copy
+  of it drifts) and the ready-
   queue triage rule — a ticket is withheld from its own filer's ready queue
   until another actor touches it (scheduler instances are judged by their
   template; scheduler and `spend` events never count — clock and meter are
@@ -193,7 +196,7 @@ orchestrator meetings and the read-only view. Product intent:
   cannot have the new question ratified in the human's name. Disagreement is
   a meeting, which is how Arthur said he works. Dashboard answers render marked as such. Everything else
   stays disclosure toggles and evidence links; add no other write affordance. Shows the
-  needs-grooming strip from `store.hygiene()` (H-23) — eleven deterministic
+  needs-grooming strip from `store.hygiene()` (H-23) — twelve deterministic
   record checks. `awaiting_second_eyes` (H-1069) makes every currently ready,
   self-filed ticket visible store-wide until another actor judges it; this
   closes the gap where reservation to the filer hid the work from both the
@@ -211,7 +214,15 @@ orchestrator meetings and the read-only view. Product intent:
   `helmo_dispose_hygiene_finding`; they need neither shell access nor a second
   path into the store. `spend_anomaly` compares one-off tickets only: recurring
   templates accumulate every run's cost indefinitely, so they are neither
-  candidates nor peers for a per-ticket norm (H-1124).
+  candidates nor peers for a per-ticket norm (H-1124). `unaccounted_work`
+  (H-1126) lists every startable open ticket carrying no `project` tag, no
+  `obj:OBJ-n` label and no stream that accounts for itself (`security`;
+  recurring instances, whose template holds the why) — so a sweeping agent
+  starts from a list instead of reading the queue. It judges nothing further:
+  whether the accounting is honest, and how it sits against roadmap status,
+  is the sweeper's call from a roadmap Helmo deliberately cannot see. The
+  finding clears the moment the ticket is tagged, labelled, held, returned to
+  the human, blocked or gated.
 - `presentation.ts` — the dashboard's shared presentation rules: actor marks,
   option letters, question fingerprints, and the bounded terminal tail.
   `view.ts` owns the only reading. The estate shell frames that HTML whole at
@@ -282,6 +293,12 @@ orchestrator meetings and the read-only view. Product intent:
 - `blocks` deps point FROM the waiting ticket TO its prerequisite.
 - Done-without-evidence is accepted but flagged — keep it that way; the flag
   is the feature.
+- Every ticket says what accounts for it (H-1126): a `project` tag when it
+  belongs to a named project, an `obj:OBJ-n` label when it serves a charter
+  objective directly, or a body line naming the justification (the human's
+  direction, security, keeping the estate running). This is a convention, not
+  a schema — nothing is rejected for lacking it; the `unaccounted_work`
+  hygiene check simply lists the work nobody can trace back to a purpose.
 - Workstream budgets are disclosure, never enforcement: nothing in the store
   may block a write because a budget is spent — recording reality always wins.
   The agent-kind rejection in `setWorkstream` is the one hard rule (an agent
@@ -330,15 +347,16 @@ and together a public API commitment — resist widening past them:
 - an optional `project` tag on tickets (create/update; '' clears), another
   grouping string alongside workstream and the join key for cost rollups;
 - a `project` filter on the ticket query;
-- the standing notice: one line of current priority with provenance, stored
-  via `notice_set` events and riding on every helmo_list_tickets response the
-  way workstream steering does. `helmo_set_notice` is operator steering —
-  agent-kind writes rejected in the store, same rule as setWorkstream — and
-  the notice is disclosure, not tasking: it never authorizes work. Helmo
-  knows nothing about what writes it. A summoned agent relaying a decision
-  the human made live in the room writes as kind "orchestrator" with the
-  provenance naming the human and the session — that is what orchestrator
-  means here, not a workaround (H-413; first used for roadmap R-8).
+- the standing notice — RETIRED (H-1126). It carried one hand-maintained line
+  of current priority to every queue read; Arthur's ruling at the Monday
+  retrospective 2026-09-07 is that the charter and the roadmap already say
+  that, and a copy of them drifts and then contradicts (the notice was
+  corrected as stale on 09-03). There is no writer and no response field any
+  more. The `notice` table, the replay of historical `notice_set` events and
+  `store.getNotice()` remain so a store written before this still rebuilds
+  exactly — the record is the record. What replaces it: agents take the work
+  routed to them, and whether that work is accounted for is the
+  `unaccounted_work` sweep below.
 
 ## The estate design tokens (R-11 H-714)
 

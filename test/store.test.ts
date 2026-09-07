@@ -1284,7 +1284,8 @@ describe('hygiene dispositions (H-81)', () => {
     s.setWorkstream(orch, { name: 'helmo-dev', seat: 'builder-loop' }); // seated: no unseated_pool finding in the mix (H-1026)
     const t = doneWithoutEvidence(s);
     s.recordSpend(builder, t.id, { cost_usd: 20, note: 'metered' });
-    const t2 = create(s); const t3 = create(s);
+    // Tagged: a project keeps unaccounted_work out of the mix (H-1126).
+    const t2 = create(s, { project: 'R-1' }); const t3 = create(s, { project: 'R-1' });
     triage(s, t2.id); triage(s, t3.id);
     s.recordSpend(builder, t2.id, { cost_usd: 1, note: 'metered' });
     s.recordSpend(builder, t3.id, { cost_usd: 1, note: 'metered' });
@@ -1466,7 +1467,7 @@ describe('write contention', () => {
   });
 });
 
-describe('the roadmap seam (H-172): project tag and standing notice', () => {
+describe('the roadmap seam (H-172): the project tag', () => {
   it('tickets carry an optional project tag, filterable, clearable with empty string', () => {
     const s = freshStore();
     const tagged = create(s, { project: 'R-4' });
@@ -1484,26 +1485,22 @@ describe('the roadmap seam (H-172): project tag and standing notice', () => {
     expect(s.getTicket(tagged.id).project).toBeNull();
   });
 
-  it('the notice is operator steering: agent writes rejected, provenance required, empty clears', () => {
+  it('the standing notice is retired: no writer remains (H-1126)', () => {
     const s = freshStore();
-    expect(() => s.setNotice(builder, { text: 'ship X', provenance: 'p' })).toThrow(HelmoError);
-    expect(() => s.setNotice(orch, { text: 'ship X', provenance: ' ' })).toThrow(/provenance/);
-
-    s.setNotice(orch, { text: 'SHIP NEXT: R-4 (roadmap)', provenance: 'decided by arthur 2026-08-24, recorded by mason' });
-    expect(s.getNotice()?.text).toContain('R-4');
-
-    s.setNotice(orch, { text: '', provenance: 'cleared after R-4 shipped' });
-    expect(s.getNotice()).toBeNull();
+    expect((s as unknown as Record<string, unknown>)['setNotice']).toBeUndefined();
   });
 
-  it('project tag and notice survive rebuild', () => {
+  it('a store whose log holds historical notice_set events still rebuilds', () => {
+    // The writer is gone; the record is not. Reaching past the public surface
+    // on purpose — this is the shape of a store written before H-1126.
     const s = freshStore();
     const t = create(s, { project: 'R-1' });
     s.updateTicket(reviewer, { ticket_id: t.id, note: 'retag', project: 'R-2' });
-    s.setNotice(orch, { text: 'ship R-2', provenance: 'arthur, meeting' });
-    const before = s.dumpState();
+    (s as unknown as { db: { prepare(q: string): { run(...a: unknown[]): void } } }).db
+      .prepare("INSERT INTO events (ts, ticket_id, event_type, actor, payload) VALUES (?, 'notice', 'notice_set', ?, ?)")
+      .run('2026-08-24T00:00:00.000Z', JSON.stringify(orch), JSON.stringify({ text: 'ship R-2', provenance: 'arthur, meeting' }));
     s.rebuild();
-    expect(s.dumpState()).toEqual(before);
+    expect(s.getNotice()?.text).toBe('ship R-2');
     expect(s.getTicket(t.id).project).toBe('R-2');
   });
 });
@@ -1816,5 +1813,67 @@ describe('workstream seats (H-1026)', () => {
     expect(pools()).toEqual([expect.objectContaining({ workstream: 'rev-dev', detail: expect.stringMatching(/^2 unassigned open tickets/) })]);
     s.setWorkstream(orch, { name: 'rev-dev', seat: 'builder-loop' });
     expect(pools()).toEqual([]);
+  });
+});
+
+describe('unaccounted work (H-1126): nothing on the ticket says what it is for', () => {
+  const unaccounted = (s: Store) => s.hygiene().filter((f) => f.check === 'unaccounted_work').map((f) => f.ticket_id);
+
+  it('reports startable work with no project tag and no objective label, naming stream and filer', () => {
+    const s = freshStore();
+    const t = create(s);
+    expect(s.hygiene().find((f) => f.check === 'unaccounted_work' && f.ticket_id === t.id)?.detail)
+      .toBe("'helmo-dev' work filed by builder-loop with no project tag and no obj: label — nothing on it says what it is for");
+  });
+
+  it('a project tag accounts for it, and clearing the tag brings it back', () => {
+    const s = freshStore();
+    const t = create(s, { project: 'R-4' });
+    expect(unaccounted(s)).toEqual([]);
+    s.updateTicket(reviewer, { ticket_id: t.id, note: 'mistagged', project: '' });
+    expect(unaccounted(s)).toEqual([t.id]);
+  });
+
+  it('an obj: label accounts for charter-direct work; another label does not', () => {
+    const s = freshStore();
+    const charter = create(s, { labels: ['obj:OBJ-3'] });
+    const decorated = create(s, { labels: ['urgent', 'objective'] });
+    expect(unaccounted(s)).toEqual([decorated.id]);
+    expect(unaccounted(s)).not.toContain(charter.id);
+  });
+
+  it('keeping the estate safe accounts for itself: the security stream is never reported', () => {
+    const s = freshStore();
+    create(s, { workstream: 'security' });
+    expect(unaccounted(s)).toEqual([]);
+  });
+
+  // Every ticket here is untagged and unlabelled; each is withheld from the
+  // executable set for a stronger reason, so asking what accounts for it is
+  // noise until it becomes startable again.
+  it('work already withheld from the executable set is not reported', () => {
+    const s = freshStore();
+    const held = create(s);
+    s.updateTicket(orch, {
+      ticket_id: held.id,
+      note: 'holding discretionary starts',
+      capacity_hold: { reason: 'budget pause', provenance: 'Arthur in H-1', reconsider_when: 'budget changes' },
+    });
+    const returned = create(s);
+    s.returnToHuman(builder, returned.id, { situation: 's', question: 'q?', recommendation: 'r' });
+    const gated = create(s, { not_before: new Date(Date.now() + 86_400_000).toISOString() });
+    const blocker = create(s, { project: 'R-4' });
+    const blocked = create(s, { deps: [{ to: blocker.id, type: 'blocks' as const }] });
+    const forHuman = create(s, { needs_human: true });
+    expect([held.id, returned.id, gated.id, blocked.id, forHuman.id]).toHaveLength(5); // all five exist, none reported
+    expect(unaccounted(s)).toEqual([]);
+  });
+
+  it('standing work accounts for itself: neither the template nor its instances are reported', () => {
+    const s = freshStore();
+    s.createTicket(builder, { title: 'Daily sweep', body: 'standing duty', workstream: 'helmo-dev', type: 'ops', schedule: 'every 30m' });
+    const [instance] = s.materializeDue(new Date(Date.now() + 31 * 60_000));
+    expect(instance).toBeDefined();
+    expect(unaccounted(s)).toEqual([]);
   });
 });

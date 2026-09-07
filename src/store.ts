@@ -12,6 +12,10 @@ const AGING_QUESTION_HOURS = 48; // the awaiting-human queue exists to protect a
 const SPEND_ANOMALY_FACTOR = 3; // flag cost > 3x the workstream norm (needs >= 3 spent tickets for a norm)
 const BUDGET_PRESSURE_RATIO = 0.8; // surface a workstream budget once 80% is spent
 const SILENT_ASSIGNEE_HOURS = 168; // 7d without the assignee writing anywhere: a reservation that will not wake on its own
+// Streams whose work accounts for itself: keeping the estate safe is never
+// discretionary, so a security ticket needs no project or objective behind it
+// (H-1126). Deliberately tiny — everything else says what it is for.
+const ACCOUNTED_WORKSTREAMS = new Set(['security']);
 
 function refuseUnmarkedDeskClaim(actor: Actor, needsHuman: boolean): void {
   if (actor.kind !== 'agent' || actor.session || needsHuman) return;
@@ -87,7 +91,7 @@ export interface UpdateResult {
 export const HYGIENE_CHECKS = [
   'stale_claim', 'done_without_evidence', 'phantom_block', 'aging_question',
   'spend_anomaly', 'priority_inversion', 'budget_pressure', 'silent_assignee',
-  'orphan_ticket', 'unseated_pool', 'awaiting_second_eyes',] as const;
+  'orphan_ticket', 'unseated_pool', 'awaiting_second_eyes', 'unaccounted_work',] as const;
 
 export interface HygieneFinding {
   check: (typeof HYGIENE_CHECKS)[number];
@@ -806,6 +810,38 @@ export class Store {
       });
     }
 
+    // Unaccounted work (H-1126): open, startable work carrying nothing that
+    // says what it is for — no project tag, no obj:OBJ-n label, and not in a
+    // stream whose work accounts for itself. Arthur's ruling at the Monday
+    // retrospective is that intent lives in the charter and the roadmap, not
+    // in prose steering copied onto Helmo, so the sweeping agent should start
+    // from a list rather than a read of the whole queue. The check makes no
+    // judgment about whether the accounting is honest, or about roadmap
+    // status: that is the sweeper's, from a roadmap Helmo deliberately cannot
+    // see. Recurring instances are exempt — a standing sweep IS the estate
+    // functioning, and its template already carries the why.
+    for (const r of this.db
+      .prepare(
+        `SELECT t.id, t.workstream, t.labels FROM tickets t
+         WHERE t.status = 'open' AND t.schedule IS NULL AND t.needs_human = 0
+           AND (t.project IS NULL OR trim(t.project) = '')
+           AND (t.not_before IS NULL OR t.not_before <= ?)
+           AND (t.capacity_hold IS NULL OR json_extract(t.capacity_hold, '$.release.until') > ?)
+           AND NOT EXISTS (SELECT 1 FROM events e WHERE e.ticket_id = t.id AND e.event_type = 'created'
+                             AND json_extract(e.payload, '$.spawned_from') IS NOT NULL)
+         ORDER BY priority ASC, created_at ASC`,
+      )
+      .all(nowTs.toISOString(), nowTs.toISOString()) as { id: string; workstream: string; labels: string }[]) {
+      if (ACCOUNTED_WORKSTREAMS.has(r.workstream)) continue;
+      if ((JSON.parse(r.labels) as string[]).some((l) => /^obj:OBJ-\d+$/i.test(l.trim()))) continue;
+      if (this.isBlocked(r.id)) continue;
+      findings.push({
+        check: 'unaccounted_work',
+        ticket_id: r.id,
+        detail: `'${r.workstream}' work filed by ${this.filingCreator(r.id) ?? '?'} with no project tag and no obj: label — nothing on it says what it is for`,
+      });
+    }
+
     // Priority inversions: a high-priority ready ticket sits while lower-priority work in the same workstream is in motion.
     for (const r of this.db
       .prepare(
@@ -1265,36 +1301,13 @@ export class Store {
     }).immediate();
   }
 
-  /** The standing notice (H-172): one line of current priority with its
-   *  provenance, riding along on ticket-queue responses the way workstream
-   *  steering does. Helmo knows nothing about what writes it — a roadmap
-   *  tool, a meeting, a script — but like workstream steering it IS operator
-   *  steering, so agent-kind writes are rejected: it reaches the whole fleet,
-   *  and only a decision the human stated may be relayed into it. Disclosure,
-   *  not tasking: seeing the notice does not authorize starting the work.
-   *  Empty text clears it. */
-  setNotice(actor: Actor, input: { text: string; provenance: string }): Notice | null {
-    validateActor(actor);
-    if (actor.kind === 'agent') {
-      throw new HelmoError(
-        'The standing notice is operator steering — writable only by kind "human" or "orchestrator" (relaying a decision the human stated explicitly). An agent broadcasting its own priority to the fleet is the failure this rule exists to prevent.',
-      );
-    }
-    if (input.text === undefined || input.provenance === undefined) {
-      throw new HelmoError('text and provenance are both required (empty text clears the notice; provenance says who decided and what recorded it).');
-    }
-    if (input.text.trim() && !input.provenance.trim()) {
-      throw new HelmoError('provenance is required with a non-empty notice: who decided this and what recorded it, so the fleet reads a decision, not a flag.');
-    }
-    rejectSwallowedMarkup({ text: input.text, provenance: input.provenance });
-    return this.db.transaction(() => {
-      const ts = now();
-      this.append(ts, 'notice', 'notice_set', actor, { text: input.text, provenance: input.provenance });
-      this.applyNoticeSet(ts, { text: input.text, provenance: input.provenance });
-      return this.getNotice();
-    }).immediate();
-  }
-
+  /** The standing notice (H-172) is RETIRED (H-1126, Arthur's ruling at the
+   *  Monday retrospective 2026-09-07): a hand-maintained line of current
+   *  priority is a copy of what the charter and the roadmap already say, and
+   *  copies drift. There is no writer any more; the table, the replay of
+   *  historical `notice_set` events, and this reader remain so the event log
+   *  still rebuilds byte-for-byte — the record is the record. Nothing reads a
+   *  notice into a queue response or the dashboard. */
   getNotice(): Notice | null {
     const row = this.db.prepare('SELECT text, provenance, updated_at FROM notice WHERE id = 1').get() as Notice | undefined;
     return row && row.text.trim() ? row : null;

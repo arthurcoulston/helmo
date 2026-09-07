@@ -53,6 +53,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
       description:
         `Create a ticket in Helmo, the shared work record for all agents and the human operator. Create a ticket whenever you start a distinct piece of work that isn't already tracked, and whenever you notice work that should happen but that you are NOT doing now (set status 'open' so another agent can pick it up; link it with dep type 'discovered_from' if you found it while working on something else — this preserves lineage without derailing you).\n\n` +
         `Write 'title' in plain human terms (one line, no jargon): the human reads it in a dashboard. Write 'body' so that a different agent with NO other context could pick the ticket up and continue — include goal, constraints, relevant paths/links, and current state. You will not be around to explain; the body is the handoff.\n\n` +
+        `Say what accounts for this work: a 'project' tag when it belongs to a named project, an 'obj:OBJ-n' label when it serves a charter objective directly, or a body line naming the justification (the human's direction, security, keeping the estate running). Work carrying none of these is reported by hygiene as unaccounted, and someone has to reconstruct why it exists.\n\n` +
         `Returns the new ticket ID (e.g. "H-142"). Reference it in commits, files, and messages you produce for this work. For 'workstream', check existing names first (helmo_list_tickets) before inventing a new one. Deps edges always point FROM this new ticket; for a reverse-direction edge (e.g. an existing ticket blocked by this new one) use helmo_link_tickets after creation.\n\n` +
         `Stop discipline: before filing a follow-on ticket, answer "who is waiting on this, and what will they do with it?" If the honest answer is "nobody, nothing yet", record it as residuals in the current ticket's body instead. When real loose ends remain, consolidate them into ONE follow-up ticket rather than fanning out several small ones. Note: a ticket you file does not enter YOUR OWN ready queue until a human, an orchestrator relaying the human, or another agent touches it — discovery is always welcome, but executing your own discoveries takes a second pair of eyes.`,
       inputSchema: {
@@ -159,14 +160,10 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
         const gated = filter.ready && caller ? store.gatedPending(caller) : [];
         const capacityHeld = filter.ready && caller ? store.capacityHeldPending(caller) : [];
         const withHuman = filter.ready && caller ? store.withHumanPending(caller) : [];
-        // The standing notice rides along like workstream steering (H-172):
-        // the human's one-line current priority, disclosure not tasking.
-        const notice = store.getNotice();
         return ok({
           tickets: tickets.map(compact),
           count: tickets.length,
           workstreams,
-          ...(notice ? { notice } : {}),
           ...(awaitingTriage.length ? { awaiting_triage: awaitingTriage } : {}),
           ...(gated.length ? { gated } : {}),
           ...(capacityHeld.length ? { capacity_held: capacityHeld } : {}),
@@ -354,7 +351,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
     {
       description:
         `Set a workstream's goal ("done means…"), budget_usd, and/or seat — the human's steering surface. Call this ONLY to relay a decision the human stated explicitly; the write requires actor kind 'human' or 'orchestrator', and agent-kind writes are rejected: an agent must never set or raise the goal or budget of the stream it draws work from, nor route the stream to itself.\n\n` +
-        `The goal is what lets every agent answer "is this stream's purpose already met?" — phrase it as the end state, not activities (e.g. "the operator has a confirmed, emailable outreach shortlist", not "research contacts"). The budget is a disclosed plan, not a kill switch: agents see remaining balance on every queue read and are expected to front-load the highest-value work and close out honestly when it is spent. The seat is the agent every unassigned filing in the stream (recurring instances included) is reserved to at creation, so a loop bound elsewhere still finds it; a stream with no seat is ready to no loop, and hygiene reports it as unseated_pool. Partial updates are fine — a field you omit keeps its current value; seat '' clears the seat.`,
+        `The goal belongs only to a STANDING stream with no project behind it — a duty that runs indefinitely, where nothing else states what done means. A stream whose tickets carry project tags gets no goal: the project body is the intent, and a second hand-maintained copy of it drifts and then contradicts (H-1126). Where it is right, phrase it as the end state, not activities (e.g. "the operator's calendars are always accurate two months out", not "reconcile calendars"). The budget is a disclosed plan, not a kill switch: agents see remaining balance on every queue read and are expected to front-load the highest-value work and close out honestly when it is spent. The seat is the agent every unassigned filing in the stream (recurring instances included) is reserved to at creation, so a loop bound elsewhere still finds it; a stream with no seat is ready to no loop, and hygiene reports it as unseated_pool. Partial updates are fine — a field you omit keeps its current value; seat '' clears the seat.`,
       inputSchema: {
         name: z.string().describe('The workstream being steered'),
         goal: z.string().optional().describe('What done means for the whole stream, as an end state'),
@@ -366,27 +363,6 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
     async ({ actor, ...input }) => {
       try {
         return ok(store.setWorkstream(resolveActor(actor as Actor | undefined), input));
-      } catch (e) {
-        return fail(e);
-      }
-    },
-  );
-
-  server.registerTool(
-    'helmo_set_notice',
-    {
-      description:
-        `Set or clear the standing notice: ONE line of current priority with its provenance, carried on every helmo_list_tickets response the way workstream steering is. Call it ONLY to relay a decision the human stated explicitly (e.g. their ship-next call on the roadmap); the write requires actor kind 'human' or 'orchestrator', and agent-kind writes are rejected — an agent must never broadcast its own priority to the fleet.\n\n` +
-        `The notice is disclosure, not tasking: agents reading it learn what the human currently wants shipped, and weigh their choice of ready work accordingly — it does not authorize starting anything. Write provenance so a stranger can trace the decision ("ship_next R-4, decided by Arthur 2026-08-24, recorded by mason"). Empty text clears the notice.`,
-      inputSchema: {
-        text: z.string().describe("The one-line current priority; '' clears it"),
-        provenance: z.string().describe('Who decided and what recorded it'),
-        actor: actorSchema,
-      },
-    },
-    async ({ actor, ...input }) => {
-      try {
-        return ok({ notice: store.setNotice(resolveActor(actor as Actor | undefined), input) });
       } catch (e) {
         return fail(e);
       }

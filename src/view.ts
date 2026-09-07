@@ -293,6 +293,7 @@ const GROOM_LABEL: Record<HygieneFinding['check'], string> = {
   orphan_ticket: '⚠ orphan row — not created by Helmo',
   unseated_pool: '🪑 no seat — pool no loop sees',
   awaiting_second_eyes: '👀 awaiting second eyes',
+  unaccounted_work: '🏷 nothing says what it is for',
 };
 
 function groomStrip(findings: HygieneFinding[]): string {
@@ -310,13 +311,9 @@ function groomStrip(findings: HygieneFinding[]): string {
 // Operator steering (H-55): only workstreams the human has actually steered
 // appear — an unsteered stream has nothing to show.
 function steeringStrip(): string {
-  // The standing notice (H-172) leads the strip when set: the fleet sees it
-  // on every queue read, so the human should see it here.
-  const notice = store.getNotice();
   const rows = store.listWorkstreamInfo().filter((w) => w.goal || w.budget_usd !== null);
-  if (!rows.length && !notice) return '';
+  if (!rows.length) return '';
   return `<section class="groom"><h2>Workstream steering</h2>
-    ${notice ? `<p class="gitem"><span class="badge accent">📣 standing notice</span> <span class="gdetail">${esc(notice.text)} (${esc(notice.provenance)})</span></p>` : ''}
     ${rows
       .map((w) => {
         const budget =

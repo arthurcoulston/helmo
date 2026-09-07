@@ -905,6 +905,64 @@ export class Store {
     return this.listTickets({ ready: true, workstream, caller, limit: 1000 }).length;
   }
 
+  /** Currently-ready tickets whose route or gate opened after `seq`.
+   *
+   *  The current-ready query remains the authority for routing, blockers,
+   *  schedules, gates, and self-triage. This read only narrows that bounded set
+   *  to candidates with a readiness-causing event after the cursor, or a date
+   *  gate that crossed after the cursor's timestamp. Keeping event archaeology
+   *  out of the state calculation makes notes and close-out noise inert while
+   *  preserving the exact ready semantics used by listTickets. */
+  newlyReadySince(seq: number, workstream: string | undefined, caller: string): string[] {
+    const ready = this.listTickets({ ready: true, workstream, caller, limit: 1000 });
+    if (!ready.length) return [];
+
+    const candidates = new Set(
+      (this.db
+        .prepare(
+          `SELECT DISTINCT ticket_id AS id FROM events
+           WHERE seq > ? AND (
+             event_type = 'created'
+             OR (event_type = 'answered' AND json_extract(payload, '$.resolution') = 'resume')
+             OR (event_type = 'updated' AND (
+               json_type(payload, '$.diffs.assignee') IS NOT NULL
+               OR json_extract(payload, '$.diffs.status.to') = 'open'
+               OR json_type(payload, '$.diffs.not_before') IS NOT NULL
+               OR json_type(payload, '$.diffs.capacity_hold') IS NOT NULL
+             ))
+           )`,
+        )
+        .all(seq) as { id: string }[])
+        .map((r) => r.id),
+    );
+
+    // Closing either kind of terminal blocker opens the waiting ticket, not
+    // the blocker itself. Deps are already indexed by their primary key's
+    // from_id prefix; events use idx_events_ticket.
+    for (const r of this.db
+      .prepare(
+        `SELECT DISTINCT d.from_id AS id
+         FROM events e JOIN deps d ON d.to_id = e.ticket_id AND d.type = 'blocks'
+         WHERE e.seq > ? AND (
+           (e.event_type = 'updated' AND json_extract(e.payload, '$.diffs.status.to') IN ('done','cancelled'))
+           OR (e.event_type = 'answered' AND json_extract(e.payload, '$.resolution') IN ('done','cancelled'))
+         )`,
+      )
+      .all(seq) as { id: string }[]) candidates.add(r.id);
+
+    const cursor = this.db
+      .prepare('SELECT ts FROM events WHERE seq <= ? ORDER BY seq DESC LIMIT 1')
+      .get(seq) as { ts: string } | undefined;
+    if (cursor) {
+      const current = now();
+      for (const t of ready) {
+        if (t.not_before && t.not_before > cursor.ts && t.not_before <= current) candidates.add(t.id);
+      }
+    }
+
+    return ready.map((t) => t.id).filter((id) => candidates.has(id));
+  }
+
   /** In_progress tickets assigned to `assignee`, each with the actor that put
    *  it in_progress and when — the same-seat guard's raw material (rev H-558).
    *  Two live sessions sharing one crew name (a rev loop and a desk subagent)

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -775,6 +775,74 @@ describe('harness queries (wake cursor)', () => {
     expect(s.readyCount('alpha')).toBe(0);
     expect(s.actorActivitySince('builder-loop', seq)).toBe(1);
     expect(s.actorActivitySince('reviewer-loop', seq)).toBe(0);
+  });
+  it('newlyReadySince finds creation, routing, return, and blocker edges without note noise', () => {
+    const s = freshStore();
+    const untouched = create(s, { workstream: 'alpha' });
+    const routed = create(s, { workstream: 'beta', assignee: builder.name });
+    const repooled = create(s, { workstream: 'alpha', assignee: builder.name });
+    const returned = create(s, { workstream: 'alpha' });
+    triage(s, returned.id);
+    s.returnToHuman(builder, returned.id, {
+      situation: 'A decision is required.', question: 'Resume it?', recommendation: 'yes',
+    });
+    const waiting = create(s, { workstream: 'alpha' });
+    const blocker = create(s, { workstream: 'beta', assignee: builder.name });
+    s.linkTickets(builder, waiting.id, blocker.id, 'blocks', 'add');
+    const noise = create(s, { workstream: 'beta', assignee: builder.name });
+    const seq = s.maxSeq();
+
+    s.updateTicket(orch, { ticket_id: untouched.id, note: 'context only; readiness did not change' });
+    s.updateTicket(orch, { ticket_id: routed.id, note: 'handed to reviewer', handoff_to: reviewer.name });
+    s.updateTicket(orch, { ticket_id: repooled.id, note: 'returned to the alpha pool', handoff_to: '' });
+    s.answerTicket(orch, returned.id, { answer: 'Resume.', resolution: 'resume' });
+    s.updateTicket(builder, { ticket_id: blocker.id, note: 'prerequisite done', status: 'done', evidence: [{ kind: 'other', ref: 'fixture' }] });
+    s.updateTicket(builder, { ticket_id: noise.id, note: 'unrelated close-out', status: 'done', evidence: [{ kind: 'other', ref: 'fixture' }] });
+    const created = create(s, { workstream: 'alpha' });
+
+    expect(s.newlyReadySince(seq, 'alpha', reviewer.name)).toEqual([
+      routed.id, repooled.id, returned.id, waiting.id, created.id,
+    ]);
+    expect(s.newlyReadySince(s.maxSeq(), 'alpha', reviewer.name)).toEqual([]);
+  });
+  it('newlyReadySince follows capacity release and excludes the caller\'s untouched filing', () => {
+    const s = freshStore();
+    const held = create(s, { workstream: 'alpha' });
+    triage(s, held.id);
+    s.updateTicket(orch, {
+      ticket_id: held.id,
+      note: 'capacity hold',
+      capacity_hold: { reason: 'Conserve.', provenance: 'Arthur fixture', reconsider_when: 'Capacity changes.' },
+    });
+    const seq = s.maxSeq();
+    s.updateTicket(orch, {
+      ticket_id: held.id,
+      note: 'bounded release',
+      capacity_hold: {
+        reason: 'Conserve.', provenance: 'Arthur fixture', reconsider_when: 'Capacity changes.',
+        release: { batch_id: 'a', until: '2099-01-01T00:00:00Z', stop_conditions: 'Stop.', shared_reserve: 'One session.' },
+      },
+    });
+    const selfFiled = create(s, { workstream: 'alpha', assignee: builder.name });
+
+    expect(s.newlyReadySince(seq, 'alpha', builder.name)).toEqual([held.id]);
+    expect(s.listTickets({ ready: true, workstream: 'alpha', caller: builder.name }).map((t) => t.id)).not.toContain(selfFiled.id);
+  });
+  it('newlyReadySince detects a date gate crossing after the cursor without a new event', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2030-01-01T00:00:00.000Z'));
+      const s = freshStore();
+      const gated = create(s, { workstream: 'alpha', not_before: '2030-01-02T00:00:00.000Z' });
+      triage(s, gated.id);
+      const seq = s.maxSeq();
+      expect(s.newlyReadySince(seq, 'alpha', builder.name)).toEqual([]);
+
+      vi.setSystemTime(new Date('2030-01-03T00:00:00.000Z'));
+      expect(s.newlyReadySince(seq, 'alpha', builder.name)).toEqual([gated.id]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
   it('a ticket assigned to the caller is ready across the workstream filter (H-661)', () => {
     const s = freshStore();

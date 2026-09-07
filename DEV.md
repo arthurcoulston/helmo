@@ -157,6 +157,13 @@ orchestrator meetings and the read-only view. Product intent:
   sweep can audit dashboard-session answers — the one channel that writes as
   the human without a meeting — through this front door instead of opening
   helmo.db with sqlite3 (H-143 detection, H-936 boundary).
+  The Store's bounded `newlyReadySince` read supports the event-driven half of
+  wake-check: it intersects the canonical current-ready set (up to 1,000 IDs)
+  with readiness-causing events after the cursor, plus date gates that crossed
+  after that event's timestamp. Two indexed event queries cover direct route /
+  gate changes and blocker closure; notes, spend, unrelated close-out, and
+  self-filed untouched work cannot enter through that intersection. The CLI
+  exposure and reconciliation fields are intentionally the H-1098 layer.
   `acceptance-check --ticket H-n --refs '["repo@<40hex>"]'` is the release
   process seam: it exits zero only when an independent PASS covers that exact
   manifest. `product-complete` and `acceptance-verdict` record the two halves.

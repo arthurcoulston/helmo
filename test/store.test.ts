@@ -7,8 +7,8 @@ import { questionFingerprint } from '../src/feed.js';
 import { Store } from '../src/store.js';
 import { Actor, ActorKind, HelmoError } from '../src/types.js';
 
-const builder: Actor = { name: 'builder-loop', kind: 'agent', model: 'claude-sonnet-5', version: '1.0' };
-const reviewer: Actor = { name: 'reviewer-loop', kind: 'agent', model: 'gpt-6-codex', version: '2.1' };
+const builder: Actor = { name: 'builder-loop', kind: 'agent', model: 'claude-sonnet-5', version: '1.0', session: 'rev:builder-loop' };
+const reviewer: Actor = { name: 'reviewer-loop', kind: 'agent', model: 'gpt-6-codex', version: '2.1', session: 'rev:reviewer-loop' };
 const orch: Actor = { name: 'helmo-orchestrator', kind: 'orchestrator', model: 'claude-fable-5', version: '0.1' };
 const relayedHuman: Actor = { name: 'builder-loop', kind: 'orchestrator', model: 'claude-fable-5', version: '0.1' };
 
@@ -131,6 +131,29 @@ describe('mangled tool-call writes rejected at the door (H-71)', () => {
 });
 
 describe('claiming', () => {
+  it('refuses an unmarked desk claim without changing the ticket', () => {
+    const s = freshStore();
+    const desk = { ...builder, session: undefined };
+    const t = create(s, { assignee: desk.name });
+    triage(s, t.id);
+    const before = s.getEvents(t.id);
+    expect(() => s.updateTicket(desk, { ticket_id: t.id, note: 'starting at the desk', status: 'in_progress' })).toThrow(/not meeting work.*leave the ticket for a loop/i);
+    expect(s.getTicket(t.id)).toMatchObject({ status: 'open', assignee: desk.name });
+    expect(s.getEvents(t.id)).toEqual(before);
+  });
+  it('allows a desk claim when the ticket is marked for a human sitting', () => {
+    const s = freshStore();
+    const desk = { ...builder, session: undefined };
+    const t = create(s, { assignee: desk.name, needs_human: true });
+    triage(s, t.id);
+    expect(s.updateTicket(desk, { ticket_id: t.id, note: 'starting the sitting', status: 'in_progress' }).ticket.status).toBe('in_progress');
+  });
+  it('allows an unmarked loop claim', () => {
+    const s = freshStore();
+    const t = create(s);
+    triage(s, t.id);
+    expect(s.updateTicket(builder, { ticket_id: t.id, note: 'starting in the loop', status: 'in_progress' }).ticket.status).toBe('in_progress');
+  });
   it('claims open work and records assignee', () => {
     const s = freshStore();
     const t = create(s);
@@ -787,7 +810,7 @@ describe('harness queries (wake cursor)', () => {
     // session stamp is what tells them apart.
     const desk: Actor = { name: 'ward-loop', kind: 'agent', model: 'claude-fable-5', version: 'claude-code-2.1.221' };
     const loop: Actor = { name: 'ward-loop', kind: 'agent', model: 'claude-sonnet-5', version: '0.3', session: 'rev:ward-loop' };
-    const a = create(s, { assignee: 'ward-loop' });
+    const a = create(s, { assignee: 'ward-loop', needs_human: true });
     triage(s, a.id);
     s.updateTicket(desk, { ticket_id: a.id, note: 'claimed at the desk', status: 'in_progress' });
     // Created directly in_progress: the created event is the claim.
@@ -1030,11 +1053,19 @@ describe('triage rule enforced on claims (H-56)', () => {
     s.updateTicket(relayedHuman, { ticket_id: t.id, note: 'Arthur said to start this now' });
     expect(s.updateTicket(builder, { ticket_id: t.id, note: 'claiming', status: 'in_progress' }).ticket.status).toBe('in_progress');
   });
-  it('creating with in_progress stays legitimate — the rule guards backlog, not work started in the same breath', () => {
+  it('a loop may create with in_progress — the triage rule guards backlog, not work started in the same breath', () => {
     const s = freshStore();
     const t = create(s, { status: 'in_progress' });
     expect(t.status).toBe('in_progress');
     expect(t.assignee).toBe('builder-loop');
+  });
+  it('a desk may file open work but cannot create it already in progress', () => {
+    const s = freshStore();
+    const desk = { ...builder, session: undefined };
+    const open = s.createTicket(desk, { title: 'Desk design', body: 'A bounded handoff for the loop.', workstream: 'helmo-dev', type: 'build' });
+    expect(open.status).toBe('open');
+    expect(() => s.createTicket(desk, { title: 'Desk build', body: 'Work started at the desk.', workstream: 'helmo-dev', type: 'build', status: 'in_progress' })).toThrow(/not meeting work.*leave the ticket for a loop/i);
+    expect(s.listTickets({ limit: 100 })).toHaveLength(1);
   });
   it('an orchestrator may claim its own filing — it is the second pair of eyes', () => {
     const s = freshStore();

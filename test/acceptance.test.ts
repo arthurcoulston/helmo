@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { Store } from '../src/store.js';
 import { Actor } from '../src/types.js';
 
-const builder: Actor = { name: 'mason', kind: 'agent', model: 'gpt-5.6-sol', version: 'codex-cli 0.153.2' };
-const proof: Actor = { name: 'proof', kind: 'agent', model: 'gpt-6-astra', version: 'rev 0.4' };
+const builder: Actor = { name: 'mason', kind: 'agent', model: 'gpt-5.6-sol', version: 'codex-cli 0.153.2', session: 'rev:mason' };
+const proof: Actor = { name: 'proof', kind: 'agent', model: 'gpt-6-astra', version: 'rev 0.4', session: 'rev:proof' };
 const sha = (digit: string) => `helmo@${digit.repeat(40)}`;
 
 function ticket(s: Store, type = 'build') {

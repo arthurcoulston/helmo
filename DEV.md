@@ -46,6 +46,12 @@ orchestrator meetings and the read-only view. Product intent:
   with `needs_human` stays open, is withheld from every agent ready queue and
   reported under `with_human`; both Helmo readings place it below questions in
   “Awaiting you”. This is presence needed, not a decision waiting for relay.
+  Desk claim guard (H-1056): an agent actor with no `session` may file and
+  update work but cannot claim an unmarked ticket, including by creating it
+  `in_progress`; if it needs a ticket, the build belongs to a loop. Marking an
+  open ticket `needs_human` in a separate update is the explicit sitting path.
+  Remote MCP callers deliberately have no machine identity or session, so the
+  same rule treats remote steering as desk work rather than a loop bypass.
   Ready routing rule (H-661): in a
   caller's ready queue a workstream filter scopes only the unassigned pool —
   a ticket assigned to the caller is ready wherever it lives. ANDing the

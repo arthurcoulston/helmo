@@ -13,6 +13,13 @@ const SPEND_ANOMALY_FACTOR = 3; // flag cost > 3x the workstream norm (needs >= 
 const BUDGET_PRESSURE_RATIO = 0.8; // surface a workstream budget once 80% is spent
 const SILENT_ASSIGNEE_HOURS = 168; // 7d without the assignee writing anywhere: a reservation that will not wake on its own
 
+function refuseUnmarkedDeskClaim(actor: Actor, needsHuman: boolean): void {
+  if (actor.kind !== 'agent' || actor.session || needsHuman) return;
+  throw new HelmoError(
+    'If it needs a ticket, it is not meeting work — file the design and leave the ticket for a loop. If Arthur wants it done with him present, first mark the open ticket for a sitting with needs_human: true in a separate update, then claim it.',
+  );
+}
+
 // Instances spawned by the store's own clock carry the store's identity —
 // attributing them to whichever reader triggered materialization would be
 // false provenance.
@@ -1213,6 +1220,7 @@ export class Store {
     }
     if (input.not_before) input = { ...input, not_before: parseNotBefore(input.not_before) };
     const status = input.status ?? 'open';
+    if (status === 'in_progress') refuseUnmarkedDeskClaim(actor, Boolean(input.needs_human));
     if (status === 'in_progress' && !input.assignee) input = { ...input, assignee: actor.name };
     // Workstream seat (H-1026): an unassigned filing is reserved to the
     // stream's seat at the door, so it is ready for that seat's loop from the
@@ -1322,6 +1330,7 @@ export class Store {
           `${t.id} is awaiting_human — its status moves when the human's answer is recorded, and helmo_answer_ticket is how you record it. IF THE HUMAN HAS ANSWERED — in a meeting, at the desk, anywhere — relay it now with helmo_answer_ticket (resolution 'done' closes it, 'resume' reopens it for whoever takes it next); that is a normal thing for any agent to do, not a role you need. Quote their reasoning, not just the choice. If they have NOT answered, leave it: you may still add notes and evidence.`,
         );
       }
+      if (input.status === 'in_progress' && t.status === 'open') refuseUnmarkedDeskClaim(actor, t.needs_human);
       // Triage enforcement (H-56): the ready-queue withholding (H-55) is a
       // rule, not advice — an agent may not claim its own untouched filing
       // directly either. Sits upstream of the reservation checks on purpose:

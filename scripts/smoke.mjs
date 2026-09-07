@@ -17,7 +17,7 @@ const transport = new StdioClientTransport({
   env: {
     ...process.env,
     HELMO_DB: smokeDb,
-    HELMO_ACTOR: JSON.stringify({ name: 'smoke-agent', kind: 'agent', model: 'claude-fable-5', version: '0.1' }),
+    HELMO_ACTOR: JSON.stringify({ name: 'smoke-agent', kind: 'agent', model: 'claude-fable-5', version: '0.1', session: 'rev:smoke-agent' }),
   },
 });
 const client = new Client({ name: 'smoke', version: '0.0.1' });
@@ -120,7 +120,7 @@ assert.equal(acceptance.result.state, 'accepted');
 const cliEnv = {
   ...process.env,
   HELMO_DB: smokeDb,
-  HELMO_ACTOR: JSON.stringify({ name: 'smoke-builder', kind: 'agent', model: 'gpt-5.6-sol', version: 'smoke 1.0' }),
+  HELMO_ACTOR: JSON.stringify({ name: 'smoke-builder', kind: 'agent', model: 'gpt-5.6-sol', version: 'smoke 1.0', session: 'rev:smoke-agent' }),
 };
 const accepted = spawnSync(process.execPath, ['--import', 'tsx', 'src/cli.ts', 'acceptance-check', '--ticket', id, '--refs', JSON.stringify([sourceRef])], {
   cwd: join(import.meta.dirname, '..'), encoding: 'utf8', env: cliEnv,

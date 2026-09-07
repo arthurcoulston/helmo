@@ -12,7 +12,7 @@ import { CLOSED_TAIL, feed, markFor, questionFingerprint, type FeedAsk } from '.
 import { Store } from '../src/store.js';
 import { Actor, Question } from '../src/types.js';
 
-const builder: Actor = { name: 'mason', kind: 'agent', model: 'claude-opus-5', version: '0.5' };
+const builder: Actor = { name: 'mason', kind: 'agent', model: 'claude-opus-5', version: '0.5', session: 'rev:mason' };
 const arthur: Actor = { name: 'Arthur Coulston', kind: 'human' };
 const orch: Actor = { name: 'helmo-orchestrator', kind: 'orchestrator', model: 'claude-fable-5', version: '0.1' };
 

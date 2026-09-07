@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 // otherwise write fiction into the operator's real record.
 const demoDb = process.env.DEMO_DB ?? join(mkdtempSync(join(tmpdir(), 'helmo-demo-')), 'demo.db');
 const repoRoot = join(import.meta.dirname, '..');
+const demoSession = JSON.stringify({ name: 'demo-seed', kind: 'agent', session: 'demo:seed' });
 
 const scout = JSON.stringify({ name: 'scout', kind: 'agent', model: 'claude-sonnet-5', version: '1.0' });
 const forge = JSON.stringify({ name: 'forge', kind: 'agent', model: 'claude-opus-5', version: '1.0' });
@@ -22,7 +23,7 @@ const cli = (...args) =>
   JSON.parse(
     execFileSync('npx', ['tsx', 'src/cli.ts', ...args], {
       cwd: repoRoot,
-      env: { ...process.env, HELMO_DB: demoDb },
+      env: { ...process.env, HELMO_DB: demoDb, HELMO_ACTOR: demoSession },
       encoding: 'utf8',
     }),
   );

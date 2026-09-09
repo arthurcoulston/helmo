@@ -17,6 +17,14 @@ const SILENT_ASSIGNEE_HOURS = 168; // 7d without the assignee writing anywhere: 
 // (H-1126). Deliberately tiny — everything else says what it is for.
 const ACCOUNTED_WORKSTREAMS = new Set(['security']);
 
+// The third accounting path (H-1166): work that serves no named project and no
+// charter objective, but is still plainly justified — Arthur's own direction,
+// keeping the estate safe, keeping it running. The convention always named this
+// category; until now only a body line could say so, which the sweep cannot read.
+// The set is closed on purpose: an enumerated label is a claim a reader can check,
+// where free prose is one more steering field nobody owns (the H-1186 lesson).
+const ACCOUNTING_LABELS = new Set(['acct:direction', 'acct:security', 'acct:estate']);
+
 function refuseUnmarkedDeskClaim(actor: Actor, needsHuman: boolean): void {
   if (actor.kind !== 'agent' || actor.session || needsHuman) return;
   throw new HelmoError(
@@ -811,8 +819,8 @@ export class Store {
     }
 
     // Unaccounted work (H-1126): open, startable work carrying nothing that
-    // says what it is for — no project tag, no obj:OBJ-n label, and not in a
-    // stream whose work accounts for itself. Arthur's ruling at the Monday
+    // says what it is for — no project tag, no obj:OBJ-n label, no acct: label,
+    // and not in a stream whose work accounts for itself. Arthur's ruling at the Monday
     // retrospective is that intent lives in the charter and the roadmap, not
     // in prose steering copied onto Helmo, so the sweeping agent should start
     // from a list rather than a read of the whole queue. The check makes no
@@ -833,12 +841,14 @@ export class Store {
       )
       .all(nowTs.toISOString(), nowTs.toISOString()) as { id: string; workstream: string; labels: string }[]) {
       if (ACCOUNTED_WORKSTREAMS.has(r.workstream)) continue;
-      if ((JSON.parse(r.labels) as string[]).some((l) => /^obj:OBJ-\d+$/i.test(l.trim()))) continue;
+      const labels = (JSON.parse(r.labels) as string[]).map((l) => l.trim());
+      if (labels.some((l) => /^obj:OBJ-\d+$/i.test(l))) continue;
+      if (labels.some((l) => ACCOUNTING_LABELS.has(l.toLowerCase()))) continue;
       if (this.isBlocked(r.id)) continue;
       findings.push({
         check: 'unaccounted_work',
         ticket_id: r.id,
-        detail: `'${r.workstream}' work filed by ${this.filingCreator(r.id) ?? '?'} with no project tag and no obj: label — nothing on it says what it is for`,
+        detail: `'${r.workstream}' work filed by ${this.filingCreator(r.id) ?? '?'} with no project tag, no obj: label and no acct: label — nothing on it says what it is for`,
       });
     }
 

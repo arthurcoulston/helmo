@@ -302,10 +302,14 @@ orchestrator meetings and the read-only view. Product intent:
   is the feature.
 - Every ticket says what accounts for it (H-1126): a `project` tag when it
   belongs to a named project, an `obj:OBJ-n` label when it serves a charter
-  objective directly, or a body line naming the justification (the human's
-  direction, security, keeping the estate running). This is a convention, not
-  a schema — nothing is rejected for lacking it; the `unaccounted_work`
-  hygiene check simply lists the work nobody can trace back to a purpose.
+  objective directly, or one of three `acct:` labels for the third category —
+  `acct:direction`, `acct:security`, `acct:estate` (H-1166). That set is
+  closed: an unrecognised `acct:` spelling accounts for nothing, which is the
+  point — a category a reader can check beats prose the sweep cannot read. The
+  label names the category; the body still names the reason. This is a
+  convention, not a schema — nothing is rejected for lacking it; the
+  `unaccounted_work` hygiene check simply lists the work nobody can trace back
+  to a purpose.
 - Workstream budgets are disclosure, never enforcement: nothing in the store
   may block a write because a budget is spent — recording reality always wins.
   The agent-kind rejection in `setWorkstream` is the one hard rule (an agent

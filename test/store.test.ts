@@ -1834,7 +1834,7 @@ describe('unaccounted work (H-1126): nothing on the ticket says what it is for',
     const s = freshStore();
     const t = create(s);
     expect(s.hygiene().find((f) => f.check === 'unaccounted_work' && f.ticket_id === t.id)?.detail)
-      .toBe("'helmo-dev' work filed by builder-loop with no project tag and no obj: label — nothing on it says what it is for");
+      .toBe("'helmo-dev' work filed by builder-loop with no project tag, no obj: label and no acct: label — nothing on it says what it is for");
   });
 
   it('a project tag accounts for it, and clearing the tag brings it back', () => {
@@ -1851,6 +1851,27 @@ describe('unaccounted work (H-1126): nothing on the ticket says what it is for',
     const decorated = create(s, { labels: ['urgent', 'objective'] });
     expect(unaccounted(s)).toEqual([decorated.id]);
     expect(unaccounted(s)).not.toContain(charter.id);
+  });
+
+  // H-1166: the third category — justified, but by nothing a tag or an
+  // objective can carry. Before this the only way to say so was a body line,
+  // which the check cannot read, so honestly-accounted work was permanent noise.
+  it('an acct: label accounts for the third category, and removing it brings the ticket back', () => {
+    const s = freshStore();
+    const direction = create(s, { labels: ['acct:direction'] });
+    const running = create(s, { labels: ['acct:estate'] });
+    expect(unaccounted(s)).toEqual([]);
+    s.updateTicket(reviewer, { ticket_id: direction.id, note: 'label was wrong', labels: [] });
+    expect(unaccounted(s)).toEqual([direction.id]);
+    expect(unaccounted(s)).not.toContain(running.id);
+  });
+
+  it('the acct: set is closed: an unrecognised category accounts for nothing', () => {
+    const s = freshStore();
+    const invented = create(s, { labels: ['acct:interesting'] });
+    const cased = create(s, { labels: ['ACCT:Security'] }); // recognised: case and spacing are forgiven
+    expect(unaccounted(s)).toEqual([invented.id]);
+    expect(unaccounted(s)).not.toContain(cased.id);
   });
 
   it('keeping the estate safe accounts for itself: the security stream is never reported', () => {

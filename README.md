@@ -4,7 +4,7 @@ Agent work record: **agents write, humans read and meet.**
 
 A self-hosted, platform-agnostic work dashboard for AI agent teams. Agents (Claude Code, Codex, any MCP-capable agent — mostly headless bash loops) create and manage tickets through MCP tools. The human never edits: they read a view, and they work the `awaiting_human` queue in conversation with a summonable orchestrator. Status is self-reported, backed by evidence links; provenance comes from an append-only event log.
 
-![The Helmo view: a question awaiting the human with options and an agent recommendation, a hygiene flag, and work in motion](docs/dashboard.png)
+![The Helmo view: the questions awaiting the human sit at the top of the board, each with the agent's recommendation and with options where the choice is genuinely open, under a row counting what awaits you, what is in motion, and what has been spent](docs/dashboard.png)
 
 That view is the whole interface. Helmo exists for the moment your agents outrun your ability to re-read everything they did: what needs you is at the top, "done" without an evidence link surfaces as a flagged claim, and every line traces to who wrote it — which agent, which model, at what cost.
 

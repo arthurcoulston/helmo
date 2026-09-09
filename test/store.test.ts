@@ -732,12 +732,12 @@ describe('renameWorkstream', () => {
     triage(s, a.id);
     s.updateTicket(builder, { ticket_id: a.id, note: 'claimed', status: 'in_progress' });
     s.updateTicket(builder, { ticket_id: a.id, note: 'done', status: 'done', evidence: [{ kind: 'file', ref: '/tmp/x' }] });
-    s.setWorkstream(orch, { name: 'old-name', goal: 'ship it', budget_usd: 10 });
+    s.setWorkstream(orch, { name: 'old-name', budget_usd: 10, seat: 'builder-loop' });
     const res = s.renameWorkstream(orch, { from: 'old-name', to: 'new-name', note: 'product renamed' });
     expect(res.moved).toBe(2);
     expect(s.getTicket(a.id).workstream).toBe('new-name');
     expect(s.getTicket(b.id).workstream).toBe('new-name');
-    expect(s.getWorkstreamInfo('new-name').goal).toBe('ship it');
+    expect(s.getWorkstreamInfo('new-name')).toMatchObject({ budget_usd: 10, seat: 'builder-loop' });
     const before = s.dumpState();
     s.rebuild();
     expect(s.dumpState()).toEqual(before);
@@ -745,8 +745,8 @@ describe('renameWorkstream', () => {
   it('refuses a rename that would collide two steering rows, and an empty source', () => {
     const s = freshStore();
     create(s, { workstream: 'x' });
-    s.setWorkstream(orch, { name: 'x', goal: 'gx' });
-    s.setWorkstream(orch, { name: 'y', goal: 'gy' });
+    s.setWorkstream(orch, { name: 'x', budget_usd: 1 });
+    s.setWorkstream(orch, { name: 'y', budget_usd: 2 });
     expect(() => s.renameWorkstream(orch, { from: 'x', to: 'y', note: 'merge' })).toThrow(/steering/);
     expect(() => s.renameWorkstream(orch, { from: 'ghost', to: 'z', note: 'typo' })).toThrow(/nothing to rename/);
   });
@@ -1007,19 +1007,30 @@ describe('recurring templates (lazy materialization)', () => {
 });
 
 describe('workstream steering (H-55)', () => {
-  it('agents cannot set goals or budgets; the human/orchestrator can', () => {
+  it('agents cannot set budgets; the human/orchestrator can', () => {
     const s = freshStore();
-    expect(() => s.setWorkstream(builder, { name: 'alpha', goal: 'ship it' })).toThrow(/operator steering/);
-    const w = s.setWorkstream(orch, { name: 'alpha', goal: 'the operator has a confirmed shortlist', budget_usd: 50 });
-    expect(w.goal).toBe('the operator has a confirmed shortlist');
+    expect(() => s.setWorkstream(builder, { name: 'alpha', budget_usd: 50 })).toThrow(/operator steering/);
+    const w = s.setWorkstream(orch, { name: 'alpha', budget_usd: 50 });
     expect(w.budget_usd).toBe(50);
     expect(w.remaining_usd).toBe(50);
   });
+  it('a goal is refused for every actor kind, and never surfaces from the row (H-1186)', () => {
+    // Standing prose in a store field is agent context outside caps and
+    // review; the seat's profile or the project body says what done means.
+    const s = freshStore();
+    const human: Actor = { name: 'arthur', kind: 'human' };
+    for (const who of [builder, orch, human]) {
+      expect(() => s.setWorkstream(who, { name: 'alpha', goal: 'ship it' } as never)).toThrow(/retired/);
+    }
+    s.setWorkstream(orch, { name: 'alpha', budget_usd: 5 });
+    expect(s.getWorkstreamInfo('alpha')).not.toHaveProperty('goal');
+    expect(s.listWorkstreamInfo().find((w) => w.name === 'alpha')).not.toHaveProperty('goal');
+  });
   it('partial updates keep the other field; empty writes are rejected', () => {
     const s = freshStore();
-    s.setWorkstream(orch, { name: 'alpha', goal: 'the goal', budget_usd: 50 });
+    s.setWorkstream(orch, { name: 'alpha', seat: 'builder-loop', budget_usd: 50 });
     const w = s.setWorkstream(orch, { name: 'alpha', budget_usd: 80 });
-    expect(w.goal).toBe('the goal');
+    expect(w.seat).toBe('builder-loop');
     expect(w.budget_usd).toBe(80);
     expect(() => s.setWorkstream(orch, { name: 'alpha' })).toThrow(/noise/);
   });
@@ -1039,7 +1050,7 @@ describe('workstream steering (H-55)', () => {
   it('listWorkstreamInfo covers streams with tickets and streams only steered', () => {
     const s = freshStore();
     create(s, { workstream: 'alpha' });
-    s.setWorkstream(orch, { name: 'beta', goal: 'future work' });
+    s.setWorkstream(orch, { name: 'beta', budget_usd: 1 });
     const names = s.listWorkstreamInfo().map((w) => w.name);
     expect(names).toContain('alpha');
     expect(names).toContain('beta');
@@ -1346,7 +1357,7 @@ describe('THE INVARIANT: tickets are a materialized view of events', () => {
     s.recordSpend(builder, b.id, { tokens: 12345, cost_usd: 1.25, note: 'metered post-close by the harness' });
     s.createTicket(builder, { title: 'Standing sweep', body: 'recurring', workstream: 'helmo-dev', type: 'ops', schedule: 'every 1h' });
     expect(s.materializeDue(new Date(Date.now() + 61 * 60_000)).length).toBe(1);
-    s.setWorkstream(orch, { name: 'helmo-dev', goal: 'the gala happens', budget_usd: 100 });
+    s.setWorkstream(orch, { name: 'helmo-dev', budget_usd: 100 });
     s.setWorkstream(orch, { name: 'helmo-dev', budget_usd: 120 }); // partial update must replay identically
     s.disposeHygieneFinding(orch, { check: 'spend_anomaly', ticket_id: b.id, reason: 'whole-session metering; explained in the 08-06 meeting' });
 
@@ -1792,13 +1803,13 @@ describe('workstream seats (H-1026)', () => {
     s.rebuild();
     expect(s.getTicket(t.id)).toMatchObject({ workstream: 'rev-dev', assignee: 'builder-loop' });
   });
-  it("seat '' clears; goal and budget survive a seat write; replay reproduces it", () => {
+  it("seat '' clears; the budget survives a seat write; replay reproduces it", () => {
     const s = freshStore();
-    s.setWorkstream(orch, { name: 'rev-dev', goal: 'g', budget_usd: 5 });
+    s.setWorkstream(orch, { name: 'rev-dev', budget_usd: 5 });
     s.setWorkstream(orch, { name: 'rev-dev', seat: 'builder-loop' });
-    expect(s.getWorkstreamInfo('rev-dev')).toMatchObject({ goal: 'g', budget_usd: 5, seat: 'builder-loop' });
+    expect(s.getWorkstreamInfo('rev-dev')).toMatchObject({ budget_usd: 5, seat: 'builder-loop' });
     s.setWorkstream(orch, { name: 'rev-dev', seat: '' });
-    expect(s.getWorkstreamInfo('rev-dev')).toMatchObject({ goal: 'g', budget_usd: 5, seat: null });
+    expect(s.getWorkstreamInfo('rev-dev')).toMatchObject({ budget_usd: 5, seat: null });
     s.setWorkstream(orch, { name: 'rev-dev', seat: 'builder-loop' });
     s.rebuild();
     expect(s.getWorkstreamInfo('rev-dev').seat).toBe('builder-loop');

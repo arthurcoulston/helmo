@@ -1186,7 +1186,7 @@ export class Store {
       if (!n && !steering) throw new HelmoError(`No tickets or steering under '${from}' — nothing to rename.`);
       if (steering && this.db.prepare('SELECT 1 FROM workstreams WHERE name = ?').get(to)) {
         throw new HelmoError(
-          `Both '${from}' and '${to}' carry steering — merge goal/budget deliberately via workstream-set, then rename.`,
+          `Both '${from}' and '${to}' carry steering — merge budget/seat deliberately via workstream-set, then rename.`,
         );
       }
       this.append(now(), `ws:${to}`, 'workstream_renamed', actor, { from, to, tickets: n, note: input.note });
@@ -1201,7 +1201,7 @@ export class Store {
   }
 
   /** One workstream with its steering and spend-to-date. Exists for names with
-   *  tickets but no steering row too — goal/budget are simply null there. */
+   *  tickets but no steering row too — budget/seat are simply null there. */
   getWorkstreamInfo(name: string): WorkstreamInfo {
     const row = this.db.prepare('SELECT * FROM workstreams WHERE name = ?').get(name) as Workstream | undefined;
     const spent = this.db
@@ -1210,7 +1210,6 @@ export class Store {
     const budget = row?.budget_usd ?? null;
     return {
       name,
-      goal: row?.goal ?? null,
       budget_usd: budget,
       seat: row?.seat ?? null,
       updated_at: row?.updated_at ?? '',
@@ -1267,30 +1266,36 @@ export class Store {
     }).immediate();
   }
 
-  /** Set a workstream's goal and/or budget — the human's steering (H-55).
+  /** Set a workstream's budget and/or seat — the human's steering (H-55).
    *  Agent-kind writes are rejected in the store, not just the tool docs: an
    *  agent must never set or raise the budget of the stream it draws from.
    *  Events ride the log under ticket_id `ws:<name>` so steering stays
-   *  derivable and attributed like everything else. */
-  setWorkstream(actor: Actor, input: { name: string; goal?: string; budget_usd?: number; seat?: string }): WorkstreamInfo {
+   *  derivable and attributed like everything else. Steering is numbers and
+   *  names only: a prose `goal` was a standing instruction every agent read
+   *  on every queue pass, outside caps and review — retired H-1186, and a
+   *  write carrying one is refused so the channel cannot quietly reopen. */
+  setWorkstream(actor: Actor, input: { name: string; budget_usd?: number; seat?: string }): WorkstreamInfo {
     validateActor(actor);
+    if ('goal' in input) {
+      throw new HelmoError(
+        'Workstream goals were retired (H-1186): standing prose in a store field is agent context outside caps and review. Intent lives in the seat\'s profile or the project body; steering here is budget_usd and seat only.',
+      );
+    }
     if (actor.kind === 'agent') {
       throw new HelmoError(
-        'Workstream goals, budgets and seats are operator steering — writable only by kind "human" or "orchestrator" (relaying a decision the human stated explicitly). An agent setting its own stream\'s goal, budget or seat is the failure this field exists to prevent.',
+        'Workstream budgets and seats are operator steering — writable only by kind "human" or "orchestrator" (relaying a decision the human stated explicitly). An agent setting its own stream\'s budget or seat is the failure this field exists to prevent.',
       );
     }
     if (!input.name?.trim()) throw new HelmoError('name is required: which workstream is being steered.');
-    if (input.goal === undefined && input.budget_usd === undefined && input.seat === undefined) {
-      throw new HelmoError('Provide goal, budget_usd and/or seat — an empty steering write is noise.');
+    if (input.budget_usd === undefined && input.seat === undefined) {
+      throw new HelmoError('Provide budget_usd and/or seat — an empty steering write is noise.');
     }
     if (input.budget_usd !== undefined && !(input.budget_usd >= 0)) {
       throw new HelmoError('budget_usd must be a non-negative number (0 clears the pressure checks but keeps disclosure).');
     }
-    rejectSwallowedMarkup({ goal: input.goal });
     return this.db.transaction(() => {
       const ts = now();
       const payload: Record<string, unknown> = { name: input.name };
-      if (input.goal !== undefined) payload['goal'] = input.goal;
       if (input.budget_usd !== undefined) payload['budget_usd'] = input.budget_usd;
       // '' clears the seat, matching the empty-string convention for clearing
       // project, not_before, and a named handoff receiver.
@@ -1941,7 +1946,8 @@ export class Store {
 
   private applyWorkstreamSet(ts: string, p: Record<string, unknown>): void {
     // COALESCE keeps the field a partial write did not carry — replaying the
-    // log reproduces exactly the same partial-update semantics.
+    // log reproduces exactly the same partial-update semantics. Historical
+    // payloads still carry `goal`; it lands in its column and nothing reads it.
     this.db
       .prepare(
         `INSERT INTO workstreams (name, goal, budget_usd, seat, updated_at) VALUES (?, ?, ?, ?, ?)

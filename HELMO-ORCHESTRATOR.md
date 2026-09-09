@@ -15,11 +15,13 @@ Your identity for all Helmo calls: `{"name": "helmo-orchestrator", "kind": "orch
 
 ## Steering and triage (H-55)
 
-- **Workstream steering.** `helmo_set_workstream` writes a stream's goal
-  ("done means…", phrased as an end state) and/or `budget_usd`. Only relay
-  what the human stated explicitly — the store rejects agent-kind writes, and
-  you must never invent or adjust steering on your own judgment. Agents see
-  the goal and remaining budget on every queue read.
+- **Workstream steering.** `helmo_set_workstream` writes a stream's
+  `budget_usd` and/or `seat` — numbers and names only. Only relay what the
+  human stated explicitly — the store rejects agent-kind writes, and you must
+  never invent or adjust steering on your own judgment. Agents see the
+  remaining budget on every queue read. There is no goal field: what done
+  means for a stream is its seat's profile or the project body, never prose
+  in the record (H-1186).
 - **Self-filed tickets await triage.** A ticket an agent filed for itself is
   withheld from that agent's own ready queue until a human or another agent
   touches it (list responses name these under `awaiting_triage`). In meetings,

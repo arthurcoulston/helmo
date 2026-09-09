@@ -109,10 +109,11 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
           agent_chain: store.agentChain(ticket_id),
           last_answer: store.lastAnswer(ticket_id),
           product_acceptance: store.productAcceptance(ticket_id),
-          // The stream's steering rides along so the claimer weighs the ticket
-          // against the goal and budget before spending anything (H-55).
-          ...(ws.goal || ws.budget_usd !== null
-            ? { workstream_steering: { ...(ws.goal ? { goal: ws.goal } : {}), ...(ws.budget_usd !== null ? { budget_usd: ws.budget_usd, spent_usd: ws.spent_usd, remaining_usd: ws.remaining_usd } : {}) } }
+          // The stream's budget rides along so the claimer weighs the ticket
+          // against it before spending anything (H-55). Numbers only: a prose
+          // goal here was standing instruction outside caps and review (H-1186).
+          ...(ws.budget_usd !== null
+            ? { workstream_steering: { budget_usd: ws.budget_usd, spent_usd: ws.spent_usd, remaining_usd: ws.remaining_usd } }
             : {}),
         };
         if (format === 'history') return ok({ ...base, events: store.getEvents(ticket_id) });
@@ -130,7 +131,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
         `Query tickets. Key filters: ready: true (open tickets with no open blockers that are unassigned or reserved for you — use this to find work you can start), status, workstream, assignee, type, priority_max. Returns compact rows sorted live work first (done and cancelled last), then priority, then age; paginated (limit default 20, cursor = offset).\n\n` +
         `Start every loop iteration with {assignee: <your name>} — this returns both work you're mid-way through (in_progress) and work handed to you that you haven't started (open + reserved). Then {ready: true} for new work. Answered questions come back as unassigned open tickets — the ready queue surfaces them; you don't need to have been the agent who asked.\n\n` +
         `Triage duty: if you pass over a ready ticket BECAUSE it needs something only the human can supply (a missing input, an unrecorded location, a decision), do not route around it silently — file its question with helmo_return_to_human first (no claim needed), then take other work. Helmo cannot see that kind of blockage; only you can. A known-blocked ticket left quietly in the ready queue stalls until someone else rediscovers what you already knew.\n\n` +
-        `The response's 'workstreams' carry the human's steering where set: 'goal' states what done means for the whole stream — check candidate work against it, and treat a met goal as a stop signal, not an invitation to polish; 'budget_usd'/'spent_usd'/'remaining_usd' disclose the stream's budget, which is a plan — front-load the highest-value work so stopping at any point is safe. Ready-queue triage rule: tickets you filed yourself are withheld from your own ready queue until a human, an orchestrator relaying the human, or another agent touches them; they appear under 'awaiting_triage' (and stay available to everyone else). Date-gated work appears under 'gated'. Work needing the operator present appears under 'with_human'. Deliberate spending holds appear under 'capacity_held': they stay visible but never enter the executable queue until a separate update releases the hold.`,
+        `The response's 'workstreams' carry each stream's seat and budget where set: 'budget_usd'/'spent_usd'/'remaining_usd' disclose the stream's budget, which is a plan — front-load the highest-value work so stopping at any point is safe. What done means for a stream is never a field here: it is the seat's profile or the project body. Ready-queue triage rule: tickets you filed yourself are withheld from your own ready queue until a human, an orchestrator relaying the human, or another agent touches them; they appear under 'awaiting_triage' (and stay available to everyone else). Date-gated work appears under 'gated'. Work needing the operator present appears under 'with_human'. Deliberate spending holds appear under 'capacity_held': they stay visible but never enter the executable queue until a separate update releases the hold.`,
       inputSchema: {
         ready: z.boolean().optional(),
         status: z.enum(STATUSES).optional(),
@@ -151,7 +152,6 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
         const workstreams = store.listWorkstreamInfo().map((w) => ({
           name: w.name,
           ...(w.seat ? { seat: w.seat } : {}),
-          ...(w.goal ? { goal: w.goal } : {}),
           ...(w.budget_usd !== null ? { budget_usd: w.budget_usd, spent_usd: w.spent_usd, remaining_usd: w.remaining_usd } : {}),
         }));
         const awaitingTriage = filter.ready && caller ? store.selfFiledPending(caller) : [];
@@ -350,11 +350,10 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
     'helmo_set_workstream',
     {
       description:
-        `Set a workstream's goal ("done means…"), budget_usd, and/or seat — the human's steering surface. Call this ONLY to relay a decision the human stated explicitly; the write requires actor kind 'human' or 'orchestrator', and agent-kind writes are rejected: an agent must never set or raise the goal or budget of the stream it draws work from, nor route the stream to itself.\n\n` +
-        `The goal belongs only to a STANDING stream with no project behind it — a duty that runs indefinitely, where nothing else states what done means. A stream whose tickets carry project tags gets no goal: the project body is the intent, and a second hand-maintained copy of it drifts and then contradicts (H-1126). Where it is right, phrase it as the end state, not activities (e.g. "the operator's calendars are always accurate two months out", not "reconcile calendars"). The budget is a disclosed plan, not a kill switch: agents see remaining balance on every queue read and are expected to front-load the highest-value work and close out honestly when it is spent. The seat is the agent every unassigned filing in the stream (recurring instances included) is reserved to at creation, so a loop bound elsewhere still finds it; a stream with no seat is ready to no loop, and hygiene reports it as unseated_pool. Partial updates are fine — a field you omit keeps its current value; seat '' clears the seat.`,
+        `Set a workstream's budget_usd and/or seat — the human's steering surface. Call this ONLY to relay a decision the human stated explicitly; the write requires actor kind 'human' or 'orchestrator', and agent-kind writes are rejected: an agent must never set or raise the budget of the stream it draws work from, nor route the stream to itself.\n\n` +
+        `Steering is numbers and names only. There is no goal field: what done means for a stream lives in the seat's profile or the project body, never in a store field every agent reads on every queue pass (H-1186). The budget is a disclosed plan, not a kill switch: agents see remaining balance on every queue read and are expected to front-load the highest-value work and close out honestly when it is spent. The seat is the agent every unassigned filing in the stream (recurring instances included) is reserved to at creation, so a loop bound elsewhere still finds it; a stream with no seat is ready to no loop, and hygiene reports it as unseated_pool. Partial updates are fine — a field you omit keeps its current value; seat '' clears the seat.`,
       inputSchema: {
         name: z.string().describe('The workstream being steered'),
-        goal: z.string().optional().describe('What done means for the whole stream, as an end state'),
         budget_usd: z.number().min(0).optional().describe('Total budget for the stream in USD; spend already recorded counts against it'),
         seat: z.string().optional().describe("Agent name unassigned filings here are reserved to at creation; '' clears it"),
         actor: actorSchema,

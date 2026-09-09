@@ -177,12 +177,12 @@ export interface Notice {
   updated_at: string;
 }
 
-/** Operator steering for a stream of work (H-55). `goal` is what "done" means
- *  for the whole stream — the thing that makes "is this still worth doing?"
- *  answerable. `budget_usd` is a disclosed plan, not a kill switch. */
+/** Operator steering for a stream of work (H-55): numbers and names only.
+ *  `budget_usd` is a disclosed plan, not a kill switch. There is no `goal`:
+ *  standing prose in a store field is agent context outside caps and review
+ *  (retired H-1186); the column persists for replay only. */
 export interface Workstream {
   name: string;
-  goal: string | null;
   budget_usd: number | null;
   seat: string | null; // the agent unassigned filings here are reserved to at creation (H-1026)
   updated_at: string;

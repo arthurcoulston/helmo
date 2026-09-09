@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 
 // Stages the fictional board behind the README screenshot (docs/dashboard.png):
 // a small agent team mid-launch, with every surface the view renders — a
-// question awaiting the human, evidence-backed dones, metered spend, workstream
-// steering, a hygiene flag, and a recurring template.
+// question awaiting the human, evidence-backed dones, metered spend, a
+// workstream budget, a hygiene flag, and a recurring template.
 //
 // Never fall through to the default (live) database: an unset DEMO_DB would
 // otherwise write fiction into the operator's real record.
@@ -32,7 +32,6 @@ const create = (actor, ...args) => cli('create', '--actor', actor, ...args).id;
 
 cli(
   'workstream-set', '--actor', orch, '--name', 'site-launch',
-  '--goal', 'The new site is live on the apex domain with analytics and signup working',
   '--budget-usd', '120',
 );
 

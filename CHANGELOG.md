@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Workstream `goal` retired (H-1186): steering fields carry numbers and names
+  only. No tool input, CLI flag, response field, or dashboard section carries
+  a goal; a write naming one is refused; the response shapes are pinned to an
+  allowlist. The column and historical events remain for exact replay.
+
 ## v0.3.0 — 2026-09-06
 
 ### Work routing and stewardship

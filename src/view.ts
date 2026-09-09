@@ -308,25 +308,6 @@ function groomStrip(findings: HygieneFinding[]): string {
   </section>`;
 }
 
-// Operator steering (H-55): only workstreams the human has actually steered
-// appear — an unsteered stream has nothing to show.
-function steeringStrip(): string {
-  const rows = store.listWorkstreamInfo().filter((w) => w.goal || w.budget_usd !== null);
-  if (!rows.length) return '';
-  return `<section class="groom"><h2>Workstream steering</h2>
-    ${rows
-      .map((w) => {
-        const budget =
-          w.budget_usd !== null
-            ? `<span class="spend">$${w.spent_usd.toFixed(2)} of $${w.budget_usd.toFixed(2)} spent</span>`
-            : w.spent_usd ? `<span class="spend">$${w.spent_usd.toFixed(2)} spent</span>` : '';
-        return `<p class="gitem"><span class="tid">${esc(w.name)}</span>
-          ${w.goal ? `<span class="gdetail">done means: ${esc(w.goal)}</span>` : ''} ${budget}</p>`;
-      })
-      .join('')}
-  </section>`;
-}
-
 function awaitingSection(awaiting: Ticket[], withHuman: Ticket[]): string {
   const count = awaiting.length + withHuman.length;
   return `<section class="hero" data-helmo-section="awaiting" data-count="${count}">
@@ -402,7 +383,6 @@ ${awaitingHtml}
 
 ${groomStrip(store.hygiene())}
 
-${steeringStrip()}
 
 ${motion.length ? `<section><h2>In motion</h2>${motion.map(motionCard).join('')}</section>` : ''}
 

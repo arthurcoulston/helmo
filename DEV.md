@@ -10,11 +10,10 @@ orchestrator meetings and the read-only view. Product intent:
 - `store.ts` — the heart: SQLite store (better-sqlite3), append-only event log
   with a global `seq` cursor (Rev's wake signal rides on it), ticket
   materialization, blocking/ready computation, actor validation. Stop
-  discipline (H-55): workstream steering (goal + budget_usd, human/orchestrator
-  writes only, evented as `workstream_set` under `ws:<name>`; since H-1126 a
-  `goal` belongs only to a STANDING stream with no project behind it — where
-  tickets carry project tags the project body is the intent, and a second copy
-  of it drifts) and the ready-
+  discipline (H-55): workstream steering (budget_usd + seat, human/orchestrator
+  writes only, evented as `workstream_set` under `ws:<name>`; numbers and
+  names only — the prose `goal` was retired in H-1186, see the roadmap seam
+  below) and the ready-
   queue triage rule — a ticket is withheld from its own filer's ready queue
   until another actor touches it (scheduler instances are judged by their
   template; scheduler and `spend` events never count — clock and meter are
@@ -68,7 +67,7 @@ orchestrator meetings and the read-only view. Product intent:
   work. Returning to the unassigned pool is still real and now explicit:
   `handoff_to: ''`, spelled the way `project`/`not_before` already clear.
   Workstream seats (H-1026, H-1096): a workstream may carry a `seat` — operator
-  steering like goal and budget, set by `workstream-set --seat` — and every
+  steering like the budget, set by `workstream-set --seat` — and every
   unassigned filing in it, recurring instances included, is reserved to that
   seat at creation. Clearing a named receiver, resuming a human-returned ticket,
   or moving unassigned work into a seated stream applies the same default; the
@@ -365,6 +364,20 @@ and together a public API commitment — resist widening past them:
   exactly — the record is the record. What replaces it: agents take the work
   routed to them, and whether that work is accounted for is the
   `unaccounted_work` sweep below.
+- the workstream `goal` — RETIRED (H-1186, Arthur's ruling 2026-09-08). It
+  was the same shape as the notice one level down: free prose in a store
+  column, no owner, no cap, no review seat, read as standing instruction by
+  every agent on every queue read and written into every Rev iteration
+  prompt. H-1126 scoped it to standing streams; the one survivor (calendar)
+  duplicated its seat's profile nearly word for word. The invariant now:
+  **steering fields carry numbers and names only** (`budget_usd`, `seat`).
+  What done means for a stream lives in the seat's profile or the project
+  body — capped, reviewed, owned files — never in a field. `setWorkstream`
+  refuses a `goal` key outright; `test/tools-surface.test.ts` pins the
+  `workstreams` row and `workstream_steering` shapes to an allowlist so a new
+  string field fails the suite; the dashboard's "Workstream steering" section
+  is gone. The `goal` column and historical `workstream_set` payloads remain
+  for exact replay; nothing reads them.
 
 ## The estate design tokens (R-11 H-714)
 

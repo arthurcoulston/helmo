@@ -8,6 +8,7 @@ import { Actor } from '../src/types.js';
 import { ANSWER_HEADER } from '../src/answer.js';
 
 const builder: Actor = { name: 'mason', kind: 'agent', model: 'test', version: '1', session: 'rev:mason' };
+const orch: Actor = { name: 'helmo-orchestrator', kind: 'orchestrator', model: 'test', version: '1' };
 
 describe('Awaiting-you section route', () => {
   const dir = mkdtempSync(join(tmpdir(), 'helmo-section-'));
@@ -38,6 +39,9 @@ describe('Awaiting-you section route', () => {
       if_unanswered: 'The landing stays split.',
     });
     seed.updateTicket(builder, { ticket_id: ticket.id, note: 'last <recorded> & update' });
+    // A budgeted stream is exactly what the retired "Workstream steering"
+    // section used to render (H-1186); the whole page below must not.
+    seed.setWorkstream(orch, { name: 'estate-ui', budget_usd: 10 });
     seed.close();
 
     view = spawn(process.execPath, ['--import', 'tsx', 'src/view.ts'], {
@@ -85,6 +89,11 @@ describe('Awaiting-you section route', () => {
 
     const unknown = await fetch(`http://127.0.0.1:${port}/?section=missing`);
     expect(unknown.status).toBe(404);
+
+    const whole = await (await fetch(`http://127.0.0.1:${port}/`)).text();
+    expect(whole).toContain('Choose the front door');
+    expect(whole).not.toContain('Workstream steering');
+    expect(whole).not.toContain('done means');
 
     const nonce = html.match(/data-answer="([0-9a-f]{32})"/)?.[1];
     const fingerprint = html.match(/data-ask="([0-9a-f]{16})"/)?.[1];

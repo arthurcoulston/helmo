@@ -463,6 +463,17 @@ ${ESTATE_TOKENS}
 :root.light { color-scheme: light; }
 :root.dark { color-scheme: dark; }
 * { box-sizing: border-box; }
+/* Every string on this page came out of the store, and the store is full of
+   absolute paths, commit refs and URLs — tokens with no space to break at. One
+   of them in a phone-width column pushes the whole document sideways, and the
+   check that catches it can only point at the text, never at an element, so it
+   is a slow thing to find. Declared once, at the root, because three selectors
+   carried this and .situation did not, which is precisely how it happened
+   again (R-11 H-1176). Value anywhere rather than break-word: only anywhere
+   also lowers min-content, which is what lets a grid or flex track shrink to
+   the box instead of being held open by the longest ref inside it. Anything
+   that must stay on one line says white-space: nowrap, and that still wins. */
+:root { overflow-wrap: anywhere; }
 body { margin: 0 auto; padding: 18px 16px 48px; max-width: 1080px; background: var(--page); color: var(--ink);
   font: 14px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
 .section-reading { padding: 0; max-width: none; }
@@ -483,7 +494,7 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; color: 
 .tid { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--ink-3); white-space: nowrap; }
 .spend { font-variant-numeric: tabular-nums; color: var(--ink-3); font-size: 12px; white-space: nowrap; }
 .badge { display: inline-block; max-width: 100%; font-size: 11px; line-height: 1.35; padding: 2px 7px; border-radius: 999px;
-  border: 1px solid var(--hairline); white-space: normal; overflow-wrap: anywhere; vertical-align: middle; }
+  border: 1px solid var(--hairline); white-space: normal; vertical-align: middle; }
 .badge.neutral { color: var(--ink-2); }
 .badge.warning { color: var(--amber-ink); background: var(--amber-wash); border-color: transparent; }
 .badge.serious { color: var(--serious); }
@@ -575,16 +586,16 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; color: 
 .rtitle { font-weight: 500; }
 .rmeta { flex-basis: 100%; text-align: left; }
 .evrow { flex-basis: 100%; display: flex; gap: 12px; flex-wrap: wrap; }
-.ev { font-size: 12px; color: var(--ink-2); min-width: 0; overflow-wrap: anywhere; }
+.ev { font-size: 12px; color: var(--ink-2); min-width: 0; }
 a.ev { color: var(--link); text-decoration: none; }
 a.ev:hover { text-decoration: underline; }
 
 /* ---- shared detail ---- */
 details.more { margin-top: 10px; }
 details.more summary { font-size: 12px; color: var(--ink-3); cursor: pointer; }
-/* pre-wrap alone breaks at spaces, and bodies carry absolute paths and refs
-   that have none — at 390px one of those pushes the whole document wide. */
-.body { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; color: var(--ink-2); font-size: 13px; background: var(--page);
+/* pre-wrap keeps the newlines a body was written with; it is the :root rule
+   above that lets the long refs inside it break. */
+.body { white-space: pre-wrap; min-width: 0; color: var(--ink-2); font-size: 13px; background: var(--page);
   border: 1px solid var(--hairline); border-radius: var(--radius-inner); padding: 10px 14px; margin: 8px 0; }
 .trow .body { background: var(--surface); }
 .uncertain { color: var(--serious); font-size: 13px; margin: 6px 0; }

@@ -240,6 +240,14 @@ orchestrator meetings and the read-only view. Product intent:
   shell keeps an embedded page in theme. `npm run smoke` in the estate repo
   drives this page and the other products at 390px in both themes. Run it
   after touching this file's HTML or CSS.
+  Every string on the page is store text carrying paths, refs and URLs, so
+  `:root { overflow-wrap: anywhere; }` lets any of them break — declared once
+  rather than per selector, because three selectors had it and `.situation` did
+  not, and one path in a phone-width column dragged the whole document to
+  420px (H-1176). Anything that must stay on one line says
+  `white-space: nowrap`, which still wins. `view-responsive.test.ts` asserts
+  the rule directly: the estate smoke only sees the defect while some live
+  ticket happens to carry a long path.
 - Evidence ref form (H-95): commit = `repo@sha` (`crew@24e8003`), one commit
   per item; file = absolute or `repo:relative/path`, never bare-relative; url
   as-is; other/draft free text. Prose belongs in the item's `note`. The point

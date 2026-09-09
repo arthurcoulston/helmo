@@ -15,8 +15,18 @@ describe('phone-first dashboard', () => {
 
   it('allows long badges to wrap inside the phone viewport', () => {
     const badge = /\.badge \{([^}]*)\}/.exec(css)?.[1] ?? '';
+    // The badge only has to opt back IN to wrapping; where it breaks is the
+    // root rule's business, and it inherits that (H-1176).
     expect(badge).toContain('white-space: normal');
-    expect(badge).toContain('overflow-wrap: anywhere');
+  });
+
+  /* Every string on this page is store text carrying paths, refs and URLs, and
+     one of them with nowhere to break drags the whole document sideways on a
+     phone. This lived on three selectors and was missed on a fourth, so it is
+     declared once at the root; asserting it there is what stops the next
+     surface having to remember (R-11 H-1176). */
+  it('lets any store string break, wherever it is rendered', () => {
+    expect(css).toContain(':root { overflow-wrap: anywhere; }');
   });
 
   it('honours an explicit shell theme as well as the system preference', () => {

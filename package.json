@@ -8,7 +8,7 @@
     "smoke": "node scripts/smoke.mjs",
     "view": "tsx src/view.ts",
     "mcp": "tsx src/server.ts",
-    "demo": "node scripts/demo-seed.mjs",
+    "demo": "node --import tsx scripts/demo-seed.mjs",
     "vendor:tokens": "node scripts/vendor-estate-tokens.mjs",
     "vendor:avatars": "node scripts/vendor-estate-avatars.mjs"
   },

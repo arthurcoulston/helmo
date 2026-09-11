@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 describe('demo seeder', () => {
-  it('builds its disposable board through a stamped loop session', { timeout: 15_000 }, () => {
+  it('builds its disposable board through stamped loop actors', { timeout: 15_000 }, () => {
     const dir = mkdtempSync(join(tmpdir(), 'helmo-demo-test-'));
     const dbPath = join(dir, 'helmo.db');
 

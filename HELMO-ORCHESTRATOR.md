@@ -39,6 +39,11 @@ The human may also ask you to inspect or tidy the record. You may: create ticket
 - **Never fabricate an answer.** If the human hasn't decided, the ticket stays `awaiting_human`.
 - **Never soften the record.** If work is flagged (done without evidence, stale claims, high blast radius), surface it plainly.
 - **Don't do the agents' work.** If a returned question is answerable from the record or by a competent agent, note that in the answer and resume the ticket rather than making the human decide it.
+- **Remote summon is read-only.** The remote crew connector proxies the
+  authenticated `crew-summon` MCP, whose summon surface returns profile and
+  memory text only; it cannot spawn a crew worker. Route any requested work
+  through Helmo so the rostered seat claims it. The local Meetings app has the
+  same dispatch rule enforced by the `MEETING DISPATCH` hook (H-1573).
 - **Teach by correction.** If a returned ticket carries its question badly (vague question, no options, no recommendation), still run it — then note the deficiency in your answer so the pattern improves.
 
 ---

@@ -51,7 +51,7 @@ export interface CreateInput {
   deps?: { to: string; type: DepType }[];
   schedule?: string; // makes this a recurring template
   not_before?: string; // withhold from ready queues until this date/instant
-  needs_human?: boolean; // requires a sitting with the operator; never agent-ready
+  needs_human?: string | false; // the one line the sitting needs; never agent-ready
   spawned_from?: string; // internal: set by materializeDue on instances
   due?: string; // internal: the slot this instance was spawned for
 }
@@ -75,7 +75,7 @@ export interface UpdateInput {
   workstream?: string;
   project?: string | null; // '' clears the tag
   not_before?: string | null; // '' clears the gate
-  needs_human?: boolean;
+  needs_human?: string | false; // the one line the sitting needs, or false to clear
   capacity_hold?: CapacityHold | null; // null releases the deliberate hold
 }
 
@@ -140,6 +140,7 @@ CREATE TABLE IF NOT EXISTS tickets (
   schedule       TEXT,
   not_before     TEXT,
   needs_human    INTEGER NOT NULL DEFAULT 0,
+  sitting        TEXT,
   capacity_hold  TEXT,
   created_at     TEXT NOT NULL,
   updated_at     TEXT NOT NULL,
@@ -202,6 +203,27 @@ function parseNotBefore(value: string): string {
     );
   }
   return d.toISOString();
+}
+
+// Marking a sitting says what the sitting is for, in one line (H-1761). A bare
+// `true` marked the ticket and told the dashboard nothing, so it drew a row
+// that read like backlog and Arthur skipped five of them. The line is what the
+// card says; requiring it here is the only place it cannot be forgotten.
+function parseSitting(value: string | boolean | undefined): { needs_human: boolean; sitting: string | null } | undefined {
+  if (value === undefined) return undefined;
+  if (value === false) return { needs_human: false, sitting: null };
+  if (value === true) {
+    throw new HelmoError(
+      'needs_human takes the one line the sitting needs, not `true`. Say what the human does, concretely enough to act on without opening the ticket — e.g. "Two clicks in the Cloudflare dashboard: add an Email Routing rule for plumb.arthurcoulston.com". Pass false to clear the marker.',
+    );
+  }
+  const line = value.trim();
+  if (line.length < 20 || !/\s/.test(line)) {
+    throw new HelmoError(
+      `needs_human "${line}" does not say what the sitting needs. Write the line the human reads on the dashboard: what he does, and roughly what it costs him.`,
+    );
+  }
+  return { needs_human: true, sitting: line };
 }
 
 function validateActor(actor: Actor): void {
@@ -312,6 +334,14 @@ export class Store {
     }
     try {
       this.db.exec('ALTER TABLE tickets ADD COLUMN needs_human INTEGER NOT NULL DEFAULT 0');
+    } catch {
+      /* column already exists */
+    }
+    // Additive migration for the line a sitting carries (H-1761). Tickets
+    // marked before it exists keep needs_human with a null sitting; the
+    // dashboard says so rather than guessing.
+    try {
+      this.db.exec('ALTER TABLE tickets ADD COLUMN sitting TEXT');
     } catch {
       /* column already exists */
     }
@@ -1374,8 +1404,9 @@ export class Store {
       if (input.status === 'in_progress') throw new HelmoError('A recurring template is standing work — it cannot be in_progress; its instances are.');
     }
     if (input.not_before) input = { ...input, not_before: parseNotBefore(input.not_before) };
+    const sitting = parseSitting(input.needs_human);
     const status = input.status ?? 'open';
-    if (status === 'in_progress') refuseUnmarkedDeskClaim(actor, Boolean(input.needs_human));
+    if (status === 'in_progress') refuseUnmarkedDeskClaim(actor, Boolean(sitting?.needs_human));
     if (status === 'in_progress' && !input.assignee) input = { ...input, assignee: actor.name };
     // Workstream seat (H-1026): an unassigned filing is reserved to the
     // stream's seat at the door, so it is ready for that seat's loop from the
@@ -1405,7 +1436,7 @@ export class Store {
       if (input.project) payload['project'] = input.project;
       if (input.schedule) payload['schedule'] = input.schedule;
       if (input.not_before) payload['not_before'] = input.not_before;
-      if (input.needs_human) payload['needs_human'] = true;
+      if (sitting?.needs_human) { payload['needs_human'] = true; payload['sitting'] = sitting.sitting; }
       if (input.spawned_from) { payload['spawned_from'] = input.spawned_from; payload['due'] = input.due; }
       this.append(ts, id, 'created', actor, payload);
       this.applyCreated(ts, payload);
@@ -1569,11 +1600,19 @@ export class Store {
     // Same for the date gate — '' opens it now, a date moves it (H-732).
     if (input.not_before === '') input = { ...input, not_before: null };
     else if (input.not_before) input = { ...input, not_before: parseNotBefore(input.not_before) };
-    for (const field of ['title', 'body', 'priority', 'workstream', 'project', 'not_before', 'needs_human', 'confidence', 'uncertainty_note'] as const) {
+    for (const field of ['title', 'body', 'priority', 'workstream', 'project', 'not_before', 'confidence', 'uncertainty_note'] as const) {
       const v = input[field];
       if (v !== undefined && v !== (t as unknown as Record<string, unknown>)[field]) {
         diffs[field] = { from: (t as unknown as Record<string, unknown>)[field], to: v };
       }
+    }
+    // The marker and its line are one fact, so they move together (H-1761):
+    // a sitting can never be marked without saying what it needs, and
+    // clearing it takes the line away with it.
+    const sitting = parseSitting(input.needs_human);
+    if (sitting) {
+      if (sitting.needs_human !== t.needs_human) diffs['needs_human'] = { from: t.needs_human, to: sitting.needs_human };
+      if (sitting.sitting !== t.sitting) diffs['sitting'] = { from: t.sitting, to: sitting.sitting };
     }
     // Moving genuinely unassigned work into a seated stream is another way it
     // can enter that pool. Keep the same ownership invariant at this door.
@@ -1945,13 +1984,13 @@ export class Store {
   private applyCreated(ts: string, p: Record<string, unknown>): void {
     this.db
       .prepare(
-        `INSERT INTO tickets (id, title, body, workstream, project, type, labels, status, priority, assignee, schedule, not_before, needs_human, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO tickets (id, title, body, workstream, project, type, labels, status, priority, assignee, schedule, not_before, needs_human, sitting, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         p['id'], p['title'], p['body'], p['workstream'], p['project'] ?? null, p['type'],
         JSON.stringify(p['labels'] ?? []), p['status'] ?? 'open', p['priority'] ?? 2, p['assignee'] ?? null,
-        p['schedule'] ?? null, p['not_before'] ?? null, p['needs_human'] ? 1 : 0, ts, ts,
+        p['schedule'] ?? null, p['not_before'] ?? null, p['needs_human'] ? 1 : 0, p['sitting'] ?? null, ts, ts,
       );
   }
 
@@ -1961,7 +2000,7 @@ export class Store {
     const params: unknown[] = [ts];
     const jsonFields = new Set(['labels', 'evidence']);
     for (const [field, d] of Object.entries(diffs)) {
-      if (!['title', 'body', 'workstream', 'project', 'type', 'labels', 'status', 'priority', 'assignee', 'evidence', 'confidence', 'uncertainty_note', 'blast_radius', 'not_before', 'needs_human', 'capacity_hold'].includes(field)) continue;
+      if (!['title', 'body', 'workstream', 'project', 'type', 'labels', 'status', 'priority', 'assignee', 'evidence', 'confidence', 'uncertainty_note', 'blast_radius', 'not_before', 'needs_human', 'sitting', 'capacity_hold'].includes(field)) continue;
       sets.push(`${field} = ?`);
       params.push(
         field === 'needs_human'
@@ -2072,6 +2111,7 @@ function rowToTicket(row: Record<string, unknown>): Ticket {
     question: row['question'] ? JSON.parse(row['question'] as string) : null,
     capacity_hold: row['capacity_hold'] ? JSON.parse(row['capacity_hold'] as string) : null,
     needs_human: Boolean(row['needs_human']),
+    sitting: (row['sitting'] as string | null) ?? null,
   };
 }
 

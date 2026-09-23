@@ -144,7 +144,7 @@ describe('claiming', () => {
   it('allows a desk claim when the ticket is marked for a human sitting', () => {
     const s = freshStore();
     const desk = { ...builder, session: undefined };
-    const t = create(s, { assignee: desk.name, needs_human: true });
+    const t = create(s, { assignee: desk.name, needs_human: 'Sit with Arthur and walk the migration together.' });
     triage(s, t.id);
     expect(s.updateTicket(desk, { ticket_id: t.id, note: 'starting the sitting', status: 'in_progress' }).ticket.status).toBe('in_progress');
   });
@@ -878,7 +878,7 @@ describe('harness queries (wake cursor)', () => {
     // session stamp is what tells them apart.
     const desk: Actor = { name: 'ward-loop', kind: 'agent', model: 'claude-fable-5', version: 'claude-code-2.1.221' };
     const loop: Actor = { name: 'ward-loop', kind: 'agent', model: 'claude-sonnet-5', version: '0.3', session: 'rev:ward-loop' };
-    const a = create(s, { assignee: 'ward-loop', needs_human: true });
+    const a = create(s, { assignee: 'ward-loop', needs_human: 'Ten minutes with Arthur to pick the retention window.' });
     triage(s, a.id);
     s.updateTicket(desk, { ticket_id: a.id, note: 'claimed at the desk', status: 'in_progress' });
     // Created directly in_progress: the created event is the claim.
@@ -1640,7 +1640,7 @@ describe('id collision recovery (H-448)', () => {
 describe('human sitting gate (H-1028)', () => {
   it('keeps marked open work out of ready queues and reports it once', () => {
     const s = freshStore();
-    const t = create(s, { needs_human: true, assignee: 'builder-loop' });
+    const t = create(s, { needs_human: 'Two clicks in the vendor dashboard to enable the rule.', assignee: 'builder-loop' });
     triage(s, t.id);
     expect(s.getTicket(t.id).status).toBe('open');
     expect(s.listTickets({ ready: true, caller: 'builder-loop' }).map((x) => x.id)).not.toContain(t.id);
@@ -1651,16 +1651,48 @@ describe('human sitting gate (H-1028)', () => {
 
   it('can be cleared and survives event-log replay', () => {
     const s = freshStore();
-    const t = create(s, { needs_human: true });
+    const t = create(s, { needs_human: 'Five minutes at the console to accept the terms.' });
     s.updateTicket(orch, { ticket_id: t.id, note: 'the sitting happened', needs_human: false });
     s.rebuild();
     expect(s.getTicket(t.id).needs_human).toBe(false);
     expect(s.listTickets({ ready: true }).map((x) => x.id)).toContain(t.id);
   });
 
+  // H-1761: a marker with nothing to say drew a dashboard row that read like
+  // backlog, and five sittings sat unnoticed. The line is the marker.
+  it('refuses a marker that does not say what the sitting needs', () => {
+    const s = freshStore();
+    expect(() => create(s, { needs_human: true as unknown as string })).toThrow(/takes the one line the sitting needs/);
+    expect(() => create(s, { needs_human: 'ask Arthur' })).toThrow(/does not say what the sitting needs/);
+    const t = create(s);
+    expect(() => s.updateTicket(orch, { ticket_id: t.id, note: 'marking it', needs_human: true as unknown as string })).toThrow(
+      /takes the one line the sitting needs/,
+    );
+    expect(s.getTicket(t.id).needs_human).toBe(false);
+    expect(s.getTicket(t.id).sitting).toBeNull();
+  });
+
+  it('carries the line through replay and drops it when the marker clears', () => {
+    const s = freshStore();
+    const line = 'Two clicks in the Cloudflare dashboard: add an Email Routing rule.';
+    const t = create(s, { needs_human: line });
+    s.rebuild();
+    expect(s.getTicket(t.id).sitting).toBe(line);
+
+    const moved = 'Ten minutes at the WorkOS console to turn password sign-in off.';
+    s.updateTicket(orch, { ticket_id: t.id, note: 'the sitting changed shape', needs_human: moved });
+    s.rebuild();
+    expect(s.getTicket(t.id).sitting).toBe(moved);
+
+    s.updateTicket(orch, { ticket_id: t.id, note: 'the sitting happened', needs_human: false });
+    s.rebuild();
+    expect(s.getTicket(t.id).needs_human).toBe(false);
+    expect(s.getTicket(t.id).sitting).toBeNull();
+  });
+
   it('keeps capacity-held sittings out of the human queue until released', () => {
     const s = freshStore();
-    const t = create(s, { needs_human: true, assignee: 'builder-loop' });
+    const t = create(s, { needs_human: 'Half an hour with Arthur to agree the shape.', assignee: 'builder-loop' });
     triage(s, t.id);
     const hold = { reason: 'Good Plumb is the focus.', provenance: 'Arthur in H-1644', reconsider_when: 'Arthur resumes this stream.' };
     s.updateTicket(orch, { ticket_id: t.id, note: 'parking the sitting with the rest of the stream', capacity_hold: hold });
@@ -1781,7 +1813,7 @@ describe('human sitting gate migration (H-1028)', () => {
 
       const after = new Store(path);
       expect(after.getTicket(t.id).needs_human).toBe(false);
-      after.updateTicket(orch, { ticket_id: t.id, note: 'Arthur needs to be present', needs_human: true });
+      after.updateTicket(orch, { ticket_id: t.id, note: 'Arthur needs to be present', needs_human: 'Arthur has to be at the keyboard for this one.' });
       expect(after.withHumanPending('reviewer-loop')).toEqual([t.id]);
       after.close();
     } finally {
@@ -1949,7 +1981,7 @@ describe('unaccounted work (H-1126): nothing on the ticket says what it is for',
     const gated = create(s, { not_before: new Date(Date.now() + 86_400_000).toISOString() });
     const blocker = create(s, { project: 'R-4' });
     const blocked = create(s, { deps: [{ to: blocker.id, type: 'blocks' as const }] });
-    const forHuman = create(s, { needs_human: true });
+    const forHuman = create(s, { needs_human: 'A sitting with Arthur to choose the provider.' });
     expect([held.id, returned.id, gated.id, blocked.id, forHuman.id]).toHaveLength(5); // all five exist, none reported
     expect(unaccounted(s)).toEqual([]);
   });

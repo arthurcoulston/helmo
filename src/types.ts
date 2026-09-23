@@ -139,6 +139,7 @@ export interface Ticket {
   schedule: string | null; // set = recurring template (spawns instances, never ready itself)
   not_before: string | null; // ISO instant before which the ticket is withheld from ready queues (H-732)
   needs_human: boolean; // open work requiring a sitting with the operator; withheld from agent queues
+  sitting: string | null; // what that sitting needs from the operator, in one line (H-1761)
   capacity_hold: CapacityHold | null; // deliberate spending hold; visible, never ready or directly claimable
   created_at: string;
   updated_at: string;

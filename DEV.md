@@ -50,6 +50,16 @@ orchestrator meetings and the read-only view. Product intent:
   “Awaiting you”. An active capacity hold removes a sitting from that operator
   queue without clearing its human-needed state; a live bounded release
   restores it. This is presence needed, not a decision waiting for relay.
+  `needs_human` is that sitting's one line, not a flag (H-1761): it takes the
+  string saying what the operator does and roughly what it costs him, stored as
+  `sitting` and rendered as the card's ask; `false` clears both. A bare `true`
+  is refused, the way `return_to_human` refuses a return with no question — a
+  marker with nothing to say drew a row that read like backlog, and five
+  sittings went unnoticed. The line is a field and never the body's first
+  paragraph: across every ticket that carried the marker, that paragraph was
+  "why this exists" background, so scraping it prints the wrong thing
+  confidently. A sitting renders as `.scard`, a question card in every
+  dimension but hue.
   Desk claim guard (H-1056): an agent actor with no `session` may file and
   update work but cannot claim an unmarked ticket, including by creating it
   `in_progress`; if it needs a ticket, the build belongs to a loop. Marking an

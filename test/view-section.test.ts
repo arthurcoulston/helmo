@@ -44,12 +44,22 @@ describe('Awaiting-you section route', () => {
       body: 'This sitting should return when the hold is released.',
       workstream: 'estate-ui',
       type: 'review',
-      needs_human: true,
+      needs_human: 'Twenty minutes with Arthur to walk the parked work.',
     });
     seed.updateTicket(orch, {
       ticket_id: held.id,
       note: 'parking this sitting until the stream resumes',
       capacity_hold: { reason: 'Another stream is active.', provenance: 'Arthur in the capacity review', reconsider_when: 'Arthur resumes estate-ui.' },
+    });
+    // A sitting is a hero card beside the questions, not a row below them
+    // (H-1761): the line it carries is the whole reason Arthur can triage the
+    // section without opening anything.
+    seed.createTicket(builder, {
+      title: 'Add the routing rule',
+      body: '## Why this exists\n\nBackground that is NOT the sitting.',
+      workstream: 'estate-ui',
+      type: 'ops',
+      needs_human: 'Two clicks in the Cloudflare dashboard: add an Email Routing rule.',
     });
     // A budgeted stream is exactly what the retired "Workstream steering"
     // section used to render (H-1186); the whole page below must not.
@@ -86,8 +96,8 @@ describe('Awaiting-you section route', () => {
     expect(response, 'the view never came up').not.toBeNull();
     expect(response!.status).toBe(200);
     const html = await response!.text();
-    expect(html).toContain('class="section-reading" data-helmo-section="awaiting" data-count="1"');
-    expect(html).toContain('<section class="hero" data-helmo-section="awaiting" data-count="1">');
+    expect(html).toContain('class="section-reading" data-helmo-section="awaiting" data-count="2"');
+    expect(html).toContain('<section class="hero" data-helmo-section="awaiting" data-count="2">');
     expect(html).toContain('class="qcard"');
     expect(html).toContain('<span class="opt-letter">a</span>yes');
     expect(html).toContain('<span class="opt-letter">b</span>no');
@@ -95,6 +105,11 @@ describe('Awaiting-you section route', () => {
     expect(html).toContain('If unanswered: The landing stays split.');
     expect(html).toContain('last &lt;recorded&gt; &amp; update');
     expect(html).toContain('Ratify recommendation');
+    expect(html).toContain('class="scard"');
+    expect(html).toContain('Two clicks in the Cloudflare dashboard: add an Email Routing rule.');
+    // The sitting speaks for itself in the card; the body stays behind the
+    // disclosure, where a "why this exists" paragraph belongs.
+    expect(html).toContain('<span class="decision-label sits">🪑 You do</span>Two clicks');
     expect(html).not.toContain('Review the parked work');
     expect(html).not.toContain('<header class="top">');
     expect(html).not.toContain('Needs grooming');
@@ -144,5 +159,9 @@ describe('Awaiting-you section route', () => {
     inspect.close();
     const after = await (await fetch(url)).text();
     expect(after).not.toContain(`data-ticket="${ticket.id}"`);
+    // The sitting outlives the answered question — the section is not empty
+    // just because the questions are gone.
+    expect(after).toContain('data-count="1"');
+    expect(after).toContain('class="scard"');
   });
 });

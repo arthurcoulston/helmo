@@ -37,7 +37,7 @@ function compact(t: Ticket) {
     ...(t.project ? { project: t.project } : {}),
     ...(t.schedule ? { schedule: t.schedule } : {}),
     ...(t.not_before ? { not_before: t.not_before } : {}),
-    ...(t.needs_human ? { needs_human: true } : {}),
+    ...(t.needs_human ? { needs_human: t.sitting ?? true } : {}),
     ...(t.capacity_hold ? { capacity_hold: t.capacity_hold } : {}),
   };
 }
@@ -69,7 +69,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
         not_before: z.string().optional().describe(
           "Withhold this ticket from ready queues until a date — 'YYYY-MM-DD' (opens 00:00 UTC that day) or a full ISO instant. Use it when the work genuinely CANNOT start yet: it needs a week of data, a deadline has to pass, a dependency lands on a known day. Without it the only way to say so is shouting in the body, and every agent reading the queue pays a full ticket read to learn it must not act. This is not priority — priority says how much the work matters, not whether it can be started.",
         ),
-        needs_human: z.boolean().optional().describe('Mark open work that requires a sitting with the human. It stays open but is withheld from every agent ready queue.'),
+        needs_human: z.union([z.string(), z.literal(false)]).optional().describe('Mark this as work that needs a sitting with the human by saying, in ONE LINE, what the sitting needs — what he does and roughly what it costs him ("Two clicks in the Cloudflare dashboard to add an Email Routing rule"). That line is what he reads on his dashboard to decide what to pick up, so write it for someone who will not open the ticket. The ticket stays open and is withheld from every agent ready queue. Pass false to clear the marker.'),
         deps: z.array(z.object({ to: z.string(), type: z.enum(DEP_TYPES) })).optional(),
         schedule: z.string().optional().describe(
           "Makes this a RECURRING TEMPLATE: 'every <N><m|h|d>' or 5-field cron (UTC). The template itself is standing work — never ready, never claimed. Due instances spawn automatically on queue reads, linked to the template via a parent dep, and a new instance is skipped while a previous one is still open. Retire the template by cancelling it.",
@@ -206,7 +206,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
         workstream: z.string().optional(),
         project: z.string().optional().describe("Set or change the project tag; '' clears it"),
         not_before: z.string().optional().describe("Set or move the date gate that withholds this ticket from ready queues — 'YYYY-MM-DD' or a full ISO instant; '' opens it now"),
-        needs_human: z.boolean().optional().describe('Set or clear the marker for open work that requires a sitting with the human; marked work is withheld from agent ready queues.'),
+        needs_human: z.union([z.string(), z.literal(false)]).optional().describe('Mark this as work that needs a sitting with the human by saying, in ONE LINE, what the sitting needs — what he does and roughly what it costs him ("Two clicks in the Cloudflare dashboard to add an Email Routing rule"). That line is what he reads on his dashboard to decide what to pick up, so write it for someone who will not open the ticket. The ticket stays open and is withheld from every agent ready queue. Pass false to clear the marker.'),
         capacity_hold: z.object({
           reason: z.string().describe('Why worthwhile work must not start under the current spending posture'),
           provenance: z.string().describe('Who authorized the hold and where that direction was recorded'),

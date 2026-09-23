@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Breaking changes
+
+- `needs_human` takes the one line the sitting needs, not `true` (H-1761).
+  Marking a ticket for a sitting now says what the human does and roughly what
+  it costs him; that line is stored as `sitting`, returned on the ticket and in
+  compact rows, and rendered on the dashboard as a card with a question's
+  weight. `false` still clears the marker; a bare `true` is refused with the
+  shape to send instead. `helmo update --needs-human` now takes a value, and
+  `--no-needs-human` clears.
+
 ## v0.4.0 — 2026-09-15
 
 ### Breaking changes

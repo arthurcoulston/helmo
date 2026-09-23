@@ -241,6 +241,29 @@ function questionCard(t: Ticket): string {
   </article>`;
 }
 
+// A sitting awaiting the human: the same weight as a question, because it is
+// the same ask — the difference is only that he answers it by doing something
+// somewhere else rather than by saying a word here. Drawn as a plain row it
+// read as backlog, and five of them sat unnoticed (H-1761).
+//
+// The line comes from the ticket's own `sitting` field and nowhere else. The
+// body's first paragraph was the tempting alternative and it is wrong: in all
+// five it was "why this exists" background, and a heuristic that scrapes it
+// prints the wrong thing confidently.
+function sittingCard(t: Ticket): string {
+  const waits = blockedBy(t);
+  return `<article class="scard" id="${esc(t.id)}" data-ticket="${esc(t.id)}">
+    <header><span class="tid">${esc(t.id)}</span> <span class="qtitle">${esc(t.title)}</span>
+      ${prioBadge(t)} ${waits.length ? `<span class="badge serious">⛔ waits on ${esc(waits.join(', '))}</span>` : ''} ${blastBadge(t)}
+      <span class="meta">${esc(t.workstream)}${t.project ? ` · ${esc(t.project)}` : ''} · marked ${esc(rel(t.updated_at))}</span></header>
+    <p class="question"><span class="decision-label sits">🪑 You do</span>${
+      t.sitting ? esc(t.sitting) : '<span class="nositting">no line recorded — open the ticket to see what this sitting needs</span>'
+    }</p>
+    ${progressLine(t)}
+    <details class="more" id="d-${esc(t.id)}"><summary>ticket detail</summary>${details(t)}</details>
+  </article>`;
+}
+
 // In motion: who holds it, what they last said, how far it reaches.
 function motionCard(t: Ticket): string {
   return `<article class="mcard" id="${esc(t.id)}">
@@ -312,7 +335,7 @@ function awaitingSection(awaiting: Ticket[], withHuman: Ticket[]): string {
   const count = awaiting.length + withHuman.length;
   return `<section class="hero" data-helmo-section="awaiting" data-count="${count}">
   <h2>Awaiting you</h2>
-  ${count ? `${awaiting.map(questionCard).join('')}${withHuman.map((t) => row(t)).join('')}` : '<p class="allclear">✓ Queue is empty. Nothing needs you.</p>'}
+  ${count ? `${awaiting.map(questionCard).join('')}${withHuman.map(sittingCard).join('')}` : '<p class="allclear">✓ Queue is empty. Nothing needs you.</p>'}
 </section>`;
 }
 
@@ -528,8 +551,15 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; color: 
   .top { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; }
   .tagline { display: inline; margin: 0 0 0 10px; }
   .stats { display: flex; gap: 12px 22px; width: auto; flex-wrap: wrap; }
-  .qcard { padding: 18px 22px; }
+  .qcard, .scard { padding: 18px 22px; }
 }
+/* A sitting card is a question card in every dimension but hue: same surface,
+   same padding, same 19px ask. Amber asks for a word, blue asks for an act. */
+.scard { background: var(--surface); border: 1px solid var(--hairline); border-left: 3px solid var(--link);
+  border-radius: var(--radius-card); padding: 16px 14px; margin: 12px 0; }
+.scard header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.decision-label.sits { color: var(--link); }
+.nositting { color: var(--ink-3); font-weight: 400; font-size: 15px; }
 .opt-label { font-weight: 600; font-size: 13px; }
 /* The letter is what Arthur says out loud, so it leads the label and holds its
    own column width — ragged letters read as a list of labels that happen to

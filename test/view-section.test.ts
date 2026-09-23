@@ -39,6 +39,18 @@ describe('Awaiting-you section route', () => {
       if_unanswered: 'The landing stays split.',
     });
     seed.updateTicket(builder, { ticket_id: ticket.id, note: 'last <recorded> & update' });
+    const held = seed.createTicket(builder, {
+      title: 'Review the parked work',
+      body: 'This sitting should return when the hold is released.',
+      workstream: 'estate-ui',
+      type: 'review',
+      needs_human: true,
+    });
+    seed.updateTicket(orch, {
+      ticket_id: held.id,
+      note: 'parking this sitting until the stream resumes',
+      capacity_hold: { reason: 'Another stream is active.', provenance: 'Arthur in the capacity review', reconsider_when: 'Arthur resumes estate-ui.' },
+    });
     // A budgeted stream is exactly what the retired "Workstream steering"
     // section used to render (H-1186); the whole page below must not.
     seed.setWorkstream(orch, { name: 'estate-ui', budget_usd: 10 });
@@ -83,6 +95,7 @@ describe('Awaiting-you section route', () => {
     expect(html).toContain('If unanswered: The landing stays split.');
     expect(html).toContain('last &lt;recorded&gt; &amp; update');
     expect(html).toContain('Ratify recommendation');
+    expect(html).not.toContain('Review the parked work');
     expect(html).not.toContain('<header class="top">');
     expect(html).not.toContain('Needs grooming');
     expect(html).not.toContain('In motion</h2>');
@@ -92,6 +105,7 @@ describe('Awaiting-you section route', () => {
 
     const whole = await (await fetch(`http://127.0.0.1:${port}/`)).text();
     expect(whole).toContain('Choose the front door');
+    expect(whole).not.toContain('Review the parked work');
     expect(whole).not.toContain('Workstream steering');
     expect(whole).not.toContain('done means');
 

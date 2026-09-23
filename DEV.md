@@ -47,7 +47,9 @@ orchestrator meetings and the read-only view. Product intent:
   Human sittings (H-1028) are typed separately from questions: an open ticket
   with `needs_human` stays open, is withheld from every agent ready queue and
   reported under `with_human`; both Helmo readings place it below questions in
-  “Awaiting you”. This is presence needed, not a decision waiting for relay.
+  “Awaiting you”. An active capacity hold removes a sitting from that operator
+  queue without clearing its human-needed state; a live bounded release
+  restores it. This is presence needed, not a decision waiting for relay.
   Desk claim guard (H-1056): an agent actor with no `session` may file and
   update work but cannot claim an unmarked ticket, including by creating it
   `in_progress`; if it needs a ticket, the build belongs to a loop. Marking an

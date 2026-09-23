@@ -1618,6 +1618,20 @@ describe('human sitting gate (H-1028)', () => {
     expect(s.getTicket(t.id).needs_human).toBe(false);
     expect(s.listTickets({ ready: true }).map((x) => x.id)).toContain(t.id);
   });
+
+  it('keeps capacity-held sittings out of the human queue until released', () => {
+    const s = freshStore();
+    const t = create(s, { needs_human: true, assignee: 'builder-loop' });
+    triage(s, t.id);
+    const hold = { reason: 'Good Plumb is the focus.', provenance: 'Arthur in H-1644', reconsider_when: 'Arthur resumes this stream.' };
+    s.updateTicket(orch, { ticket_id: t.id, note: 'parking the sitting with the rest of the stream', capacity_hold: hold });
+
+    expect(s.getTicket(t.id).needs_human).toBe(true);
+    expect(s.withHumanPending('builder-loop')).not.toContain(t.id);
+
+    s.updateTicket(orch, { ticket_id: t.id, note: 'opening a bounded working window', capacity_hold: { ...hold, release: { batch_id: 'resume-one', until: '2099-01-01T00:00:00Z', stop_conditions: 'Stop after this ticket.', shared_reserve: 'Keep the rest of the stream parked.' } } });
+    expect(s.withHumanPending('builder-loop')).toEqual([t.id]);
+  });
 });
 
 describe('date gate (H-732)', () => {

@@ -631,8 +631,12 @@ export class Store {
   /** Open tickets reserved for a sitting with the operator. */
   withHumanPending(caller: string): string[] {
     const rows = this.db.prepare(
-      "SELECT id FROM tickets WHERE status = 'open' AND schedule IS NULL AND needs_human = 1 AND (assignee IS NULL OR assignee = ?) ORDER BY priority ASC, created_at ASC",
-    ).all(caller) as { id: string }[];
+      `SELECT id FROM tickets
+       WHERE status = 'open' AND schedule IS NULL AND needs_human = 1
+         AND (capacity_hold IS NULL OR json_extract(capacity_hold, '$.release.until') > ?)
+         AND (assignee IS NULL OR assignee = ?)
+       ORDER BY priority ASC, created_at ASC`,
+    ).all(now(), caller) as { id: string }[];
     return rows.map((r) => r.id).filter((id) => !this.isBlocked(id));
   }
 

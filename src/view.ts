@@ -325,7 +325,7 @@ function page(wholeRecord = false, section: 'awaiting' | null = null): string {
   latestProgress = store.latestProgress(all.filter((t) => t.status !== 'done' && t.status !== 'cancelled').map((t) => t.id));
   const by = (s: string) => all.filter((t) => t.status === s);
   const awaiting = by('awaiting_human');
-  const withHuman = by('open').filter((t) => t.needs_human);
+  const withHuman = by('open').filter((t) => t.needs_human && (!t.capacity_hold || (!!t.capacity_hold.release && t.capacity_hold.release.until > new Date().toISOString())));
   const motion = by('in_progress');
   const standing = by('open').filter((t) => t.schedule); // recurring templates (H-22)
   const open = by('open').filter((t) => !t.schedule && !t.needs_human);

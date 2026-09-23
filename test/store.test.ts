@@ -1304,10 +1304,12 @@ describe('hygiene dispositions (H-81)', () => {
     s.disposeHygieneFinding(reviewer, { check: 'done_without_evidence', ticket_id: t.id, reason: 'deliverable was conversational; accepted by the human in the 08-06 meeting' });
     expect(s.hygiene().map((f) => f.check)).toEqual(['spend_anomaly']);
   });
-  it('terminal tickets only — a live ticket clears by acting on it', () => {
+  it('every check but spend_anomaly is terminal-only — a live ticket clears by acting on it', () => {
     const s = freshStore();
     const t = create(s);
-    expect(() => s.disposeHygieneFinding(reviewer, { check: 'stale_claim', ticket_id: t.id, reason: 'x' })).toThrow(/terminal/);
+    expect(() => s.disposeHygieneFinding(reviewer, { check: 'stale_claim', ticket_id: t.id, reason: 'x' })).toThrow(
+      /only 'spend_anomaly' can be acknowledged/,
+    );
   });
   it('rejects unknown checks, empty reasons, and double disposal', () => {
     const s = freshStore();
@@ -1316,6 +1318,43 @@ describe('hygiene dispositions (H-81)', () => {
     expect(() => s.disposeHygieneFinding(reviewer, { check: 'done_without_evidence', ticket_id: t.id, reason: '  ' })).toThrow(/reason is required/);
     s.disposeHygieneFinding(reviewer, { check: 'done_without_evidence', ticket_id: t.id, reason: 'accepted' });
     expect(() => s.disposeHygieneFinding(builder, { check: 'done_without_evidence', ticket_id: t.id, reason: 'again' })).toThrow(/already disposed/);
+  });
+  // A live spend anomaly, acknowledged at a figure (H-1715). Three spent
+  // tickets make a norm; the fourth is the outlier that trips the check.
+  function liveAnomaly(s: Store, cost = 20) {
+    const t = create(s, { project: 'R-1' });
+    for (const peer of [create(s, { project: 'R-1' }), create(s, { project: 'R-1' }), create(s, { project: 'R-1' })]) {
+      s.recordSpend(builder, peer.id, { cost_usd: 1, note: 'metered' });
+    }
+    s.recordSpend(builder, t.id, { cost_usd: cost, note: 'metered' });
+    expect(s.hygiene().some((f) => f.check === 'spend_anomaly' && f.ticket_id === t.id)).toBe(true);
+    return t;
+  }
+  it('a live spend anomaly can be acknowledged, and the acknowledgement holds while the spend does', () => {
+    const s = freshStore();
+    const t = liveAnomaly(s);
+    s.disposeHygieneFinding(reviewer, { check: 'spend_anomaly', ticket_id: t.id, reason: 'ratified scope; blocked on H-1572' });
+    expect(s.hygiene().some((f) => f.check === 'spend_anomaly' && f.ticket_id === t.id)).toBe(false);
+    s.recordSpend(builder, t.id, { cost_usd: 9, note: 'a little more' }); // $29 — under $30
+    expect(s.hygiene().some((f) => f.check === 'spend_anomaly' && f.ticket_id === t.id)).toBe(false);
+    expect(s.getTicket(t.id).status).toBe('open'); // bookkeeping, not motion
+  });
+  it('the finding returns once the ticket has cost half as much again, and can be acknowledged afresh', () => {
+    const s = freshStore();
+    const t = liveAnomaly(s);
+    s.disposeHygieneFinding(reviewer, { check: 'spend_anomaly', ticket_id: t.id, reason: 'ratified scope' });
+    s.recordSpend(builder, t.id, { cost_usd: 11, note: 'kept going' }); // $31 — past $30
+    expect(s.hygiene().some((f) => f.check === 'spend_anomaly' && f.ticket_id === t.id)).toBe(true);
+    s.disposeHygieneFinding(reviewer, { check: 'spend_anomaly', ticket_id: t.id, reason: 'still the same ratified scope, re-checked at $31' });
+    expect(s.hygiene().some((f) => f.check === 'spend_anomaly' && f.ticket_id === t.id)).toBe(false);
+  });
+  it('re-acknowledging a spend anomaly the sweep is not reporting is refused, with the figure that would reopen it', () => {
+    const s = freshStore();
+    const t = liveAnomaly(s);
+    s.disposeHygieneFinding(reviewer, { check: 'spend_anomaly', ticket_id: t.id, reason: 'ratified scope' });
+    expect(() => s.disposeHygieneFinding(builder, { check: 'spend_anomaly', ticket_id: t.id, reason: 'saying it again' })).toThrow(
+      /already acknowledged at \$20\.00.*returns above \$30\.00/s,
+    );
   });
   it('disposal is bookkeeping, not motion: status and updated_at untouched', () => {
     const s = freshStore();

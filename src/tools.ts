@@ -235,7 +235,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
     'helmo_hygiene',
     {
       description:
-        `Run Helmo's deterministic record checks. Returns current findings only; it changes nothing and makes no judgment about them. Use this for cultivation sweeps instead of reading the store directly. Live-ticket findings clear by acting on the ticket. A finding on a terminal ticket that has been examined and needs no further work can be recorded once with helmo_dispose_hygiene_finding.`,
+        `Run Helmo's deterministic record checks. Returns current findings only; it changes nothing and makes no judgment about them. Use this for cultivation sweeps instead of reading the store directly. Most live-ticket findings clear by acting on the ticket. A finding on a terminal ticket that has been examined and needs no further work — and a spend_anomaly you have accounted for on live work — is recorded with helmo_dispose_hygiene_finding, which is what stops the next sweep re-reporting it. Writing the same conclusion as a fresh note each sweep does not: the note is not read by this check, and the reading itself is metered onto the ticket.`,
       inputSchema: {},
     },
     async () => {
@@ -251,7 +251,13 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
     'helmo_dispose_hygiene_finding',
     {
       description:
-        `Record that one hygiene finding on a DONE or CANCELLED ticket was examined and dealt with, so later sweeps stop reporting it. This is append-once judgment, not deletion: give the exact check and ticket returned by helmo_hygiene, plus a reason another agent can audit. Live-ticket findings cannot be disposed; act on the ticket instead. Workstream-level findings have no ticket_id and cannot be disposed.`,
+        `Record that one hygiene finding was examined and dealt with, so later sweeps stop reporting it. This is judgment, not deletion: give the exact check and ticket returned by helmo_hygiene, plus a reason another agent can audit.
+
+On a DONE or CANCELLED ticket the judgment stands for good, and is append-once.
+
+On LIVE work the one disposable finding is 'spend_anomaly'. Every other check reports a state that masking could hide indefinitely, so those still clear only by acting on the ticket. Spend is different: it is a number that only grows, and "this cost is accounted for" stays true until the number moves. So a live acknowledgement is recorded at the figure it answered for and the finding returns on its own once the ticket has cost half as much again — acknowledge it afresh then. Use this the FIRST time you find a spend anomaly accounted for; do not write the same conclusion as a new note every sweep, because nothing reads those notes and each re-reading is itself charged to the ticket.
+
+Workstream-level findings have no ticket_id and cannot be disposed.`,
       inputSchema: {
         check: z.string(),
         ticket_id: z.string(),

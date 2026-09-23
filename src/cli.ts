@@ -264,7 +264,7 @@ try {
   acceptance-check --ticket H-n [--refs '["repo@<40hex>"]'] (exit 0 only for independent acceptance of that manifest)
   answers        --since-seq N [--session S]                    (answers recorded since a cursor, + max_seq; --session dashboard for the sweep's replay)
   hygiene                                                      (deterministic record checks, read-only)
-  hygiene-dispose --check C --ticket H-n --reason R  (stop re-reporting a finding on a TERMINAL ticket; evented, append-once)
+  hygiene-dispose --check C --ticket H-n --reason R  (stop re-reporting a finding: any check on a TERMINAL ticket, or spend_anomaly on live work, where it holds until the cost grows by half again)
   workstream     --name W                                      (budget, seat, spend-to-date; read-only)
   rename-workstream --from X --to Y --note N   (relabel every ticket incl. closed; one evented rename)
   workstream-set --name W [--budget-usd X] [--seat A | --seat '']   (operator steering; actor kind human/orchestrator only; seat = agent unassigned filings are reserved to)

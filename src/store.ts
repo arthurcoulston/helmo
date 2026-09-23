@@ -10,6 +10,7 @@ import {
 const STALE_CLAIM_HOURS = 24;
 const AGING_QUESTION_HOURS = 48; // the awaiting-human queue exists to protect attention; its own staleness is the record failing
 const SPEND_ANOMALY_FACTOR = 3; // flag cost > 3x the workstream norm (needs >= 3 spent tickets for a norm)
+const SPEND_ACK_REGROWTH = 1.5; // an acknowledged spend anomaly returns once the ticket has cost half as much again (H-1715)
 const BUDGET_PRESSURE_RATIO = 0.8; // surface a workstream budget once 80% is spent
 const SILENT_ASSIGNEE_HOURS = 168; // 7d without the assignee writing anywhere: a reservation that will not wake on its own
 // Streams whose work accounts for itself: keeping the estate safe is never
@@ -173,6 +174,7 @@ CREATE TABLE IF NOT EXISTS hygiene_dispositions (
   actor      TEXT NOT NULL,
   reason     TEXT NOT NULL,
   ts         TEXT NOT NULL,
+  at_cost    REAL,
   PRIMARY KEY (check_name, ticket_id)
 );
 `;
@@ -316,6 +318,12 @@ export class Store {
     // Additive migration for stores created before workstream seats (H-1026).
     try {
       this.db.exec('ALTER TABLE workstreams ADD COLUMN seat TEXT');
+    } catch {
+      /* column already exists */
+    }
+    // Additive migration for stores created before spend acknowledgement (H-1715).
+    try {
+      this.db.exec('ALTER TABLE hygiene_dispositions ADD COLUMN at_cost REAL');
     } catch {
       /* column already exists */
     }
@@ -749,6 +757,7 @@ export class Store {
       .prepare('SELECT id, workstream, cost_usd_total AS cost FROM tickets WHERE cost_usd_total > 0 AND schedule IS NULL')
       .all() as { id: string; workstream: string; cost: number }[];
     const byWs = new Map<string, { id: string; cost: number }[]>();
+    const costs = new Map(spent.map((s) => [s.id, s.cost]));
     for (const s of spent) {
       if (!byWs.has(s.workstream)) byWs.set(s.workstream, []);
       byWs.get(s.workstream)!.push(s);
@@ -869,13 +878,26 @@ export class Store {
     }
 
     // Disposed findings (H-81): examined once, judgment recorded, never
-    // re-reported. The ledger only ever holds terminal tickets, so nothing
-    // live is masked by a standing disposition.
-    const disposed = new Set(
-      (this.db.prepare('SELECT check_name, ticket_id FROM hygiene_dispositions').all() as { check_name: string; ticket_id: string }[])
-        .map((d) => `${d.check_name}:${d.ticket_id}`),
+    // re-reported. On a terminal ticket the disposition stands forever, since
+    // nothing about the ticket can change again. A live ticket carries an
+    // at_cost instead (H-1715): the acknowledgement holds only while the spend
+    // it answered for holds, and the finding returns once the ticket has cost
+    // half as much again.
+    const disposed = new Map(
+      (
+        this.db.prepare('SELECT check_name, ticket_id, at_cost FROM hygiene_dispositions').all() as {
+          check_name: string;
+          ticket_id: string;
+          at_cost: number | null;
+        }[]
+      ).map((d) => [`${d.check_name}:${d.ticket_id}`, d.at_cost]),
     );
-    return findings.filter((f) => !f.ticket_id || !disposed.has(`${f.check}:${f.ticket_id}`));
+    return findings.filter((f) => {
+      if (!f.ticket_id || !disposed.has(`${f.check}:${f.ticket_id}`)) return true;
+      const at = disposed.get(`${f.check}:${f.ticket_id}`);
+      if (at == null) return false; // terminal-ticket disposition: stands
+      return (costs.get(f.ticket_id) ?? 0) > at * SPEND_ACK_REGROWTH;
+    });
   }
 
   /** Catch up recurring templates: spawn an instance for each template whose
@@ -1633,12 +1655,25 @@ export class Store {
     }).immediate();
   }
 
-  /** Record that a hygiene finding on a terminal ticket was examined and dealt
-   *  with, so sweeps stop re-spending attention on it (H-81). Terminal tickets
-   *  only: an open ticket's findings clear by acting on the ticket, and a
-   *  standing disposition there could mask a live problem. Like spend, this is
-   *  bookkeeping, not motion — it accepts terminal tickets and never touches
-   *  status or updated_at. Append-once per (check, ticket). */
+  /** Record that a hygiene finding was examined and dealt with, so sweeps stop
+   *  re-spending attention on it (H-81).
+   *
+   *  On a terminal ticket the judgment stands forever: nothing about the ticket
+   *  can change again, so nothing live is masked.
+   *
+   *  The one live-ticket case is spend_anomaly (H-1715). Every other check
+   *  reports a state that either holds or does not, and masking one on open
+   *  work could hide a real problem indefinitely; spend_anomaly reports a
+   *  number that only grows, and "this spend is accounted for" stays true
+   *  until the number moves. So a live acknowledgement is recorded AT the
+   *  figure it answered for, and the finding returns on its own once the
+   *  ticket has cost half as much again — at which point it can be
+   *  acknowledged afresh. Without this, a long-lived blocked ticket that trips
+   *  the check re-surfaces every sweep, and each re-reading is itself metered
+   *  onto the ticket: the spiral that produced H-1715.
+   *
+   *  Like spend, this is bookkeeping, not motion — it never touches status or
+   *  updated_at. Append-once per (check, ticket) while the judgment holds. */
   disposeHygieneFinding(actor: Actor, input: { check: string; ticket_id: string; reason: string }): void {
     validateActor(actor);
     if (!(HYGIENE_CHECKS as readonly string[]).includes(input.check)) {
@@ -1649,18 +1684,24 @@ export class Store {
     }
     rejectSwallowedMarkup({ reason: input.reason });
     const t = this.getTicket(input.ticket_id);
-    if (t.status !== 'done' && t.status !== 'cancelled') {
-      throw new HelmoError(`${t.id} is ${t.status} — dispositions exist for terminal tickets only. A live ticket's finding clears by acting on the ticket itself.`);
+    const live = t.status !== 'done' && t.status !== 'cancelled';
+    if (live && input.check !== 'spend_anomaly') {
+      throw new HelmoError(`${t.id} is ${t.status} — on live work only 'spend_anomaly' can be acknowledged. A '${input.check}' finding clears by acting on the ticket itself.`);
     }
     const existing = this.db
-      .prepare('SELECT reason FROM hygiene_dispositions WHERE check_name = ? AND ticket_id = ?')
-      .get(input.check, t.id) as { reason: string } | undefined;
-    if (existing) {
-      throw new HelmoError(`'${input.check}' on ${t.id} is already disposed ("${existing.reason}") — nothing to record.`);
+      .prepare('SELECT reason, at_cost FROM hygiene_dispositions WHERE check_name = ? AND ticket_id = ?')
+      .get(input.check, t.id) as { reason: string; at_cost: number | null } | undefined;
+    if (existing && (existing.at_cost == null || t.cost_usd_total <= existing.at_cost * SPEND_ACK_REGROWTH)) {
+      throw new HelmoError(
+        existing.at_cost == null
+          ? `'${input.check}' on ${t.id} is already disposed ("${existing.reason}") — nothing to record.`
+          : `'${input.check}' on ${t.id} is already acknowledged at $${existing.at_cost.toFixed(2)} ("${existing.reason}") and the finding is not being reported — nothing to record. It returns above $${(existing.at_cost * SPEND_ACK_REGROWTH).toFixed(2)}.`,
+      );
     }
     this.db.transaction(() => {
       const ts = now();
-      const payload = { check: input.check, reason: input.reason };
+      const payload: Record<string, unknown> = { check: input.check, reason: input.reason };
+      if (live) payload['at_cost'] = t.cost_usd_total;
       this.append(ts, t.id, 'hygiene_disposed', actor, payload);
       this.applyHygieneDisposed(ts, t.id, actor, payload);
     }).immediate();
@@ -1953,9 +1994,16 @@ export class Store {
   }
 
   private applyHygieneDisposed(ts: string, ticketId: string, actor: Actor, p: Record<string, unknown>): void {
+    // A live spend acknowledgement replaces the one it outgrew (H-1715), so
+    // the row always carries the figure the current judgment answered for.
+    // Terminal dispositions carry no figure and, being append-once, never
+    // reach the update arm.
     this.db
-      .prepare('INSERT OR IGNORE INTO hygiene_dispositions (check_name, ticket_id, actor, reason, ts) VALUES (?, ?, ?, ?, ?)')
-      .run(p['check'], ticketId, actor.name, p['reason'], ts);
+      .prepare(
+        `INSERT INTO hygiene_dispositions (check_name, ticket_id, actor, reason, ts, at_cost) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT (check_name, ticket_id) DO UPDATE SET actor = excluded.actor, reason = excluded.reason, ts = excluded.ts, at_cost = excluded.at_cost`,
+      )
+      .run(p['check'], ticketId, actor.name, p['reason'], ts, (p['at_cost'] as number | undefined) ?? null);
   }
 
   private applyWorkstreamSet(ts: string, p: Record<string, unknown>): void {

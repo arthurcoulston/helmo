@@ -207,8 +207,20 @@ orchestrator meetings and the read-only view. Product intent:
   by design, the judgment half of cultivation stays human/agent. Since H-81
   that judgment has a recording surface: `helmo-cli hygiene-dispose` writes an
   evented, append-once disposition for a finding on a TERMINAL ticket and the
-  sweep stops re-reporting it (open tickets clear by being acted on, so
-  dispositions there are refused — nothing live can be masked). Also H-81:
+  sweep stops re-reporting it. Open tickets clear by being acted on, so
+  dispositions there are refused — with one exception, `spend_anomaly`
+  (H-1715). Every other check reports a state that either holds or does not,
+  and masking one on live work could hide a real problem indefinitely; spend
+  is a number that only grows, and "this cost is accounted for" stays true
+  until the number moves. So a live acknowledgement records the figure it
+  answered for (`hygiene_dispositions.at_cost`) and the finding returns on its
+  own once the ticket has cost `SPEND_ACK_REGROWTH` times that — then it can
+  be acknowledged afresh, which is the one case where the row is updated
+  rather than appended. Without it a long-lived blocked ticket that trips the
+  check re-surfaces every sweep, and each re-reading is itself metered onto
+  the ticket: H-1570 took thirteen near-identical "accounted for" notes in a
+  day, from several harnesses, because a note is not something the check can
+  read. Also H-81:
   done_without_evidence exempts question tickets the human closed via
   helmo_answer_ticket — the recorded answer is the closure evidence.
   H-758 exposes both halves to loop agents as `helmo_hygiene` and

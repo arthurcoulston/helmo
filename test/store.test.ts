@@ -805,6 +805,34 @@ describe('harness queries (wake cursor)', () => {
     ]);
     expect(s.newlyReadySince(s.maxSeq(), 'alpha', reviewer.name)).toEqual([]);
   });
+  it('wakeCheck answers from one ready read, taken inside one transaction (rev H-1895)', () => {
+    const s = freshStore();
+    const routed = create(s, { workstream: 'alpha', assignee: reviewer.name });
+    const seq = s.maxSeq();
+    s.updateTicket(orch, { ticket_id: routed.id, note: 'yours now', handoff_to: builder.name });
+
+    // One harness decision — wake, or re-idle at which cursor — rests on every
+    // field of this answer, so they must describe one instant. Read as separate
+    // statements they took separate WAL snapshots, and a handoff committing
+    // between two of them was seen by one and not the other: rev logged a wake
+    // reporting ready=0 (H-1895). Count the ready reads, and check the lock is
+    // held while they happen.
+    const db = (s as unknown as { db: { inTransaction: boolean } }).db;
+    const listTickets = s.listTickets.bind(s);
+    const readsInTransaction: boolean[] = [];
+    s.listTickets = (filter) => {
+      if (filter.ready) readsInTransaction.push(db.inTransaction);
+      return listTickets(filter);
+    };
+
+    const w = s.wakeCheck(seq, 'alpha', builder.name);
+    expect(readsInTransaction).toEqual([true]);
+    expect(w.ready_ids).toEqual([routed.id]);
+    expect(w.newly_ready_ids).toEqual([routed.id]);
+    expect(w.max_seq).toBe(s.maxSeq());
+    expect(w.changed_since).toBe(true);
+    expect(w.held_count).toBe(0);
+  });
   it('newlyReadySince follows capacity release and excludes the caller\'s untouched filing', () => {
     const s = freshStore();
     const held = create(s, { workstream: 'alpha' });

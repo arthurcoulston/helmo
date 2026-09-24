@@ -1009,9 +1009,48 @@ export class Store {
     return this.listTickets({ ready: true, workstream, caller, limit: 1000 }).length;
   }
 
-  /** Bounded current-ready IDs for harness reconciliation. */
-  readyIds(workstream?: string, caller?: string): string[] {
-    return this.listTickets({ ready: true, workstream, caller, limit: 1000 }).map((ticket) => ticket.id);
+  /** The whole idle-poll answer, read as ONE snapshot.
+   *
+   *  Every field here feeds a single harness decision — wake or re-idle, and at
+   *  what cursor — so they have to describe one instant. Read as separate
+   *  statements they do not: each takes its own WAL snapshot, and a handoff
+   *  committing between two of them is seen by one and not the other. rev
+   *  logged a wake reporting `ready=0` that way (rev H-1895), and the same
+   *  window can put max_seq past an event the ready set had not yet seen —
+   *  which is worse, because the loop then re-idles at a cursor beyond the
+   *  handoff and sleeps through the very wake this call exists to deliver. The
+   *  transaction holds one snapshot across all of them, and the ready set is
+   *  read once and reused, so newly_ready can never name a ticket missing from
+   *  ready_ids. */
+  wakeCheck(seq: number, workstream?: string, assignee?: string): {
+    max_seq: number;
+    ready_count: number;
+    ready_ids: string[];
+    newly_ready_count: number;
+    newly_ready_ids: string[];
+    held_count?: number;
+    changed_since: boolean;
+  } {
+    return this.db.transaction(() => {
+      const maxSeq = this.maxSeq();
+      const ready = this.listTickets({ ready: true, workstream, caller: assignee, limit: 1000 });
+      const newlyReadyIds = assignee ? this.newlyReadyFrom(ready, seq) : [];
+      return {
+        max_seq: maxSeq,
+        ready_count: ready.length,
+        ready_ids: ready.map((ticket) => ticket.id),
+        newly_ready_count: newlyReadyIds.length,
+        newly_ready_ids: newlyReadyIds,
+        // held_count only when the caller is identified: work already in hand.
+        // With ready_count it lets a harness spot the probe case — nothing to
+        // draw, nothing mid-flight — and run that pass cheap (rev H-412).
+        ...(assignee ? { held_count: this.heldCount(assignee) } : {}),
+        changed_since: this.scopeChangedSince(seq, workstream, assignee),
+      };
+      // .immediate() for the reason in the constructor: the ready read
+      // materializes due schedule instances, so this transaction writes after
+      // reading and a DEFERRED begin would meet an unwaitable upgrade.
+    }).immediate();
   }
 
   /** Currently-ready tickets whose route or gate opened after `seq`.
@@ -1023,7 +1062,12 @@ export class Store {
    *  out of the state calculation makes notes and close-out noise inert while
    *  preserving the exact ready semantics used by listTickets. */
   newlyReadySince(seq: number, workstream: string | undefined, caller: string): string[] {
-    const ready = this.listTickets({ ready: true, workstream, caller, limit: 1000 });
+    return this.newlyReadyFrom(this.listTickets({ ready: true, workstream, caller, limit: 1000 }), seq);
+  }
+
+  /** The narrowing half of newlyReadySince, over a ready set the caller already
+   *  holds — so wakeCheck reports both from one read rather than two. */
+  private newlyReadyFrom(ready: Ticket[], seq: number): string[] {
     if (!ready.length) return [];
 
     const candidates = new Set(

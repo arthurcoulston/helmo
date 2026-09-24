@@ -13,6 +13,17 @@
   A verdict whose ticket row has been deleted is still reported, with an empty
   workstream. `--actor` takes a reviewer's name; an identity JSON is refused.
 
+### Fixed
+
+- `helmo-cli wake-check` answers from one snapshot instead of six separate
+  reads (rev H-1895). Each read took its own WAL snapshot, so a handoff
+  committing partway through was seen by some fields and not others: rev logged
+  a wake reporting `ready_count` 0, and the same window could return a `max_seq`
+  past an event the ready set had not yet seen — which is a loop re-idling at a
+  cursor beyond the handoff and sleeping through the wake. The output shape is
+  unchanged. `Store.readyIds` is gone, replaced by `Store.wakeCheck`, which
+  reads the ready set once and reports every field from it.
+
 ### Breaking changes
 
 - `needs_human` takes the one line the sitting needs, not `true` (H-1761).

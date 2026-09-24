@@ -150,7 +150,14 @@ orchestrator meetings and the read-only view. Product intent:
   reported to stderr and surfaced by the `orphan_ticket` hygiene check — a row
   with no events was not written by Helmo, and repairing someone else's write
   is a human's call, not this store's.
-- `cli.ts` — programmatic write path for non-MCP writers (H-10); Rev uses
+- `cli.ts` — programmatic write path for non-MCP writers (H-10). Its flag
+  parser refuses a value-taking flag written bare and a bare flag written with
+  a value (H-1783): `--needs-human` last on the line used to read as undefined,
+  indistinguishable from never passed, so the write landed with the field
+  silently unset and the failure looked exactly like success for a day (H-1782).
+  A value that itself begins with `--` must therefore use `--flag=value`, which
+  is what the callers passing free text do (`crew:tools/estate/memo-drain.mjs`,
+  `crew:tools/github-listen.mjs`). Rev uses
   it for wake-checks, escalations, and spend write-back (`record-spend` +
   `actor-tickets`, H-19; their optional `--session` filter lets Rev isolate
   its stamped loop session from desk work under the same actor name (H-878);

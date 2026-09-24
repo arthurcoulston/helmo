@@ -11,12 +11,31 @@ import { Actor, DepType, HelmoError, writingActor } from './types.js';
 const args = process.argv.slice(2);
 const cmd = args.shift();
 
+// A flag that takes a value must be given one. Written bare — `--needs-human`
+// as the last argument, or immediately before another flag — it used to read
+// as undefined, indistinguishable from never passed, so the write succeeded
+// with the field silently unset (H-1782, H-1783). `--name=value` is the escape
+// hatch for a value that itself begins with `--`.
 function flag(name: string): string | undefined {
+  const prefix = `--${name}=`;
+  const inline = args.find((a) => a.startsWith(prefix));
+  if (inline !== undefined) return inline.slice(prefix.length);
   const i = args.indexOf(`--${name}`);
   if (i === -1) return undefined;
-  return args[i + 1];
+  const value = args[i + 1];
+  if (value === undefined || value.startsWith('--')) {
+    throw new HelmoError(
+      `--${name} was given no value. Put the value after the flag, or write --${name}=<value> if the value itself starts with '--'.`,
+    );
+  }
+  return value;
 }
+// The mirror image for a flag that takes none: `--takeover=true` would be
+// ignored by an `includes` check, which is the same silence from the other side.
 function has(name: string): boolean {
+  if (args.some((a) => a.startsWith(`--${name}=`))) {
+    throw new HelmoError(`--${name} takes no value — pass it bare.`);
+  }
   return args.includes(`--${name}`);
 }
 

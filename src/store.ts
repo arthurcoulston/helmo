@@ -4,7 +4,7 @@ import { parseSchedule } from './schedule.js';
 import {
   Actor, ActorKind, ACTOR_KINDS, Answer, AnswerEvent, BlastRadius, BLAST_RADII, CapacityHold, Confidence, Dep, DepType, Evidence,
   AcceptanceVerdict, HelmoError, HelmoEvent, Notice, ProductAcceptance, ProductArtifact,
-  ProductCompletion, Question, QuestionInput, Status, Ticket, TicketProgress, Workstream, WorkstreamInfo,
+  ProductCompletion, Question, QuestionInput, Status, Ticket, TicketProgress, VerdictEvent, Workstream, WorkstreamInfo,
 } from './types.js';
 
 const STALE_CLAIM_HOURS = 24;
@@ -1177,6 +1177,60 @@ export class Store {
         resolution: p.resolution,
         chosen_option: p.chosen_option,
         answer: Array.from(p.answer ?? '').slice(0, 200).join(''),
+      };
+    });
+  }
+
+  /** Acceptance verdicts since `seq`, oldest first — the same replay as
+   *  `answersSince`, for the other write that can let work through unread.
+   *  A verdict is recorded in the reviewer's name, Helmo's actor is
+   *  caller-supplied, and the store file is user-writable, so a forged PASS
+   *  is only caught by showing every verdict to the reviewer it names
+   *  (H-1830). `actorName` narrows to one reviewer, `workstream` to the
+   *  ticket's CURRENT stream. The join is a LEFT one on purpose: a verdict
+   *  whose ticket has since vanished is the loudest thing this read can
+   *  find, and an inner join would silently drop it. `max_seq` comes from
+   *  the caller's own read so its checkpoint advances without a second
+   *  query — same reason as `answers`, and the same reason the sweep doing
+   *  the replay never opens the store file itself (H-936).
+   *  Read-only; `note` is truncated to a scannable line. */
+  verdictsSince(seq: number, actorName?: string, workstream?: string): VerdictEvent[] {
+    const params: (string | number)[] = [seq];
+    let filter = '';
+    if (actorName) {
+      filter += " AND json_extract(e.actor, '$.name') = ?";
+      params.push(actorName);
+    }
+    if (workstream) {
+      filter += ' AND t.workstream = ?';
+      params.push(workstream);
+    }
+    const rows = this.db
+      .prepare(
+        `SELECT e.seq, e.ts, e.ticket_id, e.actor, e.payload, t.workstream FROM events e
+         LEFT JOIN tickets t ON t.id = e.ticket_id
+         WHERE e.seq > ? AND e.event_type = 'acceptance_verdict' ${filter} ORDER BY e.seq`,
+      )
+      .all(...params) as {
+      seq: number;
+      ts: string;
+      ticket_id: string;
+      actor: string;
+      payload: string;
+      workstream: string | null;
+    }[];
+    return rows.map((r) => {
+      const a = JSON.parse(r.actor) as Actor;
+      const p = JSON.parse(r.payload) as { refs?: string[]; verdict: 'pass' | 'fail'; note?: string };
+      return {
+        seq: r.seq,
+        ts: r.ts,
+        ticket_id: r.ticket_id,
+        workstream: r.workstream ?? '',
+        actor: { name: a.name, kind: a.kind, ...(a.session ? { session: a.session } : {}) },
+        refs: p.refs ?? [],
+        verdict: p.verdict,
+        note: Array.from(p.note ?? '').slice(0, 200).join(''),
       };
     });
   }

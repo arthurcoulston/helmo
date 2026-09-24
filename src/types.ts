@@ -118,6 +118,22 @@ export interface AnswerEvent {
   answer: string;
 }
 
+/** One recorded acceptance verdict, as the sweep and any auditor read it
+ *  back. Helmo's actor is caller-supplied and the store file is
+ *  user-writable, so a verdict in a reviewer's name is only as trustworthy as
+ *  the daily replay that shows it to them (H-1830). The ticket's current
+ *  workstream rides along because that is how the sweep scopes its read. */
+export interface VerdictEvent {
+  seq: number;
+  ts: string;
+  ticket_id: string;
+  workstream: string;
+  actor: Pick<Actor, 'name' | 'kind'> & { session?: string };
+  refs: string[];
+  verdict: 'pass' | 'fail';
+  note: string;
+}
+
 export interface Ticket {
   id: string;
   title: string;

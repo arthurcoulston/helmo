@@ -123,6 +123,25 @@ try {
       });
       break;
     }
+    case 'verdicts': {
+      // The daily sweep's acceptance-verdict replay (H-1830). A verdict is
+      // what lets reviewed work through, and it is written in the reviewer's
+      // name by a caller-supplied actor — so every one gets shown back to the
+      // reviewer it names. max_seq rides along for the same reason as
+      // 'answers': the checkpoint advances from this read, not a second one.
+      // Every other command reads --actor as the writer's identity JSON.
+      // Here it names the reviewer to filter on, so an identity passed out of
+      // habit would match no name and quietly return nothing (H-1830).
+      const reviewer = flag('actor');
+      if (reviewer?.trimStart().startsWith('{')) {
+        throw new HelmoError("verdicts --actor takes a reviewer's NAME, not an identity JSON — this command is read-only and needs no identity.");
+      }
+      out({
+        max_seq: store.maxSeq(),
+        verdicts: store.verdictsSince(Number(flag('since-seq') ?? 0), reviewer, flag('workstream')),
+      });
+      break;
+    }
     case 'hygiene': {
       out({ findings: store.hygiene() });
       break;
@@ -282,6 +301,7 @@ try {
   acceptance-verdict --ticket H-n --refs '["repo@<40hex>"]' --verdict pass|fail --note N
   acceptance-check --ticket H-n [--refs '["repo@<40hex>"]'] (exit 0 only for independent acceptance of that manifest)
   answers        --since-seq N [--session S]                    (answers recorded since a cursor, + max_seq; --session dashboard for the sweep's replay)
+  verdicts       --since-seq N [--actor A] [--workstream W]     (acceptance verdicts recorded since a cursor, + max_seq; the sweep's forged-PASS replay)
   hygiene                                                      (deterministic record checks, read-only)
   hygiene-dispose --check C --ticket H-n --reason R  (stop re-reporting a finding: any check on a TERMINAL ticket, or spend_anomaly on live work, where it holds until the cost grows by half again)
   workstream     --name W                                      (budget, seat, spend-to-date; read-only)

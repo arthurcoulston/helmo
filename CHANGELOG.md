@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+
+- `helmo-cli verdicts --since-seq N [--actor A] [--workstream W]` — a read-only
+  replay of acceptance verdicts from a cursor, returning `max_seq` from the same
+  read (H-1830). It is `answers` for the other write that lets work through
+  unread: a verdict is recorded in the reviewer's name by a caller-supplied
+  actor on a store file the user can write, so ward's daily sweep shows every
+  one back to the reviewer it names — without opening helmo.db itself (H-936).
+  A verdict whose ticket row has been deleted is still reported, with an empty
+  workstream. `--actor` takes a reviewer's name; an identity JSON is refused.
+
 ### Breaking changes
 
 - `needs_human` takes the one line the sitting needs, not `true` (H-1761).

@@ -178,6 +178,16 @@ orchestrator meetings and the read-only view. Product intent:
   sweep can audit dashboard-session answers — the one channel that writes as
   the human without a meeting — through this front door instead of opening
   helmo.db with sqlite3 (H-143 detection, H-936 boundary).
+  `verdicts --since-seq N [--actor A] [--workstream W]` is the same replay for
+  the other write that can let work through unread: an acceptance verdict is
+  recorded in the reviewer's name by a caller-supplied actor, so every one is
+  shown back to the reviewer it names (H-1830). Oldest first, `max_seq` from
+  the same read, `note` truncated like `answers`. The join to tickets is a LEFT
+  one on purpose — a verdict whose ticket row has been deleted underneath it is
+  the loudest thing this read can find, and an inner join would make the tidiest
+  forgery the quietest. `--actor` here is a reviewer's NAME, not the identity
+  JSON every other command reads from that flag; an identity passed by habit is
+  refused rather than silently matching nobody.
   The Store's bounded `newlyReadySince` read supports the event-driven half of
   wake-check: it intersects the canonical current-ready set (up to 1,000 IDs)
   with readiness-causing events after the cursor, plus date gates that crossed

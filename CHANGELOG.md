@@ -15,6 +15,10 @@
 
 ### Fixed
 
+- `silent_assignee` no longer flags a reservation while one of its blocking
+  dependencies is live (H-1900). The blocker already explains why the ticket
+  has not moved; if it closes and the reservation remains untouched, the
+  finding returns automatically.
 - `helmo-cli wake-check` answers from one snapshot instead of six separate
   reads (rev H-1895). Each read took its own WAL snapshot, so a handoff
   committing partway through was seen by some fields and not others: rev logged

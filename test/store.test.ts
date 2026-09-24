@@ -1295,6 +1295,19 @@ describe('hygiene checks (deterministic, read-only)', () => {
     expect(f).toContainEqual(expect.objectContaining({ ticket_id: typo.id }));
     expect(f).toContainEqual(expect.objectContaining({ ticket_id: held.id, detail: expect.stringContaining('silent everywhere for 8d') }));
   });
+  it('silent assignees ignore a live blocker, then flag when it closes', () => {
+    const s = freshStore();
+    const blocker = create(s);
+    const held = create(s, { assignee: 'never-seen', deps: [{ to: blocker.id, type: 'blocks' }] });
+    expect(s.hygiene().filter((x) => x.check === 'silent_assignee' && x.ticket_id === held.id)).toEqual([]);
+    s.updateTicket(builder, {
+      ticket_id: blocker.id,
+      note: 'prerequisite landed',
+      status: 'done',
+      evidence: [{ kind: 'file', ref: '/tmp/prerequisite' }],
+    });
+    expect(s.hygiene()).toContainEqual(expect.objectContaining({ check: 'silent_assignee', ticket_id: held.id }));
+  });
   it('a question ticket the human closed via answer is not done_without_evidence: the answer IS the closure record (H-81)', () => {
     const s = freshStore();
     const q = create(s);

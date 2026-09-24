@@ -833,6 +833,10 @@ export class Store {
          GROUP BY t.id HAVING last IS NULL OR last < ?`,
       )
       .all(hoursAgo(SILENT_ASSIGNEE_HOURS), hoursAgo(SILENT_ASSIGNEE_HOURS)) as { id: string; assignee: string; last: string | null }[]) {
+      // A live blocker already explains why the reservation has not moved.
+      // Once it closes, isBlocked() clears by itself and the untouched
+      // reservation becomes visible here again.
+      if (this.isBlocked(r.id)) continue;
       findings.push({
         check: 'silent_assignee',
         ticket_id: r.id,

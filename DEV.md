@@ -236,9 +236,12 @@ orchestrator meetings and the read-only view. Product intent:
   record checks. `awaiting_second_eyes` (H-1069) makes every currently ready,
   self-filed ticket visible store-wide until another actor judges it; this
   closes the gap where reservation to the filer hid the work from both the
-  filer and the cultivating seat. `silent_assignee` (H-61) watches open reservations whose
-  assignee has written nothing for 7d or never — typo/rename/retirement in one
-  rule), also queryable via `helmo-cli hygiene`; hygiene is judgment-free
+  filer and the cultivating seat. `silent_assignee` (H-61) watches unblocked
+  open reservations whose assignee has written nothing for 7d or never —
+  typo/rename/retirement in one rule. A live blocker already explains the lack
+  of motion; when it closes, an untouched reservation becomes visible to the
+  check automatically (H-1900). Findings are also queryable via
+  `helmo-cli hygiene`; hygiene is judgment-free
   by design, the judgment half of cultivation stays human/agent. Since H-81
   that judgment has a recording surface: `helmo-cli hygiene-dispose` writes an
   evented, append-once disposition for a finding on a TERMINAL ticket and the

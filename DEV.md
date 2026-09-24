@@ -198,6 +198,14 @@ orchestrator meetings and the read-only view. Product intent:
   `newly_ready_ids`/`newly_ready_count`; Rev uses the edge for immediate wakes
   and the current set for periodic reconciliation. Existing `max_seq`,
   `held_count`, and `changed_since` fields remain compatible (H-1098).
+  All of it comes from `Store.wakeCheck`, one IMMEDIATE transaction over one
+  ready read. Assembled as separate statements it was not one snapshot: each
+  took its own WAL view, and a handoff committing partway through appeared in
+  some fields and not others — rev logged a wake whose line read `ready=0`, and
+  a `max_seq` read after the ready set can send a seat back to idle at a cursor
+  past the handoff, which is the wake lost outright (H-1895). Anything added
+  here belongs inside that transaction, derived from the ready set already in
+  hand rather than re-queried.
   `acceptance-check --ticket H-n --refs '["repo@<40hex>"]'` is the release
   process seam: it exits zero only when an independent PASS covers that exact
   manifest. `product-complete` and `acceptance-verdict` record the two halves.

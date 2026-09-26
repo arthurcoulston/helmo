@@ -466,6 +466,34 @@ export class Store {
     return row ? (JSON.parse(row.payload) as Answer) : null;
   }
 
+  /** Every ask on this ticket the human has already answered, keyed by the
+   *  fingerprint `presentation.ts` computes. Only one question is pending at a
+   *  time — a return refuses a ticket already `awaiting_human` — so the
+   *  `returned` event standing before an `answered` one is the ask that answer
+   *  replies to. */
+  answeredAsks(ticketId: string): Map<string, { answer: Answer; at: string; by: string }> {
+    const rows = this.db
+      .prepare(
+        "SELECT event_type, actor, payload, ts FROM events WHERE ticket_id = ? AND event_type IN ('returned', 'answered') ORDER BY seq",
+      )
+      .all(ticketId) as { event_type: string; actor: string; payload: string; ts: string }[];
+    const answered = new Map<string, { answer: Answer; at: string; by: string }>();
+    let pending: string | null = null;
+    for (const r of rows) {
+      if (r.event_type === 'returned') {
+        pending = questionFingerprint(JSON.parse(r.payload) as Question);
+      } else if (pending) {
+        answered.set(pending, {
+          answer: JSON.parse(r.payload) as Answer,
+          at: r.ts,
+          by: (JSON.parse(r.actor) as Actor).name,
+        });
+        pending = null;
+      }
+    }
+    return answered;
+  }
+
   agentChain(ticketId: string): string[] {
     const rows = this.db.prepare('SELECT actor FROM events WHERE ticket_id = ? ORDER BY seq').all(ticketId) as { actor: string }[];
     const chain: string[] = [];
@@ -1877,6 +1905,20 @@ export class Store {
     // Normalised on the way in: every reader downstream sees an array.
     const stored: Question = { ...q, options };
     return this.db.transaction(() => {
+      // Inside the transaction for the same reason the answer's fingerprint
+      // check is (H-1053): the answer can land between the caller's read and
+      // its write. That is exactly the shape this refuses — on H-2099 a single
+      // live session returned a question, had it answered 35 seconds later,
+      // rewrote the body, and then returned the byte-identical ask again,
+      // apparently never seeing the answer arrive. The human's dashboard drew
+      // a decision he had already made, and the session was metered for it.
+      const already = this.answeredAsks(t.id).get(questionFingerprint(stored));
+      if (already) {
+        const said = already.answer.answer.replace(/\s+/g, ' ').trim();
+        throw new HelmoError(
+          `${t.id} has already had this exact ask answered — ${already.by} answered it at ${already.at}: "${said.length > 200 ? `${said.slice(0, 200)}…` : said}"${already.answer.chosen_option ? ` (chose: ${already.answer.chosen_option})` : ''}. Read it with helmo_get_ticket (last_answer) and act on it; asking again spends a meeting slot on a decision already made. If you do still need the human, say what is new: a situation that accounts for that answer and names what it left open. A byte-identical re-ask is the signature of a session that did not see the answer land, not of a second question.`,
+        );
+      }
       const ts = now();
       this.append(ts, t.id, 'returned', actor, stored as unknown as Record<string, unknown>);
       this.db

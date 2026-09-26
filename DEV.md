@@ -379,6 +379,21 @@ orchestrator meetings and the read-only view. Product intent:
   surface and a question without them would otherwise be unanswerable from the
   dashboard. Questions written before the cap can still hold four; readers
   letter what they are given rather than refusing to draw it.
+- `returnToHuman` refuses a return whose ask the human has already answered on
+  that ticket (H-2126): `answeredAsks` walks the log pairing each `answered`
+  event with the `returned` one before it, and a matching
+  `questionFingerprint` throws with the answer quoted, so the caller needs no
+  second read to act on it. The check is inside the write transaction for the
+  same reason `answerTicket`'s is (H-1053) — the answer can land between a
+  caller's read and its write, which is exactly the observed shape: on H-2099
+  one live session returned a question, had it answered 35 seconds later, and
+  returned the byte-identical ask again. Any previously answered ask counts,
+  not just the last, and the scope is one ticket — the same words on other work
+  are a new question. It is the store-side answer to the family H-1570 started:
+  that one was fixed by teaching an agent to read `last_answer` before
+  returning, which binds only the agent taught — a refusal binds every caller.
+  It cannot wedge a ticket: a situation that accounts for the answer is a
+  different fingerprint.
 - Product acceptance is opt-in and exact-ref: no completion is
   `not_requested`; a completion without a current verdict is `pending`; FAIL is
   `failed`; only a current non-author PASS is `accepted`. A caller checking a

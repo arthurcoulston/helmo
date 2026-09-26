@@ -400,6 +400,41 @@ describe('return to human / answer', () => {
     expect(s.getEvents(t.id).filter((e) => e.event_type === 'answered')).toHaveLength(2);
   });
 
+  it('refuses a byte-identical re-ask of a question the human has already answered (H-2126)', () => {
+    // On H-2099 one live session returned a question, had it answered 35
+    // seconds later, then returned the identical ask again — the dashboard drew
+    // a decision Arthur had already made. The guard is here rather than in one
+    // harness because any session that loses sight of an answer does this.
+    const s = freshStore();
+    const t = create(s);
+    s.returnToHuman(builder, t.id, q);
+    s.answerTicket(orch, t.id, { answer: 'Pay it — the date matters more than the money.', chosen_option: 'pay', resolution: 'resume' });
+
+    expect(() => s.returnToHuman(builder, t.id, q)).toThrow(/already had this exact ask answered/);
+    // The refusal carries the answer, so the caller needs no second read to act.
+    expect(() => s.returnToHuman(builder, t.id, q)).toThrow(/the date matters more than the money/);
+    // And nothing was written: the ticket is still the caller's to work.
+    expect(s.getTicket(t.id).status).toBe('open');
+    expect(s.getEvents(t.id).filter((e) => e.event_type === 'returned')).toHaveLength(1);
+
+    // A real second question goes through — including one whose situation now
+    // accounts for the answer. Refusing the replay must not wedge the ticket.
+    const again = s.returnToHuman(builder, t.id, { ...q, situation: 'Deposit paid as instructed; Aldrich now wants the balance a month early.' });
+    expect(again.status).toBe('awaiting_human');
+  });
+
+  it('refuses the replay of an older answered ask, not just the most recent one (H-2126)', () => {
+    const s = freshStore();
+    const t = create(s);
+    s.returnToHuman(builder, t.id, q);
+    s.answerTicket(orch, t.id, { answer: 'Pay it.', resolution: 'resume' });
+    s.returnToHuman(builder, t.id, { ...q, question: 'Book the band too?' });
+    s.answerTicket(orch, t.id, { answer: 'No band.', resolution: 'resume' });
+    expect(() => s.returnToHuman(builder, t.id, q)).toThrow(/already had this exact ask answered/);
+    // Per ticket, though: the same words on other work are a new question.
+    expect(s.returnToHuman(builder, create(s).id, q).status).toBe('awaiting_human');
+  });
+
   it('answersSince replays answers from a cursor and can narrow to one session (H-936)', () => {
     const s = freshStore();
     const dash: Actor = { name: 'arthur', kind: 'human', session: 'dashboard' };

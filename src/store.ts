@@ -1066,7 +1066,7 @@ export class Store {
     return this.db.transaction(() => {
       const maxSeq = this.maxSeq();
       const ready = this.listTickets({ ready: true, workstream, caller: assignee, limit: 1000 });
-      const newlyReadyIds = assignee ? this.newlyReadyFrom(ready, seq) : [];
+      const newlyReadyIds = assignee ? this.newlyReadyFrom(ready, seq, assignee) : [];
       return {
         max_seq: maxSeq,
         ready_count: ready.length,
@@ -1094,12 +1094,12 @@ export class Store {
    *  out of the state calculation makes notes and close-out noise inert while
    *  preserving the exact ready semantics used by listTickets. */
   newlyReadySince(seq: number, workstream: string | undefined, caller: string): string[] {
-    return this.newlyReadyFrom(this.listTickets({ ready: true, workstream, caller, limit: 1000 }), seq);
+    return this.newlyReadyFrom(this.listTickets({ ready: true, workstream, caller, limit: 1000 }), seq, caller);
   }
 
   /** The narrowing half of newlyReadySince, over a ready set the caller already
    *  holds — so wakeCheck reports both from one read rather than two. */
-  private newlyReadyFrom(ready: Ticket[], seq: number): string[] {
+  private newlyReadyFrom(ready: Ticket[], seq: number, caller: string): string[] {
     if (!ready.length) return [];
 
     const candidates = new Set(
@@ -1120,6 +1120,17 @@ export class Store {
         .all(seq) as { id: string }[])
         .map((r) => r.id),
     );
+
+    // Self-filed work becomes ready on the first second-pair-of-eyes touch.
+    // That edge is actor-sensitive rather than payload-sensitive: a note is
+    // enough to release triage, but later notes must not re-wake the seat.
+    // Recurring instances inherit the template's filing judgment, just as the
+    // canonical ready query does in selfFiledUntouched().
+    for (const t of ready) {
+      if (this.filingCreator(t.id) !== caller) continue;
+      const releasedAt = this.selfTriageReleaseSeq(t.id, caller);
+      if (releasedAt !== null && releasedAt > seq) candidates.add(t.id);
+    }
 
     // Closing either kind of terminal blocker opens the waiting ticket, not
     // the blocker itself. Deps are already indexed by their primary key's
@@ -1146,6 +1157,28 @@ export class Store {
     }
 
     return ready.map((t) => t.id).filter((id) => candidates.has(id));
+  }
+
+  /** Sequence of the first event that releases a self-filing's triage gate. */
+  private selfTriageReleaseSeq(id: string, caller: string | null): number | null {
+    if (!caller) return null;
+    const created = this.db
+      .prepare("SELECT json_extract(payload, '$.spawned_from') AS template FROM events WHERE ticket_id = ? AND event_type = 'created'")
+      .get(id) as { template: string | null } | undefined;
+    if (!created) return null;
+
+    const row = this.db
+      .prepare(
+        `SELECT MIN(seq) AS seq FROM events
+         WHERE ticket_id = ? AND event_type != 'spend'
+           AND json_extract(actor, '$.name') != 'helmo-scheduler'
+           AND (json_extract(actor, '$.name') != ? OR json_extract(actor, '$.kind') IN ('human','orchestrator'))`,
+      )
+      .get(id, caller) as { seq: number | null };
+    const inherited = created.template ? this.selfTriageReleaseSeq(created.template, caller) : null;
+    if (row.seq === null) return inherited;
+    if (inherited === null) return row.seq;
+    return Math.min(row.seq, inherited);
   }
 
   /** In_progress tickets assigned to `assignee`, each with the actor that put

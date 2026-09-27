@@ -840,6 +840,28 @@ describe('harness queries (wake cursor)', () => {
     ]);
     expect(s.newlyReadySince(s.maxSeq(), 'alpha', reviewer.name)).toEqual([]);
   });
+  it('wakeCheck reports independent triage as one readiness edge', () => {
+    const s = freshStore();
+    const selfFiled = create(s, { workstream: 'elsewhere', assignee: builder.name });
+    const template = s.createTicket(builder, {
+      title: 'Sweep', body: 'standing', workstream: 'elsewhere', type: 'ops', schedule: 'every 30m', assignee: builder.name,
+    });
+    const [instance] = s.materializeDue(new Date(Date.now() + 31 * 60_000));
+    const idleSeq = s.maxSeq();
+
+    s.updateTicket(builder, { ticket_id: selfFiled.id, note: 'more context from the filer' });
+    expect(s.wakeCheck(idleSeq, 'alpha', builder.name).newly_ready_ids).toEqual([]);
+
+    s.updateTicket(reviewer, { ticket_id: selfFiled.id, note: 'independently triaged' });
+    s.updateTicket(reviewer, { ticket_id: template.id, note: 'independently triaged standing work' });
+    const released = s.wakeCheck(idleSeq, 'alpha', builder.name);
+    expect(released.ready_ids).toEqual([selfFiled.id, instance]);
+    expect(released.newly_ready_ids).toEqual([selfFiled.id, instance]);
+
+    const afterRelease = s.maxSeq();
+    s.updateTicket(reviewer, { ticket_id: selfFiled.id, note: 'later context only' });
+    expect(s.wakeCheck(afterRelease, 'alpha', builder.name).newly_ready_ids).toEqual([]);
+  });
   it('wakeCheck answers from one ready read, taken inside one transaction (rev H-1895)', () => {
     const s = freshStore();
     const routed = create(s, { workstream: 'alpha', assignee: reviewer.name });

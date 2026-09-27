@@ -193,7 +193,10 @@ orchestrator meetings and the read-only view. Product intent:
   with readiness-causing events after the cursor, plus date gates that crossed
   after that event's timestamp. Two indexed event queries cover direct route /
   gate changes and blocker closure; notes, spend, unrelated close-out, and
-  self-filed untouched work cannot enter through that intersection. `wake-check`
+  self-filed untouched work cannot enter through that intersection. The first
+  non-meter touch by another actor (or a human/orchestrator relay) is also an
+  edge: it releases self-triage for the filing or its recurring template;
+  subsequent notes stay inert. `wake-check`
   exposes both sets as `ready_ids`/`ready_count` and
   `newly_ready_ids`/`newly_ready_count`; Rev uses the edge for immediate wakes
   and the current set for periodic reconciliation. Existing `max_seq`,

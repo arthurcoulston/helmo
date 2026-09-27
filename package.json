@@ -23,7 +23,8 @@
   "license": "MIT",
   "type": "module",
   "bin": {
-    "rev": "dist/cli.js"
+    "rev": "dist/cli.js",
+    "gp-rev": "bin/gp-rev.js"
   },
   "dependencies": {
     "smol-toml": "^1.7.1"

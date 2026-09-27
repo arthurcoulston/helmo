@@ -1,10 +1,11 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const REV_CLI = join(import.meta.dirname, '..', 'src', 'cli.ts');
+const GP_REV_CLI = join(import.meta.dirname, '..', 'bin', 'gp-rev.js');
 const ROOT = join(import.meta.dirname, '..');
 
 function rev(home: string, args: string[]) {
@@ -28,6 +29,35 @@ runtime = "mock"
 `);
   return home;
 }
+
+describe('gp-rev instance binding (H-2277)', () => {
+  it('always reads ~/.rev-gp, even when the caller supplies another REV_HOME', () => {
+    const home = mkdtempSync(join(tmpdir(), 'gp-rev-cli-'));
+    const gpHome = join(home, '.rev-gp');
+    const crossedHome = roster();
+    writeFileSync(join(home, '.keep'), '');
+    mkdirSync(gpHome);
+    writeFileSync(join(gpHome, 'roster.toml'), `[global]
+helmo_cli = "/tmp/helmo-cli.js"
+helmo_mcp_server = "/tmp/helmo-server.js"
+
+[loops.builder]
+workstream = "goodplumb"
+cwd = "/tmp"
+runtime = "mock"
+`);
+
+    const result = spawnSync(process.execPath, [GP_REV_CLI, 'status'], {
+      cwd: ROOT,
+      encoding: 'utf8',
+      env: { ...process.env, HOME: home, REV_HOME: crossedHome },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('builder');
+    expect(result.stdout).not.toContain('alpha');
+  });
+});
 
 describe('rev command arguments (H-810)', () => {
   it.each(['run', 'stop', 'resume', 'pace', 'tail'])('honours %s --help before loading the roster or treating it as a loop', (command) => {

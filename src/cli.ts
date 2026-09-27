@@ -14,23 +14,25 @@ import { logEvent, pidAlive, processObservation, sClear, sGet, sHas, sSet, strea
 import { runFleet } from './supervisor.js';
 
 const [cmd, ...rest] = process.argv.slice(2);
+const commandName = process.env['REV_COMMAND_NAME']?.trim() || 'rev';
+const rosterSource = commandName === 'rev' ? '~/.rev/roster.toml (REV_HOME to override)' : '~/.rev-gp/roster.toml (fixed by gp-rev)';
 
 const COMMAND_HELP: Record<string, string> = {
-  run: 'usage: rev run [<loop> [--count N]]',
-  stop: 'usage: rev stop [<loop>]',
-  resume: 'usage: rev resume <loop>',
-  service: 'usage: rev service <install|uninstall|start|status>',
-  redeploy: 'usage: rev redeploy [--ticket <id>] [--reason "<why>"]',
-  pace: "usage: rev pace <loop> <fraction (0,1] | park | clear>",
-  usage: 'usage: rev usage [--poll]',
-  routing: 'usage: rev routing',
-  status: 'usage: rev status',
-  tail: 'usage: rev tail <loop>',
-  'session-spec': 'usage: rev session-spec <seat> --session <actor stamp> [--provider claude] [--tier high] [--model M] [--cwd P] [--constitution P] [--version V]',
+  run: `usage: ${commandName} run [<loop> [--count N]]`,
+  stop: `usage: ${commandName} stop [<loop>]`,
+  resume: `usage: ${commandName} resume <loop>`,
+  service: `usage: ${commandName} service <install|uninstall|start|status>`,
+  redeploy: `usage: ${commandName} redeploy [--ticket <id>] [--reason "<why>"]`,
+  pace: `usage: ${commandName} pace <loop> <fraction (0,1] | park | clear>`,
+  usage: `usage: ${commandName} usage [--poll]`,
+  routing: `usage: ${commandName} routing`,
+  status: `usage: ${commandName} status`,
+  tail: `usage: ${commandName} tail <loop>`,
+  'session-spec': `usage: ${commandName} session-spec <seat> --session <actor stamp> [--provider claude] [--tier high] [--model M] [--cwd P] [--constitution P] [--version V]`,
 };
 
 if (cmd === '--help' || cmd === '-h') {
-  console.log('usage: rev <command>  (run rev <command> --help for command syntax)');
+  console.log(`usage: ${commandName} <command>  (run ${commandName} <command> --help for command syntax)`);
   process.exit(0);
 }
 if (rest[0] === '--help' || rest[0] === '-h') {
@@ -44,7 +46,7 @@ if (rest[0] === '--help' || rest[0] === '-h') {
 function loopArg(): string {
   const name = rest[0];
   if (!name) {
-    console.error(`usage: rev ${cmd} <loop>`);
+    console.error(`usage: ${commandName} ${cmd} <loop>`);
     process.exit(1);
   }
   return knownLoop(name);
@@ -107,7 +109,7 @@ switch (cmd) {
   case 'redeploy': {
     const sup = pidAlive('supervisor');
     if (!sup) {
-      console.error('No supervisor running — nothing to redeploy. The next `rev run` starts on the current build anyway.');
+      console.error(`No supervisor running — nothing to redeploy. The next \`${commandName} run\` starts on the current build anyway.`);
       process.exit(1);
     }
     const pending = readRedeploy();
@@ -126,7 +128,7 @@ switch (cmd) {
     );
     if (!existsSync(serviceFile().file)) {
       console.log(
-        `WARNING: no service is installed (${serviceFile().file}), so nothing will start the supervisor again: the fleet will drain and STAY DOWN until someone runs \`rev run\`. Rev will file that as an outage if it happens.`,
+        `WARNING: no service is installed (${serviceFile().file}), so nothing will start the supervisor again: the fleet will drain and STAY DOWN until someone runs \`${commandName} run\`. Rev will file that as an outage if it happens.`,
       );
     }
     break;
@@ -142,7 +144,7 @@ switch (cmd) {
   case 'status': {
     const supervisor = processObservation('supervisor');
     const sup = supervisor.pid;
-    console.log(`supervisor: ${supervisor.state === 'unknown' ? `unobservable (recorded pid ${sup}; process inspection unavailable)` : sup ? `running (pid ${sup})` : 'down — start the machine with: rev run'}`);
+    console.log(`supervisor: ${supervisor.state === 'unknown' ? `unobservable (recorded pid ${sup}; process inspection unavailable)` : sup ? `running (pid ${sup})` : `down — start the machine with: ${commandName} run`}`);
     console.log(usageLine(readUsage(), 'Claude'));
     console.log(`${usageLine(readCodexUsage(), 'Codex')}\n`);
     console.log('LOOP                     STATE      PID     PACE   WORKSTREAM');
@@ -168,11 +170,11 @@ switch (cmd) {
       // starts the whole machine again.
       const sup = pidAlive('supervisor');
       if (!sup) {
-        console.error('No supervisor running. Stop a single loop with: rev stop <loop>');
+        console.error(`No supervisor running. Stop a single loop with: ${commandName} stop <loop>`);
         process.exit(1);
       }
       process.kill(sup, 'SIGTERM');
-      console.log(`Drain requested (SIGTERM to supervisor pid ${sup}) — in-flight iterations finish, then the machine stops. Watch: rev status`);
+      console.log(`Drain requested (SIGTERM to supervisor pid ${sup}) — in-flight iterations finish, then the machine stops. Watch: ${commandName} status`);
       break;
     }
     knownLoop(name);
@@ -181,7 +183,7 @@ switch (cmd) {
     const sup = pidAlive('supervisor');
     console.log(
       `STOP set for '${name}' — halts cleanly after any in-flight iteration.` +
-        (sup ? ` The supervisor leaves it down until: rev resume ${name}` : ` Resume: rev resume ${name} (then rev run ${name}).`),
+        (sup ? ` The supervisor leaves it down until: ${commandName} resume ${name}` : ` Resume: ${commandName} resume ${name} (then ${commandName} run ${name}).`),
     );
     break;
   }
@@ -196,7 +198,7 @@ switch (cmd) {
     const sup = pidAlive('supervisor');
     console.log(
       `Halt sentinels cleared for '${name}'.` +
-        (sup ? ` The supervisor picks it back up within ${g.poll_seconds}s.` : ` Start it with: rev run ${name}`),
+        (sup ? ` The supervisor picks it back up within ${g.poll_seconds}s.` : ` Start it with: ${commandName} run ${name}`),
     );
     break;
   }
@@ -207,7 +209,7 @@ switch (cmd) {
     else if (verb === 'start') serviceStart();
     else if (verb === 'status') console.log(serviceStatusLine());
     else {
-      console.error('usage: rev service <install|uninstall|start|status>  (stop the machine with: rev stop)');
+      console.error(`usage: ${commandName} service <install|uninstall|start|status>  (stop the machine with: ${commandName} stop)`);
       process.exit(1);
     }
     break;
@@ -216,7 +218,7 @@ switch (cmd) {
     const name = loopArg();
     const v = rest[1];
     if (!v) {
-      console.error('usage: rev pace <loop> <fraction (0,1] | park | clear>');
+      console.error(`usage: ${commandName} pace <loop> <fraction (0,1] | park | clear>`);
       process.exit(1);
     }
     if (v === 'clear') sClear(name, 'PACE');
@@ -240,7 +242,7 @@ switch (cmd) {
       }
       if (s?.stale) console.log(`  STALE — last read failed (${s.error ?? 'no reason recorded'}); these are the last good numbers.`);
     }
-    if (!snap) console.log(`  Nothing at ${usagePath()} yet. The supervisor polls every 10 min; 'rev usage --poll' reads now.`);
+    if (!snap) console.log(`  Nothing at ${usagePath()} yet. The supervisor polls every 10 min; '${commandName} usage --poll' reads now.`);
     break;
   }
   case 'routing': {
@@ -325,7 +327,7 @@ switch (cmd) {
     break;
   }
   default:
-    console.error(`usage: rev <command>
+    console.error(`usage: ${commandName} <command>
   run                      start the machine: supervise every roster loop (respawn, backoff, drain)
   run <loop> [--count N]   drive one loop in the foreground (debugging; --count 1 = assess early)
   stop                     graceful stop-all: drain the supervisor, iterations finish first
@@ -340,6 +342,6 @@ switch (cmd) {
   redeploy [--ticket <id>] [--reason "<why>"]
                            activate a committed fix: drain after in-flight iterations, come back on the new code
   tail <loop>              print the path of the loop's event trace
-Roster: ${Object.keys(loops).join(', ') || '(none)'} — from ~/.rev/roster.toml (REV_HOME to override).`);
+Roster: ${Object.keys(loops).join(', ') || '(none)'} — from ${rosterSource}.`);
     process.exit(cmd ? 1 : 0);
 }

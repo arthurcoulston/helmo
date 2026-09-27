@@ -320,7 +320,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   than re-deriving sentinel truth. `cli.ts` — run / status /
   stop / resume / pace / service / tail. `rev run`/`rev stop` with no argument
   mean the whole machine (Arthur's ruling: the operator starts the machine,
-  not a named worker).
+  not a named worker). `bin/gp-rev.js` is the Good Plumb operator entrypoint:
+  it fixes `REV_HOME` to `~/.rev-gp` before loading that same CLI, so every
+  verb stays shared while neither a shell override nor remembered flag can
+  cross estates. Its displayed commands and roster source follow that name.
 
 ## Commands
 

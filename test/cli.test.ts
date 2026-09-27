@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -56,6 +56,37 @@ runtime = "mock"
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain('builder');
     expect(result.stdout).not.toContain('alpha');
+  });
+});
+
+describe('Prime team control (H-2301)', () => {
+  function gp(home: string, args: string[], prime = true) {
+    return spawnSync(process.execPath, [GP_REV_CLI, ...args], {
+      cwd: ROOT, encoding: 'utf8', env: { ...process.env, HOME: home, REV_LOOP: prime ? 'prime' : 'builder' },
+    });
+  }
+
+  it('stops and resumes only Prime-owned stops while preserving holds', () => {
+    const home = mkdtempSync(join(tmpdir(), 'gp-team-'));
+    const gpHome = join(home, '.rev-gp'); mkdirSync(gpHome);
+    writeFileSync(join(gpHome, 'roster.toml'), `[global]\nhelmo_cli = "/tmp/h"\nhelmo_mcp_server = "/tmp/m"\n[loops.prime]\nworkstream="governance"\ncwd="/tmp"\nruntime="mock"\n[loops.builder]\nworkstream="goodplumb"\ncwd="/tmp"\nruntime="mock"\n`);
+    expect(gp(home, ['team', 'stop', 'all']).status).toBe(0);
+    expect(existsSync(join(gpHome, 'state', 'builder', 'STOP'))).toBe(true);
+    expect(existsSync(join(gpHome, 'state', 'prime', 'STOP'))).toBe(true);
+    writeFileSync(join(gpHome, 'state', 'builder', 'HOLD'), 'cyber\n');
+    expect(gp(home, ['team', 'resume', 'all']).status).toBe(1);
+    expect(existsSync(join(gpHome, 'state', 'builder', 'STOP'))).toBe(true);
+
+    writeFileSync(join(gpHome, 'state', 'builder', 'STOP'), '');
+    expect(gp(home, ['team', 'stop', 'builder']).status).toBe(1);
+    expect(readFileSync(join(gpHome, 'state', 'builder', 'STOP'), 'utf8')).toBe('');
+  });
+
+  it('refuses non-Prime callers', () => {
+    const home = mkdtempSync(join(tmpdir(), 'gp-team-auth-'));
+    const gpHome = join(home, '.rev-gp'); mkdirSync(gpHome);
+    writeFileSync(join(gpHome, 'roster.toml'), `[global]\nhelmo_cli="/tmp/h"\nhelmo_mcp_server="/tmp/m"\n`);
+    expect(gp(home, ['team', 'stop', 'all'], false).status).toBe(1);
   });
 });
 

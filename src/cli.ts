@@ -12,6 +12,7 @@ import { serviceFile, serviceInstall, serviceStart, serviceStatusLine, serviceUn
 import { readRedeploy, requestRedeploy, watchRedeploy } from './redeploy.js';
 import { logEvent, pidAlive, processObservation, sClear, sGet, sHas, sSet, streakReset } from './sentinels.js';
 import { runFleet } from './supervisor.js';
+import { teamResume, teamStop } from './team-control.js';
 
 const [cmd, ...rest] = process.argv.slice(2);
 const commandName = process.env['REV_COMMAND_NAME']?.trim() || 'rev';
@@ -29,6 +30,7 @@ const COMMAND_HELP: Record<string, string> = {
   status: `usage: ${commandName} status`,
   tail: `usage: ${commandName} tail <loop>`,
   'session-spec': `usage: ${commandName} session-spec <seat> --session <actor stamp> [--provider claude] [--tier high] [--model M] [--cwd P] [--constitution P] [--version V]`,
+  team: `usage: ${commandName} team <stop|resume> <loop|all>`,
 };
 
 if (cmd === '--help' || cmd === '-h') {
@@ -88,6 +90,37 @@ function state(name: string): string {
 }
 
 switch (cmd) {
+  case 'team': {
+    if (commandName !== 'gp-rev' || process.env['REV_LOOP'] !== 'prime') {
+      console.error('team control is available only to Prime through gp-rev.');
+      process.exit(1);
+    }
+    const verb = rest[0];
+    const target = rest[1];
+    if (!['stop', 'resume'].includes(verb ?? '') || !target) {
+      console.error(COMMAND_HELP.team);
+      process.exit(1);
+    }
+    const names = target === 'all' ? Object.keys(loops) : [knownLoop(target)];
+    if (verb === 'stop') {
+      const result = teamStop(names);
+      for (const name of result.stopped) logEvent(name, 'prime-stop', 'provenance=prime');
+      if (result.refused.length) {
+        console.error(`Refused (foreign STOP remains): ${result.refused.join(', ')}`);
+        process.exitCode = 1;
+      }
+      if (result.stopped.length) console.log(`Prime STOP set for: ${result.stopped.join(', ')}`);
+    } else {
+      const result = teamResume(names);
+      for (const name of result.resumed) logEvent(name, 'prime-resume', 'own STOP cleared');
+      if (result.refused.length) {
+        console.error(`Refused (not Prime-owned STOP, or HOLD/BLOCKED remains): ${result.refused.join(', ')}`);
+        process.exitCode = 1;
+      }
+      if (result.resumed.length) console.log(`Prime STOP cleared for: ${result.resumed.join(', ')}`);
+    }
+    break;
+  }
   case 'run': {
     const name = rest[0];
     if (!name) {

@@ -748,3 +748,10 @@ dependency: it shells out to `session-spec` to run a seat's session under a
 human's typing instead of the queue, so a change to what a loop session carries
 changes what a meeting carries too — which is the point. In a larger estate, its
 own project map owns the remaining cross-project context.
+# Prime team control
+
+`gp-rev team stop|resume <loop|all>` is the Good Plumb leadership surface. It
+is admitted only for `REV_LOOP=prime`; its STOP records carry Prime provenance,
+and resume clears only those records while preserving every HOLD and BLOCKED
+marker. Test it only against disposable `REV_HOME` state until the GP release
+hold is independently cleared.

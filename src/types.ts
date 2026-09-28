@@ -113,6 +113,16 @@ export interface Ranked {
   effort: Claim | null; // latest effort claim
 }
 
+export interface ProjectSnapshot {
+  project: Project;
+  revision: number; // the project's own record as of this read; see Store.projectSnapshot
+  blocked_by: string[];
+  deps: { outgoing: Dep[]; incoming: Dep[] };
+  claims: Claim[];
+  citations: Citation[];
+  events: RoadmapEvent[];
+}
+
 export type EventType =
   | 'created' | 'updated' | 'claim_recorded' | 'cited' | 'uncited'
   | 'linked' | 'unlinked' | 'ship_next_set' | 'actual_recorded'

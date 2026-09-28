@@ -64,20 +64,16 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
     'roadmap_get_project',
     {
       description:
-        `Fetch one project: current fields, computed blocked-ness, deps, all claims (value/effort, with authors and reasons), objective citations, and the event history. Use it before shaping, critiquing, or re-ranking — the history is where earlier judgments and their reasons live.`,
+        `Fetch one project: current fields, computed blocked-ness, deps, all claims (value/effort, with authors and reasons), objective citations, and the event history. Use it before shaping, critiquing, or re-ranking — the history is where earlier judgments and their reasons live.\n\n` +
+        `The response also carries 'revision', the project's state as of this read — every field here is read under one snapshot, so the revision belongs to the text beside it. If what you write next depends on what you just read — reshaping a description, judging it ready, reversing a status — pass that number back as roadmap_update_project's 'if_revision' and the write is refused if a second writer moved the project in between. It covers this project's own record: 'blocked_by' and incoming 'deps' are facts about OTHER projects and can change without moving it, so a decision that turns on the dependency graph needs more than this token.`,
       inputSchema: { project_id: z.string() },
     },
     async ({ project_id }) => {
       try {
-        const p = store.getProject(project_id);
-        return ok({
-          ...p,
-          blocked_by: store.blockedBy(project_id),
-          deps: store.getDeps(project_id),
-          claims: store.getClaims(project_id),
-          citations: store.getCitations(project_id),
-          events: store.getEvents(project_id),
-        });
+        // One snapshot, not seven reads — see Store.projectSnapshot for why the
+        // revision is worthless if the body beside it came from another one.
+        const { project, ...rest } = store.projectSnapshot(project_id);
+        return ok({ ...project, ...rest });
       } catch (e) {
         return fail(e);
       }
@@ -130,10 +126,17 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
     {
       description:
         `Record a change to a project: shaping the description, moving it along the ladder (parked · shaping · ready · ship_next · shipped_watching · shipped_stable · archived), parking it with an exit condition. Every call requires a 'note' — one or two lines, human terms; notes are the story the human reads.\n\n` +
-        `Status rules the store enforces: ship_next is NEVER set here (roadmap_set_ship_next records that human go-ahead), and the shipped statuses are reachable only from ship_next — nothing ships that the human never declared go on. 'ready' means enough is known to make an informed decision about committing to the project; details may keep being decided while building. An agent declaring it must not be the one who last shaped the description: a second pair of eyes judges commitment-readiness, while a title-only change does not count as shaping. 'shipped_watching' means newly shipped: monitoring, feedback, bug fixes, loose ends. 'shipped_stable' records a standing human decision that the maintenance is worth it — move a project there only when that decision has been stated. When parking, record unpark_condition ("revisit when Helmo has one external user") so a sweep can retest the condition instead of the idea rotting silently. 'archived' is terminal and permanent — the project ran its course and no longer earns its maintenance, all surfaces closed/taken down (ideas killed before shipping land here too); a revived idea is a new project with a 'relates' link.`,
+        `Status rules the store enforces: ship_next is NEVER set here (roadmap_set_ship_next records that human go-ahead), and the shipped statuses are reachable only from ship_next — nothing ships that the human never declared go on. 'ready' means enough is known to make an informed decision about committing to the project; details may keep being decided while building. An agent declaring it must not be the one who last shaped the description: a second pair of eyes judges commitment-readiness, while a title-only change does not count as shaping. 'shipped_watching' means newly shipped: monitoring, feedback, bug fixes, loose ends. 'shipped_stable' records a standing human decision that the maintenance is worth it — move a project there only when that decision has been stated. When parking, record unpark_condition ("revisit when Helmo has one external user") so a sweep can retest the condition instead of the idea rotting silently. 'archived' is terminal and permanent — the project ran its course and no longer earns its maintenance, all surfaces closed/taken down (ideas killed before shipping land here too); a revived idea is a new project with a 'relates' link.\n\n` +
+        `Every one of those rules is decided against the project as it is when the write lands, and a project has more than one writer. If this update depends on what you read first — you reshaped the body you just read, you judged that description ready, you are reversing a status — pass 'if_revision' with the 'revision' that read gave you: the write is then refused, with nothing stored, if anyone moved the project in between, instead of silently landing on top of their change. Omit it for a write that turns on nothing you read. The response carries the new revision either way.`,
       inputSchema: {
         project_id: z.string(),
         note: z.string(),
+        if_revision: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe('The revision this update was decided against, from roadmap_get_project — refuses the write if the project has moved since'),
         status: z.enum(['parked', 'shaping', 'ready', 'shipped_watching', 'shipped_stable', 'archived']).optional(),
         title: z.string().optional(),
         body: z.string().optional().describe('The project description accretes and gets rewritten over months — keep it current enough to support an informed commitment decision'),
@@ -144,8 +147,8 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
     },
     async ({ actor, ...input }) => {
       try {
-        const { project, warnings } = store.updateProject(resolveActor(actor as Actor | undefined), input);
-        return ok(compact(project), warnings);
+        const { project, revision, warnings } = store.updateProject(resolveActor(actor as Actor | undefined), input);
+        return ok({ ...compact(project), revision }, warnings);
       } catch (e) {
         return fail(e);
       }

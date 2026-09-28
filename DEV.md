@@ -35,6 +35,9 @@ append-only event log, materialized state, `.immediate()` write transactions
   never deltas. Pre-v2 events ('shipping'/'shipped'/'abandoned' statuses,
   ship_next 'demoted' payloads) still replay correctly — never strip that
   handling.
+  `updateProject` takes an optional `if_revision` and compares it inside its
+  own write transaction; `projectSnapshot` is the read that token comes from,
+  and is one transaction for the same reason — see below.
 - `tools.ts` — the 10-tool MCP surface, descriptions are
   guidance-as-deployed (Helmo's rule). v1 postures baked into them:
   ship_next is FYI to the fleet, not tasking; the charter is derived from
@@ -162,6 +165,64 @@ identifies). That is structural: exactly one function draws a mark and it takes
 the name it prints, the test asserts `view.ts` holds a single `#crew-`
 reference beside `esc(name)`, and `.actor { white-space: nowrap }` keeps the two
 on the same line.
+
+## The update precondition
+
+Every rule `updateProject` enforces is a rule about STATE — archived takes no
+writes, only ship_next ships, the description's shaper cannot judge it ready —
+and each is decided against a `getProject` that finishes *before* the write
+begins. A project has more than one writer (an interactive session's and a
+bash-loop agent's, at least), so two of them interleave and the second one's
+rules were checked against a project that no longer exists. The case that
+matters: one seat declares `ready` while another rewrites the body, and the
+readiness judgment ends up standing on text nobody reviewed.
+
+So `roadmap_update_project` takes an optional `if_revision`, and
+`roadmap_get_project` answers with the `revision` to pass back. A revision is
+the seq of the last event recorded against the project — not a new fact, the
+event log always held it, but a caller must not have to read a precondition off
+the tail of a history array. It covers every write, not just updates: a claim, a
+citation, a link or a rollup moves it too, which is deliberately conservative,
+because a decision can depend on any of them.
+
+Two things about it are load-bearing:
+
+- **It is compared inside `db.transaction(...)`, and nowhere else.** Checked
+  before the transaction it is checked at the moment it cannot hold. Once the
+  comparison is under the write lock, a revision that matches means the read
+  outside it is provably current — which is what makes every rule above it
+  sound, not just this one field.
+- **It is optional, and omitting it keeps last-write-wins.** Existing callers
+  are unchanged; a write that turns on nothing you read needs no precondition.
+
+This is the only conditional write the store has, and a caller outside it cannot
+substitute for it. A proxy or client that reads, decides, and then writes has
+exactly the same race, and repairing the loser afterwards with a second write is
+one more unchecked write rather than atomicity.
+
+### The read it depends on
+
+A precondition is only as good as the read that hands out the token, and
+`roadmap_get_project` makes seven queries. Read the project and its revision in
+two snapshots and a writer landing between them returns the old body with the
+new revision: the caller judges text it can no longer write over, the token
+passes the comparison, and `ready` stands on the replacement — the same
+corruption, rebuilt out of the read side. So `Store.projectSnapshot` takes every
+fact the read returns inside one transaction, and the tool returns that.
+
+Its transaction is DEFERRED, the one exception to the `.immediate()` rule above:
+nothing in it upgrades a lock, so there is no SQLITE_BUSY to wait out, and a WAL
+read transaction holds one consistent snapshot from its first statement to its
+commit. Readers do not block the writer either — a second connection still
+commits mid-read, it is simply outside the snapshot.
+
+What the token covers is the project's OWN record. `blocked_by` and incoming
+`deps` are facts about other projects — a blocker archived, a relation added
+from elsewhere — and those move without appending an event here. The tool
+description says so, and a test pins it down: a caller whose decision turns on
+the dependency graph needs more than this revision. Widening it to the
+dependency closure was the alternative and is worse — every edit to a neighbour
+would refuse writes to a project nothing touched.
 
 ## The Helmo seam
 

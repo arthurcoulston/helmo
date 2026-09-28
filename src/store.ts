@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import {
   ACTOR_KINDS, Actor, ActorKind, Bet, Citation, Claim, Dep, DepType, EFFORT_SIZES, Horizon, Objective,
-  Project, Ranked, RoadmapError, RoadmapEvent, SHIPPED, Status, TERMINAL, VALUE_LEVELS,
+  Project, ProjectSnapshot, Ranked, RoadmapError, RoadmapEvent, SHIPPED, Status, TERMINAL, VALUE_LEVELS,
 } from './types.js';
 
 export interface CreateInput {
@@ -13,6 +13,10 @@ export interface CreateInput {
 export interface UpdateInput {
   project_id: string;
   note: string;
+  // The revision this update was decided against (from a read). Optional, and
+  // omitting it keeps the pre-existing last-write-wins behavior; passing it
+  // makes the write conditional — see `assertRevision`.
+  if_revision?: number;
   status?: Exclude<Status, 'ship_next'>; // ship_next only via setShipNext — it is the human's call
   title?: string;
   body?: string;
@@ -22,6 +26,7 @@ export interface UpdateInput {
 
 export interface UpdateResult {
   project: Project;
+  revision: number; // after this write — pass it back as the next if_revision
   warnings: string[];
 }
 
@@ -157,6 +162,49 @@ export class Store {
       outgoing: this.db.prepare('SELECT * FROM deps WHERE from_id = ?').all(id) as Dep[],
       incoming: this.db.prepare('SELECT * FROM deps WHERE to_id = ?').all(id) as Dep[],
     };
+  }
+
+  /** The project's revision: the seq of the last event recorded against it.
+   *  Every write appends one, so a revision that has not moved means nothing
+   *  about the project has. It is not a new fact — the event log already held
+   *  it — but a caller must not have to read a precondition off the tail of a
+   *  history array. A project always has its 'created' event, so a real
+   *  revision is >= 1. */
+  revisionOf(id: string): number {
+    const row = this.db
+      .prepare('SELECT COALESCE(MAX(seq), 0) AS rev FROM events WHERE subject_id = ?')
+      .get(id) as { rev: number };
+    return row.rev;
+  }
+
+  /** Everything one read of a project returns, taken under a single snapshot.
+   *
+   *  `revisionOf` called beside a separate `getProject` is two SQLite snapshots,
+   *  and a second connection that commits between them hands the caller the old
+   *  body with the new revision. That revision then passes `assertRevision`, and
+   *  the readiness judgment lands on text nobody read — the exact corruption the
+   *  precondition exists to stop, rebuilt out of the read side instead of the
+   *  write side. So the facts are read together or not at all.
+   *
+   *  The transaction is DEFERRED, unlike every write above: nothing here upgrades
+   *  a lock, so there is no SQLITE_BUSY to wait out, and a WAL read transaction
+   *  holds one consistent snapshot from its first statement to its commit.
+   *
+   *  `revision` covers this project's OWN record. `blocked_by` and incoming
+   *  `deps` are facts about other projects — a blocker archived, a relation
+   *  added from elsewhere — and those move without touching this project's
+   *  events. A caller whose decision turns on the dependency graph cannot treat
+   *  this token as covering it. */
+  projectSnapshot(id: string): ProjectSnapshot {
+    return this.db.transaction(() => ({
+      project: this.getProject(id),
+      revision: this.revisionOf(id),
+      blocked_by: this.blockedBy(id),
+      deps: this.getDeps(id),
+      claims: this.getClaims(id),
+      citations: this.getCitations(id),
+      events: this.getEvents(id),
+    }))();
   }
 
   getEvents(subjectId: string): RoadmapEvent[] {
@@ -336,6 +384,11 @@ export class Store {
     if (!input.note?.trim()) {
       throw new RoadmapError('note is required on every update: one or two lines, human terms, saying what changed and why. Notes are the story the human reads.');
     }
+    if (input.if_revision !== undefined && !(Number.isInteger(input.if_revision) && input.if_revision >= 1)) {
+      throw new RoadmapError(
+        `if_revision must be the revision number a read gave you — an integer of 1 or more; got ${JSON.stringify(input.if_revision)}. Omit it entirely if this write does not depend on what the project currently says.`,
+      );
+    }
     rejectSwallowedMarkup({ note: input.note, title: input.title, body: input.body, parked_reason: input.parked_reason, unpark_condition: input.unpark_condition });
     const p = this.getProject(input.project_id);
     const warnings: string[] = [];
@@ -385,12 +438,49 @@ export class Store {
     }
 
     return this.db.transaction(() => {
+      // The read above, every rule checked against it, and the diffs computed
+      // from it all happened BEFORE the write lock was taken. So the
+      // precondition is compared here and nowhere else: checked outside, it is
+      // checked at the moment it cannot hold.
+      if (input.if_revision !== undefined) this.assertRevision(p.id, input.if_revision);
       const ts = now();
       const payload: Record<string, unknown> = { diffs, note: input.note };
       this.append(ts, p.id, 'updated', actor, payload);
       this.applyUpdated(ts, p.id, payload);
-      return { project: this.getProject(p.id), warnings };
+      return { project: this.getProject(p.id), revision: this.revisionOf(p.id), warnings };
     }).immediate();
+  }
+
+  /** Refuse a write whose project moved after the caller read it.
+   *
+   *  Every rule in `updateProject` is a rule about STATE — a terminal project
+   *  takes no writes, only a ship_next project ships, the description's shaper
+   *  cannot judge it ready — and each is decided against a read that finished
+   *  before the write began. Without this, two writers interleave and the
+   *  second one's rules were checked against a project that no longer exists:
+   *  the classic case is one seat declaring 'ready' while another rewrites the
+   *  body, leaving a readiness judgment standing on text nobody reviewed.
+   *
+   *  The caller cannot close that window from outside, because there is no
+   *  outside: a proxy or a client that reads, decides, and then writes has the
+   *  same race, and compensating afterwards with a second write is one more
+   *  unchecked write, not atomicity. So the precondition belongs in the same
+   *  transaction as the write, which is here. */
+  private assertRevision(id: string, expected: number): void {
+    const current = this.revisionOf(id);
+    if (current === expected) return;
+    const moved = this.db
+      .prepare(
+        `SELECT event_type, json_extract(actor, '$.name') AS name FROM events
+         WHERE subject_id = ? AND seq > ? ORDER BY seq`,
+      )
+      .all(id, expected) as { event_type: string; name: string | null }[];
+    const what = moved.length
+      ? `Since then: ${moved.map((e) => `${e.event_type} by ${e.name ?? 'an unrecorded actor'}`).join(', ')}.`
+      : `Revision ${expected} is not one ${id} has ever been at — check that you read it from this project.`;
+    throw new RoadmapError(
+      `${id} has moved since you read it: you decided against revision ${expected}, it is now at ${current}. ${what} Nothing was written. Re-read the project, decide again against what it says now, and re-send with the revision you got — the state you judged is not the state you would have written over.`,
+    );
   }
 
   /** The actor who last wrote this project's description — the shaper the

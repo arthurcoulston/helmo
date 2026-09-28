@@ -277,6 +277,16 @@ orchestrator meetings and the read-only view. Product intent:
   is the sweeper's call from a roadmap Helmo deliberately cannot see. The
   finding clears the moment the ticket is tagged, labelled, held, returned to
   the human, blocked or gated.
+  Ready and Blocked are the queue's reading, not a second one (H-2321): a
+  ticket is offered only when no open blocker, no future `not_before` and no
+  active capacity hold stands in front of it — and a hold is lifted only by a
+  bounded release that has not expired, exactly as `store.ts` tests it at the
+  queue and at the claim. Held work falls to Blocked carrying its reason as a
+  badge: withheld, not hidden. Reading the hold differently here (Ready did
+  not test it at all) drew H-1817 as ready while every agent queue correctly
+  withheld it, and Arthur read that gap as a fleet ignoring its backlog.
+  `test/view-ready.test.ts` drives the whole page across indefinite holds,
+  live and expired releases, date gates, dependencies and sittings.
 - `presentation.ts` — the dashboard's shared presentation rules: actor marks,
   option letters, question fingerprints, and the bounded terminal tail.
   `view.ts` owns the only reading. The estate shell frames that HTML whole at

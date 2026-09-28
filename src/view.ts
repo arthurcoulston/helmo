@@ -152,6 +152,17 @@ function gated(t: Ticket): boolean {
   return !!t.not_before && t.not_before > new Date().toISOString();
 }
 
+/** True while a deliberate capacity hold still forbids starting this work
+ *  (H-2321). The store's queue and claim path read a hold exactly this way:
+ *  only a bounded release that has not expired lifts it. Reading it any other
+ *  way here put held work under Ready, and the operator read the gap between
+ *  page and queue as a fleet ignoring its backlog. */
+function held(t: Ticket): boolean {
+  const hold = t.capacity_hold;
+  if (!hold) return false;
+  return !hold.release || hold.release.until <= new Date().toISOString();
+}
+
 function blockedBy(t: Ticket): string[] {
   return store
     .getDeps(t.id)
@@ -287,6 +298,7 @@ function row(t: Ticket, opts: { showDone?: boolean } = {}): string {
       ${waits.length ? `<span class="badge serious">⛔ waits on ${esc(waits.join(', '))}</span>` : ''}
       ${t.schedule ? `<span class="badge">↻ ${esc(t.schedule)}</span>` : ''}
       ${gated(t) ? `<span class="badge">⏰ not before ${esc(t.not_before!.slice(0, 10))}</span>` : ''}
+      ${held(t) ? `<span class="badge">⏸ on hold · ${esc(t.capacity_hold!.reason)}</span>` : ''}
       ${t.needs_human ? '<span class="badge accent">🪑 needs a sitting</span>' : ''}
       ${noEv ? '<span class="badge critical">✱ no evidence</span>' : ''}
       ${confBadge(t)} ${blastBadge(t)} ${acceptanceBadge(t)}
@@ -348,15 +360,17 @@ function page(wholeRecord = false, section: 'awaiting' | null = null): string {
   latestProgress = store.latestProgress(all.filter((t) => t.status !== 'done' && t.status !== 'cancelled').map((t) => t.id));
   const by = (s: string) => all.filter((t) => t.status === s);
   const awaiting = by('awaiting_human');
-  const withHuman = by('open').filter((t) => t.needs_human && (!t.capacity_hold || (!!t.capacity_hold.release && t.capacity_hold.release.until > new Date().toISOString())));
+  const withHuman = by('open').filter((t) => t.needs_human && !held(t));
   const motion = by('in_progress');
   const standing = by('open').filter((t) => t.schedule); // recurring templates (H-22)
   const open = by('open').filter((t) => !t.schedule && !t.needs_human);
   // A date gate blocks as surely as a dep does, so it belongs on the blocked
   // side: the 'ready' stat is read as "what an agent could pick up now", and a
-  // gated ticket is exactly what the queue will not offer (H-732).
-  const ready = open.filter((t) => !store.isBlocked(t.id) && !gated(t));
-  const blocked = open.filter((t) => store.isBlocked(t.id) || gated(t));
+  // gated ticket is exactly what the queue will not offer (H-732). A capacity
+  // hold is the same promise in the other direction — the queue withholds it
+  // and the claim path refuses it — so it sits beside them (H-2321).
+  const ready = open.filter((t) => !store.isBlocked(t.id) && !gated(t) && !held(t));
+  const blocked = open.filter((t) => store.isBlocked(t.id) || gated(t) || held(t));
   const done = by('done');
   const cancelled = by('cancelled');
   const spend = all.reduce((s, t) => s + (t.cost_usd_total || 0), 0);

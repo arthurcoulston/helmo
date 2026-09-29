@@ -27,6 +27,15 @@ helmo_mcp_server = "/path/to/helm/dist/server.js"
 # runtime; a new provider names the adapter it rides (see [providers.kimi]).
 # Prices ($/MTok) give notional cost where the CLI reports none (codex under
 # plan auth) — without them the burn breaker cannot see that provider's spend.
+#
+# 'billing' says what the account IS, not what rev should do about it (H-185):
+#   metered       pay-per-token. The default, and every dollar gate applies.
+#   subscription  a flat plan (Claude Max, Codex Pro). The token-log's dollars
+#                 for it are notional, so they never gate productive work; the
+#                 provider's own plan bars are what bounds it. Declare this
+#                 only where it is true of the account.
+# [providers.claude]
+# billing = "subscription"
 [providers.claude.models]
 small = "claude-haiku-4-5-20251001"
 mid = "claude-sonnet-5"

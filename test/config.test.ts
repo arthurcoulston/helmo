@@ -131,3 +131,68 @@ mid = "x-mid"
     expect(l.choices[0]!.config).toEqual({ model_reasoning_effort: 'low' });
   });
 });
+
+describe('capacity roster keys (H-185)', () => {
+  function roster(body: string): string {
+    const home = mkdtempSync(join(tmpdir(), 'rev-cfg-'));
+    writeFileSync(join(home, 'PROFILE.md'), '# Profile\n');
+    mkdirSync(join(home, 'work'));
+    writeFileSync(
+      join(home, 'roster.toml'),
+      `[global]\nhelmo_cli = "x"\nhelmo_mcp_server = "y"\n${body}\n[loops.a]\nworkstream = "w"\ncwd = "${join(home, 'work')}"\nruntime = "claude"\nmodel = "m"\nconstitution = "${join(home, 'PROFILE.md')}"\n`,
+    );
+    process.env['REV_HOME'] = home;
+    return home;
+  }
+
+  it('defaults every new key to today’s behaviour', () => {
+    roster('');
+    const g = loadRoster().global;
+    expect(g.shared_reserve_percent).toBe(5);
+    expect(g.stale_grace_iterations).toBe(6);
+    expect(g.investigation_target_seconds).toBe(1800);
+    expect(g.relapse_window_seconds).toBe(3600);
+    expect(g.anomaly_rate_multiple).toBe(6);
+    expect(g.anomaly_min_usd).toBe(1);
+    expect(g.anomaly_abs_percent).toBe(10);
+    expect(g.exhaustion_ceiling_seconds).toBe(691200);
+    // The point of the defaults: the dollar gate is untouched until an estate
+    // declares an account flat, so shipping this moves nobody.
+    expect(g.burn_usd_per_day).toBe(75);
+  });
+
+  it('defaults a provider to metered, including the builtin entries', () => {
+    roster('');
+    const p = loadRoster().providers;
+    expect(p['claude']!.billing).toBe('metered');
+    expect(p['codex']!.billing).toBe('metered');
+  });
+
+  it('takes a declared subscription account', () => {
+    roster('[providers.claude]\nbilling = "subscription"\n[providers.codex]\nbilling = "subscription"\n');
+    const p = loadRoster().providers;
+    expect(p['claude']!.billing).toBe('subscription');
+    expect(p['codex']!.billing).toBe('subscription');
+  });
+
+  it('refuses a billing word it does not know', () => {
+    roster('[providers.claude]\nbilling = "flat"\n');
+    expect(() => loadRoster()).toThrow(/billing must be 'metered' or 'subscription'/);
+  });
+
+  it('takes an overridden threshold from [global]', () => {
+    roster('');
+    expect(loadRoster().global.anomaly_rate_multiple).toBe(6);
+    roster('');
+    const home = mkdtempSync(join(tmpdir(), 'rev-cfg-'));
+    mkdirSync(join(home, 'work'));
+    writeFileSync(join(home, 'PROFILE.md'), '# Profile\n');
+    writeFileSync(
+      join(home, 'roster.toml'),
+      `[global]\nhelmo_cli = "x"\nhelmo_mcp_server = "y"\nanomaly_rate_multiple = 4\nshared_reserve_percent = 0\n[loops.a]\nworkstream = "w"\ncwd = "${join(home, 'work')}"\nruntime = "claude"\nmodel = "m"\nconstitution = "${join(home, 'PROFILE.md')}"\n`,
+    );
+    process.env['REV_HOME'] = home;
+    expect(loadRoster().global.anomaly_rate_multiple).toBe(4);
+    expect(loadRoster().global.shared_reserve_percent).toBe(0);
+  });
+});

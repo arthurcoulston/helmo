@@ -135,6 +135,22 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   burns it exists for both spanned process restarts; the window is floored at
   `.burn_floor` (stamped at loop start) so a resumed loop starts clean instead
   of tripping again on money already accounted for (H-412).
+- `capacity.ts` — plan capacity and runaway detection, pure (H-185). **Not yet
+  wired: nothing calls it, and rev's behaviour is unchanged until H-186 does.**
+  It exists because a breaker metering *notional* dollars stopped a loop for
+  7h08m on a full backlog while both accounts had a third of their weekly
+  allowance spare (H-178, 2026-09-29). Three quantities it refuses to
+  substitute for one another: plan capacity (the provider's own percent bars —
+  the only one that says whether more work is possible), notional metered
+  equivalent (token-log dollars — accounting, and the axis a runaway shows on),
+  and billed spend (not observable on a flat plan, so it is said rather than
+  approximated). `capacityDecide` returns continue / switch / refresh /
+  continue_stale / wait / scheduled_resume / blocked; the scheduled-resume
+  branch is the one that matters, because today a weekly cap resetting in two
+  days returns `blocked`, and blocked means waiting for a human.
+  `anomalyDecide` measures a rate against the loop's own rolling mean, never a
+  cumulative total. **No percent is ever converted to tokens or dollars**, in
+  either direction.
 - `shim.ts` — the runtime adapter (claude / codex / mock). Owns non-interactive
   flags, constitution injection (fail-closed), `cleanEnv()` (strips parent
   CLAUDE/ANTHROPIC/CODEX env — the auth-leak fix; don't weaken it) and
@@ -668,6 +684,23 @@ dependency this repo should grow for one link.
   deliberately does NOT catch a small spin — ward's five iterations against a
   one-ticket wake cost $5.70 — because that is a question of what counts as
   production, not of spend.
+- **A ceiling in dollars only bounds work that is billed in dollars** (H-185).
+  `[providers.<name>] billing` says what an account IS — `metered`
+  (pay-per-token) or `subscription` (flat plan). It defaults to `metered`
+  everywhere, including the builtin claude and codex entries, so an estate that
+  declares nothing keeps every gate above exactly as it is. Where an estate
+  declares a flat plan, the token-log's dollars for it are notional — codex's
+  come from roster prices × tokens and claude's from the CLI's API-equivalent
+  estimate — and notional dollars must never stop productive work; the plan
+  bars are what bounds it. The burn caps stay in the roster as the recorded
+  ceilings they are, and a pay-per-token provider gets them back by saying so.
+  The anomaly thresholds beside it (`anomaly_rate_multiple` 6,
+  `anomaly_min_usd` 1.00, `anomaly_abs_percent` 10) are calibrated against 597
+  rolling windows of a real token-log, not chosen: see the comments in
+  `capacity.ts` for why the rate axis is cost rather than tokens (the two
+  largest token ratios in that record cost *less* than their own means — they
+  are cache reads) and why the multiple needs an absolute floor beneath it
+  (6× a $0.12 mean is 72 cents, which is not a runaway).
 - Escalations must land as Helmo tickets, never only in logs; a BLOCKED loop
   that couldn't escalate prints loudly and relies on the dashboard. One live
   summons per loop (H-401): a block checks for a standing non-terminal

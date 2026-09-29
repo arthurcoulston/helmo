@@ -21,10 +21,27 @@ export interface GlobalConfig {
   seat_stale_seconds: number;           // a foreign in_progress hold older than this no longer stands the loop down (H-558); 0 disables the guard
   drain_grace_seconds: number;          // supervisor: seconds a drain waits before SIGKILLing stragglers; 0 waits forever (H-281)
   redeploy_deadline_seconds: number;    // seconds a redeploy's watch waits for the new supervisor before alarming; 0 disables the watch (H-1046)
+  // Capacity and runaway detection (H-179/H-185). Every default reproduces
+  // today's behaviour, so an estate that declares nothing is unaffected.
+  shared_reserve_percent: number;       // plan allowance held back from loops so the operator's sessions outlast them
+  stale_grace_iterations: number;       // iterations a loop may run on unreadable usage bars before waiting
+  investigation_target_seconds: number; // a blocked loop unclaimed longer than this is itself a finding
+  relapse_window_seconds: number;       // a second trip on the same reason inside this goes to a human, never auto-released
+  anomaly_rate_multiple: number;        // x the loop's rolling mean of the last 5 iterations
+  anomaly_min_usd: number;              // below this an iteration is too small for a multiple to mean anything
+  anomaly_abs_percent: number;          // plan percentage points one iteration may consume
+  exhaustion_ceiling_seconds: number;   // a reset further out than this is bad telemetry, not a plan
   probe?: RunChoice;                    // global probe pin ("provider:tier"): every probe pass runs here while its cap stands (H-625)
 }
 
 export type Runtime = 'claude' | 'codex' | 'mock';
+
+// How a provider's account is paid for (H-185). 'metered' is pay-per-token and
+// keeps every dollar gate rev has; 'subscription' is a flat plan, where the
+// token-log's dollars are notional and must never stop productive work — the
+// plan bars are the only quantity that bounds it. Default everywhere is
+// 'metered', so declaring nothing preserves today's behaviour exactly.
+export type BillingMode = 'metered' | 'subscription';
 
 // A provider is a place work can run: an adapter (runtime) plus the operator's
 // tier→model table for it. Model names live in the roster, never in rev's code
@@ -33,6 +50,7 @@ export type Runtime = 'claude' | 'codex' | 'mock';
 export interface ProviderConfig {
   name: string;
   runtime: Runtime;
+  billing: BillingMode;                  // how the account is paid for; 'metered' keeps every dollar gate (H-185)
   models: Record<string, string>;        // tier -> model name
   prices?: Record<string, ModelPrice>;   // model -> $/MTok, for notional metering when the CLI reports no cost
   config?: Record<string, unknown>;      // adapter config overrides applied to every run (codex: -c key=value)

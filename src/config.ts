@@ -2,7 +2,7 @@ import { readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, isAbsolute } from 'node:path';
 import { parse } from 'smol-toml';
-import { GlobalConfig, LoopConfig, ModelPrice, ProviderConfig, RunChoice, Runtime } from './types.js';
+import { BillingMode, GlobalConfig, LoopConfig, ModelPrice, ProviderConfig, RunChoice, Runtime } from './types.js';
 
 // All instance data lives under the Rev home (never in the repo):
 //   roster.toml, constitutions/, state/<loop>/, token-log
@@ -57,6 +57,40 @@ const GLOBAL_DEFAULTS = {
   // and a slow start many times over, so a deadline reached means the fleet is
   // genuinely down rather than slow.
   redeploy_deadline_seconds: 300,
+  // Capacity and runaway detection (H-179/H-185, after the 7h08m stop of
+  // 2026-09-29 on a full backlog and two thirds-full accounts). Every one of
+  // these reproduces today's behaviour until a roster declares a provider
+  // `billing = "subscription"`, which is what makes the change safe to ship to
+  // estates that have not asked for it.
+  //
+  // 5 points of the plan window held back from loops: the bars are shared with
+  // the operator's own desk sessions, and the fleet should hit the wall first.
+  shared_reserve_percent: 5,
+  // Six iterations on unreadable bars before parking. Measured against this
+  // fleet's own cadence that is 7 minutes for the fastest loop and 54 for the
+  // slowest — bounded either way, and the alternative to a bounded grace is
+  // another silent night on a telemetry fault.
+  stale_grace_iterations: 6,
+  // 30 minutes is the shortest response a peer loop's wake cadence can
+  // actually meet, and the incident it answers cost 7h08m.
+  investigation_target_seconds: 1800,
+  // A second trip on the same reason inside the hour is a real anomaly, not a
+  // false alarm, and goes to a human. This is the anti-blind-restart rule.
+  relapse_window_seconds: 3600,
+  // Calibrated against 597 rolling windows of this fleet's token-log: a cost
+  // multiple of 4 would have tripped 23 times, 5 seven times, 6 twice. See
+  // capacity.ts for why the axis is cost rather than tokens, and why the
+  // multiple carries an absolute floor beneath it.
+  anomaly_rate_multiple: 6,
+  anomaly_min_usd: 1.0,
+  // No productive iteration has ever taken 10 percentage points of a plan
+  // window: a whole week of one loop's work reached 65 points across roughly
+  // 130 iterations, so 10 is about twenty times the observed per-iteration
+  // draw. This one is a ceiling, not a percentile.
+  anomaly_abs_percent: 10,
+  // Eight days — longer than any weekly window, so a reset further out than
+  // this means the telemetry is wrong rather than the plan.
+  exhaustion_ceiling_seconds: 691200,
 };
 
 export interface Roster {
@@ -79,16 +113,25 @@ function parseProviders(raw: Record<string, unknown>): Record<string, ProviderCo
   for (const [name, p] of Object.entries(rawProviders)) {
     const runtime = (p['runtime'] ?? BUILTIN_PROVIDERS[name]) as Runtime | undefined;
     if (!runtime) throw new Error(`Provider '${name}' in roster.toml needs 'runtime' (claude | codex | mock) — only 'claude' and 'codex' default it.`);
+    // Billing is a declaration of fact about the account, not a policy knob
+    // (H-185). It defaults to 'metered' so an estate that says nothing keeps
+    // every dollar gate it has; a flat-plan account says so and the notional
+    // dollars stop gating its work.
+    const billing = (p['billing'] ?? 'metered') as BillingMode;
+    if (billing !== 'metered' && billing !== 'subscription') {
+      throw new Error(`Provider '${name}': billing must be 'metered' or 'subscription' — it says what the account IS, not what rev should do about it.`);
+    }
     providers[name] = {
       name,
       runtime,
+      billing,
       models: (p['models'] ?? {}) as Record<string, string>,
       prices: p['prices'] as Record<string, ModelPrice> | undefined,
       config: p['config'] as Record<string, unknown> | undefined,
     };
   }
   for (const [name, runtime] of Object.entries(BUILTIN_PROVIDERS)) {
-    if (!providers[name]) providers[name] = { name, runtime, models: {} };
+    if (!providers[name]) providers[name] = { name, runtime, billing: 'metered', models: {} };
   }
   return providers;
 }

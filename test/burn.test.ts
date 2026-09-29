@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { burnWindow, markBurnFloor } from '../src/burn.js';
+import { burnWindow, markBurnFloor, meteredProviders } from '../src/burn.js';
 
 const NOW = Date.parse('2026-08-25T16:00:00.000Z');
 const at = (iso: string, loop: string, cost: string) =>
@@ -41,6 +41,24 @@ describe('burnWindow', () => {
     expect(burnWindow('ward', NOW, log).dayUsd).toBe(61);
     markBurnFloor('ward', Date.parse('2026-08-25T15:00:00.000Z'));
     expect(burnWindow('ward', NOW, log).dayUsd).toBe(1);
+  });
+
+  it('does not stamp a burn floor for a subscription provider', () => {
+    writeFileSync(log, at('2026-08-25T15:59:00.000Z', 'ward', '1.00') + '\n');
+    markBurnFloor('ward', 'subscription', NOW);
+    expect(burnWindow('ward', NOW, log).dayUsd).toBe(1);
+  });
+
+  it('selects only metered providers from runnable choices', () => {
+    const choices = [
+      { provider: 'claude', runtime: 'claude' as const, model: 'large' },
+      { provider: 'codex', runtime: 'codex' as const, model: 'large' },
+    ];
+    const providers = {
+      claude: { name: 'claude', runtime: 'claude' as const, billing: 'subscription' as const, models: {} },
+      codex: { name: 'codex', runtime: 'codex' as const, billing: 'metered' as const, models: {} },
+    };
+    expect([...meteredProviders(choices, providers)]).toEqual(['codex']);
   });
 
   it('skips malformed lines rather than halting a loop over a bad log line', () => {

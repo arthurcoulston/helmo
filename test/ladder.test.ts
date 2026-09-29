@@ -148,6 +148,10 @@ describe('breakerDecide (H-412)', () => {
   it('a zero cap disables that limb', () => {
     expect(breakerDecide({ hourUsd: 999, dayUsd: 999, continueStreak: 999 }, { usdPerHour: 0, usdPerDay: 0, continueCap: 0 }).act).toBe('ok');
   });
+
+  it('keeps notional dollar caps inert for a subscription provider', () => {
+    expect(breakerDecide({ hourUsd: 999, dayUsd: 999, continueStreak: 3 }, caps, 'subscription')).toEqual({ act: 'ok' });
+  });
 });
 
 describe('limitDecide (H-402)', () => {
@@ -178,6 +182,16 @@ describe('limitDecide (H-402)', () => {
     expect(a.reason).toContain('weekly (Fable)');
     expect(a.reason).toContain('2026-08-27T18:00:00Z');
     expect(a.reason).toContain('The API said: You have reached your usage limit');
+  });
+
+  it('schedules a resume beyond the wait horizon but inside the exhaustion ceiling', () => {
+    const a = limitDecide({
+      ...base,
+      exhaustionCeilingSeconds: 691200,
+      exhausted: { label: 'weekly (Fable)', percent: 100, resets_at: '2026-08-27T18:00:00Z' },
+    });
+    expect(a.act).toBe('scheduled_resume');
+    if (a.act === 'scheduled_resume') expect(a.resumeAt).toBe('2026-08-27T18:00:00Z');
   });
 
   it('blocks rather than waiting forever when the cap names no reset time', () => {

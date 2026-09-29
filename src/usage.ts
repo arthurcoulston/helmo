@@ -384,3 +384,10 @@ export function refreshCodexUsage(now = new Date()): UsageSnapshot | null {
   } catch { /* keep the last snapshot; routing handles freshness */ }
   return best;
 }
+
+/** Refresh one provider without spending a model call. */
+export async function refreshFor(provider: string): Promise<UsageSnapshot | null> {
+  if (provider === 'claude') return pollUsage();
+  if (provider === 'codex') return refreshCodexUsage();
+  return null;
+}

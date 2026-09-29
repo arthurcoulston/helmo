@@ -9,6 +9,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { stateDir, tokenLogPath } from './config.js';
+import { BillingMode, ProviderConfig, RunChoice } from './types.js';
 
 export interface BurnWindow {
   hourUsd: number;
@@ -24,7 +25,17 @@ function floorPath(loop: string): string {
 /** Stamp the moment this loop process started. The breaker never counts spend
  *  from before it, so an operator who has seen the alarm and resumed gets a
  *  fresh window instead of tripping again on money already accounted for. */
-export function markBurnFloor(loop: string, now = Date.now()): void {
+export function meteredProviders(
+  choices: RunChoice[],
+  providers: Record<string, ProviderConfig>,
+): Set<string> {
+  return new Set(choices.filter((c) => (providers[c.provider]?.billing ?? 'metered') === 'metered').map((c) => c.provider));
+}
+
+export function markBurnFloor(loop: string, billingOrNow: BillingMode | number = 'metered', now = Date.now()): void {
+  const billing = typeof billingOrNow === 'number' ? 'metered' : billingOrNow;
+  if (typeof billingOrNow === 'number') now = billingOrNow;
+  if (billing !== 'metered') return;
   writeFileSync(floorPath(loop), String(now));
 }
 

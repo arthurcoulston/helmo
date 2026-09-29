@@ -6,7 +6,7 @@
 //  - apparatus faults (missing constitution, unresolvable runtime) fail closed
 //    immediately — never retry a half-instructed agent.
 //  - runtime failures get a small consecutive cap, then a human.
-import { ExitClass, RunChoice } from './types.js';
+import { BillingMode, ExitClass, RunChoice } from './types.js';
 
 // Exit-code contract with the runtime shim (ports the prototype's):
 //   0 = clean; 75 = transient external condition; 78 = apparatus fault.
@@ -21,6 +21,7 @@ export type LadderAction =
   | { act: 'continue' }
   | { act: 'idle' }
   | { act: 'limit_wait'; waitSeconds: number; attempt: number }
+  | { act: 'scheduled_resume'; resumeAt: string; reason: string }
   | { act: 'blocked'; reason: string };
 
 export function ladderDecide(
@@ -169,11 +170,12 @@ export interface BurnCaps {
 export function breakerDecide(
   s: { hourUsd: number; dayUsd: number; continueStreak: number },
   caps: BurnCaps,
+  billing: BillingMode = 'metered',
 ): { act: 'ok' } | { act: 'trip'; reason: string } {
-  if (caps.usdPerHour > 0 && s.hourUsd > caps.usdPerHour) {
+  if (billing === 'metered' && caps.usdPerHour > 0 && s.hourUsd > caps.usdPerHour) {
     return { act: 'trip', reason: `burn breaker: $${s.hourUsd.toFixed(2)} metered in the last hour, over the $${caps.usdPerHour.toFixed(2)} cap` };
   }
-  if (caps.usdPerDay > 0 && s.dayUsd > caps.usdPerDay) {
+  if (billing === 'metered' && caps.usdPerDay > 0 && s.dayUsd > caps.usdPerDay) {
     return { act: 'trip', reason: `burn breaker: $${s.dayUsd.toFixed(2)} metered in the last 24h, over the $${caps.usdPerDay.toFixed(2)} cap` };
   }
   if (caps.continueCap > 0 && s.continueStreak > caps.continueCap) {
@@ -279,6 +281,7 @@ export interface LimitContext {
   limitCap: number;
   limitWait: number;
   blockHorizonSeconds: number;
+  exhaustionCeilingSeconds?: number;
   /** From the usage endpoint: the bar that is actually out, if known. */
   exhausted: { label: string; percent: number; resets_at: string | null } | null;
   /** What the 429 itself said, for the escalation. */
@@ -296,7 +299,7 @@ export function limitDecide(c: LimitContext): LadderAction {
     const when = c.exhausted.resets_at ?? 'an unknown time';
     const cap = `${c.exhausted.label} at ${c.exhausted.percent}%`;
 
-    if (!Number.isFinite(secondsAway) || secondsAway > c.blockHorizonSeconds) {
+    if (!Number.isFinite(secondsAway)) {
       return {
         act: 'blocked',
         reason:
@@ -305,8 +308,22 @@ export function limitDecide(c: LimitContext): LadderAction {
       };
     }
     if (secondsAway <= 0) return { act: 'limit_wait', waitSeconds: 60, attempt: c.limitStreak };
-    // Wait to the reset plus a small margin, rather than counting attempts.
-    return { act: 'limit_wait', waitSeconds: secondsAway + 60, attempt: c.limitStreak };
+    if (secondsAway <= c.blockHorizonSeconds) {
+      return { act: 'limit_wait', waitSeconds: secondsAway + 60, attempt: c.limitStreak };
+    }
+    if (c.exhaustionCeilingSeconds !== undefined && secondsAway <= c.exhaustionCeilingSeconds) {
+      return {
+        act: 'scheduled_resume',
+        resumeAt: when,
+        reason: `quota exhausted — ${cap}, scheduled to resume at ${when}.${said}`,
+      };
+    }
+    return {
+      act: 'blocked',
+      reason:
+        `quota exhausted — ${cap}, resets ${when}. That is beyond the ${Math.round(c.blockHorizonSeconds / 3600)}h waiting horizon, ` +
+        `so this is a decision rather than a retry: move the loop to another model, or leave it down until the reset.${said}`,
+    };
   }
 
   // Nothing identifiable: the pre-existing ladder, unchanged.

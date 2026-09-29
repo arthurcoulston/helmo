@@ -163,6 +163,18 @@ function held(t: Ticket): boolean {
   return !hold.release || hold.release.until <= new Date().toISOString();
 }
 
+/** True while something stands in front of this work right now — a prerequisite
+ *  that has not finished, a date that has not arrived, a hold that has not
+ *  lifted. The operator reads this backlog to choose what he can usefully do
+ *  now, so the current impediment is the primary status and anything the work
+ *  needs from him AFTER it clears is secondary (H-202). Before that, a ticket
+ *  blocked on another ticket still sat in "Awaiting you" on the strength of a
+ *  sitting it could not reach, and he could not tell it from work he could
+ *  actually pick up. */
+function impeded(t: Ticket): boolean {
+  return store.isBlocked(t.id) || gated(t) || held(t);
+}
+
 function blockedBy(t: Ticket): string[] {
   return store
     .getDeps(t.id)
@@ -286,6 +298,19 @@ function motionCard(t: Ticket): string {
   </article>`;
 }
 
+// The sitting marker on a row. An open sitting nothing stands in front of is
+// drawn as a hero card and never reaches a row, so a sitting HERE is always a
+// later step — behind the impediment badges that precede it, and drawn quiet so
+// it does not read as something the operator can do now (H-202). The line it
+// needs is retained a disclosure below, in the row's own body.
+function sittingBadge(t: Ticket): string {
+  if (!t.needs_human) return '';
+  const later = t.status === 'open' && impeded(t);
+  return later
+    ? '<span class="badge quiet">🪑 then a sitting</span>'
+    : '<span class="badge accent">🪑 needs a sitting</span>';
+}
+
 // Everything else: a quiet row that opens.
 function row(t: Ticket, opts: { showDone?: boolean } = {}): string {
   const waits = t.status === 'open' ? blockedBy(t) : [];
@@ -299,7 +324,7 @@ function row(t: Ticket, opts: { showDone?: boolean } = {}): string {
       ${t.schedule ? `<span class="badge">↻ ${esc(t.schedule)}</span>` : ''}
       ${gated(t) ? `<span class="badge">⏰ not before ${esc(t.not_before!.slice(0, 10))}</span>` : ''}
       ${held(t) ? `<span class="badge">⏸ on hold · ${esc(t.capacity_hold!.reason)}</span>` : ''}
-      ${t.needs_human ? '<span class="badge accent">🪑 needs a sitting</span>' : ''}
+      ${sittingBadge(t)}
       ${noEv ? '<span class="badge critical">✱ no evidence</span>' : ''}
       ${confBadge(t)} ${blastBadge(t)} ${acceptanceBadge(t)}
       <span class="rmeta">${esc(t.workstream)}${t.project ? ` · ${esc(t.project)}` : ''} · ${esc(t.type)}${t.assignee ? ` · ${esc(t.assignee)}` : ''} ${money(t)} · ${esc(
@@ -307,6 +332,7 @@ function row(t: Ticket, opts: { showDone?: boolean } = {}): string {
       )}</span>
       ${opts.showDone ? chain(t) : ''}
     </summary>
+    ${t.needs_human && t.sitting && t.status === 'open' ? `<p class="later"><span class="decision-label sits">🪑 You do, after</span>${esc(t.sitting)}</p>` : ''}
     ${progressLine(t)}
     ${opts.showDone ? `<div class="evrow">${evidenceLinks(t)}</div>` : ''}
     ${details(t)}
@@ -360,17 +386,26 @@ function page(wholeRecord = false, section: 'awaiting' | null = null): string {
   latestProgress = store.latestProgress(all.filter((t) => t.status !== 'done' && t.status !== 'cancelled').map((t) => t.id));
   const by = (s: string) => all.filter((t) => t.status === s);
   const awaiting = by('awaiting_human');
-  const withHuman = by('open').filter((t) => t.needs_human && !held(t));
   const motion = by('in_progress');
   const standing = by('open').filter((t) => t.schedule); // recurring templates (H-22)
-  const open = by('open').filter((t) => !t.schedule && !t.needs_human);
+  const live = by('open').filter((t) => !t.schedule);
   // A date gate blocks as surely as a dep does, so it belongs on the blocked
   // side: the 'ready' stat is read as "what an agent could pick up now", and a
   // gated ticket is exactly what the queue will not offer (H-732). A capacity
   // hold is the same promise in the other direction — the queue withholds it
   // and the claim path refuses it — so it sits beside them (H-2321).
-  const ready = open.filter((t) => !store.isBlocked(t.id) && !gated(t) && !held(t));
-  const blocked = open.filter((t) => store.isBlocked(t.id) || gated(t) || held(t));
+  //
+  // A sitting is offered the same way, and the same reading decides it: work
+  // the operator cannot reach yet is blocked work that also needs him later,
+  // not work awaiting him (H-202). So `impeded` splits all three sections, and
+  // Blocked holds sittings too — it is the section that names the prerequisite.
+  // This is also what stops a held sitting falling out of the page entirely:
+  // it used to be excluded from "Awaiting you" for being held and from the
+  // agent sections for needing a human, and was drawn nowhere at all.
+  const withHuman = live.filter((t) => t.needs_human && !impeded(t));
+  const open = live.filter((t) => !t.needs_human);
+  const ready = open.filter((t) => !impeded(t));
+  const blocked = live.filter(impeded);
   const done = by('done');
   const cancelled = by('cancelled');
   const spend = all.reduce((s, t) => s + (t.cost_usd_total || 0), 0);
@@ -601,6 +636,9 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; color: 
 .holder { color: var(--link); font-weight: 600; }
 .progress { color: var(--ink-2); margin: 8px 0 0; font-size: 13.5px;
   display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+/* The sitting a blocked ticket will need once its impediment clears: retained
+   where the operator can read it, a disclosure below the row he skims (H-202). */
+.later { color: var(--ink-2); margin: 8px 0 0; font-size: 13.5px; }
 
 /* ---- quiet rows ---- */
 .trow { border-bottom: 1px solid var(--hairline); }

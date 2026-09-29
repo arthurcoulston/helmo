@@ -47,9 +47,16 @@ orchestrator meetings and the read-only view. Product intent:
   Human sittings (H-1028) are typed separately from questions: an open ticket
   with `needs_human` stays open, is withheld from every agent ready queue and
   reported under `with_human`; both Helmo readings place it below questions in
-  “Awaiting you”. An active capacity hold removes a sitting from that operator
-  queue without clearing its human-needed state; a live bounded release
-  restores it. This is presence needed, not a decision waiting for relay.
+  “Awaiting you” — but only while the operator can actually reach it. An open
+  blocker, a future `not_before` or an active capacity hold is the primary
+  status, and the sitting falls to Blocked as a later step behind it (H-202):
+  "if something is blocked and will need me after it is blocked, the block is
+  the primary status, not the waiting for me". A live bounded release restores
+  it, as does the last blocker closing; none of this clears its human-needed
+  state. This is presence needed, not a decision waiting for relay.
+  A question in `awaiting_human` is not demoted this way even with an open
+  blocker: answering it is how the operator clears the block, so it stays where
+  he can act on it.
   `needs_human` is that sitting's one line, not a flag (H-1761): it takes the
   string saying what the operator does and roughly what it costs him, stored as
   `sitting` and rendered as the card's ask; `false` clears both. A bare `true`
@@ -287,6 +294,15 @@ orchestrator meetings and the read-only view. Product intent:
   withheld it, and Arthur read that gap as a fleet ignoring its backlog.
   `test/view-ready.test.ts` drives the whole page across indefinite holds,
   live and expired releases, date gates, dependencies and sittings.
+  The same three gates decide "Awaiting you" (H-202). A sitting standing behind
+  one is drawn under Blocked, where the badge order puts the impediment first
+  and the sitting last as `🪑 then a sitting`, with its line retained inside the
+  row. It is also what stops a held sitting vanishing: it was excluded from the
+  operator queue for being held and from the agent sections for needing a human,
+  and `view-section.test.ts` had recorded that absence as if it were the rule.
+  `test/view-blocked-sitting.test.ts` drives the operator's whole matrix: one
+  and several prerequisites, a blocker clearing, a date gate, a hold, work that
+  is genuinely his now, an unanswered question, and a terminal record.
 - `presentation.ts` — the dashboard's shared presentation rules: actor marks,
   option letters, question fingerprints, and the bounded terminal tail.
   `view.ts` owns the only reading. The estate shell frames that HTML whole at

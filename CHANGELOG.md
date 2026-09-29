@@ -15,6 +15,15 @@
 
 ### Fixed
 
+- A sitting the operator cannot reach yet is drawn as blocked work, not as work
+  awaiting him (H-202). An open blocker, a future `not_before` or an active
+  capacity hold now decides "Awaiting you" the same way it decides Ready: the
+  ticket falls to Blocked naming its real prerequisite, out of the attention
+  count, carrying `🪑 then a sitting` and the line it will need once the
+  impediment clears. A question in `awaiting_human` is unaffected — answering it
+  is how a block gets cleared. This also returns held sittings to the page at
+  all: they were excluded from the operator queue for being held and from the
+  agent sections for needing a human, and were drawn nowhere.
 - `silent_assignee` no longer flags a reservation while one of its blocking
   dependencies is live (H-1900). The blocker already explains why the ticket
   has not moved; if it closes and the reservation remains untouched, the

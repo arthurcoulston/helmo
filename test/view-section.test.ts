@@ -120,7 +120,12 @@ describe('Awaiting-you section route', () => {
 
     const whole = await (await fetch(`http://127.0.0.1:${port}/`)).text();
     expect(whole).toContain('Choose the front door');
-    expect(whole).not.toContain('Review the parked work');
+    // The held sitting is not awaiting him — but it IS on the whole page, under
+    // Blocked, saying what is actually holding it. This line used to assert it
+    // appeared nowhere at all, which is what the page really did and was a
+    // defect the test had recorded rather than a rule (H-202).
+    expect(whole).toContain('Review the parked work');
+    expect(whole.slice(whole.indexOf('<h2>Blocked</h2>'))).toContain('⏸ on hold · Another stream is active.');
     expect(whole).not.toContain('Workstream steering');
     expect(whole).not.toContain('done means');
 

@@ -1,5 +1,5 @@
 /* The release floor, measured against the document this process actually
- * serves (H-202).
+ * serves, on a record at least as heavy as the deployed one (H-202).
  *
  * Helmo's other view tests read `src/view.ts` as a string, which is the right
  * shape for "does the code say X" and the wrong shape for "does the document a
@@ -8,69 +8,23 @@
  * still at the widths it claims to support, and whether it can be read and
  * operated by someone who is not looking at it.
  *
- * What is NOT here, said plainly rather than left to be discovered: there is no
- * browser in this suite, so nothing below measures real layout, real paint or a
- * real accessibility tree. A browser harness would add computed geometry,
- * actual CLS and an axe pass over the live tree. Everything here is a
- * deterministic property of the served bytes and of the colour arithmetic
- * behind them — it runs offline, on every `npm test`, and it goes red for
- * defect classes this page has actually shipped.
+ * What is NOT here, said plainly rather than left to be discovered: nothing in
+ * this file opens a browser, so nothing below measures real geometry, real
+ * paint or a real accessibility tree. `view-viewport-render.test.ts` does that
+ * part in Chromium and is a separate script for a reason — it needs a browser
+ * on the machine. Everything here is a deterministic property of the served
+ * bytes and of the colour arithmetic behind them: it runs offline, on every
+ * `npm test`, and it goes red for defect classes this page has actually
+ * shipped.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { ChildProcess, spawn } from 'node:child_process';
+import { ChildProcess } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Store } from '../src/store.js';
-import { Actor } from '../src/types.js';
-
-// ---------- reading the served document ----------
-
-type Element = { name: string; attrs: Record<string, string>; end: number };
-
-/** Script and style bodies are cut before anything is scanned: both are
- *  program text, and a `<` inside either is not markup. */
-function markupOf(html: string): string {
-  return html
-    .replace(/(<script\b[^>]*>)[\s\S]*?(<\/script>)/gi, '$1$2')
-    .replace(/(<style\b[^>]*>)[\s\S]*?(<\/style>)/gi, '$1$2')
-    .replace(/<!--[\s\S]*?-->/g, '');
-}
-
-function elements(markup: string): Element[] {
-  const found: Element[] = [];
-  const tag = /<([a-zA-Z][\w:-]*)((?:"[^"]*"|'[^']*'|[^>])*)>/g;
-  for (let m = tag.exec(markup); m; m = tag.exec(markup)) {
-    const attrs: Record<string, string> = {};
-    const attr = /([a-zA-Z_:][\w:.-]*)(?:\s*=\s*("[^"]*"|'[^']*'|[^\s>]+))?/g;
-    for (let a = attr.exec(m[2] ?? ''); a; a = attr.exec(m[2] ?? '')) {
-      attrs[a[1]!.toLowerCase()] = (a[2] ?? '').replace(/^["']|["']$/g, '');
-    }
-    found.push({ name: m[1]!.toLowerCase(), attrs, end: m.index + m[0].length });
-  }
-  return found;
-}
-
-const decode = (s: string) =>
-  s
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&');
-
-/** The text a reader — or a screen reader with no better label — gets from an
- *  element. Anchors, buttons and summaries do not nest inside themselves, so
- *  the first matching close tag is the right one. */
-function textOf(markup: string, el: Element): string {
-  const close = markup.indexOf(`</${el.name}>`, el.end);
-  const inner = close === -1 ? '' : markup.slice(el.end, close);
-  return decode(inner.replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
-}
-
-const styleOf = (html: string) => /<style>([\s\S]*?)<\/style>/.exec(html)?.[1] ?? '';
+import { CAPACITY, Element, FLOOR, REAL_RECORD, decode, elements, markupOf, overBudget, styleOf, textOf } from '../src/floor.js';
+import { load, seedCapacityRecord, serveRecord } from './support/served-record.js';
 
 // ---------- reading the CSS ----------
 
@@ -188,112 +142,31 @@ const over = (fore: Colour, back: Rgb): Rgb => fore.rgb.map((c, i) => c * fore.a
 
 // ---------- the page under test ----------
 
-const agent: Actor = { name: 'mason', kind: 'agent', model: 'test', version: '1', session: 'rev:mason' };
-const human: Actor = { name: 'Arthur', kind: 'human', model: 'human', version: '1' };
-
 const dir = mkdtempSync(join(tmpdir(), 'helmo-floor-'));
 const db = join(dir, 'helmo.db');
 let view: ChildProcess | null = null;
 let origin = '';
+let seeded = { rows: 0, storedTextBytes: 0 };
 
 /** One document per shape the server serves: the current record, the whole
  *  record, and the section the estate landing embeds. */
-const page: Record<string, { html: string; markup: string; bytes: number; ms: number }> = {};
-
-/* More rows than the current record's closed tail (presentation.ts keeps 20),
-   so the whole-record document genuinely draws more than the default one and
-   the proportionality check below has something to measure. */
-const ROWS = 80;
-
-/** Fetched twice, timed on the second. The first request to a document pays
- *  for opening the store and warming the module, which is a real cost once per
- *  process and pure noise in a budget — measuring it forced a budget so loose
- *  it no longer failed for a render gone quadratic. */
-async function load(path: string) {
-  const first = await fetch(`${origin}${path}`, { redirect: 'error' });
-  await first.text();
-  const started = performance.now();
-  const res = await fetch(`${origin}${path}`, { redirect: 'error' });
-  const html = await res.text();
-  const ms = performance.now() - started;
-  expect(res.status).toBe(200);
-  return { html, markup: markupOf(html), bytes: Buffer.byteLength(html), ms };
-}
+const page: Record<string, { html: string; markup: string; bytes: number; ms: number; rows: number }> = {};
 
 beforeAll(async () => {
-  const seed = new Store(db);
-  const make = (title: string, extra: Record<string, unknown> = {}) =>
-    seed.createTicket(agent, { title, body: `${title}.`, workstream: 'helmo-dev', type: 'build', ...extra });
-
-  // Enough rows that a per-row store query shows up in the timing, and every
-  // row shape the page can draw: a question card, a sitting, work in motion,
-  // a blocked row, a closed row with evidence.
-  for (let i = 0; i < ROWS; i++) {
-    const motion = i % 2 === 0 && i % 5 === 0;
-    const t = make(`Seeded row ${i} with a long unbreakable ref /Users/arthur/projects/helmo/src/view.ts`, {
-      ...(motion ? { status: 'in_progress' as const } : {}),
-    });
-    if (i % 2 === 1)
-      seed.updateTicket(agent, {
-        ticket_id: t.id,
-        status: 'done',
-        note: 'shipped',
-        // The oldest closed rows are shut without evidence on purpose. That
-        // raises a grooming finding against a ticket the current record does
-        // not draw — it is past the closed tail — which is how the live page
-        // came to carry six links to rows that were not on it.
-        evidence:
-          i < 20
-            ? []
-            : [
-                { kind: 'url', ref: 'https://github.com/arthurcoulston/helmo/pull/1', note: 'the contribution' },
-                { kind: 'commit', ref: 'helmo@f73727a' },
-              ],
-      });
+  seeded = seedCapacityRecord(db);
+  ({ view, origin } = await serveRecord(db));
+  for (const [name, path] of [['current', '/'], ['whole', '/?whole=1'], ['section', '/?section=awaiting']] as const) {
+    const doc = await load(origin, path);
+    page[name] = { ...doc, markup: markupOf(doc.html) };
   }
-  const prereq = make('The unfinished prerequisite');
-  make('A sitting behind that prerequisite', {
-    needs_human: 'Half an hour reading the proposal and saying yes or no.',
-    deps: [{ to: prereq.id, type: 'blocks' as const }],
-  });
-  make('A sitting he can reach now', { needs_human: 'Two clicks in the Cloudflare dashboard.' });
-  const question = make('Which provider account should this use');
-  seed.returnToHuman(agent, question.id, {
-    situation: 'The Worker needs an account and both would work.',
-    question: 'Which account should the Worker use?',
-    recommendation: 'Use the company account.',
-    options: [
-      { label: 'The company account', consequence: 'One bill, one owner, and the personal account stays out of it.' },
-      { label: 'The personal account', consequence: 'Nothing to set up today and a migration to do later.' },
-    ],
-  });
-  seed.close();
-
-  view = spawn(process.execPath, ['--import', 'tsx', 'src/view.ts'], {
-    cwd: new URL('..', import.meta.url).pathname,
-    // The operator is set so the answer control renders: an interactive
-    // element that only exists for the human is exactly the one an
-    // accessibility pass must not miss.
-    env: { ...process.env, HELMO_DB: db, HELMO_VIEW_PORT: '0', HELMO_VIEW_HOST: '127.0.0.1', HELMO_OPERATOR: human.name },
-    stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
-  });
-
-  const port = await new Promise<number>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('the view never reported ready')), 15_000);
-    view!.once('error', reject);
-    view!.once('exit', (code) => reject(new Error(`the view exited before ready (${code})`)));
-    view!.on('message', (message) => {
-      if (!message || typeof message !== 'object' || !('type' in message) || message.type !== 'helmo-view-ready') return;
-      clearTimeout(timer);
-      resolve((message as { port: number }).port);
-    });
-  });
-  origin = `http://127.0.0.1:${port}`;
-
-  page.current = await load('/');
-  page.whole = await load('/?whole=1');
-  page.section = await load('/?section=awaiting');
-}, 40_000);
+  // Printed every run, on stderr because vitest keeps a passing test's console
+  // to itself: recalibrating a budget starts with what it measures today, and
+  // a number nobody can see goes stale unnoticed.
+  const measured = documents()
+    .map(([name, d]) => `${name} ${d.bytes}B/${d.rows}r/${d.ms.toFixed(0)}ms`)
+    .join(' | ');
+  process.stderr.write(`floor: ${seeded.rows} rows, ${seeded.storedTextBytes} bytes of record text | ${measured}\n`);
+}, 120_000);
 
 afterAll(() => {
   view?.kill();
@@ -376,24 +249,39 @@ describe('every link on the served page goes somewhere', () => {
 // ---------- performance budget ----------
 
 describe('the page stays inside its performance budget', () => {
-  /* Measured on this seed before they were written down, at 80 rows and warm:
-     current record 18ms / 122KB, whole record 17ms / 150KB, embedded section
-     3ms / 40KB. About 38KB of every document is the inline sprite and token
-     file it carries instead of making a second request.
+  /* MEASURED_AT_CAPACITY */
 
-     The time budget is ~7x the slowest of those. It is not tighter because a
-     laptop under load is several times slower than an idle one and a flaky
-     floor check is worse than none; it is not looser because the regression
-     worth catching has to fail it. Calibrated against one: a single extra
-     store-wide query per row — the shape a render turns quadratic in — takes
-     the whole record to 187ms and the current record to 96ms. */
-  const RENDER_MS = 120;
-  const BYTES = 300_000;
+  it('is measured on a record at least as heavy as the deployed one', () => {
+    // The budget's whole claim rests on this. A ceiling measured on a lighter
+    // fixture than the record it protects is the defect this file shipped
+    // once already: 300,000 bytes asserted on 80 one-line tickets, while the
+    // record it was shipped against served 2,718,020.
+    expect(seeded.rows).toBeGreaterThanOrEqual(REAL_RECORD.tickets);
+    expect(seeded.storedTextBytes).toBeGreaterThanOrEqual(CAPACITY.minimumStoredTextBytes);
+    expect(page.whole!.rows).toBeGreaterThanOrEqual(REAL_RECORD.tickets);
+    expect(page.current!.rows).toBeGreaterThanOrEqual(REAL_RECORD.currentRows);
+    // Heavier in total is not enough: a fixture of many thin rows renders
+    // nothing like a record of fewer fat ones. The document a row costs is
+    // the thing the budget is made of, so the seed has to be at least as
+    // dense as the deployed record too.
+    expect(page.whole!.bytes / page.whole!.rows).toBeGreaterThanOrEqual(REAL_RECORD.bytesPerRow.whole);
+    expect(page.current!.bytes / page.current!.rows).toBeGreaterThanOrEqual(REAL_RECORD.bytesPerRow.current);
+    // And it has to carry the hardest thing to lay out that the real record
+    // holds: a path with no space in it. A fixture whose longest ref fits in
+    // a 360px phone anyway cannot tell anyone whether the page would.
+    const longest = decode(page.current!.markup.replace(/<[^>]*>/g, ' '))
+      .split(/\s+/)
+      .reduce((most, token) => Math.max(most, token.length), 0);
+    expect(longest).toBeGreaterThanOrEqual(REAL_RECORD.longestUnbrokenToken);
+    const unbreakable = decode(page.current!.markup.replace(/<[^>]*>/g, ' '))
+      .split(/[\s/\-.,_?&=:;()[\]{}<>|+*"']+/)
+      .reduce((most, run) => Math.max(most, run.length), 0);
+    expect(unbreakable).toBeGreaterThanOrEqual(REAL_RECORD.longestUnbreakableRun);
+  });
 
   it('renders and sends each document inside budget', () => {
     for (const [name, doc] of documents()) {
-      expect(doc.ms, `${name} took ${doc.ms.toFixed(0)}ms`).toBeLessThan(RENDER_MS);
-      expect(doc.bytes, `${name} is ${doc.bytes} bytes`).toBeLessThan(BYTES);
+      expect(overBudget(doc, FLOOR), `${name}: ${doc.bytes} bytes, ${doc.ms.toFixed(0)}ms, ${doc.rows} rows`).toEqual([]);
     }
   });
 
@@ -412,12 +300,15 @@ describe('the page stays inside its performance budget', () => {
 
   it('grows with the record rather than with the square of it', () => {
     // The whole record adds closed rows to the current one. Both are drawn by
-    // the same row renderer, so the extra bytes have to stay proportional to
-    // the extra rows; a jump here is the page drawing something per-pair.
-    expect(page.whole!.bytes).toBeGreaterThan(page.current!.bytes);
-    expect(page.whole!.bytes).toBeLessThan(page.current!.bytes * 2);
+    // the same row renderer, so a row has to cost about the same on either
+    // document; the raw totals cannot say that, because the whole record
+    // legitimately draws three times as many rows.
+    expect(page.whole!.rows).toBeGreaterThan(page.current!.rows);
+    const perRow = (name: string) => page[name]!.bytes / page[name]!.rows;
+    expect(perRow('whole')).toBeLessThan(perRow('current') * 1.5);
   });
 });
+
 
 // ---------- layout stability across the supported viewports ----------
 

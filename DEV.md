@@ -341,9 +341,20 @@ orchestrator meetings and the read-only view. Product intent:
   and the current record draws only the newest `CLOSED_TAIL` closed, so a
   finding against an older closed ticket linked to a row that was not on the
   page. `groomStrip` now takes the set this document actually drew and sends
-  the rest to `?whole=1#H-n`. There is no browser in this suite, so nothing
-  there measures real layout, paint or an accessibility tree; the file says so
-  at the top rather than letting the next reader assume otherwise.
+  the rest to `?whole=1#H-n`.
+  Its budget is measured on a record at least as heavy as a deployed one, and
+  that is a checked property, not a claim: `test/support/served-record.ts`
+  seeds 244 rows to the shape of a real store — body lengths, an evidence tail
+  that reaches 118 items on one ticket, 64-character digests — and the first
+  assertion in the budget block refuses to measure anything until the fixture
+  exceeds the numbers in `src/floor.ts`'s `REAL_RECORD` in total text, in
+  bytes per row and in the longest unbreakable run it draws. The budget it
+  shipped with before did none of that: 300,000 bytes asserted over 80
+  one-line tickets while the record it was shipped against served 2,718,020,
+  nine times the ceiling, green the whole time (H-202).
+  Nothing in that file opens a browser, so it cannot measure real geometry or
+  paint; `test/view-viewport-render.test.ts` does, and `scripts/live-floor.mjs`
+  does both against a deployed service. See Commands.
 - Evidence ref form (H-95): commit = `repo@sha` (`crew@24e8003`), one commit
   per item; file = absolute or `repo:relative/path`, never bare-relative; url
   as-is; other/draft free text. Prose belongs in the item's `note`. The point
@@ -371,9 +382,30 @@ orchestrator meetings and the read-only view. Product intent:
 
 - `npm run build` (tsc → dist/), `npm test` (store + e2e against a temp db).
 - `npm run floor` runs the release-floor checks alone (links, performance
-  budget, viewport/layout stability, accessibility) against the served page.
-  They are part of `npm test` too; the separate script exists because the floor
-  is what a release is gated on and it is worth being able to ask for by name.
+  budget, declared widths, accessibility) against the served page. They are
+  part of `npm test` too; the separate script exists because the floor is what
+  a release is gated on and it is worth being able to ask for by name.
+- `npm run viewport` lays the same document out in Chromium at 360, 390, 480,
+  700 and 1280px, delivered and with every row opened, and fails on anything
+  that reaches past the right edge — boxes and text runs alike. It is NOT part
+  of `npm test`: it needs a browser (a Playwright-managed Chromium first, then
+  whatever Chrome the machine has) and the rest of the suite runs offline.
+  Skipping itself when the browser is absent would make a release gate that
+  passes hardest when it is doing least, so it fails and says what to install.
+  Two things it taught, both of which made an earlier control useless: every
+  row is a collapsed `<details>`, so a browser that only loads the page lays
+  out the summaries and never touches the bodies where the long refs are; and
+  a browser breaks a long path after its slashes whatever the CSS says, so the
+  case that needs `overflow-wrap: anywhere` is a 64-character digest, not a
+  path. With digests in the fixture and the rows opened, deleting that one
+  declaration takes the document to 624px in a 360px viewport and this is the
+  only check in the repo that notices.
+- `npm run live-floor -- <origin>` runs the same numbers and the same widths
+  against a DEPLOYED service (default `http://localhost:4420`): three reads,
+  a headless page load, no writes. This is what makes the budget appropriate
+  to the record rather than to the fixture — run it after a deploy, and read
+  its per-row figure, which is the reading that still means something when the
+  record grows past the capacity the seed declares.
 - `npm run smoke` drives a create → claim → return → answer lifecycle with
   different truthful fixture actors, asserts every state and event, then
   proves a rejected CLI operation exits nonzero. It always uses a fresh temp

@@ -7,7 +7,9 @@ import { execFileSync, spawn } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { HELMO_CLI as HELM_CLI, HELMO_SERVER } from './helmo.js';
+import { HELMO_CLI as HELM_CLI, HELMO_SERVER, HELMO_STORE } from './helmo.js';
+
+const { Store } = await import(HELMO_STORE);
 
 const REV_CLI = join(import.meta.dirname, '..', 'src', 'cli.ts');
 
@@ -73,6 +75,29 @@ process.exit(result.status ?? 1);
   const roster = join(e.home, 'roster.toml');
   writeFileSync(roster, readFileSync(roster, 'utf8').replace(`helmo_cli = "${HELM_CLI}"`, `helmo_cli = "${proxy}"`));
   return marker;
+}
+
+function injectLateSelfFiling(e: Env, marker: string): string {
+  const injected = join(e.home, 'late-filing.json');
+  const proxy = join(e.home, 'late-filing-helmo-proxy.mjs');
+  writeFileSync(
+    proxy,
+    `import { existsSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+const cli = ${JSON.stringify(HELM_CLI)};
+if (process.argv[2] === 'wake-check' && existsSync(${JSON.stringify(marker)}) && !existsSync(${JSON.stringify(injected)})) {
+  const env = { ...process.env, HELMO_ACTOR: JSON.stringify({ name: 'builder', kind: 'agent', model: 'mock', version: '0.1', session: 'rev:builder' }) };
+  const made = spawnSync(process.execPath, [cli, 'create', '--title', 'Late self-filed work', '--body', 'must receive independent triage', '--workstream', 'delivery', '--type', 'build', '--assignee', 'builder'], { env, encoding: 'utf8' });
+  if (made.status !== 0) { process.stderr.write(made.stderr); process.exit(made.status ?? 1); }
+  writeFileSync(${JSON.stringify(injected)}, made.stdout);
+}
+const result = spawnSync(process.execPath, [cli, ...process.argv.slice(2)], { env: process.env, stdio: 'inherit' });
+process.exit(result.status ?? 1);
+`,
+  );
+  const roster = join(e.home, 'roster.toml');
+  writeFileSync(roster, readFileSync(roster, 'utf8').replace(`helmo_cli = "${HELM_CLI}"`, `helmo_cli = "${proxy}"`));
+  return injected;
 }
 
 // These spawn real processes and drive a real store, so vitest's 5s unit
@@ -1005,6 +1030,128 @@ mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
         await exited;
       }
     }
+  });
+
+  it('does not advance a store-wide cursor past a filing that arrived after the session final read (H-223)', async () => {
+    const marker = join(tmpdir(), `rev-h223-final-read-${process.pid}-${Date.now()}`);
+    const e = setup(`[loops.judge]
+workstream = "*"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = '''
+set -e
+ID=$(node ${HELM_CLI} list --assignee builder --status open --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
+if [ -n "$ID" ]; then node ${HELM_CLI} update --ticket $ID --note "independent triage: release"; fi
+touch ${marker}
+'''
+
+[loops.builder]
+workstream = "delivery"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = '''
+set -e
+ID=$(node ${HELM_CLI} list --ready --assignee builder --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
+if [ -n "$ID" ]; then
+  node ${HELM_CLI} update --ticket $ID --note "owner claimed after triage" --status in_progress
+  node ${HELM_CLI} update --ticket $ID --note "owner completed after wake" --status done --evidence-kind other --evidence-ref fixture
+fi
+'''
+`);
+    const injected = injectLateSelfFiling(e, marker);
+
+    // The proxy inserts the filing inside Rev's first post-session wake-check:
+    // after the mock's final queue read, before that check returns max_seq.
+    rev(e, ['run', 'judge', '--count', '1']);
+    const id = (JSON.parse(readFileSync(injected, 'utf8')) as { id: string }).id;
+    const cursor = Number(readFileSync(join(e.home, 'state', 'judge', 'IDLE'), 'utf8').split('\n')[0]);
+    const pending = helm(e, ['wake-check', '--since-seq', String(cursor)]) as { changed_since: boolean };
+    expect(pending.changed_since).toBe(true);
+
+    // The author still cannot turn its own filing into authority before the
+    // independent pass. This call is intentionally refused by the real store.
+    expect(() => helm(e, ['update', '--ticket', id, '--note', 'self claim', '--status', 'in_progress'],
+      '{"name":"builder","kind":"agent","model":"mock","version":"0.1","session":"rev:builder"}')).toThrow();
+
+    // Put the owner on its real scoped wake path while the filing is withheld.
+    rev(e, ['run', 'builder', '--count', '1']);
+    const owner = spawn('npx', ['tsx', REV_CLI, 'run', 'builder', '--count', '2'], {
+      env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore',
+    });
+    try {
+      rev(e, ['run', 'judge', '--count', '1']);
+      const deadline = Date.now() + 15_000;
+      while ((helm(e, ['get', id]) as { status: string }).status !== 'done') {
+        if (Date.now() >= deadline) throw new Error('owner did not wake and complete the independently triaged filing');
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      const ownerLog = join(e.home, 'state', 'builder', 'events.log');
+      while (!/run-end.*produced=true/.test(readFileSync(ownerLog, 'utf8'))) {
+        if (Date.now() >= deadline) throw new Error('owner completed the ticket but Rev did not record the advancing run');
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      const ownerEvents = readFileSync(ownerLog, 'utf8');
+      expect(ownerEvents).toMatch(/wake\s/);
+      expect(ownerEvents).toMatch(/run-end.*produced=true/);
+    } finally {
+      if (owner.exitCode === null) owner.kill('SIGKILL');
+    }
+
+    // One reconciliation pass consumes the judge's own triage motion. With no
+    // new filing, the resulting cursor is quiet: replay does not churn forever.
+    rev(e, ['run', 'judge', '--count', '1']);
+    const settled = Number(readFileSync(join(e.home, 'state', 'judge', 'IDLE'), 'utf8').split('\n')[0]);
+    expect((helm(e, ['wake-check', '--since-seq', String(settled)]) as { changed_since: boolean }).changed_since).toBe(false);
+  });
+
+  it('the triage feed excludes terminal, triaged, held, date-gated and dependency-blocked filings (H-223)', () => {
+    const report = join(tmpdir(), `rev-h223-gates-${process.pid}-${Date.now()}.json`);
+    const e = setup(`[loops.judge]
+workstream = "*"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = 'node ${HELM_CLI} hygiene > ${report}'
+`);
+    const store = new Store(e.db);
+    const builder = { name: 'builder', kind: 'agent', model: 'mock', version: '0.1', session: 'rev:builder' };
+    const judge = { name: 'judge', kind: 'agent', model: 'mock', version: '0.1', session: 'rev:judge' };
+    const filing = (title: string, extra = {}) => store.createTicket(builder, {
+      title, body: 'self-filed fixture', workstream: 'delivery', type: 'build', assignee: 'builder', ...extra,
+    });
+
+    const eligible = filing('Eligible');
+    const triaged = filing('Already triaged');
+    store.updateTicket(judge, { ticket_id: triaged.id, note: 'independently released already' });
+    const terminal = filing('Terminal');
+    store.updateTicket(judge, { ticket_id: terminal.id, note: 'independently released before close' });
+    store.updateTicket(builder, { ticket_id: terminal.id, note: 'claim', status: 'in_progress' });
+    store.updateTicket(builder, { ticket_id: terminal.id, note: 'done', status: 'done', evidence: [{ kind: 'other', ref: 'fixture' }] });
+    const blocker = store.createTicket(judge, { title: 'Prerequisite', body: 'still open', workstream: 'delivery', type: 'build' });
+    const blocked = filing('Dependency blocked', { deps: [{ to: blocker.id, type: 'blocks' }] });
+    const gated = filing('Date gated', { not_before: '2099-01-01T00:00:00Z' });
+    const held = filing('Capacity held');
+    store.updateTicket(judge, {
+      ticket_id: held.id,
+      note: 'capacity remains reserved',
+      capacity_hold: { reason: 'bounded fixture hold', provenance: 'H-223', reconsider_when: 'fixture ends' },
+    });
+
+    rev(e, ['run', 'judge', '--count', '1']);
+    const findings = (JSON.parse(readFileSync(report, 'utf8')) as {
+      findings: { check: string; ticket_id?: string }[];
+    }).findings.filter((f) => f.check === 'awaiting_second_eyes').map((f) => f.ticket_id);
+    // The judge's own prerequisite filing remains in the feed too: wildcard
+    // scope does not make the triager an automatic second pair of eyes.
+    expect(findings).toEqual([eligible.id, blocker.id]);
+    expect(store.getTicket(triaged.id).status).toBe('open');
+    expect(store.getTicket(terminal.id).status).toBe('done');
+    const ownerReady = store.listTickets({ ready: true, caller: 'builder', limit: 100 }).map((t) => t.id);
+    expect(ownerReady).toContain(triaged.id);
+    expect(ownerReady).not.toContain(blocked.id);
+    expect(ownerReady).not.toContain(gated.id);
+    expect(ownerReady).not.toContain(held.id);
+    expect(store.getTicket(gated.id).not_before).toBe('2099-01-01T00:00:00.000Z');
+    expect(store.getTicket(held.id).capacity_hold?.reason).toBe('bounded fixture hold');
   });
 
   it('repeated failure hits the cap, sets BLOCKED, and escalates into the Helm queue', () => {

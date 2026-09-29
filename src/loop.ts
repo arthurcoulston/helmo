@@ -601,7 +601,14 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
         // guessing forward: too low costs one redundant wake, too high skips
         // motion silently.
         const after = tryWakeCheck(g, l, 0);
-        const cursor = after?.max_seq ?? before.max_seq;
+        // A store-wide session may make its final queue read before it exits.
+        // Advancing to a snapshot taken after that exit would acknowledge any
+        // event in between without ever showing it to the session. Retain the
+        // pre-session cursor for store-wide passes: motion during the pass is
+        // delivered at least once on the next wake. That can buy one bounded
+        // reconciliation pass for the session's own writes; it cannot lose a
+        // filing. Scoped loops use readiness edges and can advance normally.
+        const cursor = l.workstream === '*' ? before.max_seq : (after?.max_seq ?? before.max_seq);
         const ready = after?.ready_count ?? before.ready_count;
         const held = after?.held_count ?? before.held_count ?? 0;
         const reason = produced

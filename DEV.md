@@ -40,7 +40,13 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   (H-336: a live desk session woke ward ~$1/2min against an empty queue;
   H-545: bosun's own sweep records were the motion that woke it, 16 straight
   iterations to the burn breaker). A store-wide loop also idles after a
-  *productive* clean pass, with its cursor past its own writes: the floor
+  *productive* clean pass. Its idle cursor deliberately remains at the
+  pre-session snapshot: a filing can land after the session's final queue read
+  but before Rev's post-session snapshot, and advancing through that event
+  would acknowledge work no triager ever saw. Motion during a store-wide pass
+  is therefore delivered at least once on the next wake. The loop may buy one
+  bounded reconciliation pass for its own writes, then advances on the quiet
+  pass; the idle floor still caps that cost. Before this, the floor
   only ever gated wakes, and a produced pass used to `continue` straight
   into the next one, so bosun's pass-closing sweep record, which drew a
   done_without_evidence finding that the next pass disposed of, ran it back to back

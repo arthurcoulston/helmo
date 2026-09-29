@@ -128,6 +128,32 @@ fi
 '''`;
 
 describe('rev fleet e2e (supervisor over mock loops, real helm store)', () => {
+  it('keeps a scheduled-capacity loop down until its resume time', async () => {
+    const e = setup(`[loops.scheduled]
+workstream = "ws-scheduled"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = "true"
+`);
+    const dir = join(e.home, 'state', 'scheduled');
+    mkdirSync(dir, { recursive: true });
+    const resumeAt = new Date(Date.now() + 2500).toISOString();
+    writeFileSync(join(dir, 'LIMIT'), `kind=capacity\nresume_at=${resumeAt}\nreason=test fixture\n`);
+    const { proc } = startFleet(e);
+    try {
+      await sleep(1200);
+      expect(loopPid(e, 'scheduled')).toBeNull();
+      expect(existsSync(join(dir, 'LIMIT'))).toBe(true);
+      await waitFor(() => loopPid(e, 'scheduled') !== null, 'scheduled loop relaunched', 10000);
+      expect(existsSync(join(dir, 'LIMIT'))).toBe(false);
+      expect(readFileSync(join(dir, 'events.log'), 'utf8')).toContain('capacity-resume');
+    } finally {
+      proc.kill('SIGKILL');
+      const p = loopPid(e, 'scheduled');
+      if (p) process.kill(p, 'SIGKILL');
+    }
+  });
+
   it('general start runs every roster loop; both complete their work; rev stop drains cleanly', { timeout: 60000 }, async () => {
     const e = setup(`[loops.alpha]
 workstream = "ws-a"

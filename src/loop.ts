@@ -4,7 +4,8 @@
 import { stateDir } from './config.js';
 import { WakeCheck, WorkstreamInfo, actorActivity, actorSelfSpend, actorTickets, escalateBlocked, escalateSilentDeclines, openEscalation, readyTicketIds, recordSpend, scopeLabel, seatHolds, seatId, seatStreams, wakeCheck, workstreamInfo } from './helm.js';
 import { burnWindow, markBurnFloor } from './burn.js';
-import { exhaustedLimit, pollUsage, readCodexUsage, readUsage, refreshCodexUsage, usageForModel } from './usage.js';
+import { exhaustedLimit, pollUsage, readCodexUsage, readUsage, refreshCodexUsage, refreshFor, usageForModel } from './usage.js';
+import { capacityDecide } from './capacity.js';
 import { choiceExhausted, selectRun } from './routing.js';
 import { raiseWedgeAlarm, wedgeDecide } from './health.js';
 import { breakerDecide, declineDecide, ladderDecide, limitDecide, probeDecide, rollingMean, seatDecide, velocityToPause, wakeDecide } from './ladder.js';
@@ -77,8 +78,12 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
   sClear(l.name, 'SEAT_HELD');
   if (!sHas(l.name, 'PACE') && l.pace < 1) sSet(l.name, 'PACE', String(l.pace));
   // Burn-breaker window floor: this process's start (H-412).
-  markBurnFloor(l.name);
-  const cleanup = () => sClear(l.name, 'RUNNING', 'PARKED', 'SEAT_HELD', 'LIMIT');
+  const allChoices = [...l.choices, ...l.fallbacks, ...(g.probe ? [g.probe] : [])];
+  markBurnFloor(l.name, allChoices.some((c) => (c.billing ?? 'metered') === 'metered') ? 'metered' : 'subscription');
+  const cleanup = () => {
+    sClear(l.name, 'RUNNING', 'PARKED', 'SEAT_HELD');
+    if (!sGet(l.name, 'LIMIT')?.split('\n').some((line) => line.startsWith('resume_at='))) sClear(l.name, 'LIMIT');
+  };
   process.on('exit', cleanup);
 
   const cycle = l.choices.map((c) => `${c.provider}/${c.model}`).join(' ⇄ ');
@@ -243,10 +248,84 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     const exhaustedChoice = (c: RunChoice) =>
       choiceExhausted(c, providerUsage(), g.limit_exhausted_percent);
     const sel = selectRun(l, providerUsage(), i, g.limit_exhausted_percent);
-    const choice = sel.choice;
+    let choice = sel.choice;
     if (sel.switched) {
       logEvent(l.name, 'provider-switch', `iter=${i} ${sel.switched}`);
       console.log(`rev: ${sel.switched}`);
+    }
+    if ((choice.billing ?? 'metered') === 'subscription') {
+      const capacityThresholds = {
+        exhaustedPercent: g.limit_exhausted_percent,
+        sharedReservePercent: g.shared_reserve_percent,
+        blockHorizonSeconds: g.limit_block_horizon_seconds,
+        exhaustionCeilingSeconds: g.exhaustion_ceiling_seconds,
+        staleGraceIterations: g.stale_grace_iterations,
+        staleWaitSeconds: g.limit_wait_seconds,
+      };
+      const capacityChoices = () => {
+        const ordered = [choice, ...l.choices, ...l.fallbacks].filter((c, n, a) =>
+          a.findIndex((x) => x.provider === c.provider && x.model === c.model) === n,
+        );
+        return ordered.map((c) => ({
+          choice: c,
+          snapshot: c.runtime === 'mock' ? null : usageForModel(providerUsage()[c.runtime], c.model),
+          refreshed: false,
+        }));
+      };
+      let capacities = capacityChoices();
+      let capacity = capacityDecide({
+        choices: capacities,
+        isLoopRun: true,
+        staleIterations: streak(l.name, 'capacity_stale', false),
+        thresholds: capacityThresholds,
+      });
+      if (capacity.act === 'refresh') {
+        await Promise.all(capacity.providers.map((provider) =>
+          refreshFor(capacities.find((c) => c.choice.provider === provider)?.choice.runtime ?? provider),
+        ));
+        const refreshed = new Set(capacity.providers);
+        capacities = capacityChoices().map((c) => ({ ...c, refreshed: refreshed.has(c.choice.provider) }));
+        capacity = capacityDecide({
+          choices: capacities,
+          isLoopRun: true,
+          staleIterations: streak(l.name, 'capacity_stale', false),
+          thresholds: capacityThresholds,
+        });
+      }
+      if (capacity.act === 'switch') {
+        choice = capacity.on;
+        streakReset(l.name, 'capacity_stale');
+        logEvent(l.name, 'capacity-switch', capacity.reason);
+        console.log(`rev: ${capacity.reason}`);
+      } else if (capacity.act === 'continue_stale') {
+        choice = capacity.on;
+        streak(l.name, 'capacity_stale', true);
+        logEvent(l.name, 'capacity-stale', capacity.reason);
+      } else if (capacity.act === 'continue') {
+        choice = capacity.on;
+        streakReset(l.name, 'capacity_stale');
+      } else if (capacity.act === 'wait') {
+        sSet(l.name, 'LIMIT', `kind=capacity\nretry_s=${capacity.seconds}\nreason=${capacity.reason}\n`);
+        logEvent(l.name, 'capacity-wait', `seconds=${capacity.seconds} reason=${capacity.reason}`);
+        await sleep(capacity.seconds);
+        sClear(l.name, 'LIMIT');
+        continue;
+      } else if (capacity.act === 'scheduled_resume') {
+        sSet(l.name, 'LIMIT', `kind=capacity\nresume_at=${capacity.resumeAt}\nreason=${capacity.reason}\n`);
+        logEvent(l.name, 'capacity-scheduled', `resume_at=${capacity.resumeAt} reason=${capacity.reason}`);
+        console.log(`rev: '${l.name}' has no plan capacity — scheduled to resume at ${capacity.resumeAt}.`);
+        return;
+      } else if (capacity.act === 'blocked') {
+        sSet(l.name, 'BLOCKED', `kind=capacity\nreason=${capacity.reason}\nat=${new Date().toISOString()}\n`);
+        logEvent(l.name, 'blocked', `kind=capacity reason=${capacity.reason}`);
+        try {
+          const id = escalateBlocked(g, l, capacity.reason, '', dir);
+          console.log(`rev: '${l.name}' BLOCKED — escalated as Helm ticket ${id}.`);
+        } catch (e) {
+          console.error(`rev: '${l.name}' BLOCKED — escalation failed (${String(e).slice(0, 200)}).`);
+        }
+        return;
+      }
     }
     // The probe tier (H-412): nothing ready and nothing in hand means this
     // iteration can only read the queue and stop, so it runs on the cheap
@@ -469,6 +548,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
           usdPerDay: l.burn_usd_per_day ?? g.burn_usd_per_day,
           continueCap: l.continue_cap ?? g.continue_cap,
         },
+        run.billing ?? 'metered',
       );
       if (trip.act === 'trip') {
         logEvent(l.name, 'breaker', trip.reason);

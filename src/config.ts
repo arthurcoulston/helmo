@@ -151,7 +151,7 @@ export function resolveRef(
   if (!model) throw new Error(`${where}: provider '${name}' has no model for tier '${tier}' — add it to [providers.${name}.models].`);
   const probe = defaults.probe_tier ? p.models[defaults.probe_tier] : undefined;
   if (defaults.probe_tier && !probe) throw new Error(`${where}: provider '${name}' has no model for probe_tier '${defaults.probe_tier}'.`);
-  return { provider: name!, runtime: p.runtime, model, probe_model: probe, prices: p.prices, config: p.config };
+  return { provider: name!, runtime: p.runtime, billing: p.billing, model, probe_model: probe, prices: p.prices, config: p.config };
 }
 
 /** The complete set of keys a [loops.<name>] table may carry. */
@@ -264,6 +264,7 @@ function resolveSelection(
     primary = {
       provider: providerName ?? String(l['runtime']),
       runtime: (p?.runtime ?? l['runtime']) as Runtime,
+      billing: p?.billing ?? 'metered',
       model: String(l['model'] ?? 'mock'),
       probe_model: l['probe_model'] ? String(l['probe_model']) : probeFromTier,
       prices: p?.prices,

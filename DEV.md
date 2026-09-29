@@ -135,8 +135,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   burns it exists for both spanned process restarts; the window is floored at
   `.burn_floor` (stamped at loop start) so a resumed loop starts clean instead
   of tripping again on money already accounted for (H-412).
-- `capacity.ts` — plan capacity and runaway detection, pure (H-185). **Not yet
-  wired: nothing calls it, and rev's behaviour is unchanged until H-186 does.**
+- `capacity.ts` — plan capacity and runaway detection, pure (H-185), consumed
+  by the loop before subscription-provider runs (H-186). Metered providers
+  retain the legacy dollar and transient-limit gates; declaring a provider
+  `billing = "subscription"` makes its fresh plan bars the capacity gate.
   It exists because a breaker metering *notional* dollars stopped a loop for
   7h08m on a full backlog while both accounts had a third of their weekly
   allowance spare (H-178, 2026-09-29). Three quantities it refuses to
@@ -146,8 +148,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   and billed spend (not observable on a flat plan, so it is said rather than
   approximated). `capacityDecide` returns continue / switch / refresh /
   continue_stale / wait / scheduled_resume / blocked; the scheduled-resume
-  branch is the one that matters, because today a weekly cap resetting in two
-  days returns `blocked`, and blocked means waiting for a human.
+  branch persists `resume_at` in LIMIT, exits the loop, and lets the supervisor
+  relaunch it at the reset without clearing STOP, HOLD or BLOCKED. A reset past
+  the exhaustion ceiling still blocks for a human because the telemetry is
+  wrong rather than the plan.
   `anomalyDecide` measures a rate against the loop's own rolling mean, never a
   cumulative total. **No percent is ever converted to tokens or dollars**, in
   either direction.

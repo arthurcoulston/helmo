@@ -37,7 +37,15 @@ interface Slot {
 }
 
 function halted(name: string): boolean {
-  return sHas(name, 'STOP') || sHas(name, 'HOLD') || sHas(name, 'BLOCKED');
+  return sHas(name, 'STOP') || sHas(name, 'HOLD') || sHas(name, 'BLOCKED') || scheduledResumeAt(name) !== null;
+}
+
+function scheduledResumeAt(name: string): number | null {
+  const raw = sGet(name, 'LIMIT');
+  const value = raw?.split('\n').find((line) => line.startsWith('resume_at='))?.slice('resume_at='.length);
+  if (!value) return null;
+  const at = Date.parse(value);
+  return Number.isFinite(at) ? at : null;
 }
 
 /** Resolves with the process exit code: 0 for a drain that should stay down,
@@ -211,6 +219,12 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
         }
         if (s.child || shuttingDown) continue;
         const name = s.cfg.name;
+        const resumeAt = scheduledResumeAt(name);
+        if (resumeAt !== null) {
+          if (Date.now() < resumeAt) continue;
+          sClear(name, 'LIMIT');
+          logEvent(name, 'capacity-resume', `scheduled=${new Date(resumeAt).toISOString()}`);
+        }
         if (sHas(name, 'BLOCKED')) {
           try {
             const ticket = answeredResumeEscalation(g, s.cfg);

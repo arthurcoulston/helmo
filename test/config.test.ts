@@ -70,7 +70,9 @@ mid = "x-mid"
     const l = loadRoster().loops['a']!;
     expect(l.model).toBe('m');
     expect(l.probe_model).toBe('p');
-    expect(l.choices).toEqual([{ provider: 'claude', runtime: 'claude', model: 'm', probe_model: 'p', prices: undefined }]);
+    expect(l.choices).toEqual([{
+      provider: 'claude', runtime: 'claude', billing: 'metered', model: 'm', probe_model: 'p', prices: undefined, config: undefined,
+    }]);
     expect(l.fallbacks).toEqual([]);
   });
 

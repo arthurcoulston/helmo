@@ -67,6 +67,7 @@ export interface ModelPrice {
 export interface RunChoice {
   provider: string;
   runtime: Runtime;
+  billing?: BillingMode; // omitted by older/programmatic callers => metered
   model: string;
   probe_model?: string;
   prices?: Record<string, ModelPrice>;

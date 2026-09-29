@@ -6,6 +6,7 @@
     "test": "vitest run",
     "build": "tsc",
     "smoke": "node scripts/smoke.mjs",
+    "floor": "vitest run test/view-release-floor.test.ts",
     "view": "tsx src/view.ts",
     "mcp": "tsx src/server.ts",
     "demo": "node --import tsx scripts/demo-seed.mjs",

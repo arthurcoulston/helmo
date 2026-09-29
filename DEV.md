@@ -328,6 +328,22 @@ orchestrator meetings and the read-only view. Product intent:
   `white-space: nowrap`, which still wins. `view-responsive.test.ts` asserts
   the rule directly: the estate smoke only sees the defect while some live
   ticket happens to carry a long path.
+  `test/view-release-floor.test.ts` is the only test that reads the DOCUMENT
+  rather than this file: it spawns the view over a seeded store and checks the
+  four release-floor axes against what a browser would receive — every link
+  resolves (fragments to ids in the same document, internal links to the one
+  route this server has, external ones to absolute http(s)), a measured byte
+  and render budget with no subresource at all, no declared width wider than
+  the narrowest viewport it can apply at, and an accessibility pass over the
+  served markup plus WCAG contrast for the inks Helmo composes on the surfaces
+  it draws them on. It found six dead links on the live dashboard: the
+  grooming strip names tickets the hygiene sweep found anywhere in the store,
+  and the current record draws only the newest `CLOSED_TAIL` closed, so a
+  finding against an older closed ticket linked to a row that was not on the
+  page. `groomStrip` now takes the set this document actually drew and sends
+  the rest to `?whole=1#H-n`. There is no browser in this suite, so nothing
+  there measures real layout, paint or an accessibility tree; the file says so
+  at the top rather than letting the next reader assume otherwise.
 - Evidence ref form (H-95): commit = `repo@sha` (`crew@24e8003`), one commit
   per item; file = absolute or `repo:relative/path`, never bare-relative; url
   as-is; other/draft free text. Prose belongs in the item's `note`. The point
@@ -354,6 +370,10 @@ orchestrator meetings and the read-only view. Product intent:
 ## Commands
 
 - `npm run build` (tsc → dist/), `npm test` (store + e2e against a temp db).
+- `npm run floor` runs the release-floor checks alone (links, performance
+  budget, viewport/layout stability, accessibility) against the served page.
+  They are part of `npm test` too; the separate script exists because the floor
+  is what a release is gated on and it is worth being able to ask for by name.
 - `npm run smoke` drives a create → claim → return → answer lifecycle with
   different truthful fixture actors, asserts every state and event, then
   proves a rejected CLI operation exits nonzero. It always uses a fresh temp

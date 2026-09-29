@@ -357,13 +357,20 @@ const GROOM_LABEL: Record<HygieneFinding['check'], string> = {
   unaccounted_work: '🏷 nothing says what it is for',
 };
 
-function groomStrip(findings: HygieneFinding[]): string {
+/** `drawn` is the set of tickets THIS document holds. The hygiene sweep reads
+ *  the whole store, so it names closed tickets the current record leaves out —
+ *  it keeps only the newest CLOSED_TAIL — and a bare `#H-19` to a row that
+ *  is not on the page is a link that does nothing when the operator clicks it.
+ *  Six of them were live on his dashboard, found by the link check in
+ *  test/view-release-floor.test.ts. Those go to the whole record instead,
+ *  which draws every ticket, so the link lands on the row either way. */
+function groomStrip(findings: HygieneFinding[], drawn: Set<string>): string {
   if (!findings.length) return '';
   return `<section class="groom"><h2>Needs grooming</h2>
     ${findings
       .map(
         (f) => `<p class="gitem"><span class="badge quiet">${GROOM_LABEL[f.check]}</span>
-          ${f.ticket_id ? `<a href="#${esc(f.ticket_id)}" class="tid">${esc(f.ticket_id)}</a>` : `<span class="tid">${esc(f.workstream ?? '')}</span>`} <span class="gdetail">${esc(f.detail)}</span></p>`,
+          ${f.ticket_id ? `<a href="${drawn.has(f.ticket_id) ? '' : '?whole=1'}#${esc(f.ticket_id)}" class="tid">${esc(f.ticket_id)}</a>` : `<span class="tid">${esc(f.workstream ?? '')}</span>`} <span class="gdetail">${esc(f.detail)}</span></p>`,
       )
       .join('')}
   </section>`;
@@ -453,7 +460,7 @@ ${ESTATE_AVATARS}
 
 ${awaitingHtml}
 
-${groomStrip(store.hygiene())}
+${groomStrip(store.hygiene(), new Set(all.map((t) => t.id)))}
 
 
 ${motion.length ? `<section><h2>In motion</h2>${motion.map(motionCard).join('')}</section>` : ''}

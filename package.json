@@ -8,6 +8,8 @@
     "smoke": "node scripts/smoke.mjs",
     "floor": "vitest run test/view-release-floor.test.ts",
     "viewport": "vitest run test/view-viewport-render.test.ts",
+    "browser": "playwright-core install chromium --only-shell --no-remove",
+    "screenshot": "node scripts/screenshot.mjs",
     "live-floor": "node --import tsx scripts/live-floor.mjs",
     "view": "tsx src/view.ts",
     "mcp": "tsx src/server.ts",

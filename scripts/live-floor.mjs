@@ -12,7 +12,7 @@
  * a store or restarts anything.
  */
 
-import { chromium } from 'playwright-core';
+import { launchBrowser } from './browser.mjs';
 import { FLOOR, elements, markupOf, overBudget, rowsDrawn, styleOf, textOf } from '../src/floor.js';
 
 const origin = (process.argv[2] ?? 'http://localhost:4420').replace(/\/$/, '');
@@ -100,7 +100,7 @@ for (const path of PATHS) {
 }
 
 // The same widths the browser harness uses, against the deployed document.
-const browser = await chromium.launch().catch(() => chromium.launch({ channel: 'chrome' }));
+const browser = await launchBrowser();
 for (const width of VIEWPORTS) {
   const page = await browser.newPage({ viewport: { width, height: 900 } });
   await page.goto(`${origin}/`, { waitUntil: 'load' });

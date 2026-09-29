@@ -11,8 +11,8 @@
  * and not part of `npm test`: the rest of the suite runs offline on a laptop
  * with nothing installed, and quietly skipping a check when the browser is
  * missing would make a release gate that passes hardest when it is doing
- * least. Launch order is a Playwright-managed Chromium first, then whatever
- * Chrome the machine has; if neither is there the file fails and says so.
+ * least. It requires Playwright's managed headless shell; it never launches
+ * the installed desktop browser. `npm run browser` installs the right build.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -20,7 +20,8 @@ import { ChildProcess } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Browser, Page, chromium } from 'playwright-core';
+import { Browser, Page } from 'playwright-core';
+import { launchBrowser } from '../scripts/browser.mjs';
 import { seedCapacityRecord, serveRecord } from './support/served-record.js';
 
 /* The widths the CSS names, plus the two the page has been caught overflowing
@@ -42,24 +43,10 @@ let view: ChildProcess | null = null;
 let browser: Browser | null = null;
 let origin = '';
 
-async function launch(): Promise<Browser> {
-  const attempts: string[] = [];
-  for (const options of [{}, { channel: 'chrome' }]) {
-    try {
-      return await chromium.launch(options);
-    } catch (error) {
-      attempts.push(`${JSON.stringify(options)}: ${String(error).split('\n')[0]}`);
-    }
-  }
-  throw new Error(
-    `no browser to render in. Install Chrome, or run \`npx playwright install chromium\`.\n${attempts.join('\n')}`,
-  );
-}
-
 beforeAll(async () => {
   seedCapacityRecord(db);
   ({ view, origin } = await serveRecord(db));
-  browser = await launch();
+  browser = await launchBrowser();
 }, 180_000);
 
 afterAll(async () => {

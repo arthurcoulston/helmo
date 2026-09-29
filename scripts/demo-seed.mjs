@@ -161,5 +161,5 @@ console.log(`Seeded ${rows.length} tickets into ${demoDb}`);
 for (const t of rows) console.log(`  ${t.id}  ${t.status.padEnd(14)} ${t.title}`);
 console.log(`\nView it:  HELMO_DB=${demoDb} npm run view`);
 console.log('README screenshot recipe: serve the view, then');
-console.log('  chrome --headless=new --screenshot=docs/dashboard.png \\');
-console.log('    --window-size=1360,860 --force-device-scale-factor=2 --hide-scrollbars http://127.0.0.1:4400');
+console.log('  npm run browser');
+console.log('  npm run screenshot -- http://127.0.0.1:4400 docs/dashboard.png');

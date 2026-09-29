@@ -388,10 +388,16 @@ orchestrator meetings and the read-only view. Product intent:
 - `npm run viewport` lays the same document out in Chromium at 360, 390, 480,
   700 and 1280px, delivered and with every row opened, and fails on anything
   that reaches past the right edge — boxes and text runs alike. It is NOT part
-  of `npm test`: it needs a browser (a Playwright-managed Chromium first, then
-  whatever Chrome the machine has) and the rest of the suite runs offline.
+  of `npm test`: it needs Playwright's managed headless shell, installed with
+  `npm run browser`, and the rest of the suite runs offline.
   Skipping itself when the browser is absent would make a release gate that
   passes hardest when it is doing least, so it fails and says what to install.
+  `scripts/browser.mjs` is the shared launcher for viewport checks, live-floor
+  and screenshots. It never falls back to installed Chrome: desktop extension
+  policies can close the user's other windows even on a headless launch.
+  `test/browser-launch.test.ts` proves the missing-browser path cannot retry
+  against a desktop browser and keeps all three entrypoints on this launcher.
+  `npm run screenshot -- <url> <output.png>` replaces direct Chrome commands.
   Two things it taught, both of which made an earlier control useless: every
   row is a collapsed `<details>`, so a browser that only loads the page lays
   out the summaries and never touches the bodies where the long refs are; and

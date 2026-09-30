@@ -773,6 +773,16 @@ follow a module imported dynamically much later.
   SQLite file by hand, wedging the whole fleet for forty minutes. The prompt now
   names the tools to load up front and says plainly that a missing tool is never
   grounds to go around Helmo.
+- **Never assert on the iteration prompt through rev's stdout** (H-2496). The
+  console prints `res.outputTail.slice(-2000)` — a bounded tail, by design, on
+  top of the shim's own 4000-char cap. The prompt is one long line, so as it
+  grows its head falls out of that window, and an assertion reading stdout
+  fails for a reason that has nothing to do with the prompt. The `not.toContain`
+  direction is worse: it passes because the text was truncated away, not
+  because the prompt lacks it — a mutation putting "what done means" at the
+  head of the prompt left the old steering test green. Mocks in
+  `test/loop.e2e.test.ts` write `$REV_PROMPT` to `$REV_HOME/prompt.txt`
+  (`CAPTURE_PROMPT`) and assertions read `promptOf(e)`.
 - **Production means work advanced, not bytes written** (H-412). The
   produced-check calls helm-cli `actor-activity --advancing`, so a note-only
   update does not count. It matters because `ladderDecide` returns `continue`

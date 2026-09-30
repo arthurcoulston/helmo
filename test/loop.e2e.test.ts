@@ -52,6 +52,18 @@ function seedTicket(e: Env, title: string): string {
   return (helm(e, ['create', '--title', title, '--body', 'test work: claim me, complete me', '--workstream', 'rev-test', '--type', 'ops']) as { id: string }).id;
 }
 
+// Prompt assertions read the compiled prompt from a file the mock writes, not
+// from rev's stdout. The loop prints only the last 2000 characters of a
+// session's output (loop.ts), so the head of a long prompt never reaches the
+// console — and asserting through that window weakens silently as the prompt
+// grows: a toContain goes red for the wrong reason, and a not.toContain passes
+// because the text was cut off rather than because the prompt lacks it.
+const CAPTURE_PROMPT = 'printf %s "$REV_PROMPT" > "$REV_HOME/prompt.txt"';
+
+function promptOf(e: Env): string {
+  return readFileSync(join(e.home, 'prompt.txt'), 'utf8');
+}
+
 async function waitForFile(path: string, timeoutMs = 5000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!existsSync(path)) {
@@ -872,15 +884,16 @@ fi
 workstream = "rev-test"
 cwd = "/tmp"
 runtime = "mock"
-mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
+mock_cmd = '${CAPTURE_PROMPT}'
 `);
     seedTicket(e, 'Steered work item');
     helm(e, ['workstream-set', '--name', 'rev-test', '--budget-usd', '50'], '{"name":"operator","kind":"human"}');
-    const out = rev(e, ['run', 'steer-loop', '--count', '1']);
-    expect(out).toContain("Budget for 'rev-test': $0.00 of $50.00 spent, $50.00 remains");
+    rev(e, ['run', 'steer-loop', '--count', '1']);
+    const prompt = promptOf(e);
+    expect(prompt).toContain("Budget for 'rev-test': $0.00 of $50.00 spent, $50.00 remains");
     // The prompt carries no prose from the store: the goal that used to ride
     // here was standing instruction outside caps and review.
-    expect(out).not.toContain('what done means');
+    expect(prompt).not.toContain('what done means');
   });
 
   it('states that zero is uncapped and leaves runnable work runnable (H-267)', () => {
@@ -888,15 +901,16 @@ mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
 workstream = "rev-test"
 cwd = "/tmp"
 runtime = "mock"
-mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
+mock_cmd = '${CAPTURE_PROMPT}'
 `);
     const ticket = seedTicket(e, 'Runnable uncapped work');
     helm(e, ['workstream-set', '--name', 'rev-test', '--budget-usd', '0'], '{"name":"operator","kind":"human"}');
     helm(e, ['record-spend', '--ticket', ticket, '--cost-usd', '12', '--note', 'metered']);
-    const out = rev(e, ['run', 'uncapped-loop', '--count', '1']);
-    expect(out).toContain("Spending cap for 'rev-test': none (budget_usd 0 sentinel); $12.00 measured spend disclosed. Runnable work remains runnable.");
-    expect(out).not.toContain('budget exhausted');
-    expect(out).not.toContain('$-12.00 remains');
+    rev(e, ['run', 'uncapped-loop', '--count', '1']);
+    const prompt = promptOf(e);
+    expect(prompt).toContain("Spending cap for 'rev-test': none (budget_usd 0 sentinel); $12.00 measured spend disclosed. Runnable work remains runnable.");
+    expect(prompt).not.toContain('budget exhausted');
+    expect(prompt).not.toContain('$-12.00 remains');
   });
 
   it('steering names every stream the seat holds work in, not just the one it watches (H-954)', () => {
@@ -909,19 +923,20 @@ mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
 workstream = "rev-test"
 cwd = "/tmp"
 runtime = "mock"
-mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
+mock_cmd = '${CAPTURE_PROMPT}'
 `);
     seedTicket(e, 'Work in the watched stream');
     helm(e, ['create', '--title', 'Routed in from elsewhere', '--body', 'reserved to this seat', '--workstream', 'rev-elsewhere', '--type', 'ops', '--assignee', 'multi-loop']);
     helm(e, ['workstream-set', '--name', 'rev-test', '--budget-usd', '50'], '{"name":"operator","kind":"human"}');
     helm(e, ['workstream-set', '--name', 'rev-elsewhere', '--budget-usd', '25'], '{"name":"operator","kind":"human"}');
-    const out = rev(e, ['run', 'multi-loop', '--count', '1']);
-    expect(out).toContain("You hold finite-budget work in more than one workstream ('rev-test', 'rev-elsewhere')");
-    expect(out).toContain("Budget for 'rev-test': $0.00 of $50.00 spent");
-    expect(out).toContain("Budget for 'rev-elsewhere': $0.00 of $25.00 spent");
+    rev(e, ['run', 'multi-loop', '--count', '1']);
+    const prompt = promptOf(e);
+    expect(prompt).toContain("You hold finite-budget work in more than one workstream ('rev-test', 'rev-elsewhere')");
+    expect(prompt).toContain("Budget for 'rev-test': $0.00 of $50.00 spent");
+    expect(prompt).toContain("Budget for 'rev-elsewhere': $0.00 of $25.00 spent");
     // The sentence that made the old behaviour dangerous rather than merely
     // wrong: one stream's close-out cue must never authorize closing out another's.
-    expect(out).not.toContain('if it is exhausted, close out honestly');
+    expect(prompt).not.toContain('if it is exhausted, close out honestly');
   });
 
   it('a held stream without steering stays out of the prompt (H-1127)', () => {
@@ -929,14 +944,15 @@ mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
 workstream = "rev-test"
 cwd = "/tmp"
 runtime = "mock"
-mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
+mock_cmd = '${CAPTURE_PROMPT}'
 `);
     helm(e, ['create', '--title', 'Held work in a stream nobody steered', '--body', 'reserved to this seat', '--workstream', 'rev-quiet', '--type', 'ops', '--assignee', 'quiet-loop']);
     helm(e, ['workstream-set', '--name', 'rev-test', '--budget-usd', '50'], '{"name":"operator","kind":"human"}');
-    const out = rev(e, ['run', 'quiet-loop', '--count', '1']);
-    expect(out).toContain("Budget for 'rev-test'");
-    expect(out).not.toContain("'rev-quiet'");
-    expect(out).not.toContain('unsteered');
+    rev(e, ['run', 'quiet-loop', '--count', '1']);
+    const prompt = promptOf(e);
+    expect(prompt).toContain("Budget for 'rev-test'");
+    expect(prompt).not.toContain("'rev-quiet'");
+    expect(prompt).not.toContain('unsteered');
   });
 
   it('three held streams without goals or budgets produce no steering block (H-1127)', () => {
@@ -944,15 +960,16 @@ mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
 workstream = "rev-test"
 cwd = "/tmp"
 runtime = "mock"
-mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
+mock_cmd = '${CAPTURE_PROMPT}'
 `);
     for (const name of ['rev-one', 'rev-two']) {
       helm(e, ['create', '--title', `Held work in ${name}`, '--body', 'reserved to this seat', '--workstream', name, '--type', 'ops', '--assignee', 'unsteered-loop']);
     }
-    const out = rev(e, ['run', 'unsteered-loop', '--count', '1']);
-    expect(out).not.toContain('what done means');
-    expect(out).not.toContain('Budget for');
-    expect(out).not.toContain('You hold budgeted work');
+    rev(e, ['run', 'unsteered-loop', '--count', '1']);
+    const prompt = promptOf(e);
+    expect(prompt).not.toContain('what done means');
+    expect(prompt).not.toContain('Budget for');
+    expect(prompt).not.toContain('You hold budgeted work');
   });
 
   it('the idle rule covers the assigned list, not only the watched stream (H-987)', () => {
@@ -965,13 +982,14 @@ mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
 workstream = "rev-test"
 cwd = "/tmp"
 runtime = "mock"
-mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
+mock_cmd = '${CAPTURE_PROMPT}'
 `);
     helm(e, ['create', '--title', 'Routed in from elsewhere', '--body', 'reserved to this seat', '--workstream', 'rev-elsewhere', '--type', 'ops', '--assignee', 'literal-loop']);
-    const out = rev(e, ['run', 'literal-loop', '--count', '1']);
-    expect(out).toContain('A ticket reserved for you is yours to work whatever its workstream');
-    expect(out).toContain('If nothing in EITHER list is workable');
-    expect(out).not.toContain('If nothing there is workable');
+    rev(e, ['run', 'literal-loop', '--count', '1']);
+    const prompt = promptOf(e);
+    expect(prompt).toContain('A ticket reserved for you is yours to work whatever its workstream');
+    expect(prompt).toContain('If nothing in EITHER list is workable');
+    expect(prompt).not.toContain('If nothing there is workable');
   });
 
   it('held work in the seat\'s own stream keeps the single-stream wording (H-954)', () => {
@@ -981,14 +999,15 @@ mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
 workstream = "rev-test"
 cwd = "/tmp"
 runtime = "mock"
-mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
+mock_cmd = '${CAPTURE_PROMPT}'
 `);
     helm(e, ['create', '--title', 'Held work, same stream', '--body', 'reserved to this seat', '--workstream', 'rev-test', '--type', 'ops', '--assignee', 'solo-loop']);
     helm(e, ['workstream-set', '--name', 'rev-test', '--budget-usd', '50'], '{"name":"operator","kind":"human"}');
-    const out = rev(e, ['run', 'solo-loop', '--count', '1']);
-    expect(out).toContain("Budget for 'rev-test': $0.00 of $50.00 spent");
-    expect(out).toContain('if it is exhausted, close out honestly');
-    expect(out).not.toContain('more than one workstream');
+    rev(e, ['run', 'solo-loop', '--count', '1']);
+    const prompt = promptOf(e);
+    expect(prompt).toContain("Budget for 'rev-test': $0.00 of $50.00 spent");
+    expect(prompt).toContain('if it is exhausted, close out honestly');
+    expect(prompt).not.toContain('more than one workstream');
   });
 
   it('a scoped loop is told how to signal idle — the ladder scores it on that contract (H-740)', () => {
@@ -996,20 +1015,21 @@ mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
 workstream = "rev-test"
 cwd = "/tmp"
 runtime = "mock"
-mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
+mock_cmd = '${CAPTURE_PROMPT}'
 `);
     seedTicket(e, 'Something to draw');
-    const out = rev(e, ['run', 'scoped-loop', '--count', '1']);
-    expect(out).toContain("PROMPT:This is a Rev loop iteration, not a summon; AGENTS.md's summon clause does not apply; the queue is the work.");
-    expect(out).toContain('producing nothing is the idle signal this loop reads');
+    rev(e, ['run', 'scoped-loop', '--count', '1']);
+    const prompt = promptOf(e);
+    expect(prompt).toContain("This is a Rev loop iteration, not a summon; AGENTS.md's summon clause does not apply; the queue is the work.");
+    expect(prompt).toContain('producing nothing is the idle signal this loop reads');
     // Named because a scoped seat's queue stalls in ways a store-wide sweep's
     // "nothing has changed" does not describe.
-    expect(out).toContain('blocked, time-gated, or already sitting with the human');
+    expect(prompt).toContain('blocked, time-gated, or already sitting with the human');
     // Triage duty still outranks idling: the carve-out must survive rewording.
-    expect(out).toContain('question only the human can answer');
-    expect(out).toContain('file children that each fit one iteration and close the parent as a plan');
-    expect(out).toContain('Never leave ready work as found');
-    expect(out).toContain('prevent that unchanged ticket waking it again');
+    expect(prompt).toContain('question only the human can answer');
+    expect(prompt).toContain('file children that each fit one iteration and close the parent as a plan');
+    expect(prompt).toContain('Never leave ready work as found');
+    expect(prompt).toContain('prevent that unchanged ticket waking it again');
   });
 
   it('quarantines a ticket after three silent declines and deduplicates the escalation (H-1071)', () => {
@@ -1089,7 +1109,7 @@ cwd = "/tmp"
 runtime = "mock"
 mock_cmd = '''
 set -e
-echo "PROMPT:$REV_PROMPT"
+${CAPTURE_PROMPT}
 ID=$(node ${HELM_CLI} list --ready --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
 if [ -n "$ID" ]; then
   node ${HELM_CLI} update --ticket $ID --note "judged by mock" --status in_progress
@@ -1101,12 +1121,13 @@ fi
     const id = (helm(e, ['create', '--title', 'Filed far away', '--body', 'x', '--workstream', 'elsewhere', '--type', 'ops']) as { id: string }).id;
     // One pass: a store-wide loop idles after a clean pass even when it
     // produced, and waits for someone else's motion (H-2164).
-    const out = rev(e, ['run', 'judge', '--count', '1']);
-    expect(out).toContain("PROMPT:This is a Rev loop iteration, not a summon; AGENTS.md's summon clause does not apply; the queue is the work.");
-    expect(out).toContain('across all workstreams'); // the wildcard prompt, not a stream's
-    expect(out).toContain('file children that each fit one iteration and close the parent as a plan');
-    expect(out).toContain('Never leave ready work as found');
-    expect(out).toContain('For this store-wide sweep, a disposition note is action');
+    rev(e, ['run', 'judge', '--count', '1']);
+    const prompt = promptOf(e);
+    expect(prompt).toContain("This is a Rev loop iteration, not a summon; AGENTS.md's summon clause does not apply; the queue is the work.");
+    expect(prompt).toContain('across all workstreams'); // the wildcard prompt, not a stream's
+    expect(prompt).toContain('file children that each fit one iteration and close the parent as a plan');
+    expect(prompt).toContain('Never leave ready work as found');
+    expect(prompt).toContain('For this store-wide sweep, a disposition note is action');
     expect((helm(e, ['get', id]) as { status: string }).status).toBe('done');
     expect(existsSync(join(e.home, 'state', 'judge', 'IDLE'))).toBe(true);
     expect(readFileSync(join(e.home, 'state', 'judge', 'events.log'), 'utf8')).toMatch(/produced=true .*action=idle/);
@@ -1120,7 +1141,7 @@ fi
 workstream = "*"
 cwd = "/tmp"
 runtime = "mock"
-mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
+mock_cmd = '${CAPTURE_PROMPT}'
 `);
     helm(e, ['create', '--title', 'Standing backlog', '--body', 'x', '--workstream', 'elsewhere', '--type', 'ops']);
     rev(e, ['run', 'judge', '--count', '1']); // one no-production iteration -> IDLE at cursor, backlog still ready

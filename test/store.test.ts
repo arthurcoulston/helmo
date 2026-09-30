@@ -180,6 +180,28 @@ describe('atomic workflow admission (H-431)', () => {
     triage(s, ordinary.id);
     expect(s.updateTicket(builder, { ticket_id: ordinary.id, note: 'ordinary claim', status: 'in_progress' }).ticket.status).toBe('in_progress');
   });
+
+  it('rolls back action-report resume when workflow approval is missing', () => {
+    const s = admissionStore();
+    const gated = create(s, { workflow_attempt_id: 'attempt-1' });
+    s.requestAction(builder, gated.id, {
+      situation: 'The release is waiting on a DNS record.',
+      action: 'Add the release DNS record in the provider dashboard.',
+      why_human: 'Only the operator owns the provider credentials.',
+    });
+    const before = s.getEvents(gated.id).length;
+
+    expect(() => s.reportAction(relayedHuman, gated.id, { did: 'Added the DNS record.' })).toThrow(
+      /workflow_admission_denied .*"missing":\["requirement:technical"\]/,
+    );
+    expect(s.getEvents(gated.id)).toHaveLength(before);
+    expect(s.getTicket(gated.id)).toMatchObject({
+      status: 'awaiting_human',
+      assignee: null,
+      workflow_attempt_id: 'attempt-1',
+      action: { action: 'Add the release DNS record in the provider dashboard.' },
+    });
+  });
 });
 
 describe('actor validation', () => {

@@ -20,6 +20,12 @@ const actorSchema = z
   .optional()
   .describe('Who is writing. Omit only when ROADMAP_ACTOR (or HELMO_ACTOR) in the server environment already names you exactly. Interactive sessions: pass your true identity on every write — {name, kind: "agent", model: your exact model ID, version: your harness version}. Writes without a truthful complete identity are rejected.');
 
+// A raw shape is wrapped by the MCP SDK in a non-strict object, which silently
+// strips undeclared keys. Refuse them before a handler can read or write (R-41).
+function strict<S extends z.ZodRawShape>(shape: S) {
+  return z.object(shape).strict();
+}
+
 function result(data: unknown, warnings: string[] = []): { content: { type: 'text'; text: string }[] } {
   const body: Record<string, unknown> = { result: data };
   if (warnings.length) body['warnings'] = warnings;
@@ -77,12 +83,12 @@ export function buildServer(store: Store, envActor: Actor | null, install?: Inst
       description:
         `Add a project to the roadmap — the record of work WORTH doing, the layer above Helmo's tickets of work BEING done. Getting an idea in costs nothing: a title, ideally a sentence of body. Everything else (claims, citations, shaping) accretes later; that is the design, not an omission. Bad ideas belong here too — recording an idea and ranking it low is the process succeeding.\n\n` +
         `A project is a thing that ships ("Helmo v2.0", "Run a hackathon"), not a domain that never ends (that is a Helmo workstream) and not code-shaped by default. New projects enter 'parked' unless you pass status 'shaping' because active work on the description is starting now. Projects are never claimed or executed directly — when one is declared go, a builder breaks it into Helmo tickets and the work happens there.`,
-      inputSchema: {
+      inputSchema: strict({
         title: z.string().describe('One line, plain human terms'),
         body: z.string().optional().describe('A sentence is enough to start; the first sweep assesses fit from it'),
         status: z.enum(['parked', 'shaping']).optional(),
         actor: actorSchema,
-      },
+      }),
     },
     async ({ actor, ...input }) => {
       try {
@@ -100,7 +106,7 @@ export function buildServer(store: Store, envActor: Actor | null, install?: Inst
       description:
         `Fetch one project: current fields, computed blocked-ness, deps, all claims (value/effort, with authors and reasons), objective citations, and the event history. Use it before shaping, critiquing, or re-ranking — the history is where earlier judgments and their reasons live.\n\n` +
         `The response also carries 'revision', the project's state as of this read — every field here is read under one snapshot, so the revision belongs to the text beside it. If what you write next depends on what you just read — reshaping a description, judging it ready, reversing a status — pass that number back as roadmap_update_project's 'if_revision' and the write is refused if a second writer moved the project in between. It covers this project's own record: 'blocked_by' and incoming 'deps' are facts about OTHER projects and can change without moving it, so a decision that turns on the dependency graph needs more than this token.\n\nA bare id means this installation's record, and every result says on its envelope which installation that is. The 'references' array pairs each id this result mentions with that id qualified by the installation (R-4@dev.roadmap) — quote THAT anywhere the reference may travel, because ids are minted per installation and the qualified form is REFUSED by any other rather than answered with its own unrelated R-4. Every tool here takes either spelling.`,
-      inputSchema: { project_id: z.string() },
+      inputSchema: strict({ project_id: z.string() }),
     },
     async ({ project_id }) => {
       try {
@@ -120,10 +126,10 @@ export function buildServer(store: Store, envActor: Actor | null, install?: Inst
       description:
         `The roadmap in derived rank order. Rank is never set by hand: facts (ship_next, ready, shaping, blocked, parked) set the tier; judgments (cited objective rank, latest value claim, effort) order within it; every row carries a one-line explanation of its position. Shipped and archived projects are excluded unless you filter for them by status; the response's ship_next array is the current work phase — every project the human has declared go on, and a growing array is a problem to surface, not a neutral fact.\n\n` +
         `The response also carries the charter projection (objectives by the human's rank, and bets) so fit can be assessed without a second call. A project marked "advances nothing stated" is a signal worth reading, not an error — some work is maintenance; the visibility is the point.`,
-      inputSchema: {
+      inputSchema: strict({
         status: z.enum(STATUSES).optional().describe('Filter to one status; terminal statuses are only visible this way'),
         limit: z.number().int().optional(),
-      },
+      }),
     },
     async ({ status, limit }) => {
       try {
@@ -162,7 +168,7 @@ export function buildServer(store: Store, envActor: Actor | null, install?: Inst
         `Record a change to a project: shaping the description, moving it along the ladder (parked · shaping · ready · ship_next · shipped_watching · shipped_stable · archived), parking it with an exit condition. Every call requires a 'note' — one or two lines, human terms; notes are the story the human reads.\n\n` +
         `Status rules the store enforces: ship_next is NEVER set here (roadmap_set_ship_next records that human go-ahead), and the shipped statuses are reachable only from ship_next — nothing ships that the human never declared go on. 'ready' means enough is known to make an informed decision about committing to the project; details may keep being decided while building. An agent declaring it must not be the one who last shaped the description: a second pair of eyes judges commitment-readiness, while a title-only change does not count as shaping. 'shipped_watching' means newly shipped: monitoring, feedback, bug fixes, loose ends. 'shipped_stable' records a standing human decision that the maintenance is worth it — move a project there only when that decision has been stated. When parking, record unpark_condition ("revisit when Helmo has one external user") so a sweep can retest the condition instead of the idea rotting silently. 'archived' is terminal and permanent — the project ran its course and no longer earns its maintenance, all surfaces closed/taken down (ideas killed before shipping land here too); a revived idea is a new project with a 'relates' link.\n\n` +
         `Every one of those rules is decided against the project as it is when the write lands, and a project has more than one writer. If this update depends on what you read first — you reshaped the body you just read, you judged that description ready, you are reversing a status — pass 'if_revision' with the 'revision' that read gave you: the write is then refused, with nothing stored, if anyone moved the project in between, instead of silently landing on top of their change. Omit it for a write that turns on nothing you read. The response carries the new revision either way.`,
-      inputSchema: {
+      inputSchema: strict({
         project_id: z.string(),
         note: z.string(),
         if_revision: z
@@ -177,7 +183,7 @@ export function buildServer(store: Store, envActor: Actor | null, install?: Inst
         parked_reason: z.string().optional(),
         unpark_condition: z.string().optional().describe('What would unpark this — phrased so a sweep can test it'),
         actor: actorSchema,
-      },
+      }),
     },
     async ({ actor, ...input }) => {
       try {
@@ -195,7 +201,7 @@ export function buildServer(store: Store, envActor: Actor | null, install?: Inst
       description:
         `Record a value or effort judgment on a project. Judgments are claims with an author, a date, and a one-line reason — never naked numbers; the latest claim of each kind is what ranking uses, and the history stays. Lowering a project's value is ordinary maintenance, not a dispute: the crew agreeing an idea is low-value is the critique working.\n\n` +
         `value: level high|medium|low. effort: size S|M|L|XL plus predicted_usd — the dollar prediction is checked against the metered actual rolled up from the project's Helmo tickets, which is what teaches the crew what a size really costs and lets falling costs re-sort the list. No hour estimates, no dates.`,
-      inputSchema: {
+      inputSchema: strict({
         project_id: z.string(),
         kind: z.enum(['value', 'effort']),
         level: z.enum(VALUE_LEVELS).optional().describe('value claims'),
@@ -203,7 +209,7 @@ export function buildServer(store: Store, envActor: Actor | null, install?: Inst
         predicted_usd: z.number().min(0).optional().describe('effort claims: predicted total cost in dollars — the falsifiable half of the estimate'),
         reason: z.string().describe('One line on why — what makes this high/low value, or what the size hinges on'),
         actor: actorSchema,
-      },
+      }),
     },
     async ({ actor, ...input }) => {
       try {
@@ -219,13 +225,13 @@ export function buildServer(store: Store, envActor: Actor | null, install?: Inst
     {
       description:
         `Record an independent review of a project's commitment-readiness. Read the project first and pass its readiness revision: verdicts on identical state form one append-only set, each reviewer's latest verdict is their own correction, and any FAIL governs. A mixed set is contested. A passing set moves the project to ready; a failed or contested set leaves it shaping. Any non-verdict project change makes the old revision stale, and a refused write stores nothing. The description's last shaper cannot review their own work.`,
-      inputSchema: {
+      inputSchema: strict({
         project_id: z.string(),
         reviewed_revision: z.number().int().positive().describe('The readiness_revision from roadmap_get_project'),
         verdict: z.enum(['pass', 'fail']),
         note: z.string().describe('Why it is ready, or the concrete issue that remains'),
         actor: actorSchema,
-      },
+      }),
     },
     async ({ actor, ...input }) => {
       try {
@@ -242,13 +248,13 @@ export function buildServer(store: Store, envActor: Actor | null, install?: Inst
     {
       description:
         `Tie a project to a charter objective with a checkable one-line claim of HOW it advances it ("advances OBJ-3, because …"). This is what rescues value from decoration: the human can disagree with the mapping rather than with a number. A project cites zero or more objectives; citing nothing is a visible signal, not an error. action 'remove' drops a citation that no longer holds.`,
-      inputSchema: {
+      inputSchema: strict({
         project_id: z.string(),
         objective_id: z.string(),
         claim: z.string().optional().describe("Required when adding: how this project advances the objective, one line"),
         action: z.enum(['add', 'remove']).optional().describe("default 'add'"),
         actor: actorSchema,
-      },
+      }),
     },
     async ({ actor, ...input }) => {
       try {
@@ -264,13 +270,13 @@ export function buildServer(store: Store, envActor: Actor | null, install?: Inst
     {
       description:
         `Add or remove a typed link between projects. 'blocks' (from_id cannot ship until to_id has shipped — blocked-ness is computed from these, never remembered) or 'relates' (soft association, including a revived idea pointing at its abandoned ancestor). Use 'blocks' sparingly, for true prerequisites.`,
-      inputSchema: {
+      inputSchema: strict({
         from_id: z.string(),
         to_id: z.string(),
         type: z.enum(DEP_TYPES),
         action: z.enum(['add', 'remove']).optional().describe("default 'add'"),
         actor: actorSchema,
-      },
+      }),
     },
     async ({ from_id, to_id, type, action, actor }) => {
       try {
@@ -290,12 +296,12 @@ export function buildServer(store: Store, envActor: Actor | null, install?: Inst
       description:
         `Record the human's go-ahead moving a ready project into ship_next — the work phase. This is ALWAYS the human's call: the tool exists for an agent to record a decision the human stated explicitly, with decided_by naming them and reason carrying their one-line why. Never call it on your own judgment, however ready a project looks. Only a 'ready' project can be declared.\n\n` +
         `Several projects may hold ship_next at once, but with resistance: the response carries the resulting count, and a growing work phase is a problem to surface to the human, not a neutral fact — the standing aim is getting projects OFF it (to shipped_watching) when they are close. ship_next is disclosure — the human's current shipping order, readable here — not tasking: seeing it does not authorize starting the work. Building begins when the project is broken into Helmo tickets and those enter the ready queue like any other work.`,
-      inputSchema: {
+      inputSchema: strict({
         project_id: z.string(),
         decided_by: z.string().describe('The human who made the call'),
         reason: z.string().describe("The human's one-line why, so the fleet reads a decision, not a flag"),
         actor: actorSchema,
-      },
+      }),
     },
     async ({ actor, ...input }) => {
       try {
@@ -317,12 +323,12 @@ export function buildServer(store: Store, envActor: Actor | null, install?: Inst
     {
       description:
         `Record the metered actual cost for a project — the rollup of cost_usd across its Helmo tickets (query them by the ticket 'project' tag). Absolute total, not a delta; the sweep recomputes and re-records it. Never self-report a guess: this figure is what makes effort predictions falsifiable, and it must come from Helmo's meter.`,
-      inputSchema: {
+      inputSchema: strict({
         project_id: z.string(),
         actual_usd: z.number().min(0),
         note: z.string().describe('Where the rollup came from: which Helmo project tag, how many tickets'),
         actor: actorSchema,
-      },
+      }),
     },
     async ({ actor, ...input }) => {
       try {
@@ -339,7 +345,7 @@ export function buildServer(store: Store, envActor: Actor | null, install?: Inst
       description:
         `Upsert one item of the charter projection. The charter is the one thing the human writes and agents only read — it lives in the human's own document, and this records a PROJECTION of it: derive items from that source at the human's direction, never author them. 'source' points back to the authoritative document and derived_at marks when, so drift is visible; when the source changes, re-derive.\n\n` +
         `shape 'objective': statement, horizon near|long|standing, rank (1 = top — the human ranks a dozen objectives once; project rank inherits from this). shape 'bet': statement, stake, falsifier — bets justify projects that advance no objective but cheaply test a written-down belief. Pass id (OBJ-n / BET-n) to update an existing item; omit it to mint one. Gates and stances are recognized shapes for v2 — do not force them into objectives.`,
-      inputSchema: {
+      inputSchema: strict({
         shape: z.enum(['objective', 'bet']),
         id: z.string().optional().describe('Update an existing item; omit to create'),
         statement: z.string().describe('Short and quotable — citations point at this'),
@@ -349,7 +355,7 @@ export function buildServer(store: Store, envActor: Actor | null, install?: Inst
         stake: z.string().optional().describe('bets: what rides on this being true'),
         falsifier: z.string().optional().describe('bets: what would show it false'),
         actor: actorSchema,
-      },
+      }),
     },
     async ({ actor, ...input }) => {
       try {

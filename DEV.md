@@ -51,7 +51,12 @@ append-only event log, materialized state, `.immediate()` write transactions
 - `tools.ts` — the 11-tool MCP surface, descriptions are
   guidance-as-deployed (Helmo's rule). v1 postures baked into them:
   ship_next is FYI to the fleet, not tasking; the charter is derived from
-  the human's document, never authored here.
+  the human's document, never authored here. Every argument schema is a
+  strict Zod object: undeclared keys refuse during MCP validation before the
+  handler, including on reads, so a misspelled filter cannot become an
+  unfiltered read and a guessed write field cannot become a silent no-op.
+  `test/tools-surface.test.ts` checks the behavior and the complete advertised
+  surface; a new tool left on the SDK's raw-shape default fails that test.
 - `install.ts` — which installation this process is (H-2472), the sibling of
   helmo:src/install.ts. Both entry points resolve the store here rather than
   each reading `ROADMAP_DB` on its own, so they cannot disagree about the

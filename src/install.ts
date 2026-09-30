@@ -1,0 +1,151 @@
+// Which installation of the roadmap is this process? (H-2472)
+//
+// The sibling of helmo:src/install.ts, in the same idiom and for the same
+// reason: `server.ts` and `view.ts` each resolved `ROADMAP_DB` on their own,
+// and an installation had no name — the only thing that said which roadmap you
+// were talking to was a database path, and nothing printed it back.
+//
+// The identity is shared, not invented here. Rev is the supervisor that spawns
+// every session and installs the services, and it already names an
+// installation: `REV_LABEL`, written into the service environment
+// (rev:src/service.ts, H-2452) and inherited by everything it starts.
+// `HELMO_LABEL` is the same name for a Helmo-family installation standing
+// without Rev — the roadmap honours it for the reason it honours `HELMO_ACTOR`,
+// so an estate that has already named its installation needs no second
+// variable — and `ROADMAP_LABEL` overrides both. Failing all three, the
+// identity is derived from the roadmap's own home, which is the honest answer
+// when nothing above it has claimed one.
+//
+// The single-install experience is unchanged: no variables set at all still
+// means ~/.helmo-roadmap/roadmap.db, now under the name `dev.roadmap`.
+import { createHash } from 'node:crypto';
+import { homedir, userInfo } from 'node:os';
+import { basename, dirname, join, resolve, sep } from 'node:path';
+import { RoadmapError } from './types.js';
+
+/** Refused before any store is opened. */
+export class InstallationError extends RoadmapError {}
+
+export type IdentitySource = 'ROADMAP_LABEL' | 'HELMO_LABEL' | 'REV_LABEL' | 'derived';
+
+export interface Installation {
+  /** The installation's name — what a surface prints to say which roadmap it read. */
+  label: string;
+  /** Resolved installation home: the directory this installation's files live in. */
+  home: string;
+  /** Resolved store path. */
+  db: string;
+  /** Where `label` came from, so a surface can say so rather than implying a registry. */
+  source: IdentitySource;
+}
+
+const LABEL_VARS: readonly IdentitySource[] = ['ROADMAP_LABEL', 'HELMO_LABEL', 'REV_LABEL'];
+
+/**
+ * Resolve this process's installation, or throw `InstallationError` if the
+ * environment names two.
+ *
+ * `ROADMAP_HOME` names the installation; `ROADMAP_DB` names its store. Either
+ * one alone determines the other — a bare `ROADMAP_DB` (how every existing
+ * caller points at a store) puts the home at the store's directory, so nothing
+ * already deployed has anything new to set. Both set and disagreeing is the
+ * refusal: one entry point would have honoured the home and another the store,
+ * and the winner would be whichever line of whichever file you read.
+ */
+export function installation(env: NodeJS.ProcessEnv = process.env): Installation {
+  const homeVar = env['ROADMAP_HOME']?.trim();
+  const dbVar = env['ROADMAP_DB']?.trim();
+
+  const home = homeVar ? resolve(homeVar) : dbVar ? dirname(resolve(dbVar)) : join(homedir(), '.helmo-roadmap');
+  const db = dbVar ? resolve(dbVar) : join(home, 'roadmap.db');
+
+  if (homeVar && dbVar && !within(home, db)) {
+    throw new InstallationError(
+      `ROADMAP_HOME and ROADMAP_DB name different installations — ROADMAP_HOME=${home} but ROADMAP_DB=${db}, `
+      + `which is not inside it. Unset one: ROADMAP_HOME alone uses ${join(home, 'roadmap.db')}, `
+      + `ROADMAP_DB alone treats ${dirname(db)} as the installation home.`,
+    );
+  }
+
+  const named = LABEL_VARS.find((v) => env[v]?.trim());
+  return {
+    label: named ? (env[named] as string).trim() : derivedLabel(home),
+    home,
+    db,
+    source: named ?? 'derived',
+  };
+}
+
+/**
+ * For entry points: resolve, or report and exit before opening anything.
+ *
+ * `report` is injectable because an entry point with a machine-readable error
+ * contract has to keep it; the long-running surfaces print a line of prose.
+ */
+export function requireInstallation(
+  env: NodeJS.ProcessEnv = process.env,
+  report: (message: string) => never = plainExit,
+): Installation {
+  try {
+    return installation(env);
+  } catch (e) {
+    return report(e instanceof Error ? e.message : String(e));
+  }
+}
+
+function plainExit(message: string): never {
+  console.error(message);
+  process.exit(1);
+}
+
+// The same rule as rev's `serviceLabel()`, on the roadmap's own prefix: a
+// direct child of the ACCOUNT's home called `.helmo-roadmap` or
+// `.helmo-roadmap-<suffix>` keeps the readable name its siblings guarantee is
+// unique, and anywhere else the label carries a digest of the resolved path —
+// because two installations can have homes with the same basename
+// (/tmp/customer-a/.helmo-roadmap and /tmp/customer-b/.helmo-roadmap), which is
+// what made one label cover many installs.
+//
+// The account's home comes from the password database, not from `$HOME`: a
+// service manager hands a daemon an environment the software under test can
+// itself have written, so an identity keyed on `$HOME` is keyed on something a
+// second installation can set. `$HOME` still decides where the default home IS
+// — that is `installation()` above, and it must stay that way.
+function derivedLabel(home: string): string {
+  const suffix = labelSuffix(basename(home));
+  if (dirname(home) === accountHome() && /^\.helmo-roadmap([-_.]|$)/.test(basename(home))) {
+    return suffix ? `dev.roadmap.${suffix}` : 'dev.roadmap';
+  }
+  const descriptive = suffix || labelSuffix(basename(dirname(home)));
+  return `dev.roadmap.${descriptive ? `${descriptive}.` : ''}${homeDigest(home)}`;
+}
+
+function labelSuffix(name: string): string {
+  return name
+    .replace(/^\.?(helmo-roadmap|roadmap)(?=[-_.]|$)/, '')
+    .replace(/^[-_.]+/, '')
+    .replace(/[^A-Za-z0-9-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function accountHome(): string {
+  try {
+    return resolve(userInfo().homedir);
+  } catch {
+    // No password entry (some containers). $HOME is then all there is, and a
+    // wrong answer here only means a home gets a digest it did not need.
+    return resolve(homedir());
+  }
+}
+
+// Eight hex characters of the resolved path: long enough that two installs on
+// one machine will not collide, short enough to read back off a label. Not
+// `realpath`ed, so a home reached through a symlink is a second identity —
+// ROADMAP_LABEL is the override when that is not what you meant.
+function homeDigest(home: string): string {
+  return createHash('sha256').update(home).digest('hex').slice(0, 8);
+}
+
+function within(home: string, path: string): boolean {
+  return path === home || path.startsWith(home.endsWith(sep) ? home : home + sep);
+}

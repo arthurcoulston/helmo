@@ -5,17 +5,18 @@
 // zero dependencies, no build step beyond tsc.
 import { mkdirSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { AVATAR_MARKS, ESTATE_AVATARS } from './estate-avatars.generated.js';
+import { requireInstallation } from './install.js';
 import { ESTATE_TOKENS } from './estate-tokens.generated.js';
 import { Store } from './store.js';
 import { ActorKind, Claim, Project, Ranked, RoadmapEvent } from './types.js';
 
-const dbPath = process.env['ROADMAP_DB'] ?? join(homedir(), '.helmo-roadmap', 'roadmap.db');
+const install = requireInstallation();
+const dbPath = install.db;
 // The view may be the first thing to touch a fresh store — don't crash on a
 // missing home directory (caught by launchd on first boot).
-mkdirSync(join(dbPath, '..'), { recursive: true });
+mkdirSync(install.home, { recursive: true });
 const port = Number(process.env['ROADMAP_VIEW_PORT'] ?? 4410);
 const host = process.env['ROADMAP_VIEW_HOST'] ?? '127.0.0.1';
 const store = new Store(dbPath);
@@ -564,4 +565,4 @@ createServer((req, res) => {
     res.writeHead(500, { 'content-type': 'text/plain' });
     res.end(String(e));
   }
-}).listen(port, host, () => console.log(`Roadmap view: http://localhost:${port} — db: ${dbPath}`));
+}).listen(port, host, () => console.log(`Roadmap view: http://localhost:${port} — install: ${install.label} — db: ${dbPath}`));

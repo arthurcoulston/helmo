@@ -62,6 +62,24 @@ const MARKS = new Set<string>(AVATAR_MARKS);
  *  kind its writer declared at the time, which is better than the store-wide
  *  answer this falls back to. Both are read from the record; neither is a
  *  guess from the name. */
+/** A reference the operator might carry into a conversation, drawn with the
+ *  one control that copies it. Arthur asked for copy icons "across the
+ *  harness beside things he might take into an agent conversation" (H-2364)
+ *  and named roadmap items alongside tickets — so every visible R- and OBJ-
+ *  id on this page comes from here, which is what makes "it can always be
+ *  copied" a property of the code rather than a habit. Helmo's view.ts holds
+ *  the same renderer, spelled the same way, for the same reason.
+ *
+ *  What lands on the clipboard is `id` and nothing else: it comes off
+ *  `data-copy`, never off the rendered text, so a rank, a badge or a future
+ *  prefix beside it cannot end up in what he pastes.
+ *
+ *  `cls` is the class the id already carried here — `pid` for a project,
+ *  `oid` for an objective or bet — so the page keeps the two distinct. */
+function ref(id: string, cls: 'pid' | 'oid'): string {
+  return `<span class="${cls}">${esc(id)}<button type="button" class="copy" data-copy="${esc(id)}" aria-label="Copy ${esc(id)}" title="Copy ${esc(id)}">⧉</button></span>`;
+}
+
 function actor(name: string, known?: ActorKind): string {
   const kind = known ?? actorKinds.get(name);
   // `person` is the fallback for a human with no role mark; an agent with no
@@ -119,7 +137,7 @@ function details(r: Ranked): string {
   ${r.project.status === 'parked' && (r.project.parked_reason || r.project.unpark_condition)
     ? `<div class="park">${r.project.parked_reason ? `parked: ${esc(r.project.parked_reason)}` : ''}${r.project.unpark_condition ? ` <b>unparks when:</b> ${esc(r.project.unpark_condition)}` : ''}</div>`
     : ''}
-  ${r.citations.map((c) => `<div class="cite"><span class="oid">${esc(c.objective_id)}</span> ${esc(c.claim)}</div>`).join('')}
+  ${r.citations.map((c) => `<div class="cite">${ref(c.objective_id, 'oid')} ${esc(c.claim)}</div>`).join('')}
   ${claimLine(r.value)}${claimLine(r.effort)}
   ${r.blocked_by.length ? `<div class="park">⛔ waits on ${esc(r.blocked_by.join(', '))}</div>` : ''}
   ${related.length ? `<div class="park">related: ${esc(related.join(', '))}</div>` : ''}
@@ -136,11 +154,11 @@ function shipNextCard(r: Ranked): string {
   // attribution on the page falls back to the store-wide map and finds nothing,
   // because Arthur never writes here himself; an orchestrator relays his call.
   return `<article class="hero-card" id="${esc(r.project.id)}">
-    <header><span class="pid">${esc(r.project.id)}</span> <span class="htitle">${esc(r.project.title)}</span>
+    <header>${ref(r.project.id, 'pid')} <span class="htitle">${esc(r.project.title)}</span>
       <span class="meta">${money(r.project, r.effort)} · ${esc(rel(r.project.updated_at))}</span></header>
     ${decision ? `<p class="decision"><span class="dmark">ship next</span> decided by <b>${actor(String(decision.payload['decided_by'] ?? ''), 'human')}</b>, ${esc(rel(decision.ts))} — ${esc(decision.payload['reason'])}</p>` : ''}
     ${r.project.body ? `<div class="body">${esc(r.project.body)}</div>` : ''}
-    ${r.citations.map((c) => `<div class="cite"><span class="oid">${esc(c.objective_id)}</span> ${esc(c.claim)}</div>`).join('')}
+    ${r.citations.map((c) => `<div class="cite">${ref(c.objective_id, 'oid')} ${esc(c.claim)}</div>`).join('')}
     ${claimLine(r.value)}${claimLine(r.effort)}
     <details class="more" id="d-${esc(r.project.id)}"><summary>history</summary>${timeline(store.getEvents(r.project.id))}</details>
   </article>`;
@@ -152,7 +170,7 @@ function row(r: Ranked): string {
   return `<details class="prow" id="${esc(p.id)}">
     <summary>
       <span class="rank">${r.rank}</span>
-      <span class="pid">${esc(p.id)}</span>
+      ${ref(p.id, 'pid')}
       <span class="rtitle">${esc(p.title)}</span>
       <span class="badge quiet">${esc(STATUS_LABEL[p.status] ?? p.status)}</span>
       ${r.blocked_by.length ? `<span class="badge serious">⛔ waits on ${esc(r.blocked_by.join(', '))}</span>` : ''}
@@ -174,7 +192,7 @@ const STATUS_LABEL: Record<string, string> = {
 // rank — the body and the trail are what a reader comes for.
 function shelfRow(p: Project): string {
   return `<details class="prow" id="${esc(p.id)}">
-    <summary><span class="pid">${esc(p.id)}</span><span class="rtitle">${esc(p.title)}</span>
+    <summary>${ref(p.id, 'pid')}<span class="rtitle">${esc(p.title)}</span>
       <span class="badge quiet">${esc(STATUS_LABEL[p.status] ?? p.status)}</span>
       <span class="rmeta">${p.actual_usd ? `$${p.actual_usd.toFixed(2)} metered · ` : ''}${esc(rel(p.closed_at ?? p.updated_at))}</span></summary>
     ${p.body ? `<div class="body">${esc(p.body)}</div>` : ''}
@@ -189,11 +207,11 @@ function charterStrip(): string {
   if (!objectives.length && !bets.length) return '';
   return `<section class="charter"><h2>Charter</h2>
     ${objectives
-      .map((o) => `<p class="citem"><span class="oid">${esc(o.id)}</span><span class="crank">#${o.rank}</span>
+      .map((o) => `<p class="citem">${ref(o.id, 'oid')}<span class="crank">#${o.rank}</span>
         <span class="cstate">${esc(o.statement)}</span> <span class="attr">${esc(o.horizon)} · from ${esc(o.source)}</span></p>`)
       .join('')}
     ${bets
-      .map((b) => `<p class="citem"><span class="oid">${esc(b.id)}</span>
+      .map((b) => `<p class="citem">${ref(b.id, 'oid')}
         <span class="cstate">${esc(b.statement)}</span> <span class="attr">stake: ${esc(b.stake)} · falsified by: ${esc(b.falsifier)}</span></p>`)
       .join('')}
   </section>`;
@@ -246,6 +264,7 @@ ${stable.length ? `<section><h2>Shipped — stable</h2>${stable.map(shelfRow).jo
 ${archived.length ? `<section><h2>Archived (${archived.length})</h2>${archived.map(shelfRow).join('')}</section>` : ''}
 
 <footer>read-only — the record is written by agents, including your decisions · ${esc(dbPath)} · refreshed <span id="age">just now</span></footer>
+<span id="copy-status" class="sr-only" role="status" aria-live="polite"></span>
 <script>${JS}</script>
 </body></html>`;
 }
@@ -308,6 +327,22 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; color: 
   margin: 34px 0 10px; padding-top: 14px; border-top: 1px solid var(--hairline); }
 .allclear { color: var(--ink-3); font-size: 14px; }
 .pid, .oid { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--ink-3); white-space: nowrap; }
+/* The copy control (H-2428, I12), spelled as it is in Helmo's view.ts. It is
+   deliberately small beside a 12px monospace id and takes its 44px touch
+   target from a transparent overlay instead of from bulk: a control sized to
+   a finger would stand three times the height of the reference it belongs to,
+   on every row of the page. An inset of -13px around an 18px box is exactly 44. */
+.copy { position: relative; margin-left: 4px; padding: 0; width: 18px; height: 18px; line-height: 1;
+  border: 0; border-radius: var(--radius-inner); background: none; color: var(--ink-3);
+  font: inherit; cursor: pointer; vertical-align: -0.12em; }
+.copy::after { content: ''; position: absolute; inset: -13px; }
+.copy:hover { color: var(--link); }
+.copy[data-copied='yes'] { color: var(--good-text); }
+.copy[data-copied='no'] { color: var(--serious); }
+/* Nothing on screen, everything to a screen reader: the copy result has no
+   visual home of its own — the glyph swap is the sighted feedback — so it is
+   announced through a live region rather than succeeding silently. */
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .spend { font-variant-numeric: tabular-nums; color: var(--ink-3); font-size: 12px; white-space: nowrap; }
 .badge { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--hairline); white-space: nowrap; }
 .badge.serious { color: var(--serious); }
@@ -375,7 +410,63 @@ footer { margin-top: 48px; color: var(--ink-3); font-size: 11.5px; border-top: 1
 // Refresh by replacement, preserving scroll and open disclosures.
 const JS = `
 let last = Date.now();
+
+// Put text on the clipboard where navigator.clipboard is not there to do it.
+// This is not a legacy nicety: the Clipboard API is secure-context only and
+// this page is served over plain http, so a phone reading the estate over the
+// LAN takes THIS path every time. Focus is borrowed and handed straight back,
+// or the reader loses their place to an invisible textarea.
+function copyWithoutTheApi(text) {
+  const held = document.activeElement;
+  const field = document.createElement('textarea');
+  field.value = text;
+  field.setAttribute('readonly', '');
+  field.style.cssText = 'position:fixed;top:-1000px;opacity:0';
+  document.body.appendChild(field);
+  field.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch { ok = false; }
+  field.remove();
+  if (held && held.focus) held.focus();
+  return ok;
+}
+
+document.addEventListener('click', async (e) => {
+  const copy = e.target.closest('.copy');
+  if (!copy) return;
+  // Most of these controls sit inside a <summary>, whose activation behaviour
+  // is to toggle its disclosure. Engines differ on whether an interactive
+  // descendant is exempted from that, so the exemption is stated here rather
+  // than assumed: one gesture, one effect.
+  e.preventDefault();
+  const text = copy.dataset.copy;
+  let ok = false;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      ok = true;
+    } else {
+      ok = copyWithoutTheApi(text);
+    }
+  } catch {
+    ok = copyWithoutTheApi(text);
+  }
+  copy.dataset.copied = ok ? 'yes' : 'no';
+  copy.textContent = ok ? '✓' : '✗';
+  const announce = document.getElementById('copy-status');
+  if (announce) announce.textContent = ok ? text + ' copied' : 'could not copy ' + text;
+  setTimeout(() => {
+    delete copy.dataset.copied;
+    copy.textContent = '⧉';
+  }, 1500);
+});
+
 setInterval(async () => {
+  // A focused disclosure or control belongs to the reader until they leave
+  // it. This page had no such guard while everything on it was inert; a copy
+  // button is focusable, so without this a reader tabbing to one would have
+  // it pulled out from under them every fifteen seconds.
+  if (document.activeElement && document.activeElement !== document.body) return;
   try {
     const r = await fetch(location.pathname, { cache: 'no-store' });
     if (!r.ok) return;

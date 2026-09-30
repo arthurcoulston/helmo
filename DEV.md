@@ -81,6 +81,29 @@ after touching this file's HTML or CSS. But it can only see the defect while
 some project body happens to be carrying a long path, which is why
 `test/view-wrapping.test.ts` asserts the rule against the source as well.
 
+## Copying a reference (R-42 I12, H-2428)
+
+Arthur carries roadmap items into agent conversations by their id, so every
+visible `R-`/`OBJ-`/bet id has a copy control beside it. One renderer draws
+them all — `ref(id, cls)` in `view.ts`, where `cls` keeps the existing `pid`
+(project) and `oid` (objective or bet) distinction — and there is no second
+way to draw one. `test/view-copy-reference.test.ts` holds that by asserting no
+renderer builds one by hand.
+
+This is Helmo's control, spelled the same way on purpose; `helmo/DEV.md`
+("Copying a reference") explains why `e.preventDefault()` and the
+`document.execCommand` fallback are load-bearing rather than defensive. Helmo
+proves the behaviour end to end in a real browser with a real clipboard. This
+repo has no browser in its toolchain and is not worth buying one for, so it
+asserts the shape and leans on that proof. If you change the control here,
+change it there and run `npm run viewport` in helmo.
+
+One consequence worth knowing: this page replaces `document.body` every 15
+seconds, and that was harmless while nothing on it could hold focus. A copy
+button can, so the refresh now skips while `document.activeElement` is not the
+body — the same guard Helmo already had. Anything focusable added here depends
+on it.
+
 ## The estate design tokens (R-11 H-714)
 
 `src/estate-tokens.generated.ts` is a **vendored copy** of the estate shell's

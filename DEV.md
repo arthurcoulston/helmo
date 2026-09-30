@@ -590,6 +590,33 @@ does it for the shell's own nav with `--host-resolver-rules=MAP estate.test
 verbatim against a stubbed origin, because a browser harness is not a
 dependency this repo should grow for one link.
 
+## What built `dist` (H-2442, R-39 Q8)
+
+`dist/` is gitignored and `rev redeploy` restarts the fleet WITHOUT building,
+so the supervisor has always loaded an artifact with no provenance. On
+2026-09-30 `dist/cli.js` was built 2026-09-29 19:46 while the supervisor
+running it had started 2026-09-27 18:01 — the fleet was executing code that
+no longer existed on disk, and the iteration prompt every loop runs is
+compiled from `src/loop.ts`.
+
+`npm run build` now stamps `dist/BUILD.json` through a `postbuild` hook, so
+there is no second step to forget. The stamp travels WITH the artifact rather
+than living in a central log directory: two installs of rev on one machine
+(the personal supervisor and `~/.rev-gp`'s) build into different checkouts,
+and a file keyed by repo basename could only ever describe one of them
+(H-2435, H-2436). `node scripts/stamp-build.mjs --check` fails when the stamp
+is missing or older than the code beside it, and never counts itself as
+evidence of its own freshness.
+
+A dirty tree is RECORDED, not refused — `tsc` compiles the working tree, so
+the sha would not certify the artifact, and a refusal only produces builds
+with no record at all. crew's `tools/estate/builds.mjs --check` reads this
+stamp and reports `dirty` as a failure there.
+
+Because building and restarting are separate acts here, a build alone does not
+change what the fleet runs: the supervisor keeps executing what it read at
+spawn until `rev redeploy`.
+
 ## Invariants that bite
 
 - Roster `version` is constitution provenance — bump it when a loop's profile

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.5.0 — 2026-09-30
 
 One Helmo installation is now distinguishable from another: in what it is
 called, which store is its own, and which build is serving it. Alongside that,

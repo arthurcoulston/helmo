@@ -1389,6 +1389,26 @@ describe('harness queries (wake cursor)', () => {
     ]);
     expect(s.newlyReadySince(s.maxSeq(), 'alpha', reviewer.name)).toEqual([]);
   });
+  it('newlyReadySince finds every recorded executable-gate opening', () => {
+    const s = freshStore();
+    const removedBlocker = create(s, { workstream: 'alpha', assignee: builder.name });
+    const unlinked = create(s, { workstream: 'alpha', deps: [{ to: removedBlocker.id, type: 'blocks' }] });
+    triage(s, unlinked.id);
+    const sitting = create(s, {
+      workstream: 'alpha', assignee: builder.name,
+      needs_human: 'Five minutes with Arthur to approve the prepared change.',
+    });
+    const moved = create(s, { workstream: 'beta' });
+    triage(s, moved.id);
+    const seq = s.maxSeq();
+
+    s.linkTickets(builder, unlinked.id, removedBlocker.id, 'blocks', 'remove');
+    s.updateTicket(orch, { ticket_id: sitting.id, note: 'the sitting is complete', needs_human: false });
+    s.updateTicket(orch, { ticket_id: moved.id, note: 'route into the watched stream', workstream: 'alpha' });
+
+    expect(s.newlyReadySince(seq, 'alpha', builder.name)).toEqual([unlinked.id, sitting.id, moved.id]);
+    expect(s.newlyReadySince(s.maxSeq(), 'alpha', builder.name)).toEqual([]);
+  });
   it('wakeCheck reports independent triage as one readiness edge', () => {
     const s = freshStore();
     const selfFiled = create(s, { workstream: 'elsewhere', assignee: builder.name });

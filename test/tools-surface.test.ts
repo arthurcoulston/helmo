@@ -87,4 +87,19 @@ describe('the steering surface after the workstream goal was retired (H-1186)', 
     await client.close();
     store.close();
   });
+
+  it('exposes zero as uncapped without a negative remainder (H-267)', async () => {
+    const store = new Store(':memory:');
+    const t = store.createTicket(orch, { title: 'Build the importer', body: 'Goal: import CSVs. Current state: not started.', workstream: 'helmo-dev', type: 'build' });
+    store.setWorkstream(orch, { name: 'helmo-dev', budget_usd: 0 });
+    store.recordSpend(orch, t.id, { cost_usd: 12, note: 'metered' });
+    const client = await connect(store);
+    const queue = await client.callTool({ name: 'helmo_list_tickets', arguments: {} });
+    const row = JSON.parse((queue.content as { text: string }[])[0]!.text).result.workstreams.find((w: { name: string }) => w.name === 'helmo-dev');
+    expect(row).toMatchObject({ budget_usd: 0, spent_usd: 12, remaining_usd: null });
+    const ticket = await client.callTool({ name: 'helmo_get_ticket', arguments: { ticket_id: t.id } });
+    expect(JSON.parse((ticket.content as { text: string }[])[0]!.text).result.workstream_steering).toMatchObject({ budget_usd: 0, spent_usd: 12, remaining_usd: null });
+    await client.close();
+    store.close();
+  });
 });

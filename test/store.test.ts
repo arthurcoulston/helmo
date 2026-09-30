@@ -1099,6 +1099,14 @@ describe('workstream steering (H-55)', () => {
     expect(w.budget_usd).toBe(50);
     expect(w.remaining_usd).toBe(50);
   });
+  it('zero is an uncapped sentinel, not an exhausted finite budget (H-267)', () => {
+    const s = freshStore();
+    const t = create(s, { workstream: 'alpha' });
+    s.setWorkstream(orch, { name: 'alpha', budget_usd: 0 });
+    s.recordSpend(builder, t.id, { cost_usd: 12, note: 'metered' });
+    expect(s.getWorkstreamInfo('alpha')).toMatchObject({ budget_usd: 0, spent_usd: 12, remaining_usd: null });
+    expect(s.hygiene().filter((f) => f.check === 'budget_pressure')).toEqual([]);
+  });
   it('a goal is refused for every actor kind, and never surfaces from the row (H-1186)', () => {
     // Standing prose in a store field is agent context outside caps and
     // review; the seat's profile or the project body says what done means.

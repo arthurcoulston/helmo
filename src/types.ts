@@ -207,7 +207,7 @@ export interface Workstream {
 
 export interface WorkstreamInfo extends Workstream {
   spent_usd: number;
-  remaining_usd: number | null; // null when no budget is set
+  remaining_usd: number | null; // null when no finite cap is set (budget null or zero)
 }
 
 export interface HelmoEvent {

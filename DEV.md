@@ -103,6 +103,10 @@ orchestrator meetings and the read-only view. Product intent:
   Human direction relayed by an orchestrator is judgment even when the relay
   carries the same agent name that filed the ticket (H-829); otherwise the
   name-only self-triage check makes Arthur's recorded answer invisible.
+  Budget zero is the explicit uncapped sentinel (H-267): measured spend remains
+  disclosed, `remaining_usd` is null because no finite remainder exists, and
+  pressure checks leave runnable work runnable. Positive budgets retain finite
+  remaining arithmetic and exhaustion guidance.
   Seat holds (H-558): `seatHolds`/`seat-check`
   reports each in_progress ticket in a name with the actor that claimed it —
   the claiming actor's `session` stamp is how rev's same-seat guard tells a

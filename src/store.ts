@@ -1443,7 +1443,9 @@ export class Store {
       seat: row?.seat ?? null,
       updated_at: row?.updated_at ?? '',
       spent_usd: spent.s,
-      remaining_usd: budget === null ? null : budget - spent.s,
+      // Zero is the supported "no cap" sentinel. It still discloses measured
+      // spend, but there is no finite remainder to subtract it from (H-267).
+      remaining_usd: budget === null || budget === 0 ? null : budget - spent.s,
     };
   }
 

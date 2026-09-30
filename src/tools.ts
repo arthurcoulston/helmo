@@ -515,6 +515,29 @@ Workstream-level findings have no ticket_id and cannot be disposed.`,
   );
 
   server.registerTool(
+    'helmo_record_workflow_decision',
+    {
+      description:
+        'Record an append-only decision or revocation against one exact workflow requirement and subject manifest. Identity comes only from the trusted HELMO_ACTOR configured for this server; this tool deliberately has no actor argument and remote/unbound servers refuse the write.',
+      inputSchema: strict({
+        id: z.string(),
+        requirement_id: z.string(),
+        manifest_id: z.string(),
+        verdict: z.enum(['pass', 'fail', 'selection', 'revocation']),
+        source: z.string(),
+        revokes_decision_id: z.string().optional(),
+      }),
+    },
+    async (input) => {
+      try {
+        return ok(store.recordWorkflowDecision(input));
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
+
+  server.registerTool(
     'helmo_check_product_acceptance',
     {
       description:

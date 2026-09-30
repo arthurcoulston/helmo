@@ -88,8 +88,8 @@ describe('durable workflow model (H-429)', () => {
 });
 
 describe('trusted scoped workflow decisions (H-430)', () => {
-  function decisionStore() {
-    const s = freshStore();
+  function decisionStore(actor: Actor = reviewer) {
+    const s = new Store(':memory:', undefined, actor);
     s.addWorkflowDefinition({ workflow_id: 'release', revision: 'v1', stages: [{ id: 'review' }] });
     s.addWorkflowRun({ id: 'run-1', workflow_id: 'release', definition_revision: 'v1' });
     s.addWorkflowAttempt({ id: 'attempt-1', run_id: 'run-1', stage_id: 'review', ordinal: 1 });
@@ -104,27 +104,36 @@ describe('trusted scoped workflow decisions (H-430)', () => {
 
   it('records an authorized independent decision and exact-scope revocation append-only', () => {
     const s = decisionStore();
-    const pass = s.recordWorkflowDecision(reviewer, { id: 'decision-1', requirement_id: 'visual', manifest_id: 'manifest-a', verdict: 'pass', source: 'review:event-1' });
+    const pass = s.recordWorkflowDecision({ id: 'decision-1', requirement_id: 'visual', manifest_id: 'manifest-a', verdict: 'pass', source: 'review:event-1' });
     expect(pass.actor).toEqual(reviewer);
-    expect(s.recordWorkflowDecision(reviewer, { id: 'decision-2', requirement_id: 'visual', manifest_id: 'manifest-a', verdict: 'revocation', source: 'review:event-2', revokes_decision_id: 'decision-1' }).revokes_decision_id).toBe('decision-1');
-    expect(() => s.recordWorkflowDecision(reviewer, { id: 'decision-1', requirement_id: 'visual', manifest_id: 'manifest-a', verdict: 'fail', source: 'review:event-3' })).toThrow(/immutable/);
+    expect(s.recordWorkflowDecision({ id: 'decision-2', requirement_id: 'visual', manifest_id: 'manifest-a', verdict: 'revocation', source: 'review:event-2', revokes_decision_id: 'decision-1' }).revokes_decision_id).toBe('decision-1');
+    expect(() => s.recordWorkflowDecision({ id: 'decision-1', requirement_id: 'visual', manifest_id: 'manifest-a', verdict: 'fail', source: 'review:event-3' })).toThrow(/immutable/);
   });
 
   it('rejects stale manifests, self-review, aliases, unauthorized actors, and cross-scope revocation', () => {
     const s = decisionStore();
-    expect(() => s.recordWorkflowDecision(reviewer, { id: 'stale', requirement_id: 'visual', manifest_id: 'manifest-b', verdict: 'pass', source: 'review:stale' })).toThrow(/stale or outside/);
-    expect(() => s.recordWorkflowDecision(builder, { id: 'self', requirement_id: 'visual', manifest_id: 'manifest-a', verdict: 'pass', source: 'review:self' })).toThrow(/not authorized/);
-    expect(() => s.recordWorkflowDecision({ ...reviewer, name: 'reviewer-loop-alias' }, { id: 'alias', requirement_id: 'visual', manifest_id: 'manifest-a', verdict: 'pass', source: 'review:alias' })).toThrow(/not authorized/);
-    expect(() => s.recordWorkflowDecision(orch, { id: 'unauthorized', requirement_id: 'visual', manifest_id: 'manifest-a', verdict: 'pass', source: 'review:orch' })).toThrow(/not authorized/);
+    expect(() => s.recordWorkflowDecision({ id: 'stale', requirement_id: 'visual', manifest_id: 'manifest-b', verdict: 'pass', source: 'review:stale' })).toThrow(/stale or outside/);
+    expect(() => decisionStore(builder).recordWorkflowDecision({ id: 'self', requirement_id: 'visual', manifest_id: 'manifest-a', verdict: 'pass', source: 'review:self' })).toThrow(/not authorized/);
+    expect(() => decisionStore({ ...reviewer, name: 'reviewer-loop-alias' }).recordWorkflowDecision({ id: 'alias', requirement_id: 'visual', manifest_id: 'manifest-a', verdict: 'pass', source: 'review:alias' })).toThrow(/not authorized/);
+    expect(() => decisionStore(orch).recordWorkflowDecision({ id: 'unauthorized', requirement_id: 'visual', manifest_id: 'manifest-a', verdict: 'pass', source: 'review:orch' })).toThrow(/not authorized/);
     s.addWorkflowRequirement({ id: 'technical', workflow_id: 'release', definition_revision: 'v1', scope: 'technical', subject_manifest_id: 'manifest-a', allowed_verdicts: ['pass'], authorities: [{ name: reviewer.name, kind: reviewer.kind }], independence: 'different_from_manifest_creators' });
-    s.recordWorkflowDecision(reviewer, { id: 'technical-pass', requirement_id: 'technical', manifest_id: 'manifest-a', verdict: 'pass', source: 'review:technical' });
-    expect(() => s.recordWorkflowDecision(reviewer, { id: 'wrong-revoke', requirement_id: 'visual', manifest_id: 'manifest-a', verdict: 'revocation', source: 'review:wrong', revokes_decision_id: 'technical-pass' })).toThrow(/same requirement and manifest scope/);
+    s.recordWorkflowDecision({ id: 'technical-pass', requirement_id: 'technical', manifest_id: 'manifest-a', verdict: 'pass', source: 'review:technical' });
+    expect(() => s.recordWorkflowDecision({ id: 'wrong-revoke', requirement_id: 'visual', manifest_id: 'manifest-a', verdict: 'revocation', source: 'review:wrong', revokes_decision_id: 'technical-pass' })).toThrow(/same requirement and manifest scope/);
   });
 
   it('enforces creator independence after exact authority resolution', () => {
-    const s = decisionStore();
+    const s = new Store(':memory:', undefined, builder);
+    s.addWorkflowDefinition({ workflow_id: 'release', revision: 'v1', stages: [{ id: 'review' }] });
+    s.addWorkflowRun({ id: 'run-1', workflow_id: 'release', definition_revision: 'v1' });
+    s.addWorkflowAttempt({ id: 'attempt-1', run_id: 'run-1', stage_id: 'review', ordinal: 1 });
+    s.addWorkflowManifest({ id: 'manifest-a', attempt_id: 'attempt-1', kind: 'output', subjects: ['repo@0123456789012345678901234567890123456789'], creators: [{ name: builder.name, kind: builder.kind }] });
     s.addWorkflowRequirement({ id: 'builder-scope', workflow_id: 'release', definition_revision: 'v1', scope: 'builder-check', subject_manifest_id: 'manifest-a', allowed_verdicts: ['pass'], authorities: [{ name: builder.name, kind: builder.kind }], independence: 'different_from_manifest_creators' });
-    expect(() => s.recordWorkflowDecision(builder, { id: 'self-authorized', requirement_id: 'builder-scope', manifest_id: 'manifest-a', verdict: 'pass', source: 'review:self-authorized' })).toThrow(/created subject manifest/);
+    expect(() => s.recordWorkflowDecision({ id: 'self-authorized', requirement_id: 'builder-scope', manifest_id: 'manifest-a', verdict: 'pass', source: 'review:self-authorized' })).toThrow(/created subject manifest/);
+  });
+
+  it('refuses decisions when no trusted runtime actor was bound', () => {
+    const s = freshStore();
+    expect(() => s.recordWorkflowDecision({ id: 'forged', requirement_id: 'visual', manifest_id: 'manifest-a', verdict: 'pass', source: 'review:forged' })).toThrow(/trusted runtime actor/);
   });
 });
 

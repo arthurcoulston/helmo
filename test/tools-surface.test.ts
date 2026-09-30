@@ -42,6 +42,32 @@ describe('the MCP tool surface after the standing notice was retired (H-1126)', 
   });
 });
 
+describe('trusted workflow decision door (H-430)', () => {
+  it('uses the runtime actor and rejects a caller-supplied identity before writing', async () => {
+    const reviewer: Actor = { name: 'reviewer-loop', kind: 'agent', model: 'gpt-6-codex', version: '2.1', session: 'rev:reviewer-loop' };
+    const builder: Actor = { name: 'builder-loop', kind: 'agent', model: 'claude-sonnet-5', version: '1.0' };
+    const store = new Store(':memory:', undefined, reviewer);
+    store.addWorkflowDefinition({ workflow_id: 'release', revision: 'v1', stages: [{ id: 'review' }] });
+    store.addWorkflowRun({ id: 'run-1', workflow_id: 'release', definition_revision: 'v1' });
+    store.addWorkflowAttempt({ id: 'attempt-1', run_id: 'run-1', stage_id: 'review', ordinal: 1 });
+    store.addWorkflowManifest({ id: 'manifest-a', attempt_id: 'attempt-1', kind: 'output', subjects: ['helmo@0123456789012345678901234567890123456789'], creators: [{ name: builder.name, kind: builder.kind }] });
+    store.addWorkflowRequirement({ id: 'technical', workflow_id: 'release', definition_revision: 'v1', scope: 'technical', subject_manifest_id: 'manifest-a', allowed_verdicts: ['pass'], authorities: [{ name: reviewer.name, kind: reviewer.kind }], independence: 'different_from_manifest_creators' });
+    const client = await connect(store);
+    const forged = await client.callTool({ name: 'helmo_record_workflow_decision', arguments: {
+      id: 'forged', requirement_id: 'technical', manifest_id: 'manifest-a', verdict: 'pass', source: 'review:forged', actor: builder,
+    } });
+    expect(forged.isError).toBe(true);
+    expect((forged.content as { text: string }[])[0]!.text).toContain('actor');
+    const recorded = await client.callTool({ name: 'helmo_record_workflow_decision', arguments: {
+      id: 'trusted', requirement_id: 'technical', manifest_id: 'manifest-a', verdict: 'pass', source: 'review:event-1',
+    } });
+    expect(recorded.isError).not.toBe(true);
+    expect(JSON.parse((recorded.content as { text: string }[])[0]!.text).result.actor).toEqual(reviewer);
+    await client.close();
+    store.close();
+  });
+});
+
 describe('explicit human request doors (R-42 I11/I13)', () => {
   it('creates and reports an action without turning it into a decision', async () => {
     const store = new Store(':memory:');

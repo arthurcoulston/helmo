@@ -20,7 +20,10 @@ orchestrator meetings and the read-only view. Product intent:
   the store-resolved actor only. Requirements bind one exact subject manifest,
   exact actor name + kind authorities, allowed verdicts and optional creator
   independence; mismatched manifests, aliases, self-review and cross-scope or
-  repeated revocations refuse. Admission and ticket-mutation enforcement remain
+  repeated revocations refuse. Decision identity is bound when the service
+  opens the store from its trusted runtime actor; the decision call and MCP
+  schema accept no caller-supplied identity, and an unbound/remote service
+  refuses the write. Admission and ticket-mutation enforcement remain
   later slices.
   Explicitly named installations claim `meta.installation_name` atomically
   with their first event. Every later event under another explicit/inherited

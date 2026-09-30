@@ -15,10 +15,9 @@ const install = requireInstallation(process.env, undefined, requestedInstallatio
 // (H-2490).
 loaded();
 mkdirSync(install.home, { recursive: true });
-const store = new Store(install.db, install);
-console.error(`Helmo MCP (stdio) — ${installationLine(install, store.installationIdentity())}`);
-
 const envActor: Actor | null = process.env['HELMO_ACTOR'] ? (JSON.parse(process.env['HELMO_ACTOR']) as Actor) : null;
+const store = new Store(install.db, install, envActor);
+console.error(`Helmo MCP (stdio) — ${installationLine(install, store.installationIdentity())}`);
 
 const server = buildServer(store, envActor);
 const transport = new StdioServerTransport();

@@ -363,9 +363,11 @@ function normalizeRefs(input: string[] | undefined): string[] {
 export class Store {
   private db: Database.Database;
   private installation?: Installation;
+  private workflowActor?: Actor;
 
-  constructor(path: string, installation?: Installation) {
+  constructor(path: string, installation?: Installation, workflowActor?: Actor | null) {
     this.installation = installation;
+    this.workflowActor = workflowActor ?? undefined;
     this.db = new Database(path);
     this.db.pragma('journal_mode = WAL');
     // WAL lets readers run alongside the one writer, but a second WRITER gets
@@ -539,7 +541,9 @@ export class Store {
     catch (error) { if (String(error).includes('UNIQUE constraint failed')) throw new HelmoError(`Workflow requirement ${requirement.id} already exists and is immutable.`); throw error; }
   }
 
-  recordWorkflowDecision(actor: Actor, decision: Omit<WorkflowDecision, 'actor'>): WorkflowDecision {
+  recordWorkflowDecision(decision: Omit<WorkflowDecision, 'actor'>): WorkflowDecision {
+    const actor = this.workflowActor;
+    if (!actor) throw new HelmoError('Workflow decisions require a trusted runtime actor; caller-supplied identity is not accepted.');
     validateActor(actor);
     if (!decision?.id?.trim() || !decision.source?.trim()) throw new HelmoError('Workflow decisions require an immutable id and original decision source.');
     const row = this.db.prepare('SELECT requirement FROM workflow_requirements WHERE id = ?').get(decision.requirement_id) as { requirement: string } | undefined;

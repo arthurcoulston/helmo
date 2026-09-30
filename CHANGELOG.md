@@ -133,12 +133,19 @@ changing which release it runs, and going back.
   `REV_HOME`, with no product refusal in the way. This is a separate verb rather
   than a flag on `service uninstall`, because the difference between keeping and
   deleting every record must not be a word someone can miss. The plan prints
-  first and `--confirm` is a second act. The boundary is the installation home:
-  a store outside it is reported as left in place rather than followed, whether
-  or not anything has opened it yet. A standing service definition or a live
-  supervisor refuses, each naming the command that clears it, and a `REV_HOME`
-  containing the account's own home directory is refused outright. Release
-  directories are never touched.
+  first and `--confirm` is a second act. The boundary is the directories the
+  installation owns, named: its Rev home and, for a home named the conventional
+  way, the Helmo family's homes beside it carrying the same suffix (`~/.rev-b`
+  with `~/.helmo-b`). A store in none of them is reported as left in place rather
+  than followed, whether or not anything has opened it yet. Naming them beats
+  trusting the directory they sit in, which under that layout is the whole
+  account home — so a roster copied from `~/.rev` to bootstrap `~/.rev-b` no
+  longer brings the first installation's store inside the second's boundary
+  (H-2544). A home named outside the convention keeps the enclosing directory,
+  which holds as far as that directory is one installation's. A standing service
+  definition or a live supervisor refuses, each naming the command that clears
+  it, and a `REV_HOME` containing the account's own home directory is refused
+  outright. Release directories are never touched.
 
 ### Documentation
 

@@ -470,18 +470,36 @@ can miss.
 - **The plan is printed first and `--confirm` is a separate act.** Without it
   the command writes nothing and exits 0 — which is also the way to find out
   what an installation actually owns.
-- **The boundary is the installation home**: the directory Rev's own home sits
-  in. Inside it, the removal takes Rev's home (controls, roster, state, service
-  launcher), the Helmo store the roster names, the roadmap store
-  `ROADMAP_DB`/`ROADMAP_HOME` names, and the selection file — each with its
-  SQLite `-wal`/`-shm` sidecars beside it, since a database without its
-  write-ahead log is not the records.
-- **A path outside that boundary is reported as left in place, with the reason,
-  and never followed.** A shell carrying this installation's `REV_HOME` and a
-  neighbour's `HELMO_DB` is precisely the case this exists for, and the
-  neighbour's store survives it. Whether a path belongs to this installation is
-  decided before the file is looked for: a store nothing has opened yet reads
-  the same as one this installation owns.
+- **The boundary is the directories this installation owns** — for a home named
+  the conventional way, `~/.rev-b` and the Helmo family's homes beside it
+  carrying the same suffix, `~/.helmo-b` and `~/.helmo-roadmap-b`. Inside them,
+  the removal takes Rev's home (controls, roster, state, service launcher), the
+  Helmo store the roster names, the roadmap store `ROADMAP_DB`/`ROADMAP_HOME`
+  names, and the selection file — each with its SQLite `-wal`/`-shm` sidecars
+  beside it, since a database without its write-ahead log is not the records.
+  Those names are unique among siblings by construction, the same fact the
+  installation's identity rests on, so a neighbour's home is never one of them.
+  The plan prints the boundary it used, so you can read it before you confirm.
+- **A path in none of those directories is reported as left in place, with the
+  reason, and never followed.** A shell carrying this installation's `REV_HOME`
+  and a neighbour's `HELMO_DB` is precisely the case this exists for, and the
+  neighbour's store survives it — including the case that made this a set of
+  named directories rather than one enclosing one: `cp -a ~/.rev ~/.rev-b`
+  brings `roster.toml` and its `helmo_db = ~/.helmo/helmo.db` along, so the
+  second installation names the first one's records. Whether a path belongs to
+  this installation is decided before the file is looked for: a store nothing
+  has opened yet reads the same as one this installation owns.
+- **Put the selection file inside the Rev home** (`~/.rev-b/release.json`, as
+  above). One in the directory the homes share is not this installation's to
+  delete — under this layout that directory is your account home, where a
+  neighbour's `release.json` looks identical — so it is named in the plan as
+  left in place and is yours to remove by hand.
+- **A home named outside the convention** — anything but `.rev` or
+  `.rev-<suffix>` — has nothing to pair with, so its boundary is the directory
+  it sits in, and that holds only as far as that directory is one
+  installation's. `/srv/installs/alpha/.rev` beside `/srv/installs/alpha/.helmo`
+  is the layout that means; two differently named homes in one directory are
+  not, and want the convention instead.
 - **A product this installation names no store for gets no default assumed** —
   the default store is the shared one, and it is reported as left in place.
 - **The refusals are ordered, and each names the command that clears it.** A

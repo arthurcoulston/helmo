@@ -166,7 +166,28 @@ function labelSuffix(name: string): string {
  *  suffixed-home convention covers, whose basenames are unique by construction
  *  because they are siblings in one directory. */
 function isConventionalHome(home: string): boolean {
-  return dirname(home) === accountHome() && /^\.rev([-_.]|$)/.test(basename(home));
+  return dirname(home) === accountHome() && conventionalTail(basename(home)) !== null;
+}
+
+/**
+ * What a conventionally NAMED Rev home carries after `.rev` — '' for `.rev`,
+ * '-gp' for `.rev-gp` — or null when the name is not one of that family.
+ *
+ * The convention is a family, not one product: the same tail on the Helmo
+ * family's own names (`.helmo-gp`, `.helmo-roadmap-gp`) is the same
+ * installation, and a DIFFERENT tail is a different one. That is what lets a
+ * removal name the directories it owns instead of trusting the directory they
+ * all sit in (H-2544, `removalBounds`), so the rule lives here beside the
+ * identity it already decides rather than being spelled twice.
+ *
+ * Unlike `isConventionalHome` this asks only about the basename. The label has
+ * to know WHERE the home sits, because only siblings in one directory are
+ * unique by construction; a boundary is safer for not knowing — `.rev-a` and
+ * `.rev-b` beside each other are separate installations wherever they are.
+ */
+export function conventionalTail(name: string): string | null {
+  const m = /^\.rev([-_.].*)?$/.exec(name);
+  return m ? (m[1] ?? '') : null;
 }
 
 function accountHome(): string {

@@ -531,14 +531,30 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   - **The plan is printed before anything goes, and `--confirm` is a second
     act.** Without it the command writes nothing and exits 0, which is also how
     an operator finds out what the installation actually owns.
-  - **The boundary is the installation home** — `dirname` of the resolved Rev
-    home. Rev's home, the Helmo store the roster names, the roadmap store
-    `ROADMAP_DB`/`ROADMAP_HOME` names, and the selection, each with its SQLite
-    `-wal`/`-shm` beside it. A path outside that boundary is reported as left in
-    place with the reason, never followed: a shell carrying the target's
-    `REV_HOME` and the neighbour's `HELMO_DB` is exactly the case, and the
-    neighbour's store survives it. A product this installation names no store
-    for gets no default assumed — the default is the shared one.
+  - **The boundary is the directories the installation OWNS, named** —
+    `removalBounds`. It was `dirname` of the resolved Rev home, which is right
+    for a parent dedicated to one installation (`/srv/installs/alpha/.rev` beside
+    `/srv/installs/alpha/.helmo`, the shape the fixture proves) and wrong for the
+    layout this product calls conventional: `~/.rev-b` beside `~/.helmo-b` makes
+    that parent the ACCOUNT HOME, so every path under `~` read as ours. Ward
+    found it in the H-2542 clearance, and the plausible route in is `cp -a ~/.rev
+    ~/.rev-b`, which brings `roster.toml` and its `helmo_db = ~/.helmo/helmo.db`
+    with it — the first installation's records, named by the second, inside the
+    boundary (H-2544). So a conventionally NAMED home gets a named set instead:
+    itself plus the Helmo family's homes beside it carrying the same tail
+    (`conventionalTail`, exported from service.ts because it is the same
+    uniqueness the label rests on). The name, not the location, decides — so
+    `.rev-a` and `.rev-b` are separate wherever they sit, and the rule is
+    provable in a tmpdir rather than against the real account home. Any other
+    name keeps the enclosing directory, because there is nothing to pair with;
+    that is the remaining gap, and the docs say so rather than implying a guard.
+    A selection file in the directory the homes share is now reported rather than
+    taken — under the conventional layout that directory is the account home, so
+    the documented place for it is inside the Rev home. Rev's home, the Helmo
+    store the roster names, the roadmap store `ROADMAP_DB`/`ROADMAP_HOME` names,
+    and the selection, each with its SQLite `-wal`/`-shm` beside it. A product
+    this installation names no store for gets no default assumed — the default is
+    the shared one.
   - **Order, each refusal naming the command that clears it.** A standing
     service definition blocks it (`rev service uninstall` first, or a manager
     keeps bringing back a supervisor whose home this deleted); a live supervisor

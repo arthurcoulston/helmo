@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { planLines, removalPlan, removeInstallation } from '../src/remove.js';
+import { planLines, removalBounds, removalPlan, removeInstallation } from '../src/remove.js';
 
 // Two installations laid out the way the H-2451 fixture lays them out: homes
 // with the same basename under one account, each with its own stores and
@@ -55,7 +55,7 @@ function targeting(i: Install, account: string, extra: Record<string, string> = 
 }
 
 describe('rev install remove — the plan', () => {
-  it('names this installation\'s records, controls and selection, and each store\'s write-ahead log with it', () => {
+  it('names this installation\'s records and controls, and each store\'s write-ahead log with it', () => {
     const { root, a } = estate();
     targeting(a, root);
     const plan = removalPlan('dev.rev.customer-a', { helmo_db: a.helmoDb });
@@ -64,11 +64,29 @@ describe('rev install remove — the plan', () => {
       a.revHome,
       a.helmoDb, `${a.helmoDb}-wal`,
       a.roadmapDb, `${a.roadmapDb}-wal`,
-      a.selection,
     ]);
-    expect(plan.leaving).toEqual([]);
     expect(plan.blocked).toBe(null);
-    expect(planLines(plan)[0]).toBe(`installation dev.rev.customer-a — removing every record it names inside ${a.home}:`);
+    expect(planLines(plan)[0]).toBe(
+      `installation dev.rev.customer-a — removing every record it names inside ${a.revHome}, ${join(a.home, '.helmo')}, ${join(a.home, '.helmo-roadmap')}:`,
+    );
+  });
+
+  it('takes the selection when it sits inside the installation, and reports one sitting beside it', () => {
+    const { root, a } = estate();
+    // H-2544 narrowed the boundary to the directories this installation owns, and
+    // a selection file in the directory the homes SHARE is not one of them: under
+    // the conventional layout that directory is the account home, where a
+    // neighbour's `release.json` looks exactly the same. So the documented place
+    // for it (INSTALLATIONS.md: `~/.rev-b/release.json`) is inside the Rev home,
+    // and one beside it is named in the plan for the operator to take by hand.
+    targeting(a, root);
+    expect(removalPlan('dev.rev.customer-a', { helmo_db: a.helmoDb }).leaving.find((i) => i.path === a.selection)?.why)
+      .toContain('none of installation dev.rev.customer-a\'s own directories');
+
+    const inside = join(a.revHome, 'release.json');
+    writeFileSync(inside, JSON.stringify({ install: 'customer-a', release: 'current' }));
+    targeting(a, root, { INSTALLATION_RELEASE: inside });
+    expect(removalPlan('dev.rev.customer-a', { helmo_db: a.helmoDb }).taking.map((i) => i.path)).toContain(inside);
   });
 
   it('leaves a store that points into the other installation, and says why rather than following it', () => {
@@ -79,7 +97,7 @@ describe('rev install remove — the plan', () => {
 
     expect(plan.taking.map((i) => i.path)).not.toContain(b.helmoDb);
     const left = plan.leaving.find((i) => i.path === b.helmoDb);
-    expect(left?.why).toContain(`outside installation dev.rev.customer-a's home ${a.home}`);
+    expect(left?.why).toContain(`none of installation dev.rev.customer-a's own directories (${a.revHome}, `);
     expect(planLines(plan).join('\n')).toContain(b.helmoDb);
   });
 
@@ -91,7 +109,7 @@ describe('rev install remove — the plan', () => {
     targeting(a, root, { ROADMAP_DB: b.roadmapDb });
     const plan = removalPlan('dev.rev.customer-a', { helmo_db: a.helmoDb });
 
-    expect(plan.leaving.find((i) => i.path === b.roadmapDb)?.why).toContain('outside installation dev.rev.customer-a\'s home');
+    expect(plan.leaving.find((i) => i.path === b.roadmapDb)?.why).toContain('none of installation dev.rev.customer-a\'s own directories');
     expect(plan.taking.map((i) => i.path)).not.toContain(b.roadmapDb);
   });
 
@@ -111,6 +129,94 @@ describe('rev install remove — the plan', () => {
     delete process.env['ROADMAP_DB'];
     process.env['ROADMAP_HOME'] = join(a.home, '.helmo-roadmap');
     expect(removalPlan('dev.rev.customer-a', { helmo_db: a.helmoDb }).taking.map((i) => i.path)).toContain(a.roadmapDb);
+  });
+});
+
+// The layout INSTALLATIONS.md and DEV.md call conventional: homes that are direct
+// children of ONE account home, told apart by their suffix — `~/.rev` with
+// `~/.helmo`, `~/.rev-b` with `~/.helmo-b`. Here the directory the homes share is
+// the account home itself, so "the directory Rev's home sits in" was a boundary
+// holding every record on the machine (H-2544).
+function conventionalEstate() {
+  const account = mkdtempSync(join(tmpdir(), 'rev-account-'));
+  const make = (tail: string) => {
+    const install = {
+      revHome: join(account, `.rev${tail}`),
+      helmoDb: join(account, `.helmo${tail}`, 'helmo.db'),
+      roadmapDb: join(account, `.helmo-roadmap${tail}`, 'roadmap.db'),
+    };
+    mkdirSync(join(install.revHome, 'state', 'supervisor'), { recursive: true });
+    writeFileSync(join(install.revHome, 'roster.toml'), `# rev${tail}\n`);
+    for (const db of [install.helmoDb, install.roadmapDb]) {
+      mkdirSync(join(db, '..'), { recursive: true });
+      writeFileSync(db, `rev${tail} records`);
+      writeFileSync(`${db}-wal`, `rev${tail} write-ahead log`);
+    }
+    return install;
+  };
+  return { account, first: make(''), second: make('-b') };
+}
+
+describe('rev install remove — the conventional ~/.rev-<suffix> layout', () => {
+  it('leaves the first installation\'s store a copied roster still names, and takes its own', () => {
+    const { account, first, second } = conventionalEstate();
+    // How an operator gets here: `cp -a ~/.rev ~/.rev-b` to bootstrap the second
+    // installation, and roster.toml comes along with `helmo_db = ~/.helmo/helmo.db`
+    // in it — the FIRST installation's records, named by the second.
+    Object.assign(process.env, { HOME: account, REV_HOME: second.revHome, REV_LABEL: 'dev.rev.b' });
+    const plan = removalPlan('dev.rev.b', { helmo_db: first.helmoDb });
+
+    expect(plan.taking.map((i) => i.path)).not.toContain(first.helmoDb);
+    expect(plan.leaving.find((i) => i.path === first.helmoDb)?.why)
+      .toContain(`none of installation dev.rev.b's own directories`);
+    // And the boundary never was the account home: nothing under it is ours by
+    // being under it.
+    expect(plan.bounds).toEqual([second.revHome, join(account, '.helmo-b'), join(account, '.helmo-roadmap-b')]);
+    expect(plan.bounds).not.toContain(account);
+
+    // Its own store, named the same way, is taken.
+    const mine = removalPlan('dev.rev.b', { helmo_db: second.helmoDb });
+    expect(mine.taking.map((i) => i.path)).toEqual([
+      second.revHome, second.helmoDb, `${second.helmoDb}-wal`,
+    ]);
+  });
+
+  it('removes the second installation and leaves the first byte-for-byte', () => {
+    const { account, first, second } = conventionalEstate();
+    const before = [readFileSync(join(first.revHome, 'roster.toml'), 'utf8'), readFileSync(first.helmoDb, 'utf8'), readFileSync(`${first.helmoDb}-wal`, 'utf8'), readFileSync(first.roadmapDb, 'utf8')];
+    Object.assign(process.env, {
+      HOME: account, REV_HOME: second.revHome, REV_LABEL: 'dev.rev.b',
+      HELMO_DB: first.helmoDb, ROADMAP_DB: first.roadmapDb,
+    });
+
+    const plan = removalPlan('dev.rev.b', { helmo_db: undefined });
+    expect(removeInstallation(plan)).toEqual([second.revHome]);
+    expect(existsSync(second.revHome)).toBe(false);
+    expect([readFileSync(join(first.revHome, 'roster.toml'), 'utf8'), readFileSync(first.helmoDb, 'utf8'), readFileSync(`${first.helmoDb}-wal`, 'utf8'), readFileSync(first.roadmapDb, 'utf8')]).toEqual(before);
+    // The account home is not a record: a removal never reaches for it.
+    expect(existsSync(account)).toBe(true);
+  });
+
+  it('falls back to the enclosing directory for a home the convention does not name', () => {
+    // There is nothing to pair a `/srv/installs/alpha-rev` with, so the directory
+    // it sits in is the only boundary available — and it holds exactly as far as
+    // that directory belongs to one installation. The docs say that rather than
+    // implying a guard, and `REV_HOME` under the account home is still refused
+    // outright by `blockage`.
+    expect(removalBounds('/srv/installs/alpha-rev')).toEqual(['/srv/installs']);
+    expect(removalBounds('/srv/installs/alpha/.revved')).toEqual(['/srv/installs/alpha']);
+    // A separator after `.rev` is the convention, in any of its spellings.
+    expect(removalBounds('/srv/.rev_b')).toEqual(['/srv/.rev_b', '/srv/.helmo_b', '/srv/.helmo-roadmap_b']);
+  });
+
+  it('holds for the bare ~/.rev as well, whose pair is the unsuffixed ~/.helmo', () => {
+    const { account, first, second } = conventionalEstate();
+    Object.assign(process.env, { HOME: account, REV_HOME: first.revHome, REV_LABEL: 'dev.rev' });
+    const plan = removalPlan('dev.rev', { helmo_db: second.helmoDb });
+
+    expect(plan.bounds).toEqual([first.revHome, join(account, '.helmo'), join(account, '.helmo-roadmap')]);
+    expect(plan.taking.map((i) => i.path)).not.toContain(second.helmoDb);
+    expect(plan.leaving.find((i) => i.path === second.helmoDb)?.why).toContain('not this installation\'s to remove');
   });
 });
 

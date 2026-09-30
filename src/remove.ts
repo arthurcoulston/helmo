@@ -18,9 +18,9 @@
 //              A removal under a supervisor that is still running is a half
 //              removal, and a definition naming a home that no longer exists is
 //              a job a service manager keeps trying to bring back.
-//   Bounded.   Nothing outside the installation's own home goes, whatever the
-//              environment says. A store path pointing into a sibling
-//              installation is reported as left alone, never followed.
+//   Bounded.   Nothing outside the directories the installation OWNS goes,
+//              whatever the environment says. A store path pointing into a
+//              sibling installation is reported as left alone, never followed.
 //   Spoken.    The plan is printed before anything is deleted, and `--confirm`
 //              is a separate act. Without it this command writes nothing.
 //
@@ -29,11 +29,11 @@
 // someone can miss.
 import { existsSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, resolve, sep } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { revHome } from './config.js';
 import { GlobalConfig } from './types.js';
 import { occupiedPid } from './sentinels.js';
-import { serviceFile } from './service.js';
+import { conventionalTail, serviceFile } from './service.js';
 
 /** One path the removal has an opinion about, and what it is in plain terms. */
 export interface Item {
@@ -46,8 +46,9 @@ export interface Item {
 export interface Removal {
   /** The installation this removal is about, as every other surface names it. */
   label: string;
-  /** Its home: the directory Rev's own home sits in, and the boundary. */
-  home: string;
+  /** The directories this installation owns, and the boundary: a path in none of
+   *  them is never taken. See `removalBounds` for how they are derived. */
+  bounds: string[];
   taking: Item[];
   leaving: Item[];
   /** Why this cannot run at all, with the command that clears it. */
@@ -68,6 +69,45 @@ function storeFiles(db: string): string[] {
 }
 
 /**
+ * The directories one installation owns — the boundary a removal will not cross
+ * (H-2544).
+ *
+ * The first rule here was the directory Rev's home sits in, which is right for
+ * the layout the fixture proves — `/srv/installs/alpha/.rev` beside
+ * `/srv/installs/alpha/.helmo`, a parent dedicated to one installation — and
+ * wrong for the layout this product itself calls conventional. `~/.rev-b` beside
+ * `~/.helmo-b` makes that parent the ACCOUNT HOME, so every path under `~` read
+ * as ours, and a roster copied from `~/.rev` to bootstrap `~/.rev-b` carries
+ * `helmo_db = ~/.helmo/helmo.db` with it: the first installation's records, named
+ * by the second, inside the boundary. Ward found it during H-2542, before a
+ * release went out with a documented guard that did not hold.
+ *
+ * So when the Rev home carries a conventional NAME, the boundary is named
+ * instead of enclosed: this home, and the Helmo family's own homes beside it
+ * carrying the same tail. Those names are unique among siblings by construction,
+ * which is the same fact the identity rests on — so a neighbour's home can never
+ * be in the set, whatever directory the family sits in. `.rev-a` and `.rev-b`
+ * side by side are separate wherever they are, and the account home in
+ * particular stops being a boundary at all.
+ *
+ * Any other name gets the enclosing directory, as before: there is no convention
+ * to pair on, so the directory is the only boundary available — and it holds only
+ * as far as that directory belongs to this installation alone. That is the
+ * remaining gap, and the docs say so rather than implying a guard.
+ */
+export function removalBounds(rev: string): string[] {
+  const resolved = resolve(rev);
+  const beside = dirname(resolved);
+  const tail = conventionalTail(basename(resolved));
+  if (tail === null) return [beside];
+  // The Helmo family's conventional homes, each its own name plus this
+  // installation's tail. Named per product rather than read back off whatever
+  // sits there, because `.helmo-roadmap` is ambiguous the other way round — it
+  // is the roadmap's bare home AND what `.helmo` + tail `-roadmap` would spell.
+  return [resolved, join(beside, `.helmo${tail}`), join(beside, `.helmo-roadmap${tail}`)];
+}
+
+/**
  * What a removal of this installation would take, and what it would not.
  *
  * `label` is passed in rather than derived here so that the caller prints and
@@ -81,8 +121,8 @@ export function removalPlan(
   env: NodeJS.ProcessEnv = process.env,
 ): Removal {
   const rev = resolve(revHome());
-  const home = dirname(rev);
-  const plan: Removal = { label, home, taking: [], leaving: [], blocked: null };
+  const bounds = removalBounds(rev);
+  const plan: Removal = { label, bounds, taking: [], leaving: [], blocked: null };
 
   /**
    * Is a path the installation names ours to take? Answered BEFORE the file is
@@ -93,8 +133,8 @@ export function removalPlan(
    * year of records in it, and the operator should see it either way.
    */
   const ours = (path: string, what: string): boolean => {
-    if (within(home, path)) return true;
-    plan.leaving.push({ path, what, why: `it is outside installation ${label}'s home ${home}, so it is not this installation's to remove` });
+    if (bounds.some((b) => within(b, path))) return true;
+    plan.leaving.push({ path, what, why: `it is in none of installation ${label}'s own directories (${bounds.join(', ')}), so it is not this installation's to remove` });
     return false;
   };
 
@@ -170,7 +210,7 @@ function blockage(plan: Removal, rev: string): string | null {
 
 /** The lines that say what this would take, printed before anything goes. */
 export function planLines(plan: Removal): string[] {
-  const lines = [`installation ${plan.label} — removing every record it names inside ${plan.home}:`];
+  const lines = [`installation ${plan.label} — removing every record it names inside ${plan.bounds.join(', ')}:`];
   for (const i of plan.taking) lines.push(`  ${i.path}  — ${i.what}`);
   if (plan.leaving.length) {
     lines.push('Left in place:');

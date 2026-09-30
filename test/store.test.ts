@@ -340,6 +340,42 @@ describe('workflow outcomes and retry recovery (H-433)', () => {
     expect(s.updateTicket(builder, { ticket_id: ticket.id, note: 'fresh admission', status: 'in_progress' }).ticket.status).toBe('in_progress');
   });
 
+  it('retries an aborted quarantined attempt with predecessor evidence', () => {
+    const s = new Store(':memory:', undefined, reviewer);
+    s.addWorkflowDefinition({ workflow_id: 'release', revision: 'v1', stages: [{ id: 'build' }] });
+    s.addWorkflowRun({ id: 'run-1', workflow_id: 'release', definition_revision: 'v1' });
+    s.addWorkflowAttempt({ id: 'attempt-1', run_id: 'run-1', stage_id: 'build', ordinal: 1 });
+    s.addWorkflowManifest({ id: 'old', attempt_id: 'attempt-1', kind: 'output', subjects: ['repo@old'], creators: [builder] });
+    s.addWorkflowRequirement({ id: 'check', workflow_id: 'release', definition_revision: 'v1', scope: 'technical', subject_manifest_id: 'old', allowed_verdicts: ['pass'], authorities: [reviewer], independence: 'different_from_manifest_creators' });
+    s.recordWorkflowDecision({ id: 'pass', requirement_id: 'check', manifest_id: 'old', verdict: 'pass', source: 'review:old' });
+    const predecessor = create(s, { workflow_attempt_id: 'attempt-1' }); triage(s, predecessor.id);
+    s.updateTicket(builder, { ticket_id: predecessor.id, note: 'start', status: 'in_progress' });
+    s.addWorkflowManifest({ id: 'new', attempt_id: 'attempt-1', kind: 'output', subjects: ['repo@new'], creators: [builder], supersedes_manifest_id: 'old' });
+    expect(s.recordWorkflowOutcome({ attempt_id: 'attempt-1', outcome: 'aborted_quarantined' }).outcome).toBe('aborted_quarantined');
+    s.addWorkflowManifest({ id: 'diagnosis', attempt_id: 'attempt-1', kind: 'diagnosis', subjects: ['failure:stale-output'], creators: [builder] });
+    s.addWorkflowManifest({ id: 'change', attempt_id: 'attempt-1', kind: 'change', subjects: ['repo@fixed'], creators: [builder] });
+
+    s.retryWorkflowAttempt({ id: 'attempt-2', predecessor_attempt_id: 'attempt-1', diagnosis_manifest_id: 'diagnosis', change_manifest_id: 'change' });
+    const ticket = create(s, { workflow_attempt_id: 'attempt-2' }); triage(s, ticket.id);
+    expect(s.updateTicket(builder, { ticket_id: ticket.id, note: 'fresh admission after quarantine', status: 'in_progress' }).ticket.status).toBe('in_progress');
+  });
+
+  it('keeps retry outcomes isolated between workflow runs', () => {
+    const s = subject();
+    s.addWorkflowRun({ id: 'run-2', workflow_id: 'release', definition_revision: 'v1' });
+    s.addWorkflowAttempt({ id: 'other-attempt-1', run_id: 'run-2', stage_id: 'build', ordinal: 1 });
+    const other = create(s, { workflow_attempt_id: 'other-attempt-1' }); triage(s, other.id);
+    s.updateTicket(builder, { ticket_id: other.id, note: 'start other run', status: 'in_progress' });
+
+    s.recordWorkflowOutcome({ attempt_id: 'attempt-1', outcome: 'rejected' });
+    s.addWorkflowManifest({ id: 'diagnosis', attempt_id: 'attempt-1', kind: 'diagnosis', subjects: ['failure:known'], creators: [builder] });
+    s.addWorkflowManifest({ id: 'change', attempt_id: 'attempt-1', kind: 'change', subjects: ['repo@fixed'], creators: [builder] });
+    s.retryWorkflowAttempt({ id: 'attempt-2', predecessor_attempt_id: 'attempt-1', diagnosis_manifest_id: 'diagnosis', change_manifest_id: 'change' });
+
+    expect(s.recordWorkflowOutcome({ attempt_id: 'other-attempt-1', outcome: 'advanced' }).outcome).toBe('advanced');
+    expect(() => s.addWorkflowAttempt({ id: 'other-attempt-2', run_id: 'run-2', stage_id: 'build', ordinal: 2 })).not.toThrow();
+  });
+
   it('refuses advancing retries while preserving ordinary tickets', () => {
     const s = subject();
     s.recordWorkflowOutcome({ attempt_id: 'attempt-1', outcome: 'advanced' });

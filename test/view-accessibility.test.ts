@@ -22,6 +22,23 @@ describe('view accessibility', () => {
     expect(row.indexOf('evidenceLinks(t)')).toBeGreaterThan(toggleEnd);
   });
 
+  it('separates product result, review evidence and release state', () => {
+    const evidence = bodyOf('evidenceLinks');
+    expect(evidence).toContain('Product result');
+    expect(evidence).toContain('Review evidence');
+    expect(evidence).toContain('Release state');
+    expect(evidence).toContain('View result');
+    expect(evidence).toContain('No product result linked');
+  });
+
+  it('does not hand a remote reader a device-local result link', () => {
+    expect(bodyOf('evidenceLinks')).toContain('data-device-local');
+    expect(bodyOf('evidenceLinks')).toContain('Result available on the estate machine');
+    expect(bodyOf('enableDeviceLocalResults')).toContain("location.hostname === 'localhost'");
+    expect(bodyOf('enableDeviceLocalResults')).toContain("link.hasAttribute('href')");
+    expect(view).toMatch(/\.result-action\.primary\s*\{[^}]*min-height:\s*44px/);
+  });
+
   it('keeps the one-click answer control touch-sized', () => {
     expect(view).toMatch(/\.ratify\s*\{[^}]*min-height:\s*44px/);
     expect(bodyOf('questionCard')).toContain('Ratify recommendation');

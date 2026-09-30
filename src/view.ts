@@ -119,15 +119,46 @@ function acceptanceBadge(t: Ticket): string {
   return `<span class="badge ${cls}" title="${esc(acceptance.reason.replaceAll('_', ' '))}">${mark} ${label}</span>`;
 }
 
+function deviceLocalUrl(ref: string): boolean {
+  try {
+    const host = new URL(ref).hostname;
+    return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+  } catch {
+    return false;
+  }
+}
+
 function evidenceLinks(t: Ticket): string {
-  return t.evidence
-    .map((e) => {
-      const label = `${esc(e.kind)}${e.note ? `: ${esc(e.note)}` : `: ${esc(e.ref.length > 46 ? e.ref.slice(0, 46) + '…' : e.ref)}`}`;
-      return e.kind === 'url'
-        ? `<a class="ev" href="${esc(e.ref)}" title="${esc(e.ref)}">${label}</a>`
-        : `<span class="ev" title="${esc(e.ref)}">${label}</span>`;
-    })
-    .join('');
+  const results = t.evidence.filter((e) => e.kind === 'url');
+  const review = t.evidence.filter((e) => e.kind !== 'url');
+  const acceptance = store.productAcceptance(t.id);
+  const release = acceptance.state === 'accepted' ? 'Accepted for release'
+    : acceptance.state === 'failed' ? 'Release review failed'
+    : acceptance.state === 'pending' ? 'Release review pending'
+    : 'Release review not requested';
+  const resultLinks = results.map((e, i) => {
+    const local = deviceLocalUrl(e.ref);
+    const attrs = local
+      ? `data-device-local="${esc(e.ref)}" aria-disabled="true"`
+      : `href="${esc(e.ref)}"`;
+    const label = local ? 'Result available on the estate machine' : (i === 0 ? 'View result' : 'View another result');
+    return `<a class="result-action${i === 0 ? ' primary' : ''}" ${attrs} title="${esc(e.ref)}">${label}</a>${e.note ? `<span class="result-note">${esc(e.note)}</span>` : ''}`;
+  }).join('');
+  const reviewLinks = review.map((e) => {
+    const label = `${esc(e.kind)}${e.note ? `: ${esc(e.note)}` : `: ${esc(e.ref.length > 46 ? e.ref.slice(0, 46) + '…' : e.ref)}`}`;
+    return `<span class="ev" title="${esc(e.ref)}">${label}</span>`;
+  }).join('');
+  return `<section class="result-group" aria-label="Product result">
+      <span class="evidence-label">Product result</span>
+      ${resultLinks || '<span class="result-missing">No product result linked</span>'}
+    </section>
+    <section class="result-group" aria-label="Review evidence">
+      <span class="evidence-label">Review evidence</span>
+      ${reviewLinks || '<span class="result-missing">No review evidence linked</span>'}
+    </section>
+    <section class="result-group" aria-label="Release state">
+      <span class="evidence-label">Release state</span><span class="release-state">${release}</span>
+    </section>`;
 }
 
 // ---------- actors ----------
@@ -729,10 +760,15 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; color: 
   margin: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .rtitle { font-weight: 500; }
 .rmeta { flex-basis: 100%; text-align: left; }
-.evrow { flex-basis: 100%; display: flex; gap: 12px; flex-wrap: wrap; }
+.evrow { flex-basis: 100%; display: grid; gap: 10px; }
+.result-group { display: flex; align-items: baseline; gap: 8px 12px; flex-wrap: wrap; }
+.evidence-label { min-width: 96px; color: var(--ink-3); font-size: 11px; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; }
+.result-action { min-height: 36px; display: inline-flex; align-items: center; padding: 3px 10px; border: 1px solid var(--hairline);
+  border-radius: var(--radius-control); color: var(--link); font-weight: 600; text-decoration: none; }
+.result-action.primary { min-height: 44px; padding: 7px 14px; border-color: var(--link); background: var(--link); color: var(--link-ink); }
+.result-action[aria-disabled='true'] { border-color: var(--hairline); background: none; color: var(--ink-3); font-weight: 400; }
+.result-note, .result-missing, .release-state { color: var(--ink-2); font-size: 12px; }
 .ev { font-size: 12px; color: var(--ink-2); min-width: 0; }
-a.ev { color: var(--link); text-decoration: none; }
-a.ev:hover { text-decoration: underline; }
 
 /* ---- shared detail ---- */
 details.more { margin-top: 10px; }
@@ -817,6 +853,7 @@ setInterval(async () => {
     }
     const y = scrollY;
     document.body.replaceWith(doc.body);
+    enableDeviceLocalResults();
     if (sectionObserver) {
       sectionObserver.disconnect();
       sectionObserver.observe(document.body);
@@ -853,6 +890,28 @@ function copyWithoutTheApi(text) {
   if (held && held.focus) held.focus();
   return ok;
 }
+
+// A localhost result belongs to the machine serving it, not to whichever
+// phone happens to read this page. It becomes a link only on that machine;
+// remote readers get an honest status instead of a trip to their own port.
+function enableDeviceLocalResults() {
+  const here = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname === '::1';
+  if (here) {
+    for (const link of document.querySelectorAll('[data-device-local]')) {
+      link.href = link.dataset.deviceLocal;
+      link.removeAttribute('aria-disabled');
+    }
+  }
+  for (const group of document.querySelectorAll('.result-group')) {
+    const links = [...group.querySelectorAll('.result-action')];
+    for (const link of links) link.classList.remove('primary');
+    const firstReachable = links.find((link) => link.hasAttribute('href'));
+    if (!firstReachable) continue;
+    firstReachable.classList.add('primary');
+    for (const link of links) link.textContent = link === firstReachable ? 'View result' : link.hasAttribute('href') ? 'View another result' : 'Result available on the estate machine';
+  }
+}
+enableDeviceLocalResults();
 
 document.addEventListener('click', async (e) => {
   // The ticket rows' disclosure. <details> would open itself, but its

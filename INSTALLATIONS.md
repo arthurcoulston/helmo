@@ -75,6 +75,11 @@ stdout is a machine value a caller substitutes, and both already carry the home.
 - The path is resolved, not `realpath`ed: a home reached through a symlink is a
   second identity, and `REV_LABEL` is the override for that.
 
+Suffixes beginning with `roadmap` at a name boundary are reserved for the
+roadmap side of the family convention. For example, `.helmo-roadmap` and
+`.helmo-roadmap-b` are the roadmap homes for the bare and `-b` installations;
+they are not paired as Helmo homes for `.rev-roadmap` or `.rev-roadmap-b`.
+
 Two homes with the **same basename** therefore get distinct service labels —
 `/srv/customer-a/.rev` and `/srv/customer-b/.rev` are two installations, not
 one. This matters more than it looks: a service manager's namespace belongs to
@@ -479,6 +484,9 @@ can miss.
   beside it, since a database without its write-ahead log is not the records.
   Those names are unique among siblings by construction, the same fact the
   installation's identity rests on, so a neighbour's home is never one of them.
+  The reserved `roadmap` suffixes are the exception to pairing a Helmo home:
+  removal of `.rev-roadmap*` does not claim the `.helmo-roadmap*` name that is
+  already another installation's roadmap home.
   The plan prints the boundary it used, so you can read it before you confirm.
 - **A path in none of those directories is reported as left in place, with the
   reason, and never followed.** A shell carrying this installation's `REV_HOME`

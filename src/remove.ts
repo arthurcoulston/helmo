@@ -101,10 +101,14 @@ export function removalBounds(rev: string): string[] {
   const tail = conventionalTail(basename(resolved));
   if (tail === null) return [beside];
   // The Helmo family's conventional homes, each its own name plus this
-  // installation's tail. Named per product rather than read back off whatever
-  // sits there, because `.helmo-roadmap` is ambiguous the other way round — it
-  // is the roadmap's bare home AND what `.helmo` + tail `-roadmap` would spell.
-  return [resolved, join(beside, `.helmo${tail}`), join(beside, `.helmo-roadmap${tail}`)];
+  // installation's tail. A Helmo home that would itself spell a conventional
+  // roadmap home is reserved: `.helmo-roadmap-b` belongs to roadmap `-b`, not
+  // Helmo `-roadmap-b`, so this installation cannot own it by pairing alone.
+  const helmo = join(beside, `.helmo${tail}`);
+  const roadmap = join(beside, `.helmo-roadmap${tail}`);
+  return /^\.helmo-roadmap(?:[-_.]|$)/.test(basename(helmo))
+    ? [resolved, roadmap]
+    : [resolved, helmo, roadmap];
 }
 
 /**

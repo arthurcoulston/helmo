@@ -218,6 +218,24 @@ describe('rev install remove — the conventional ~/.rev-<suffix> layout', () =>
     expect(plan.taking.map((i) => i.path)).not.toContain(second.helmoDb);
     expect(plan.leaving.find((i) => i.path === second.helmoDb)?.why).toContain('not this installation\'s to remove');
   });
+
+  it.each(['-roadmap', '-roadmap-b'])('does not pair reserved tail %s with another installation\'s roadmap home', (tail) => {
+    const account = mkdtempSync(join(tmpdir(), 'rev-account-'));
+    const rev = join(account, `.rev${tail}`);
+    const otherRoadmap = join(account, `.helmo${tail}`, 'roadmap.db');
+    mkdirSync(rev, { recursive: true });
+    mkdirSync(join(otherRoadmap, '..'), { recursive: true });
+    writeFileSync(otherRoadmap, 'other installation records');
+    writeFileSync(`${otherRoadmap}-wal`, 'other installation write-ahead log');
+    Object.assign(process.env, { HOME: account, REV_HOME: rev, REV_LABEL: `dev.rev${tail.replaceAll('-', '.')}`, ROADMAP_DB: otherRoadmap });
+
+    const plan = removalPlan(process.env['REV_LABEL']!, { helmo_db: undefined });
+
+    expect(plan.bounds).toEqual([rev, join(account, `.helmo-roadmap${tail}`)]);
+    expect(plan.taking.map((i) => i.path)).not.toContain(otherRoadmap);
+    expect(plan.taking.map((i) => i.path)).not.toContain(`${otherRoadmap}-wal`);
+    expect(plan.leaving.find((i) => i.path === otherRoadmap)?.why).toContain('not this installation\'s to remove');
+  });
 });
 
 describe('rev install remove — what stops it', () => {

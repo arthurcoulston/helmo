@@ -399,7 +399,7 @@ try {
   return         --ticket H-n --situation S --question Q --recommendation R [--options '[{"label":..,"consequence":..}]' (2-3, only for a real choice)] [--if-unanswered U]
 Writes read identity from HELMO_ACTOR env or --actor JSON. Installation from HELMO_HOME (default ~/.helmo) or HELMO_DB naming the store
 directly; set both only if they agree. Its name is REV_LABEL when Rev started this process, or HELMO_LABEL, else derived from the home.
-Every command names the installation it used in its JSON. --installation <name|home|db> asserts that target on any command: it refuses
+Every command names the installation it used, and the build it loaded, in its JSON. --installation <name|home|db> asserts that target on any command: it refuses
 before the store is opened when the environment resolves a different one, and it cannot redirect — move the target with HELMO_HOME/HELMO_DB.`);
       process.exit(cmd ? 1 : 0);
   }

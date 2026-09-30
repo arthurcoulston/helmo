@@ -11,6 +11,7 @@ import { createServer } from 'node:http';
 import { join } from 'node:path';
 import { ANSWER_HEADER, answerRequest } from './answer.js';
 import { ESTATE_AVATARS } from './estate-avatars.generated.js';
+import { loaded, running } from './build.js';
 import { installationLine, requestedInstallation, requireInstallation } from './install.js';
 import { ask, CLOSED_TAIL, markFor, recordTickets } from './presentation.js';
 import { ESTATE_TOKENS } from './estate-tokens.generated.js';
@@ -19,6 +20,10 @@ import { HygieneFinding } from './store.js';
 import { Actor, ActorKind, HelmoError, Ticket, HelmoEvent, TicketProgress } from './types.js';
 
 const install = requireInstallation(process.env, undefined, requestedInstallation(process.argv.slice(2)));
+// Take the reading of what this process loaded NOW, before it serves anything:
+// a first reading taken at the first request would describe whatever had
+// replaced this code by then and call that running (H-2490).
+loaded();
 const dbPath = install.db;
 const port = Number(process.env['HELMO_VIEW_PORT'] ?? 4400);
 const host = process.env['HELMO_VIEW_HOST'] ?? '127.0.0.1';
@@ -36,6 +41,24 @@ const esc = (s: unknown) =>
   String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
 
 // ---------- small renderers ----------
+
+/** Which build of Helmo is drawing this page (H-2490). Read per render, not at
+ *  startup: a dashboard that stays up across a rebuild is exactly the process
+ *  whose answer changes, and the H-2432 mistake was reporting the artifact's
+ *  new commit as what a months-old process was serving. Anything but a clean
+ *  verified match is drawn as a warning and carries its reason, because
+ *  "unverifiable" is only useful to a reader who is told why. */
+function buildFooter(): string {
+  const r = running();
+  if (r.state === 'verified' && !r.dirty) return `build ${esc(r.commit?.slice(0, 7))}`;
+  // The loaded commit stays on the line in every state that knows one —
+  // including STALE, where it is the only commit that describes this process.
+  const named = r.commit ? `build ${esc(r.commit.slice(0, 7))}` : 'build';
+  const label = r.state === 'verified'
+    ? `${named} (dirty)`
+    : `${named} ${r.state === 'stale' ? 'STALE' : r.state === 'unstamped' ? 'UNSTAMPED' : 'UNVERIFIABLE'}`;
+  return `<span class="build-warning" title="${esc(r.detail)}">⚠ ${label}</span>`;
+}
 
 /** A reference the operator might carry into a conversation, drawn with the
  *  one control that copies it. Arthur asked for copy icons "across the
@@ -588,7 +611,7 @@ ${standing.length ? `<section><h2>Standing</h2>${standing.map((t) => row(t)).joi
 ${done.length ? `<section><h2>Done</h2>${done.map((t) => row(t, { showDone: true })).join('')}</section>` : ''}
 ${cancelled.length ? `<section><h2>Cancelled (${cancelled.length})</h2>${cancelled.map((t) => row(t)).join('')}</section>` : ''}
 
-<footer>${operator ? `answers write as ${esc(operator)} (human) · everything else read-only` : 'read-only · set HELMO_OPERATOR to answer from here'} · ${esc(dbPath)} · refreshed <span id="age">just now</span>
+<footer>${operator ? `answers write as ${esc(operator)} (human) · everything else read-only` : 'read-only · set HELMO_OPERATOR to answer from here'} · ${esc(install.label)} · ${esc(dbPath)} · ${buildFooter()} · refreshed <span id="age">just now</span>
   <span id="refresh-warning" class="refresh-warning" role="status" hidden>⚠ refresh failed · showing last good reading from <time id="last-good"></time></span>
 </footer>
 ${COPY_STATUS}
@@ -836,6 +859,7 @@ details.more summary { font-size: 12px; color: var(--ink-3); cursor: pointer; }
 .tl-dash { color: var(--warning); font-weight: 600; }
 .tl-note { color: var(--ink-2); display: block; margin-top: 1px; }
 footer { margin-top: 48px; color: var(--ink-3); font-size: 11.5px; border-top: 1px solid var(--hairline); padding-top: 12px; }
+.build-warning { color: var(--critical); font-weight: 600; }
 .refresh-warning { display: block; margin-top: 6px; color: var(--critical); font-weight: 600; }
 .refresh-warning[hidden] { display: none; }
 @media (min-width: 700px) {

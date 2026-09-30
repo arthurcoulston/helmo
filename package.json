@@ -5,6 +5,7 @@
   "scripts": {
     "test": "vitest run --exclude 'test/view-viewport-render.test.ts'",
     "build": "tsc",
+    "postbuild": "node scripts/stamp-build.mjs",
     "smoke": "node scripts/smoke.mjs",
     "floor": "vitest run test/view-release-floor.test.ts",
     "viewport": "vitest run test/view-viewport-render.test.ts",

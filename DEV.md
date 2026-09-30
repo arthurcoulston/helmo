@@ -433,6 +433,34 @@ orchestrator meetings and the read-only view. Product intent:
   `requireInstallation` so no entry point can resolve a target and forget to
   verify it; a bare `--installation` refuses rather than reading as absent
   (H-1782).
+- `build.ts` — which BUILD this process is running (H-2490), the other half of
+  the same question. Never read the answer off the artifact: `dist` is
+  gitignored and nobody rebuilds it on restart, so on 2026-09-30 the sha beside
+  the code was eight minutes younger than the dashboard serving it (H-2432).
+  Each process takes ONE snapshot of its own code directory at startup
+  (`loaded()`, warmed by every long-lived entry point before it serves) and
+  every report compares that against the directory read fresh: `verified`,
+  `stale`, `unstamped`, `unverifiable`. The commit named is always the LOADED
+  one — on divergence the artifact's sha appears only as the thing nobody is
+  executing. What is compared is a digest of the `.js` in the directory, not
+  the sha: a dirty tree's commit did not produce the artifact and two rebuilds
+  of one commit differ. `.d.ts` and the stamp are excluded because neither
+  changes a byte a process executes. A source run under `tsx` has no JavaScript
+  to digest and reports `unverifiable`, which is the honest answer rather than
+  `stale`. `scripts/stamp-build.mjs` writes `dist/BUILD.json` as npm
+  `postbuild`, so `npm run build` stamps with no second step to forget; a dirty
+  tree is recorded, not refused, and `--check` fails a stamp older than the
+  code beside it. The stamp travels WITH the artifact because a central file
+  keyed by repo name cannot describe two installations of one repo (H-2435),
+  and crew:tools/estate/builds.mjs prefers it over the deploy record. Rev's
+  half that does NOT port is the RUNNING marker: `rev status` is one process
+  answering for another, while every Helmo surface answers for itself — so the
+  reading lives in module memory for the life of the process, which is exactly
+  the life of the bytes it loaded. Reported by `installationLine()` (startup
+  line of view, remote and both MCP servers), by `installationRef()` (inside
+  every CLI result and refusal), and by the dashboard footer, which re-reads
+  per render because a view that stays up across a rebuild is precisely the
+  process whose answer changes.
 - `schedule.ts` — recurring-ticket schedules (H-22): 'every N<m|h|d>' or 5-field
   cron, UTC. A ticket with `schedule` set is a TEMPLATE — standing work, never
   ready itself. Instances spawn lazily on ticket-list reads (the read path is

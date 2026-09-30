@@ -12,6 +12,7 @@
 import { createServer, IncomingMessage, ServerResponse } from 'node:http';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { mkdirSync } from 'node:fs';
+import { loaded } from './build.js';
 import { installationLine, requestedInstallation, requireInstallation } from './install.js';
 import { Store } from './store.js';
 import { buildServer } from './tools.js';
@@ -23,6 +24,10 @@ if (!token || token.length < 24) {
 }
 
 const install = requireInstallation(process.env, undefined, requestedInstallation(process.argv.slice(2)));
+// The reading of what this process loaded is taken here, before it serves:
+// a long-lived server asked later would report whatever replaced its code
+// (H-2490).
+loaded();
 mkdirSync(install.home, { recursive: true });
 const store = new Store(install.db, install);
 

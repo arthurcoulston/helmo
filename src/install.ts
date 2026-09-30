@@ -32,6 +32,7 @@ import { readFileSync, realpathSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { runningLine, runningRef } from './build.js';
 import { HelmoError } from './types.js';
 
 /** Refused before any store is opened. */
@@ -150,16 +151,23 @@ export function requestedInstallation(argv: readonly string[]): string | undefin
   return next === undefined || next.startsWith('--') ? '' : next;
 }
 
-/** The phrase a prose surface prints to say which installation it served. */
+/** The phrase a prose surface prints to say which installation it served, and
+ *  which build of Helmo is serving it. The two belong on one line because they
+ *  are one question asked twice — which Helmo is this, and which Helmo is it —
+ *  and because a surface that printed only the first would leave a reader to
+ *  assume the second from the artifact on disk (H-2490). */
 export function installationLine(i: Installation, identity?: { stored: string | null; clear: boolean }): string {
   const target = identity && !identity.clear ? ` — target UNCLEAR: process ${i.label}, store ${identity.stored}` : '';
-  return `install: ${i.label} (${i.home}) — db: ${i.db}${i.release ? ` — release: ${i.release}` : ''}${target}`;
+  return `install: ${i.label} (${i.home}) — db: ${i.db}${i.release ? ` — release: ${i.release}` : ''}${target} — ${runningLine()}`;
 }
 
-/** The same answer as a field, for a surface whose output is parsed. */
-export function installationRef(i: Installation, identity?: { stored: string | null; clear: boolean }): Pick<Installation, 'label' | 'home' | 'db' | 'source'> & { release?: string; target?: string; stored_name?: string } {
+/** The same answer as a field, for a surface whose output is parsed.
+ *  `running` is read fresh on every call, because the question it answers —
+ *  is this process still executing what is on disk — is only true of a moment. */
+export function installationRef(i: Installation, identity?: { stored: string | null; clear: boolean }): Pick<Installation, 'label' | 'home' | 'db' | 'source'> & { release?: string; target?: string; stored_name?: string; running: ReturnType<typeof runningRef> } {
   return { label: i.label, home: i.home, db: i.db, source: i.source, ...(i.release ? { release: i.release } : {}),
-    ...(identity && !identity.clear ? { target: 'UNCLEAR', stored_name: identity.stored ?? undefined } : {}) };
+    ...(identity && !identity.clear ? { target: 'UNCLEAR', stored_name: identity.stored ?? undefined } : {}),
+    running: runningRef() };
 }
 
 function selectedRelease(product: 'rev' | 'helmo' | 'helmo-roadmap', env: NodeJS.ProcessEnv): string | null {

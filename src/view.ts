@@ -58,6 +58,44 @@ function ref(id: string, href?: string): string {
   return `<span class="tid">${shown}<button type="button" class="copy" data-copy="${esc(id)}" aria-label="Copy ${esc(id)}" title="Copy ${esc(id)}">⧉</button></span>`;
 }
 
+/** A title, drawn so a long one scans like a short one.
+ *
+ *  Every title in this store is already plain human language — the create
+ *  contract asks for it and writers comply. Measured over 400 of them (H-2476),
+ *  not one needed translating; what they need is length. Median 78 characters,
+ *  p90 112, max 145, all painted at a single weight, so scanning a queue means
+ *  reading a paragraph per row instead of a handle per row.
+ *
+ *  Nearly half already carry the handle their writer intended, ahead of a `: `
+ *  or an em dash. This draws that lead at the title's weight and the remainder
+ *  quieter. That is why I4 needed no stored human-summary field: the summary
+ *  was in the title all along and was being thrown away at paint. A second
+ *  stored field would have added one more thing to write and two titles that
+ *  can disagree.
+ *
+ *  What renders is byte-identical to what is stored — the separator is kept
+ *  and nothing is clipped, elided or reordered — so selection, find-in-page
+ *  and a screen reader still get the whole title, and a title with no break
+ *  renders exactly as it did. The lead is capped at 48 characters so a split
+ *  only ever promotes a short handle, never the first half of a sentence, and
+ *  the remainder must be substantial enough to be worth quieting.
+ *
+ *  Only the colon and the two dashes are separators: they are what this store
+ *  actually uses (171 colons, 17 em dashes, no other form in 400). A spaced
+ *  hyphen is left out deliberately — nothing here writes one, and a stray
+ *  hyphen splitting a title is worse than a long title rendered flat.
+ *
+ *  Both spans are inert. They sit inside the row's existing `.rtoggle` button,
+ *  so this adds nothing interactive and cannot bring back `nested-interactive`
+ *  (H-2447). */
+const TITLE_BREAK = /^(.{4,48}?)(: | — | – )(.{12,})$/;
+
+function title(text: string, cls: string): string {
+  const m = TITLE_BREAK.exec(text);
+  if (!m) return `<span class="${cls}">${esc(text)}</span>`;
+  return `<span class="${cls}">${esc(m[1])}<span class="tdetail">${esc(m[2] + m[3])}</span></span>`;
+}
+
 
 function rel(iso: string): string {
   // A timestamp this cannot parse is a corrupt record, not a reason to take
@@ -310,7 +348,7 @@ function questionCard(t: Ticket): string {
     return `<div class="option">${inner}</div>`;
   };
   return `<article class="qcard" id="${esc(t.id)}" data-ticket="${esc(t.id)}" data-ask="${esc(a.fingerprint)}">
-    <header>${ref(t.id)} <span class="qtitle">${esc(t.title)}</span>
+    <header>${ref(t.id)} ${title(t.title, 'qtitle')}
       <span class="meta">${esc(t.workstream)} · asked ${esc(rel(t.updated_at))} ${blastBadge(t)} ${acceptanceBadge(t)}</span></header>
     <p class="question"><span class="decision-label">Issue</span>${esc(q.question)}</p>
     ${a.options ? `<div class="options">${a.options.map(opt).join('')}</div>` : ''}
@@ -335,7 +373,7 @@ function questionCard(t: Ticket): string {
 function sittingCard(t: Ticket): string {
   const waits = blockedBy(t);
   return `<article class="scard" id="${esc(t.id)}" data-ticket="${esc(t.id)}">
-    <header>${ref(t.id)} <span class="qtitle">${esc(t.title)}</span>
+    <header>${ref(t.id)} ${title(t.title, 'qtitle')}
       ${prioBadge(t)} ${waits.length ? `<span class="badge serious">⛔ waits on ${esc(waits.join(', '))}</span>` : ''} ${blastBadge(t)}
       <span class="meta">${esc(t.workstream)}${t.project ? ` · ${esc(t.project)}` : ''} · marked ${esc(rel(t.updated_at))}</span></header>
     <p class="question"><span class="decision-label sits">🪑 You do</span>${
@@ -349,7 +387,7 @@ function sittingCard(t: Ticket): string {
 // In motion: who holds it, what they last said, how far it reaches.
 function motionCard(t: Ticket): string {
   return `<article class="mcard" id="${esc(t.id)}">
-    <header>${ref(t.id)} <span class="mtitle">${esc(t.title)}</span>
+    <header>${ref(t.id)} ${title(t.title, 'mtitle')}
       ${prioBadge(t)} ${blastBadge(t)} ${acceptanceBadge(t)} ${money(t)}
       <span class="meta">${esc(t.workstream)} · <b class="holder">${t.assignee ? actor(t.assignee) : '?'}</b> · ${esc(rel(t.updated_at))}</span></header>
     ${progressLine(t)}
@@ -390,7 +428,7 @@ function row(t: Ticket, opts: { showDone?: boolean } = {}): string {
     <div class="rhead">
       ${ref(t.id)}
       <button type="button" class="rtoggle" aria-expanded="false" aria-controls="${panel}">
-        <span class="rtitle">${esc(t.title)}</span>
+        ${title(t.title, 'rtitle')}
         ${prioBadge(t)}
         ${waits.length ? `<span class="badge serious">⛔ waits on ${esc(waits.join(', '))}</span>` : ''}
         ${t.schedule ? `<span class="badge">↻ ${esc(t.schedule)}</span>` : ''}
@@ -759,6 +797,10 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; color: 
 .rtoggle { flex: 1 1 100%; min-width: 0; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
   margin: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .rtitle { font-weight: 500; }
+/* The quieter half of a split title (H-2476). Weight and colour only: the text
+   is the stored title's own remainder, still selectable and still found by
+   find-in-page. */
+.tdetail { font-weight: 400; color: var(--ink-2); }
 .rmeta { flex-basis: 100%; text-align: left; }
 .evrow { flex-basis: 100%; display: grid; gap: 10px; }
 .result-group { display: flex; align-items: baseline; gap: 8px 12px; flex-wrap: wrap; }

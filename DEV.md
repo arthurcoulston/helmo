@@ -721,6 +721,36 @@ remote reader sees `Result available on the estate machine` and cannot be sent
 to their own device's port. The same hydration runs after the 15-second body
 replacement, or a link would work only until the first refresh.
 
+## Reading a title (R-42 I4, H-2476)
+
+I4 asked for "plain human titles" and left one question open: does that need a
+separate stored human-summary field? Measured over 400 real titles, no. Not one
+needed translating — `createTicket`'s contract asks for plain human terms and
+writers comply. What they have is length: median 78 characters, p90 112, max
+145, all drawn at one weight, so scanning a queue meant reading a paragraph per
+row. Nearly half already carried the handle their writer intended, ahead of a
+`: ` or an em dash, and the page was throwing it away at paint.
+
+`title(text, cls)` splits there and draws the lead at the title's weight with
+the remainder in `.tdetail`. It is presentation and nothing else: no stored
+field, no title rewritten, and **what renders is byte-identical to what is
+stored** — the separator is kept, nothing clipped or elided — so selection,
+find-in-page and a screen reader still get the whole title. That invariant, not
+the split, is what `test/view-title.test.ts` holds, against the real rendered
+page.
+
+The lead is capped at 48 characters so a split only ever promotes a short
+handle rather than the first half of a sentence, and the remainder must reach
+12 characters to be worth quieting. Separators are the colon and the two
+dashes, which is what the store actually writes (171 colons, 17 em dashes, no
+other form in 400); a spaced hyphen is deliberately excluded, because a stray
+hyphen splitting a title is worse than a long title drawn flat.
+
+Both spans are inert and sit inside the row's existing `.rtoggle` button, so
+this adds nothing interactive and cannot bring back `nested-interactive`
+(H-2447). `helmo-roadmap/src/view.ts` carries the same rule for project titles
+and proves it the same way.
+
 ## Neighbors
 
 Rev (formerly Capstan), a sibling project, supervises the bash loops that draw

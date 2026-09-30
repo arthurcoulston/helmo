@@ -4,6 +4,7 @@
 // the MCP server: writes require an identity (HELMO_ACTOR env or --actor JSON).
 // The binary is `helmo-cli`, matching its siblings `helmo-mcp` and `helmo-view`.
 import { installationRef, requireInstallation } from './install.js';
+import { localRecordRef } from './reference.js';
 import { Store } from './store.js';
 import { Actor, DepType, HelmoError, writingActor } from './types.js';
 
@@ -176,7 +177,7 @@ try {
       // Repair path for a row written outside Helmo (H-448). Refuses anything
       // with history, prints what it removed so the deletion is recoverable,
       // and requires --confirm because it is the one destructive command here.
-      const id = flag('ticket');
+      const id = ticketRefOpt(flag('ticket'));
       if (!id) throw new HelmoError('purge-orphan requires --ticket H-n');
       if (!has('confirm')) {
         const n = store.hygiene().filter((f) => f.check === 'orphan_ticket' && f.ticket_id === id).length;
@@ -227,8 +228,9 @@ try {
       break;
     }
     case 'hygiene-dispose': {
-      store.disposeHygieneFinding(actor(), { check: req('check'), ticket_id: req('ticket'), reason: req('reason') });
-      out({ disposed: `${flag('check')} on ${flag('ticket')}` });
+      const disposedOn = ticketRef('ticket');
+      store.disposeHygieneFinding(actor(), { check: req('check'), ticket_id: disposedOn, reason: req('reason') });
+      out({ disposed: `${flag('check')} on ${disposedOn}` });
       break;
     }
     case 'workstream': {
@@ -268,7 +270,7 @@ try {
       break;
     }
     case 'record-spend': {
-      const t = store.recordSpend(actor(), req('ticket'), {
+      const t = store.recordSpend(actor(), ticketRef('ticket'), {
         tokens: flag('tokens') !== undefined ? Number(flag('tokens')) : undefined,
         cost_usd: flag('cost-usd') !== undefined ? Number(flag('cost-usd')) : undefined,
         note: req('note'),
@@ -289,14 +291,14 @@ try {
       break;
     }
     case 'get': {
-      const id = flag('ticket') ?? args[0];
+      const id = ticketRefOpt(flag('ticket') ?? args[0]);
       if (!id) throw new HelmoError('get requires a ticket id');
       out({ ...store.getTicket(id), last_answer: store.lastAnswer(id), agent_chain: store.agentChain(id), product_acceptance: store.productAcceptance(id) });
       break;
     }
     case 'product-complete': {
       out(store.recordProductCompletion(actor(), {
-        ticket_id: req('ticket'),
+        ticket_id: ticketRef('ticket'),
         artifacts: JSON.parse(req('artifacts')),
         note: req('note'),
       }));
@@ -304,7 +306,7 @@ try {
     }
     case 'acceptance-verdict': {
       out(store.recordAcceptanceVerdict(actor(), {
-        ticket_id: req('ticket'),
+        ticket_id: ticketRef('ticket'),
         refs: JSON.parse(req('refs')),
         verdict: req('verdict') as 'pass' | 'fail',
         note: req('note'),
@@ -312,7 +314,7 @@ try {
       break;
     }
     case 'acceptance-check': {
-      const acceptance = store.productAcceptance(req('ticket'), flag('refs') ? JSON.parse(flag('refs')!) : undefined);
+      const acceptance = store.productAcceptance(ticketRef('ticket'), flag('refs') ? JSON.parse(flag('refs')!) : undefined);
       out(acceptance);
       if (acceptance.state !== 'accepted') process.exitCode = 1;
       break;
@@ -326,7 +328,7 @@ try {
         priority: flag('priority') !== undefined ? Number(flag('priority')) : undefined,
         status: (flag('status') as 'open' | 'in_progress') ?? undefined,
         assignee: flag('assignee'),
-        deps: flag('dep') ? [{ to: flag('dep')!, type: (flag('dep-type') as DepType) ?? 'relates' }] : undefined,
+        deps: flag('dep') ? [{ to: ticketRef('dep'), type: (flag('dep-type') as DepType) ?? 'relates' }] : undefined,
         schedule: flag('schedule'),
         not_before: flag('not-before'),
         needs_human: flag('needs-human'),
@@ -341,7 +343,7 @@ try {
         throw new HelmoError('--body-old and --body-new must be passed together.');
       }
       const { ticket, warnings } = store.updateTicket(actor(), {
-        ticket_id: req('ticket'),
+        ticket_id: ticketRef('ticket'),
         note: req('note'),
         status: flag('status') as never,
         evidence: flag('evidence-ref') ? [{ kind: (flag('evidence-kind') as never) ?? 'other', ref: flag('evidence-ref')! }] : undefined,
@@ -361,7 +363,7 @@ try {
       break;
     }
     case 'return': {
-      const t = store.returnToHuman(actor(), req('ticket'), {
+      const t = store.returnToHuman(actor(), ticketRef('ticket'), {
         situation: req('situation'),
         question: req('question'),
         // Optional, like the tool (H-939): a recommendation that stands on its
@@ -400,7 +402,10 @@ try {
 Writes read identity from HELMO_ACTOR env or --actor JSON. Installation from HELMO_HOME (default ~/.helmo) or HELMO_DB naming the store
 directly; set both only if they agree. Its name is REV_LABEL when Rev started this process, or HELMO_LABEL, else derived from the home.
 Every command names the installation it used, and the build it loaded, in its JSON. --installation <name|home|db> asserts that target on any command: it refuses
-before the store is opened when the environment resolves a different one, and it cannot redirect — move the target with HELMO_HOME/HELMO_DB.`);
+before the store is opened when the environment resolves a different one, and it cannot redirect — move the target with HELMO_HOME/HELMO_DB.
+A ticket id may be written bare (H-42, meaning this installation's) or qualified (H-42@<name|home|db>), which asserts which installation the
+reference came FROM and is refused here when it names another — ids are minted per installation, so the same H-42 exists in each and means a
+different record.`);
       process.exit(cmd ? 1 : 0);
   }
 } catch (e) {
@@ -417,6 +422,16 @@ function req(name: string): string {
   const v = flag(name);
   if (v === undefined) throw new HelmoError(`--${name} is required for '${cmd}'`);
   return v;
+}
+/** A ticket id as it arrives from a caller. A bare `H-42` is this
+ *  installation's, as it always was; `H-42@<installation>` asserts which one
+ *  it came from, and is refused here — before the store is touched — when it
+ *  names another (H-2502). */
+function ticketRef(name: string): string {
+  return localRecordRef(req(name), install);
+}
+function ticketRefOpt(value: string | undefined): string | undefined {
+  return value === undefined ? undefined : localRecordRef(value, install);
 }
 function actorSafe(): Actor | undefined {
   try {

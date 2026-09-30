@@ -433,6 +433,30 @@ orchestrator meetings and the read-only view. Product intent:
   `requireInstallation` so no entry point can resolve a target and forget to
   verify it; a bare `--installation` refuses rather than reading as absent
   (H-1782).
+- `reference.ts` — which installation a RECORD came from (H-2502), the inbound
+  direction of the same question. Ids are minted per installation, so `H-267`
+  exists in both and means two unrelated records: a reference an agent copied
+  out of A used to resolve against B and answer, confidently, with the wrong
+  ticket. Nothing was malformed — the id is the shape ids have, and B really
+  does have one. The spelling is `H-267@dev.helmo.b`, split at the FIRST `@` so
+  the qualifier takes the same three words `--installation` does (label, home,
+  store path) through the shared `namesInstallation()`, and asserts the same
+  way: `localRecordRef()` refuses a reference naming another installation
+  rather than forwarding it, because forwarding would mean a process bound to
+  one store opening a second. A BARE id keeps working everywhere and must — it
+  is unambiguous within one installation, which is every single-install user
+  and every caller written before this. Applied at the surfaces, before the
+  store: every `ticket_id`/`from_id`/`to_id`/`deps[].to` in `tools.ts` through
+  `local()`, and every `--ticket`/`--dep` in `cli.ts` through `ticketRef()`.
+  Outbound, `tools.ts` puts `installation` (the label alone) on the ENVELOPE
+  beside `result`, not inside it — the ids and seat names an agent carries away
+  are in `result`, and the line saying whose they are must not read as a field
+  of the record. The label alone and not the CLI's full block, because this
+  surface lands in an agent's context on every call; `helmo_get_ticket` adds
+  `ref`, the qualified spelling, alongside the bare `id`. The DASHBOARD is
+  deliberately untouched: `ref()`'s documented promise is that the id and
+  nothing else reaches the clipboard (H-2428), and a bare id is what the human
+  with one installation wants to paste.
 - `build.ts` — which BUILD this process is running (H-2490), the other half of
   the same question. Never read the answer off the artifact: `dist` is
   gitignored and nobody rebuilds it on restart, so on 2026-09-30 the sha beside

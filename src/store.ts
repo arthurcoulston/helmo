@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import { projectAcceptance } from './acceptance.js';
+import type { Installation } from './install.js';
 import { questionFingerprint } from './presentation.js';
 import { parseSchedule } from './schedule.js';
 import {
@@ -288,9 +289,9 @@ function normalizeRefs(input: string[] | undefined): string[] {
 
 export class Store {
   private db: Database.Database;
-  private installation?: { label: string; source: string };
+  private installation?: Installation;
 
-  constructor(path: string, installation?: { label: string; source: string }) {
+  constructor(path: string, installation?: Installation) {
     this.installation = installation;
     this.db = new Database(path);
     this.db.pragma('journal_mode = WAL');
@@ -369,6 +370,15 @@ export class Store {
 
   /** Durable name claimed by the first explicitly named writer. A derived-only
    *  installation deliberately leaves old single-store use unchanged. */
+  /** The installation this store was opened as, for a surface that has to
+   *  qualify a record reference with it or check one against it (H-2502).
+   *  Undefined for a store opened without one — a library caller or a test —
+   *  where a qualified reference has nothing to check and is refused rather
+   *  than assumed. */
+  installationTarget(): Installation | undefined {
+    return this.installation;
+  }
+
   installationIdentity(): { process: string | null; stored: string | null; clear: boolean } {
     const row = this.db.prepare("SELECT value FROM meta WHERE key = 'installation_name'").get() as { value: string } | undefined;
     const processName = this.installation?.label ?? null;

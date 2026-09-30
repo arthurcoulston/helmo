@@ -4,6 +4,21 @@
 
 ### Added
 
+- A ticket reference can say which installation it came from, and one that
+  names another is refused rather than resolved (H-2502). Ids are minted per
+  installation, so `H-267` exists in every one of them and means a different
+  record in each; a reference copied out of one store used to be answered, with
+  confidence, by another's unrelated ticket. Write it `H-267@dev.helmo.b` —
+  the qualifier takes the same `name|home|db` spellings as `--installation`,
+  and asserts the same way: it can refuse a command, never redirect it. Every
+  MCP tool and every `helmo-cli --ticket`/`--dep` accepts either form, and the
+  check runs before the store is touched, so a refused write leaves the record
+  alone. A BARE id keeps working everywhere and always will — within one
+  installation it is unambiguous. MCP results and refusals now carry
+  `installation` (the label) on the envelope beside `result`, so the ids and
+  seat names an agent reads always arrive with whose they are, and
+  `helmo_get_ticket` returns `ref`, the qualified spelling, alongside `id`.
+
 - An installation has a name, and every entry point says which one it is about
   (H-2472, H-2474). `HELMO_HOME` names the installation and `HELMO_DB` names its
   store — either alone determines the other, so nothing already deployed has

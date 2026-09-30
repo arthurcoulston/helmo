@@ -1,5 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { localRecordRef, qualifiedRecordRef } from './reference.js';
 import { Store } from './store.js';
 import { Actor, ACTOR_KINDS, BLAST_RADII, CONFIDENCES, DEP_TYPES, HelmoError, STATUSES, Ticket, writingActor } from './types.js';
 
@@ -31,15 +32,23 @@ function strict<S extends z.ZodRawShape>(shape: S) {
   return z.object(shape).strict();
 }
 
-function ok(data: unknown, warnings: string[] = []): { content: { type: 'text'; text: string }[] } {
+// Every result and every refusal says which installation answered (H-2502).
+// It rides on the ENVELOPE, beside `result`, not inside it: the ids and seat
+// names an agent carries away are in `result`, and the one line that says
+// whose they are must not be mistakable for a field of the record itself. The
+// label alone, not the CLI's full installation block — this surface is read
+// into an agent's context on every call, and which build is running is a
+// diagnostic question the CLI and the status lines already answer (H-2490).
+function envelope(installation: string | undefined, data: unknown, warnings: string[] = []): { content: { type: 'text'; text: string }[] } {
   const body: Record<string, unknown> = { result: data };
   if (warnings.length) body['warnings'] = warnings;
+  if (installation) body['installation'] = installation;
   return { content: [{ type: 'text', text: JSON.stringify(body, null, 1) }] };
 }
 
-function fail(e: unknown): { content: { type: 'text'; text: string }[]; isError: true } {
+function refusal(installation: string | undefined, e: unknown): { content: { type: 'text'; text: string }[]; isError: true } {
   const msg = e instanceof HelmoError ? e.message : `Unexpected error: ${String(e)}`;
-  return { content: [{ type: 'text', text: JSON.stringify({ error: msg }) }], isError: true };
+  return { content: [{ type: 'text', text: JSON.stringify({ error: msg, ...(installation ? { installation } : {}) }) }], isError: true };
 }
 
 function compact(t: Ticket) {
@@ -56,6 +65,17 @@ function compact(t: Ticket) {
 
 export function buildServer(store: Store, envActor: Actor | null): McpServer {
   const resolveActor = (override?: Actor): Actor => writingActor(override, envActor);
+
+  // The installation comes off the store rather than a second parameter, so
+  // the identity this surface checks references against is the identity of the
+  // store it is actually serving — they cannot be wired up disagreeing.
+  const install = store.installationTarget();
+  const ok = (data: unknown, warnings: string[] = []) => envelope(install?.label, data, warnings);
+  const fail = (e: unknown) => refusal(install?.label, e);
+  /** Resolve an incoming ticket reference to a local id before it reaches the
+   *  store: bare ids pass through, a qualifier naming this installation is
+   *  dropped, one naming another refuses (H-2502). */
+  const local = (ref: string): string => localRecordRef(ref, install);
 
   const server = new McpServer({ name: 'helmo', version: '0.1.0' });
 
@@ -91,7 +111,10 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
     },
     async ({ actor, ...input }) => {
       try {
-        const t = store.createTicket(resolveActor(actor as Actor | undefined), input);
+        const t = store.createTicket(resolveActor(actor as Actor | undefined), {
+          ...input,
+          ...(input.deps ? { deps: input.deps.map((d) => ({ ...d, to: local(d.to) })) } : {}),
+        });
         return ok({ id: t.id, ticket: compact(t) });
       } catch (e) {
         return fail(e);
@@ -103,7 +126,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
     'helmo_get_ticket',
     {
       description:
-        `Fetch one ticket by ID. format "state" (default) returns current fields plus any pending question and the last human answer — enough to work. format "history" additionally returns the full event log (who did what, when, with diffs) — use it when resuming unfamiliar work, investigating, or preparing a meeting.`,
+        `Fetch one ticket by ID. format "state" (default) returns current fields plus any pending question and the last human answer — enough to work. format "history" additionally returns the full event log (who did what, when, with diffs) — use it when resuming unfamiliar work, investigating, or preparing a meeting.\n\nA bare id means this installation's record, and every result says on its envelope which installation that is. The 'ref' field is that id qualified with it (H-42@dev.helmo) — quote THAT anywhere the reference may travel, because ids are minted per installation and the qualified form is REFUSED by any other rather than answered with its own unrelated H-42. Every tool here takes either spelling.`,
       inputSchema: strict({
         ticket_id: z.string(),
         format: z.enum(['state', 'history']).optional(),
@@ -111,16 +134,21 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
     },
     async ({ ticket_id, format }) => {
       try {
-        const t = store.getTicket(ticket_id);
-        const deps = store.getDeps(ticket_id);
+        const id = local(ticket_id);
+        const t = store.getTicket(id);
+        const deps = store.getDeps(id);
         const ws = store.getWorkstreamInfo(t.workstream);
         const base = {
           ...t,
-          blocked: store.isBlocked(ticket_id),
+          // The reference to quote elsewhere. `id` stays bare, so every caller
+          // reading it is unaffected; `ref` is the spelling that survives being
+          // carried to another installation, because there it refuses (H-2502).
+          ref: qualifiedRecordRef(t.id, install),
+          blocked: store.isBlocked(id),
           deps,
-          agent_chain: store.agentChain(ticket_id),
-          last_answer: store.lastAnswer(ticket_id),
-          product_acceptance: store.productAcceptance(ticket_id),
+          agent_chain: store.agentChain(id),
+          last_answer: store.lastAnswer(id),
+          product_acceptance: store.productAcceptance(id),
           // The stream's budget rides along so the claimer weighs the ticket
           // against it before spending anything (H-55). Numbers only: a prose
           // goal here was standing instruction outside caps and review (H-1186).
@@ -128,7 +156,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
             ? { workstream_steering: { budget_usd: ws.budget_usd, spent_usd: ws.spent_usd, remaining_usd: ws.remaining_usd } }
             : {}),
         };
-        if (format === 'history') return ok({ ...base, events: store.getEvents(ticket_id) });
+        if (format === 'history') return ok({ ...base, events: store.getEvents(id) });
         return ok(base);
       } catch (e) {
         return fail(e);
@@ -240,7 +268,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
     },
     async ({ actor, ...input }) => {
       try {
-        const { ticket, warnings } = store.updateTicket(resolveActor(actor as Actor | undefined), input);
+        const { ticket, warnings } = store.updateTicket(resolveActor(actor as Actor | undefined), { ...input, ticket_id: local(input.ticket_id) });
         return ok(compact(ticket), warnings);
       } catch (e) {
         return fail(e);
@@ -284,8 +312,9 @@ Workstream-level findings have no ticket_id and cannot be disposed.`,
     },
     async ({ actor, ...input }) => {
       try {
-        store.disposeHygieneFinding(resolveActor(actor as Actor | undefined), input);
-        return ok({ disposed: `${input.check} on ${input.ticket_id}` });
+        const ticket_id = local(input.ticket_id);
+        store.disposeHygieneFinding(resolveActor(actor as Actor | undefined), { ...input, ticket_id });
+        return ok({ disposed: `${input.check} on ${ticket_id}` });
       } catch (e) {
         return fail(e);
       }
@@ -307,8 +336,10 @@ Workstream-level findings have no ticket_id and cannot be disposed.`,
     },
     async ({ from_id, to_id, type, action, actor }) => {
       try {
-        store.linkTickets(resolveActor(actor as Actor | undefined), from_id, to_id, type, action ?? 'add');
-        return ok({ linked: action !== 'remove', from_id, to_id, type });
+        const from = local(from_id);
+        const to = local(to_id);
+        store.linkTickets(resolveActor(actor as Actor | undefined), from, to, type, action ?? 'add');
+        return ok({ linked: action !== 'remove', from_id: from, to_id: to, type });
       } catch (e) {
         return fail(e);
       }
@@ -339,7 +370,7 @@ Workstream-level findings have no ticket_id and cannot be disposed.`,
     },
     async ({ ticket_id, actor, ...q }) => {
       try {
-        const t = store.returnToHuman(resolveActor(actor as Actor | undefined), ticket_id, q);
+        const t = store.returnToHuman(resolveActor(actor as Actor | undefined), local(ticket_id), q);
         return ok({ ticket: compact(t), queued: 'awaiting_human' });
       } catch (e) {
         return fail(e);
@@ -362,7 +393,7 @@ Workstream-level findings have no ticket_id and cannot be disposed.`,
     },
     async ({ ticket_id, actor, resolution, ...a }) => {
       try {
-        const t = store.answerTicket(resolveActor(actor as Actor | undefined), ticket_id, { ...a, resolution: resolution ?? 'resume' });
+        const t = store.answerTicket(resolveActor(actor as Actor | undefined), local(ticket_id), { ...a, resolution: resolution ?? 'resume' });
         return ok({ ticket: compact(t) });
       } catch (e) {
         return fail(e);
@@ -406,7 +437,7 @@ Workstream-level findings have no ticket_id and cannot be disposed.`,
     },
     async ({ actor, ...input }) => {
       try {
-        return ok(store.recordProductCompletion(resolveActor(actor as Actor | undefined), input));
+        return ok(store.recordProductCompletion(resolveActor(actor as Actor | undefined), { ...input, ticket_id: local(input.ticket_id) }));
       } catch (e) {
         return fail(e);
       }
@@ -428,7 +459,7 @@ Workstream-level findings have no ticket_id and cannot be disposed.`,
     },
     async ({ actor, ...input }) => {
       try {
-        return ok(store.recordAcceptanceVerdict(resolveActor(actor as Actor | undefined), input));
+        return ok(store.recordAcceptanceVerdict(resolveActor(actor as Actor | undefined), { ...input, ticket_id: local(input.ticket_id) }));
       } catch (e) {
         return fail(e);
       }
@@ -447,7 +478,7 @@ Workstream-level findings have no ticket_id and cannot be disposed.`,
     },
     async ({ ticket_id, refs }) => {
       try {
-        return ok(store.productAcceptance(ticket_id, refs));
+        return ok(store.productAcceptance(local(ticket_id), refs));
       } catch (e) {
         return fail(e);
       }

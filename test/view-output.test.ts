@@ -94,8 +94,12 @@ model = "mock"
   await request('/health.json');
 });
 
-afterAll(() => {
-  child?.kill('SIGTERM');
+afterAll(async () => {
+  if (child && child.exitCode === null && child.signalCode === null) {
+    const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+    child.kill('SIGTERM');
+    await exited;
+  }
   rmSync(home, { recursive: true, force: true });
 });
 

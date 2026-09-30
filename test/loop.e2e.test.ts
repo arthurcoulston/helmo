@@ -60,6 +60,13 @@ async function waitForFile(path: string, timeoutMs = 5000): Promise<void> {
   }
 }
 
+async function stop(child: ReturnType<typeof spawn>): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+  child.kill('SIGKILL');
+  await exited;
+}
+
 function instrumentSuccessfulWakeChecks(e: Env): string {
   const marker = join(e.home, 'wake-check-completed');
   const proxy = join(e.home, 'helmo-proxy.mjs');
@@ -186,7 +193,7 @@ mock_cmd = "true"
       expect(events()).toMatch(/seat-clear/);
       expect(events()).toMatch(/run-start/);
     } finally {
-      child.kill('SIGKILL');
+      await stop(child);
     }
   });
 
@@ -231,7 +238,7 @@ fi
         await new Promise((r) => setTimeout(r, 25));
       }
     } finally {
-      child.kill('SIGKILL');
+      await stop(child);
     }
     const events = readFileSync(eventsPath, 'utf8');
     expect(events).toMatch(/run-end.*iter=1.*produced=false.*action=idle/);
@@ -299,7 +306,7 @@ fi
         await new Promise((r) => setTimeout(r, 50));
       }
     } finally {
-      child.kill('SIGKILL');
+      await stop(child);
     }
     const events = readFileSync(join(dir, 'events.log'), 'utf8').slice(marker);
     expect(events).toMatch(/wake\s/);
@@ -348,7 +355,7 @@ mock_cmd = "true"
       const wokeAt = Date.parse(tail.match(/^(\S+) wake\s/m)![1]!);
       expect(wokeAt - idleAt).toBeLessThan(60_000);
     } finally {
-      child.kill('SIGKILL');
+      await stop(child);
     }
   });
 
@@ -401,7 +408,7 @@ mock_cmd = "true"
       expect(tail).not.toMatch(/wake\s/);
       expect(tail).not.toMatch(/run-start.*iter=2/);
     } finally {
-      child.kill('SIGKILL');
+      await stop(child);
     }
   });
 
@@ -447,7 +454,7 @@ mock_cmd = "true"
       }
       expect(tail).toMatch(/wake .*ready=1/);
     } finally {
-      child.kill('SIGKILL');
+      await stop(child);
     }
   });
 
@@ -505,7 +512,7 @@ fi
       // decision and not an empty queue.
       expect(ids.map((id) => (helm(e, ['get', id]) as { status: string }).status)).toContain('open');
     } finally {
-      child.kill('SIGKILL');
+      await stop(child);
     }
   });
 
@@ -668,7 +675,7 @@ mock_cmd = "true"
       // Let it poll on past the wedge, to prove the alarm does not repeat.
       await new Promise((r) => setTimeout(r, 3000));
     } finally {
-      child.kill('SIGKILL');
+      await stop(child);
     }
 
     const events = readFileSync(join(dir, 'events.log'), 'utf8');
@@ -1132,7 +1139,7 @@ fi
       expect(ownerEvents).toMatch(/wake\s/);
       expect(ownerEvents).toMatch(/run-end.*produced=true/);
     } finally {
-      if (owner.exitCode === null) owner.kill('SIGKILL');
+      await stop(owner);
     }
 
     // One reconciliation pass consumes the judge's own triage motion. With no

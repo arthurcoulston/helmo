@@ -543,7 +543,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
     boundary (H-2544). So a conventionally NAMED home gets a named set instead:
     itself plus the Helmo family's homes beside it carrying the same tail
     (`conventionalTail`, exported from service.ts because it is the same
-    uniqueness the label rests on). The name, not the location, decides — so
+    uniqueness the label rests on). A tail beginning `-roadmap` at a name
+    boundary is reserved: `.helmo-roadmap[-…]` is another installation's
+    roadmap home, so removal never pairs it as this installation's Helmo home
+    (H-2553). The name, not the location, decides — so
     `.rev-a` and `.rev-b` are separate wherever they sit, and the rule is
     provable in a tmpdir rather than against the real account home. Any other
     name keeps the enclosing directory, because there is nothing to pair with;

@@ -10,13 +10,26 @@ import { selectRun } from './routing.js';
 import { runLoop } from './loop.js';
 import { serviceFile, serviceInstall, serviceStart, serviceStatusLine, serviceUninstall } from './service.js';
 import { readRedeploy, requestRedeploy, watchRedeploy } from './redeploy.js';
-import { logEvent, pidAlive, processObservation, sClear, sGet, sHas, sSet, streakReset } from './sentinels.js';
+import { logEvent, pidAlive, processObservation, sClear, sGet, sHas, sPendingPid, sSetOwned, sValue, streakReset } from './sentinels.js';
 import { runFleet } from './supervisor.js';
 import { teamResume, teamStop } from './team-control.js';
 
 const [cmd, ...rest] = process.argv.slice(2);
 const commandName = process.env['REV_COMMAND_NAME']?.trim() || 'rev';
 const rosterSource = commandName === 'rev' ? '~/.rev/roster.toml (REV_HOME to override)' : '~/.rev-gp/roster.toml (fixed by gp-rev)';
+
+function cliActor(): { label: string; human: boolean } {
+  for (const key of ['REV_ACTOR', 'HELMO_ACTOR']) {
+    const raw = process.env[key];
+    if (!raw) continue;
+    try {
+      const actor = JSON.parse(raw) as { name?: string; kind?: string };
+      if (actor.kind === 'human') return { label: 'human', human: true };
+      if (actor.name) return { label: actor.name, human: false };
+    } catch { return { label: raw, human: false }; }
+  }
+  return { label: `cli:${process.pid}:${cmd ?? 'unknown'}`, human: false };
+}
 
 const COMMAND_HELP: Record<string, string> = {
   run: `usage: ${commandName} run [<loop> [--count N]]`,
@@ -151,7 +164,7 @@ switch (cmd) {
       break;
     }
     requestRedeploy({
-      by: flag('by') ?? process.env['REV_LOOP'] ?? 'operator',
+      by: flag('by') ?? process.env['REV_LOOP'] ?? cliActor().label,
       reason: flag('reason') ?? 'activate committed changes',
       ticket: flag('ticket'),
       requested_at: new Date().toISOString(),
@@ -183,7 +196,8 @@ switch (cmd) {
     console.log('LOOP                     STATE      PID     PACE   WORKSTREAM');
     for (const name of Object.keys(loops)) {
       const pid = pidAlive(name) ?? '-';
-      const pace = sGet(name, 'PACE')?.trim() ?? '1';
+      const pending = sPendingPid(name);
+      const pace = pending ? `pending:${pending}` : (sValue(name, 'PACE') ?? '1');
       console.log(`${name.padEnd(24)} ${state(name).padEnd(10)} ${String(pid).padEnd(7)} ${pace.padEnd(6)} ${loops[name].workstream}`);
     }
     console.log('\nSTATE: RUNNING=iteration in flight  IDLE=waiting on wake cursor  PARKED=held via PACE');
@@ -211,8 +225,9 @@ switch (cmd) {
       break;
     }
     knownLoop(name);
-    sSet(name, 'STOP');
-    logEvent(name, 'operator', 'STOP set');
+    const actor = cliActor();
+    sSetOwned(name, 'STOP', { value: '', by: actor.human ? 'human' : actor.label, at: new Date().toISOString(), pid: process.pid, reason: `${commandName} stop`, expires_at: 'never' });
+    logEvent(name, actor.label, 'STOP set');
     const sup = pidAlive('supervisor');
     console.log(
       `STOP set for '${name}' — halts cleanly after any in-flight iteration.` +
@@ -227,7 +242,7 @@ switch (cmd) {
     // retry budget back. Carrying the streak over made resume a single retry
     // that re-blocked in seconds and filed a duplicate escalation (H-401).
     streakReset(name, 'fail', 'limit');
-    logEvent(name, 'operator', 'STOP/HOLD/BLOCKED cleared; fail/limit streaks reset');
+    logEvent(name, cliActor().label, 'STOP/HOLD/BLOCKED cleared; fail/limit streaks reset');
     const sup = pidAlive('supervisor');
     console.log(
       `Halt sentinels cleared for '${name}'.` +
@@ -254,9 +269,10 @@ switch (cmd) {
       console.error(`usage: ${commandName} pace <loop> <fraction (0,1] | park | clear>`);
       process.exit(1);
     }
+    const actor = cliActor();
     if (v === 'clear') sClear(name, 'PACE');
-    else sSet(name, 'PACE', v);
-    logEvent(name, 'operator', `PACE=${v}`);
+    else sSetOwned(name, 'PACE', { value: v, by: actor.human ? 'human' : actor.label, at: new Date().toISOString(), pid: process.pid, reason: `${commandName} pace`, expires_at: actor.human ? 'never' : new Date(Date.now() + 60 * 60 * 1000).toISOString() });
+    logEvent(name, actor.label, `PACE=${v}`);
     console.log(`PACE ${v === 'clear' ? 'cleared' : `set to ${v}`} for '${name}' (picked up within one poll).`);
     break;
   }

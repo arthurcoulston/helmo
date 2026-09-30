@@ -9,7 +9,7 @@ import { join } from 'node:path';
 
 const home = mkdtempSync(join(tmpdir(), 'rev-sentinels-'));
 process.env.REV_HOME = home; // before the module reads it
-const { occupiedPid, pidAlive, processObservation, runningStamp } = await import('../src/sentinels.js');
+const { occupiedPid, paceAutoRelease, pidAlive, processObservation, runningStamp, sOwner, sReleaseOwned, sSet, sSetOwned, sValue } = await import('../src/sentinels.js');
 
 function marker(loop: string, contents: string): void {
   mkdirSync(join(home, 'state', loop), { recursive: true });
@@ -78,5 +78,38 @@ describe('pidAlive', () => {
 
   it('reads no marker as not running', () => {
     expect(pidAlive('never-existed')).toBe(null);
+  });
+});
+
+describe('owned sentinels', () => {
+  it('keeps legacy and malformed controls readable but unowned', () => {
+    mkdirSync(join(home, 'state', 'legacy-owned'), { recursive: true });
+    sSet('legacy-owned', 'PACE', 'park');
+    expect(sValue('legacy-owned', 'PACE')).toBe('park');
+    expect(sOwner('legacy-owned', 'PACE')).toBe(null);
+    sSet('legacy-owned', 'PACE', 'park\nby=maintenance\n');
+    expect(sOwner('legacy-owned', 'PACE')).toBe(null);
+  });
+
+  it('parses owned controls and releases only the exact observation', () => {
+    mkdirSync(join(home, 'state', 'owned'), { recursive: true });
+    const first = { value: 'park', by: 'maintenance', at: '2026-09-29T15:00:00.000Z', pid: 123, reason: 'window', expires_at: '2026-09-29T16:00:00.000Z' };
+    sSetOwned('owned', 'PACE', first);
+    expect(sOwner('owned', 'PACE')).toEqual(first);
+    const newer = { ...first, at: '2026-09-29T15:30:00.000Z', pid: 456 };
+    sSetOwned('owned', 'PACE', newer);
+    expect(sReleaseOwned('owned', 'PACE', first)).toBe(false);
+    expect(sOwner('owned', 'PACE')).toEqual(newer);
+    expect(sReleaseOwned('owned', 'PACE', newer)).toBe(true);
+    expect(sValue('owned', 'PACE')).toBe(null);
+  });
+
+  it('auto-releases only expired or orphaned maintenance controls', () => {
+    const base = { value: 'park', by: 'maintenance', at: '2026-09-29T15:00:00.000Z', pid: 123, reason: 'window', expires_at: '2026-09-29T16:00:00.000Z' };
+    expect(paceAutoRelease(null, Date.now(), () => false)).toBe(null);
+    expect(paceAutoRelease({ ...base, by: 'human' }, Date.now(), () => false)).toBe(null);
+    expect(paceAutoRelease(base, Date.parse('2026-09-29T16:00:00.000Z'), () => true)).toBe('pace-expired');
+    expect(paceAutoRelease({ ...base, expires_at: 'never' }, Date.now(), () => false)).toBe('pace-orphaned');
+    expect(paceAutoRelease({ ...base, expires_at: 'never' }, Date.now(), () => true)).toBe(null);
   });
 });

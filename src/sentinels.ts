@@ -32,6 +32,65 @@ export function sSet(loop: string, s: Sentinel, content = ''): void {
   writeFileSync(sPath(loop, s), content);
 }
 
+export type SentinelOwner = {
+  value: string;
+  by: string;
+  at: string;
+  pid: number;
+  reason: string;
+  expires_at: string;
+};
+
+export function sOwner(loop: string, s: Sentinel): SentinelOwner | null {
+  const content = sGet(loop, s);
+  if (content === null) return null;
+  const [value = '', ...lines] = content.split('\n');
+  const fields = Object.fromEntries(lines.filter(Boolean).map((line) => {
+    const at = line.indexOf('=');
+    return at > 0 ? [line.slice(0, at), line.slice(at + 1)] : ['', ''];
+  }));
+  const pid = Number(fields.pid);
+  if (!fields.by || !fields.at || !Number.isInteger(pid) || !fields.reason || !fields.expires_at) return null;
+  return { value, by: fields.by, at: fields.at, pid, reason: fields.reason, expires_at: fields.expires_at };
+}
+
+export function sValue(loop: string, s: Sentinel): string | null {
+  const content = sGet(loop, s);
+  return content === null ? null : (content.split('\n')[0] ?? '');
+}
+
+export function sSetOwned(loop: string, s: Sentinel, owner: SentinelOwner): void {
+  const reason = owner.reason.replace(/[\r\n]+/g, ' ').trim();
+  const pending = s === 'PACE' ? sPath(loop, 'PACE.pending') : null;
+  if (pending) writeFileSync(pending, `${owner.pid}\n`);
+  try {
+    sSet(loop, s, `${owner.value}\nby=${owner.by}\nat=${owner.at}\npid=${owner.pid}\nreason=${reason}\nexpires_at=${owner.expires_at}\n`);
+  } finally {
+    if (pending) rmSync(pending, { force: true });
+  }
+}
+
+export function sPendingPid(loop: string): number | null {
+  try { return parseInt(readFileSync(sPath(loop, 'PACE.pending'), 'utf8'), 10) || null; } catch { return null; }
+}
+
+export function paceAutoRelease(owner: SentinelOwner | null, now = Date.now(), alive = writerAlive): 'pace-expired' | 'pace-orphaned' | null {
+  if (!owner || owner.by === 'human') return null;
+  if (owner.expires_at !== 'never' && Date.parse(owner.expires_at) <= now) return 'pace-expired';
+  return alive(owner.pid) ? null : 'pace-orphaned';
+}
+
+export function sReleaseOwned(loop: string, s: Sentinel, observed: Pick<SentinelOwner, 'by' | 'at' | 'pid'>): boolean {
+  const current = sOwner(loop, s);
+  if (!current || current.by !== observed.by || current.at !== observed.at || current.pid !== observed.pid) return false;
+  sClear(loop, s);
+  return true;
+}
+
+export function writerAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
 export function sGet(loop: string, s: Sentinel): string | null {
   return existsSync(sPath(loop, s)) ? readFileSync(sPath(loop, s), 'utf8') : null;
 }

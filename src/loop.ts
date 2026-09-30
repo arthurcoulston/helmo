@@ -11,7 +11,7 @@ import { anomalyDecide, capacityDecide, planPointsConsumed } from './capacity.js
 import { choiceExhausted, selectRun } from './routing.js';
 import { raiseWedgeAlarm, wedgeDecide } from './health.js';
 import { breakerDecide, declineDecide, ladderDecide, limitDecide, probeDecide, rollingMean, seatDecide, velocityToPause, wakeDecide } from './ladder.js';
-import { logEvent, occupiedPid, pidAlive, runningStamp, sClear, sGet, sHas, sSet, streak, streakMap, streakMapSet, streakReset } from './sentinels.js';
+import { logEvent, occupiedPid, paceAutoRelease, pidAlive, runningStamp, sClear, sGet, sHas, sOwner, sReleaseOwned, sSet, sSetOwned, sValue, streak, streakMap, streakMapSet, streakReset } from './sentinels.js';
 import { ancestryBroken, ancestryStamp } from './ancestry.js';
 import { runSession } from './shim.js';
 import { GlobalConfig, LoopConfig, RunChoice } from './types.js';
@@ -85,7 +85,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
   }
   sSet(l.name, 'RUNNING', runningStamp());
   sClear(l.name, 'SEAT_HELD');
-  if (!sHas(l.name, 'PACE') && l.pace < 1) sSet(l.name, 'PACE', String(l.pace));
+  if (!sHas(l.name, 'PACE') && l.pace < 1) sSetOwned(l.name, 'PACE', { value: String(l.pace), by: 'rev', at: new Date().toISOString(), pid: process.pid, reason: 'configured loop pace', expires_at: 'never' });
   // Burn-breaker window floor: this process's start (H-412).
   const allChoices = [...l.choices, ...l.fallbacks, ...(g.probe ? [g.probe] : [])];
   markBurnFloor(l.name, allChoices.some((c) => (c.billing ?? 'metered') === 'metered') ? 'metered' : 'subscription');
@@ -154,7 +154,15 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     }
 
     // Live park (command != state: PARKED is the ack a coordinator waits for).
-    if (sGet(l.name, 'PACE')?.trim() === 'park') {
+    const paceOwner = sOwner(l.name, 'PACE');
+    if (paceOwner?.value === 'park') {
+      const event = paceAutoRelease(paceOwner);
+      if (event) {
+        if (sReleaseOwned(l.name, 'PACE', paceOwner)) logEvent(l.name, event, `by=${paceOwner.by} at=${paceOwner.at} pid=${paceOwner.pid}`);
+        else logEvent(l.name, 'pace-superseded', `by=${paceOwner.by} at=${paceOwner.at} pid=${paceOwner.pid}`);
+      }
+    }
+    if (sValue(l.name, 'PACE') === 'park') {
       if (!sHas(l.name, 'PARKED')) {
         sSet(l.name, 'PARKED', new Date().toISOString());
         logEvent(l.name, 'park');
@@ -713,9 +721,9 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     }
 
     // Inter-iteration velocity throttle, honoring live sentinel changes.
-    const pace = parseFloat(sGet(l.name, 'PACE') ?? '') || 1;
+    const pace = parseFloat(sValue(l.name, 'PACE') ?? '') || 1;
     let throttle = velocityToPause(pace, tAvg);
-    while (throttle > 0 && !sHas(l.name, 'STOP') && !sHas(l.name, 'BLOCKED') && sGet(l.name, 'PACE')?.trim() !== 'park') {
+    while (throttle > 0 && !sHas(l.name, 'STOP') && !sHas(l.name, 'BLOCKED') && sValue(l.name, 'PACE') !== 'park') {
       const step = Math.min(g.poll_seconds, throttle);
       await sleep(step);
       throttle -= step;

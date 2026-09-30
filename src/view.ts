@@ -9,7 +9,7 @@ import { readCodexUsage, readUsage, usageLine, worstSeverity } from './usage.js'
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { revHome, loadRoster, stateDir, tokenLogPath } from './config.js';
-import { pidAlive, processObservation, sGet, sHas } from './sentinels.js';
+import { pidAlive, processObservation, sGet, sHas, sValue } from './sentinels.js';
 
 const port = Number(process.env['REV_VIEW_PORT'] ?? 4500);
 const host = process.env['REV_VIEW_HOST'] ?? '127.0.0.1';
@@ -170,7 +170,7 @@ createServer((req, res) => {
         <td class="st st-${st}">${st}${blocked}${wedged}${idle}${seatHeld}</td>
         <td>${esc(l.workstream)}</td>
         <td>${esc(l.runtime)}/${esc(l.model)}</td>
-        <td>${esc(sGet(l.name, 'PACE')?.trim() ?? '1')}</td>
+        <td>${esc(sValue(l.name, 'PACE') ?? '1')}</td>
         <td>${sp.tokens ? `${(sp.tokens / 1000).toFixed(1)}k` : '—'}${sp.cost ? ` $${sp.cost.toFixed(2)}` : ''}</td>
         <td class="trace">${events || '<span class="dim">no trace yet</span>'}</td>
       </tr>`;

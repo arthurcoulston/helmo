@@ -10,7 +10,8 @@ import { pollUsage, readCodexUsage, readUsage, refreshCodexUsage, usageLine, usa
 import { selectRun } from './routing.js';
 import { runLoop } from './loop.js';
 import { serviceFile, serviceInstall, serviceStart, serviceStatusLine, serviceUninstall } from './service.js';
-import { requireTarget, targetLine } from './install.js';
+import { requireTarget, target, targetLine } from './install.js';
+import { ReleaseError, describe as describeRelease, migrationLine, rollback, selectionFile, upgrade } from './release.js';
 import { readRedeploy, requestRedeploy, watchRedeploy } from './redeploy.js';
 import { logEvent, pidAlive, processObservation, sClear, sGet, sHas, sPendingPid, sSetOwned, sValue, streakReset } from './sentinels.js';
 import { runFleet } from './supervisor.js';
@@ -24,7 +25,10 @@ const [cmd, ...rest] = process.argv.slice(2);
 const requestedInstall = takeInstallFlag(rest);
 // Validate a pinned release before even reading the roster. Every command,
 // including read-only surfaces and the supervisor, enters through this file.
-targetLine();
+// `release` is the deliberate exception, and it has to be: those commands are
+// how a broken selection is repaired, so gating them on the selection being
+// sound would put the repair behind the fault (H-2493). They report it instead.
+if (cmd !== 'release') targetLine();
 
 /**
  * What the supervisor loaded, read from the RUNNING marker it wrote at startup.
@@ -64,6 +68,7 @@ const COMMAND_HELP: Record<string, string> = {
   stop: `usage: ${commandName} stop [<loop>]`,
   resume: `usage: ${commandName} resume <loop>`,
   service: `usage: ${commandName} service <install|uninstall|start|status>`,
+  release: `usage: ${commandName} release <status | upgrade <release directory> | rollback>`,
   redeploy: `usage: ${commandName} redeploy [--ticket <id>] [--reason "<why>"]`,
   pace: `usage: ${commandName} pace <loop> <fraction (0,1] | park | clear>`,
   usage: `usage: ${commandName} usage [--poll]`,
@@ -321,6 +326,51 @@ switch (cmd) {
     refusable(act);
     break;
   }
+  // The one family that runs while the selection is broken, because it is what
+  // repairs it. Every refusal below leaves the installation on the release it
+  // is already running (H-2493, src/release.ts).
+  case 'release': {
+    const verb = rest[0] ?? 'status';
+    const file = selectionFile();
+    if (verb === 'status') {
+      console.log(targetLine(target('unchecked')));
+      for (const line of describeRelease(file)) console.log(line);
+      break;
+    }
+    if ((verb !== 'upgrade' && verb !== 'rollback') || (verb === 'upgrade' && !rest[1])) {
+      console.error(COMMAND_HELP['release']);
+      process.exit(1);
+    }
+    if (!file) {
+      console.error(
+        `Cannot ${verb}: this installation is not pinned to a release, so there is no selection to change `
+        + '(INSTALLATION_RELEASE is unset). Set it to the selection file this installation should use, then run this again.',
+      );
+      process.exit(1);
+    }
+    console.log(targetLine(requireTarget(`${commandName} release ${verb}`, requestedInstall, 'unchecked')));
+    try {
+      const change = verb === 'upgrade' ? upgrade(file, rest[1]!) : rollback(file);
+      if (change.unchanged) {
+        console.log(`release: already ${change.to} (${change.directory}) — nothing written.`);
+        break;
+      }
+      console.log(`release: ${change.from ?? '(none)'} -> ${change.to} (${change.directory})`);
+      if (change.discarded) console.log(`The selection this replaced could not be read (${change.discarded}), so nothing is retained to roll back to.`);
+      console.log(`data compatibility: ${migrationLine(change.migration)}`);
+      console.log(
+        'Nothing was restarted: a running process keeps the code it loaded, and takes this release when it next starts '
+        + `(${commandName} redeploy, or ${commandName} service start). Check with: ${commandName} status`,
+      );
+    } catch (e) {
+      // A release refusal is the ordinary answer, not a crash — the same shape
+      // the `service` verbs use when one installation declines another's work.
+      if (!(e instanceof ReleaseError)) throw e;
+      console.error(e.message);
+      process.exit(1);
+    }
+    break;
+  }
   case 'pace': {
     const name = loopArg();
     const v = rest[1];
@@ -450,6 +500,7 @@ switch (cmd) {
   status                   supervisor + every loop's state at a glance
   session-spec <seat>      the composed session as JSON (model, cwd, skills, MCP, env) — reads nothing else
   service <verb>           install|uninstall|start|status — survive reboots (launchd/systemd)
+  release <verb>           status|upgrade <dir>|rollback — which release set this installation runs
   redeploy [--ticket <id>] [--reason "<why>"]
                            activate a committed fix: drain after in-flight iterations, come back on the new code
   tail <loop>              print the path of the loop's event trace

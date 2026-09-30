@@ -26,6 +26,7 @@ import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { revHome } from './config.js';
+import { RELEASE_REPOS } from './release.js';
 import { definedHome, serviceFile, serviceLabel } from './service.js';
 
 export interface Target {
@@ -39,9 +40,20 @@ export interface Target {
   release: string | null;
 }
 
-export function target(): Target {
+/**
+ * `release: 'unchecked'` skips the pinned-release verification, and only
+ * `rev release` uses it: those commands are how a broken selection is
+ * repaired, so gating them on the selection being sound would make the repair
+ * unreachable (H-2493). They report the selection's state themselves.
+ */
+export function target(release: 'verify' | 'unchecked' = 'verify'): Target {
   const home = resolve(revHome());
-  return { label: serviceLabel(), home, conflict: inheritedConflict(home), release: selectedRelease('rev') };
+  return {
+    label: serviceLabel(),
+    home,
+    conflict: inheritedConflict(home),
+    release: release === 'verify' ? selectedRelease('rev') : null,
+  };
 }
 
 /**
@@ -79,7 +91,7 @@ function selectedRelease(product: 'rev' | 'helmo' | 'helmo-roadmap'): string | n
     if (!selection.release || !selection.directory) throw new Error('selection lacks release or directory');
     const releaseDir = resolve(dirname(selectionFile), selection.directory);
     const manifest = JSON.parse(readFileSync(join(releaseDir, 'RELEASE.json'), 'utf8')) as { commits?: Record<string, string> };
-    for (const repo of ['rev', 'helmo', 'helmo-roadmap']) {
+    for (const repo of RELEASE_REPOS) {
       const component = selection.components?.[repo];
       if (!component || component.release !== selection.release || component.commit !== manifest.commits?.[repo]) {
         throw new Error(`${repo} does not match selected release ${selection.release}`);
@@ -99,8 +111,8 @@ function selectedRelease(product: 'rev' | 'helmo' | 'helmo-roadmap'): string | n
  * The gate a mutating command passes before it writes anything. Prints the
  * refusal and exits 1, so nothing downstream has to remember to check.
  */
-export function requireTarget(action: string, requested?: string): Target {
-  const t = target();
+export function requireTarget(action: string, requested?: string, release: 'verify' | 'unchecked' = 'verify'): Target {
+  const t = target(release);
   const problem = t.conflict ?? mismatch(t, requested);
   if (problem) {
     console.error(`refusing to ${action}: ${problem}.`);

@@ -426,6 +426,37 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   - `bin/gp-rev.js` deletes an inherited `REV_LABEL`: it fixes the home, so the
     name must come from the home. Without that, a crew session running `gp-rev`
     would be refused every mutation it asked for, correctly.
+- `release.ts` — **changing which release an installation runs** (H-2493).
+  `install.ts` verifies the pin; this is the only thing that moves it, because
+  until now the write half was a text editor. `rev release status | upgrade
+  <dir> | rollback`.
+  - **The whole set is verified before the pointer moves.** For each of rev,
+    helmo and helmo-roadmap: `dist` holds JavaScript, and its `BUILD.json`
+    stamp names exactly the commit `RELEASE.json` does, built clean. A dirty
+    component is refused — `stamp-build.mjs` records a dirty tree rather than
+    refusing it, which is right for a build and not enough for a release: the
+    manifest's commit would not identify the bytes. `releaseProblems()` returns
+    every fault at once so a set is fixed in one pass, not three rebuilds.
+  - **`MIGRATION.json` is required in the release directory**, authored rather
+    than generated: `data_compatibility` (`compatible` | `one_way`) and
+    `rollback` (`{supported:true}`, or `{supported:false, limit}` saying what
+    cannot be recovered and how to recover from a backup). A release that has
+    not declared it cannot be selected — after the upgrade is too late to ask.
+    It is copied INTO the selection when selected, so a rollback can be refused
+    in the limit's own words with the release directory long gone.
+  - **The replacement is atomic and durable**: temp file in the same directory,
+    `fsync`, `rename`, then `fsync` on the directory — without the last one the
+    bytes are durable and the name pointing at them is not. The selection it
+    replaces is retained whole INSIDE the new one, so a rollback is the same
+    write in the other direction and one rename moves both or neither.
+  - **`rev release` is the one family exempt from the pin check** in cli.ts,
+    and has to be: it is how a broken selection is repaired, so gating it on
+    the selection being sound would put the repair behind the fault. `status`
+    reports the incoherence as lines instead of throwing, and `upgrade` over an
+    unreadable selection says plainly that nothing was retained to roll back to.
+  - It changes one file and restarts nothing: a running process keeps the code
+    it loaded and takes the release when it next starts. Operating a service
+    here would be operating one the command has not established it owns.
 - `sentinels.ts` / `config.ts` — sentinel files + roster loading. A loop's
   optional `skills = [...]` (paths) are appended whole to its constitution at
   spawn — how a Drive-touching loop carries crew `skills/file-stewardship.md`

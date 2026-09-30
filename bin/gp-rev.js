@@ -6,4 +6,9 @@ import { join } from 'node:path';
 
 process.env.REV_HOME = join(homedir(), '.rev-gp');
 process.env.REV_COMMAND_NAME = 'gp-rev';
-await import('../dist/cli.js');
+if (process.env.REV_TEST_SOURCE === '1') {
+  await import('tsx/esm');
+  await import('../src/cli.ts');
+} else {
+  await import('../dist/cli.js');
+}

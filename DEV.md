@@ -793,8 +793,9 @@ dependency this repo should grow for one link.
 ## Neighbors
 
 Helmo is the work record and must be built separately; runtime rosters point at
-its `dist/cli.js` and `dist/server.js`, while integration tests use the built
-checkout named by `REV_TEST_HELMO` (falling back to sibling `../helmo`) —
+its `dist/cli.js` and `dist/server.js`. Integration tests run the source checkout
+named by `REV_TEST_HELMO` (falling back to sibling `../helmo`) through dedicated
+CLI and server shims, so an immutable Rev candidate needs neither shared build —
 every reference through `test/helmo.ts`, never a written-out `../../helmo`
 path, which resolves only where the two checkouts are adjacent. That
 prerequisite is declared to the release gate as `publish.cold.requires_env` in

@@ -50,7 +50,7 @@ runtime = "mock"
     const result = spawnSync(process.execPath, [GP_REV_CLI, 'status'], {
       cwd: ROOT,
       encoding: 'utf8',
-      env: { ...process.env, HOME: home, REV_HOME: crossedHome },
+      env: { ...process.env, HOME: home, REV_HOME: crossedHome, REV_TEST_SOURCE: '1' },
     });
 
     expect(result.status, result.stderr).toBe(0);
@@ -62,7 +62,7 @@ runtime = "mock"
 describe('Prime team control (H-2301)', () => {
   function gp(home: string, args: string[], prime = true) {
     return spawnSync(process.execPath, [GP_REV_CLI, ...args], {
-      cwd: ROOT, encoding: 'utf8', env: { ...process.env, HOME: home, REV_LOOP: prime ? 'prime' : 'builder' },
+      cwd: ROOT, encoding: 'utf8', env: { ...process.env, HOME: home, REV_LOOP: prime ? 'prime' : 'builder', REV_TEST_SOURCE: '1' },
     });
   }
 

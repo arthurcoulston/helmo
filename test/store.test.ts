@@ -169,7 +169,7 @@ describe('atomic workflow admission (H-431)', () => {
     s.recordWorkflowDecision({ id: 'pass-1', requirement_id: 'technical', manifest_id: 'manifest-a', verdict: 'pass', source: 'review:event-1' });
     expect(s.updateTicket(builder, { ticket_id: gated.id, note: 'claiming after review', status: 'in_progress' }).ticket.status).toBe('in_progress');
     s.recordWorkflowDecision({ id: 'revoke-1', requirement_id: 'technical', manifest_id: 'manifest-a', verdict: 'revocation', source: 'review:event-2', revokes_decision_id: 'pass-1' });
-    expect(() => s.updateTicket(builder, { ticket_id: gated.id, note: 'handoff after revocation', handoff_to: reviewer.name })).toThrow(/"stale":\["requirement:technical"\]/);
+    expect(() => s.updateTicket(builder, { ticket_id: gated.id, note: 'handoff after revocation', handoff_to: reviewer.name })).toThrow(/"stale":\["invalidation"\]/);
     expect(s.getTicket(gated.id)).toMatchObject({ status: 'in_progress', assignee: builder.name });
 
     s.returnToHuman(builder, gated.id, { situation: 'Review was revoked.', question: 'Resume?', recommendation: 'yes' });
@@ -201,6 +201,47 @@ describe('atomic workflow admission (H-431)', () => {
       workflow_attempt_id: 'attempt-1',
       action: { action: 'Add the release DNS record in the provider dashboard.' },
     });
+  });
+});
+
+describe('workflow invalidation and quarantine (H-432)', () => {
+  it('quarantines only the revoked branch and its descendants while preserving its history', () => {
+    const s = new Store(':memory:', undefined, reviewer);
+    s.addWorkflowDefinition({ workflow_id: 'branching', revision: 'v1', stages: [
+      { id: 'left' }, { id: 'right' }, { id: 'publish', after: ['left', 'right'] },
+    ] });
+    s.addWorkflowRun({ id: 'run-1', workflow_id: 'branching', definition_revision: 'v1' });
+    for (const stage of ['left', 'right', 'publish']) s.addWorkflowAttempt({ id: `attempt-${stage}`, run_id: 'run-1', stage_id: stage, ordinal: 1 });
+    for (const stage of ['left', 'right']) {
+      s.addWorkflowManifest({ id: `manifest-${stage}`, attempt_id: `attempt-${stage}`, kind: 'output', subjects: [`repo@${stage}`], creators: [builder] });
+      s.addWorkflowRequirement({ id: `review-${stage}`, workflow_id: 'branching', definition_revision: 'v1', stage_id: stage, scope: 'technical', subject_manifest_id: `manifest-${stage}`, allowed_verdicts: ['pass'], authorities: [reviewer], independence: 'different_from_manifest_creators' });
+      s.recordWorkflowDecision({ id: `pass-${stage}`, requirement_id: `review-${stage}`, manifest_id: `manifest-${stage}`, verdict: 'pass', source: `review:${stage}` });
+    }
+    const tickets = new Map(['left', 'right', 'publish'].map((stage) => [stage, create(s, { workflow_attempt_id: `attempt-${stage}` })]));
+    for (const ticket of tickets.values()) triage(s, ticket.id);
+    for (const stage of ['left', 'right']) s.updateTicket(builder, { ticket_id: tickets.get(stage)!.id, note: 'start', status: 'in_progress' });
+    const db = (s as unknown as { db: { prepare(sql: string): { run(...args: unknown[]): unknown } } }).db;
+    for (const stage of ['left', 'right']) db.prepare('INSERT INTO workflow_outcomes (attempt_id, outcome, created_at) VALUES (?, ?, ?)').run(`attempt-${stage}`, JSON.stringify({ outcome: 'advanced' }), new Date().toISOString());
+    s.updateTicket(builder, { ticket_id: tickets.get('publish')!.id, note: 'start', status: 'in_progress' });
+
+    s.recordWorkflowDecision({ id: 'revoke-left', requirement_id: 'review-left', manifest_id: 'manifest-left', verdict: 'revocation', source: 'review:withdrawn', revokes_decision_id: 'pass-left' });
+    expect(() => s.updateTicket(builder, { ticket_id: tickets.get('left')!.id, note: 'resume', handoff_to: reviewer.name })).toThrow(/"stale":\["invalidation"\]/);
+    expect(() => s.updateTicket(builder, { ticket_id: tickets.get('publish')!.id, note: 'resume', handoff_to: reviewer.name })).toThrow(/"stale":\["invalidation"\]/);
+    expect(s.updateTicket(builder, { ticket_id: tickets.get('right')!.id, note: 'handoff unaffected branch', handoff_to: reviewer.name }).ticket.assignee).toBe(reviewer.name);
+  });
+
+  it('superseding an exact manifest quarantines admissions that used the old bytes', () => {
+    const s = new Store(':memory:', undefined, reviewer);
+    s.addWorkflowDefinition({ workflow_id: 'release', revision: 'v1', stages: [{ id: 'review' }] });
+    s.addWorkflowRun({ id: 'run-1', workflow_id: 'release', definition_revision: 'v1' });
+    s.addWorkflowAttempt({ id: 'attempt-1', run_id: 'run-1', stage_id: 'review', ordinal: 1 });
+    s.addWorkflowManifest({ id: 'old', attempt_id: 'attempt-1', kind: 'input', subjects: ['repo@old'], creators: [builder] });
+    s.addWorkflowRequirement({ id: 'check', workflow_id: 'release', definition_revision: 'v1', scope: 'technical', subject_manifest_id: 'old', allowed_verdicts: ['pass'], authorities: [reviewer], independence: 'different_from_manifest_creators' });
+    s.recordWorkflowDecision({ id: 'pass', requirement_id: 'check', manifest_id: 'old', verdict: 'pass', source: 'review:old' });
+    const ticket = create(s, { workflow_attempt_id: 'attempt-1' }); triage(s, ticket.id);
+    s.updateTicket(builder, { ticket_id: ticket.id, note: 'start', status: 'in_progress' });
+    s.addWorkflowManifest({ id: 'new', attempt_id: 'attempt-1', kind: 'input', subjects: ['repo@new'], creators: [builder], supersedes_manifest_id: 'old' });
+    expect(() => s.updateTicket(builder, { ticket_id: ticket.id, note: 'resume', handoff_to: reviewer.name })).toThrow(/invalidation/);
   });
 });
 

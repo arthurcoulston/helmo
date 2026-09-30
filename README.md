@@ -79,6 +79,14 @@ answers, workstream budgets and seats, record-hygiene scanning and disposition, 
 `helmo_check_product_acceptance`. The tool descriptions teach correct usage;
 no separate convention doc is required.
 
+Workflow-bound tickets use immutable definitions, attempts, manifests,
+requirements, decisions, admissions, and outcomes. Admission is checked in the
+same transaction as every supported start or resume. Revoking a decision or
+explicitly superseding a manifest appends an invalidation, quarantines only the
+affected attempt and its downstream stage descendants, and makes later
+admission fail closed; sibling branches and the historical records remain
+intact. Ordinary tickets retain their existing lifecycle semantics.
+
 ### Product acceptance
 
 Product acceptance is an explicit gate, separate from ordinary ticket status

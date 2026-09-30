@@ -222,6 +222,11 @@ CREATE TABLE IF NOT EXISTS workflow_admissions (
   id TEXT PRIMARY KEY, attempt_id TEXT NOT NULL, admission TEXT NOT NULL, created_at TEXT NOT NULL,
   FOREIGN KEY (attempt_id) REFERENCES workflow_attempts(id)
 );
+CREATE TABLE IF NOT EXISTS workflow_invalidations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, attempt_id TEXT NOT NULL, reason TEXT NOT NULL,
+  source TEXT NOT NULL, created_at TEXT NOT NULL,
+  FOREIGN KEY (attempt_id) REFERENCES workflow_attempts(id)
+);
 CREATE TABLE IF NOT EXISTS workflow_outcomes (
   attempt_id TEXT PRIMARY KEY, outcome TEXT NOT NULL, created_at TEXT NOT NULL,
   FOREIGN KEY (attempt_id) REFERENCES workflow_attempts(id)
@@ -233,9 +238,11 @@ export interface WorkflowDefinition { workflow_id: string; revision: string; sta
 export interface WorkflowActorRef { name: string; kind: ActorKind }
 export interface WorkflowManifest {
   id: string; attempt_id: string; kind: string; subjects: string[]; creators: WorkflowActorRef[];
+  supersedes_manifest_id?: string;
 }
 export interface WorkflowRequirement {
   id: string; workflow_id: string; definition_revision: string; scope: string; subject_manifest_id: string;
+  stage_id?: string;
   allowed_verdicts: ('pass' | 'fail' | 'selection')[]; authorities: WorkflowActorRef[];
   independence: 'none' | 'different_from_manifest_creators';
 }
@@ -530,13 +537,69 @@ export class Store {
     if (!Array.isArray(manifest.subjects) || !manifest.subjects.length || manifest.subjects.some((v) => typeof v !== 'string' || !v.trim()) || new Set(manifest.subjects).size !== manifest.subjects.length) throw new HelmoError('Workflow manifests require unique, non-empty exact subjects.');
     if (!Array.isArray(manifest.creators) || !manifest.creators.length || manifest.creators.some((a) => !a?.name?.trim() || !ACTOR_KINDS.includes(a.kind))) throw new HelmoError('Workflow manifests require at least one creator with an exact name and actor kind.');
     if (!this.db.prepare('SELECT 1 FROM workflow_attempts WHERE id = ?').get(manifest.attempt_id)) throw new HelmoError(`Workflow attempt ${manifest.attempt_id} does not exist.`);
-    try { this.db.prepare('INSERT INTO workflow_manifests (id, attempt_id, kind, manifest, created_at) VALUES (?, ?, ?, ?, ?)').run(manifest.id, manifest.attempt_id, manifest.kind, JSON.stringify(manifest), now()); }
+    if (manifest.supersedes_manifest_id) {
+      const prior = this.db.prepare('SELECT attempt_id, kind FROM workflow_manifests WHERE id = ?').get(manifest.supersedes_manifest_id) as { attempt_id: string; kind: string } | undefined;
+      if (!prior || prior.attempt_id !== manifest.attempt_id || prior.kind !== manifest.kind) throw new HelmoError('A superseding manifest must replace an existing manifest from the same attempt and kind.');
+    }
+    try { this.db.transaction(() => {
+      this.db.prepare('INSERT INTO workflow_manifests (id, attempt_id, kind, manifest, created_at) VALUES (?, ?, ?, ?, ?)').run(manifest.id, manifest.attempt_id, manifest.kind, JSON.stringify(manifest), now());
+      if (manifest.supersedes_manifest_id) this.invalidateWorkflowFromManifest(manifest.supersedes_manifest_id, `manifest:${manifest.id}`);
+    })(); }
     catch (error) { if (String(error).includes('UNIQUE constraint failed')) throw new HelmoError(`Workflow manifest ${manifest.id} already exists and is immutable.`); throw error; }
+  }
+
+  private invalidateWorkflowFromManifest(manifestId: string, source: string): void {
+    const rows = this.db.prepare(`SELECT DISTINCT a.attempt_id FROM workflow_admissions a
+      WHERE EXISTS (SELECT 1 FROM json_each(a.admission, '$.requirements') r
+        WHERE json_extract(r.value, '$.manifest_id') = ?)`)
+      .all(manifestId) as { attempt_id: string }[];
+    this.invalidateWorkflowAttempts(rows.map((row) => row.attempt_id), 'manifest_superseded', source);
+  }
+
+  private invalidateWorkflowFromDecision(decisionId: string, source: string): void {
+    const rows = this.db.prepare(`SELECT DISTINCT a.attempt_id FROM workflow_admissions a
+      WHERE EXISTS (SELECT 1 FROM json_each(a.admission, '$.requirements') r
+        WHERE json_extract(r.value, '$.decision_id') = ?)`)
+      .all(decisionId) as { attempt_id: string }[];
+    this.invalidateWorkflowAttempts(rows.map((row) => row.attempt_id), 'decision_revoked', source);
+  }
+
+  private invalidateWorkflowAttempts(seedIds: string[], reason: string, source: string): void {
+    const queue = [...seedIds];
+    const affected = new Set<string>();
+    while (queue.length) {
+      const id = queue.shift()!;
+      if (affected.has(id)) continue;
+      affected.add(id);
+      const row = this.db.prepare(`SELECT a.run_id, a.stage_id, r.workflow_id, r.definition_revision
+        FROM workflow_attempts a JOIN workflow_runs r ON r.id = a.run_id WHERE a.id = ?`).get(id) as
+        { run_id: string; stage_id: string; workflow_id: string; definition_revision: string } | undefined;
+      if (!row) continue;
+      const definition = this.getWorkflowDefinition(row.workflow_id, row.definition_revision);
+      const descendants = new Set([row.stage_id]);
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const stage of definition?.stages ?? []) if ((stage.after ?? []).some((p) => descendants.has(p)) && !descendants.has(stage.id)) {
+          descendants.add(stage.id); changed = true;
+        }
+      }
+      const downstream = this.db.prepare(`SELECT id FROM workflow_attempts WHERE run_id = ? AND stage_id IN (${[...descendants].map(() => '?').join(',')})`)
+        .all(row.run_id, ...descendants) as { id: string }[];
+      for (const candidate of downstream) if (!affected.has(candidate.id)) queue.push(candidate.id);
+    }
+    const insert = this.db.prepare('INSERT INTO workflow_invalidations (attempt_id, reason, source, created_at) VALUES (?, ?, ?, ?)');
+    const quarantine = this.db.prepare("UPDATE workflow_attempts SET state = 'quarantined' WHERE id = ?");
+    for (const id of affected) {
+      if (!this.db.prepare('SELECT 1 FROM workflow_invalidations WHERE attempt_id = ? AND reason = ? AND source = ?').get(id, reason, source)) insert.run(id, reason, source, now());
+      quarantine.run(id);
+    }
   }
 
   addWorkflowRequirement(requirement: WorkflowRequirement): void {
     if (!requirement?.id?.trim() || !requirement.scope?.trim() || !requirement.subject_manifest_id?.trim()) throw new HelmoError('Workflow requirements require id, scope, and an exact subject manifest.');
     if (!this.getWorkflowDefinition(requirement.workflow_id, requirement.definition_revision)) throw new HelmoError(`Workflow definition ${requirement.workflow_id}@${requirement.definition_revision} does not exist.`);
+    if (requirement.stage_id && !this.getWorkflowDefinition(requirement.workflow_id, requirement.definition_revision)!.stages.some((stage) => stage.id === requirement.stage_id)) throw new HelmoError(`Workflow requirement ${requirement.id} names unknown stage ${requirement.stage_id}.`);
     const subject = this.db.prepare(`SELECT r.workflow_id, r.definition_revision FROM workflow_manifests m
       JOIN workflow_attempts a ON a.id = m.attempt_id JOIN workflow_runs r ON r.id = a.run_id WHERE m.id = ?`).get(requirement.subject_manifest_id) as { workflow_id: string; definition_revision: string } | undefined;
     if (!subject) throw new HelmoError(`Subject manifest ${requirement.subject_manifest_id} does not exist.`);
@@ -570,7 +633,10 @@ export class Store {
       if (this.db.prepare("SELECT 1 FROM workflow_decisions WHERE json_extract(decision, '$.revokes_decision_id') = ?").get(decision.revokes_decision_id)) throw new HelmoError(`Workflow decision ${decision.revokes_decision_id} is already revoked.`);
     } else if (!requirement.allowed_verdicts.includes(decision.verdict)) throw new HelmoError(`Verdict ${decision.verdict} is not allowed for workflow requirement ${requirement.id}.`);
     const stored: WorkflowDecision = { ...decision, actor };
-    try { this.db.prepare('INSERT INTO workflow_decisions (id, requirement_id, manifest_id, decision, created_at) VALUES (?, ?, ?, ?, ?)').run(decision.id, decision.requirement_id, decision.manifest_id, JSON.stringify(stored), now()); }
+    try { this.db.transaction(() => {
+      this.db.prepare('INSERT INTO workflow_decisions (id, requirement_id, manifest_id, decision, created_at) VALUES (?, ?, ?, ?, ?)').run(decision.id, decision.requirement_id, decision.manifest_id, JSON.stringify(stored), now());
+      if (decision.verdict === 'revocation') this.invalidateWorkflowFromDecision(decision.revokes_decision_id!, `decision:${decision.id}`);
+    })(); }
     catch (error) { if (String(error).includes('UNIQUE constraint failed')) throw new HelmoError(`Workflow decision ${decision.id} already exists and is immutable.`); throw error; }
     return stored;
   }
@@ -586,6 +652,9 @@ export class Store {
     if (!attempt) {
       throw new HelmoError(`workflow_admission_denied ${JSON.stringify({ attempt_id: attemptId, missing: ['attempt'], stale: [], failed: [] })}`);
     }
+    if (attempt.state === 'quarantined') {
+      throw new HelmoError(`workflow_admission_denied ${JSON.stringify({ attempt_id: attemptId, missing: [], stale: ['invalidation'], failed: [] })}`);
+    }
     const definition = this.getWorkflowDefinition(attempt.workflow_id, attempt.definition_revision);
     if (!definition) {
       throw new HelmoError(`workflow_admission_denied ${JSON.stringify({ attempt_id: attemptId, missing: [], stale: ['definition'], failed: [] })}`);
@@ -599,10 +668,10 @@ export class Store {
     const stale: string[] = [];
     const failed: string[] = [];
     for (const prerequisite of stage.after ?? []) {
-      const prior = this.db.prepare(`SELECT o.outcome FROM workflow_attempts a
+      const prior = this.db.prepare(`SELECT o.outcome, a.state FROM workflow_attempts a
         LEFT JOIN workflow_outcomes o ON o.attempt_id = a.id
-        WHERE a.run_id = ? AND a.stage_id = ? ORDER BY a.ordinal DESC LIMIT 1`).get(attempt.run_id, prerequisite) as { outcome: string | null } | undefined;
-      if (!prior?.outcome || (JSON.parse(prior.outcome) as { outcome?: string }).outcome !== 'advanced') missing.push(`stage:${prerequisite}`);
+        WHERE a.run_id = ? AND a.stage_id = ? ORDER BY a.ordinal DESC LIMIT 1`).get(attempt.run_id, prerequisite) as { outcome: string | null; state: string } | undefined;
+      if (!prior?.outcome || prior.state === 'quarantined' || (JSON.parse(prior.outcome) as { outcome?: string }).outcome !== 'advanced') missing.push(`stage:${prerequisite}`);
     }
 
     const requirements = this.db.prepare('SELECT id, requirement FROM workflow_requirements WHERE workflow_id = ? AND definition_revision = ? ORDER BY id')
@@ -610,6 +679,7 @@ export class Store {
     const admitted: { requirement_id: string; manifest_id: string; decision_id: string; verdict: string }[] = [];
     for (const row of requirements) {
       const requirement = JSON.parse(row.requirement) as WorkflowRequirement;
+      if (requirement.stage_id && requirement.stage_id !== attempt.stage_id) continue;
       const decisions = this.db.prepare('SELECT decision FROM workflow_decisions WHERE requirement_id = ? AND manifest_id = ? ORDER BY rowid')
         .all(requirement.id, requirement.subject_manifest_id).map((r) => JSON.parse((r as { decision: string }).decision) as WorkflowDecision);
       const revoked = new Set(decisions.filter((d) => d.verdict === 'revocation').map((d) => d.revokes_decision_id));

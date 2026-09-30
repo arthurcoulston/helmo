@@ -14,6 +14,9 @@ code alone. Each product still documents its own install identity and targeting
 in its own docs, and a Helmo-family installation is supported standing without
 Rev at all:
 
+For an independent review of those guarantees, including a two-installation
+checklist and the public tests, see [ISOLATION-CHECKS.md](ISOLATION-CHECKS.md).
+
 - Helmo: [AGENT-INSTALL.md](https://github.com/arthurcoulston/helmo/blob/main/AGENT-INSTALL.md)
   — `HELMO_HOME` / `HELMO_DB`, `HELMO_LABEL`, `--installation <name|home|db>`,
   and qualified record references (`H-267@<label>`).

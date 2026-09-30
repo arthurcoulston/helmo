@@ -39,9 +39,11 @@ const COMMAND_FLAGS: Record<string, readonly string[]> = {
   'product-complete': ['ticket', 'artifacts', 'note'],
   'acceptance-verdict': ['ticket', 'refs', 'verdict', 'note'],
   'acceptance-check': ['ticket', 'refs'],
-  create: ['title', 'body', 'workstream', 'type', 'priority', 'status', 'assignee', 'dep', 'dep-type', 'schedule', 'not-before', 'needs-human'],
-  update: ['ticket', 'note', 'status', 'evidence-kind', 'evidence-ref', 'confidence', 'uncertainty-note', 'blast-radius', 'tokens', 'cost-usd', 'handoff-to', 'not-before', 'needs-human', 'no-needs-human', 'takeover', 'body-append', 'body-old', 'body-new'],
+  create: ['title', 'body', 'workstream', 'type', 'priority', 'status', 'assignee', 'dep', 'dep-type', 'schedule', 'not-before', 'needs-human', 'sitting-with'],
+  update: ['ticket', 'note', 'status', 'evidence-kind', 'evidence-ref', 'confidence', 'uncertainty-note', 'blast-radius', 'tokens', 'cost-usd', 'handoff-to', 'not-before', 'needs-human', 'sitting-with', 'no-needs-human', 'takeover', 'body-append', 'body-old', 'body-new'],
   return: ['ticket', 'situation', 'question', 'options', 'recommendation', 'if-unanswered'],
+  action: ['ticket', 'situation', 'action', 'why-human', 'if-unanswered'],
+  'action-report': ['ticket', 'did'],
 };
 
 // `--actor` says who is writing; `--installation` says which Helmo this command
@@ -332,6 +334,7 @@ try {
         schedule: flag('schedule'),
         not_before: flag('not-before'),
         needs_human: flag('needs-human'),
+        sitting_with: flag('sitting-with'),
       });
       out({ id: t.id });
       break;
@@ -355,6 +358,7 @@ try {
         handoff_to: flag('handoff-to'),
         not_before: flag('not-before'),
         needs_human: has('no-needs-human') ? false : flag('needs-human'),
+        sitting_with: flag('sitting-with'),
         takeover: has('takeover') ? true : undefined,
         body_append: flag('body-append'),
         body_patch: bodyOld === undefined ? undefined : { old: bodyOld, new: bodyNew! },
@@ -375,6 +379,21 @@ try {
       out({ id: t.id, status: t.status });
       break;
     }
+    case 'action': {
+      const t = store.requestAction(actor(), ticketRef('ticket'), {
+        situation: req('situation'),
+        action: req('action'),
+        why_human: req('why-human'),
+        if_unanswered: flag('if-unanswered'),
+      });
+      out({ id: t.id, status: t.status });
+      break;
+    }
+    case 'action-report': {
+      const t = store.reportAction(actor(), ticketRef('ticket'), { did: req('did') });
+      out({ id: t.id, status: t.status });
+      break;
+    }
     default:
       console.error(`usage: helmo-cli <command> [flags]
   wake-check     --workstream W --assignee A --since-seq N     (read-only harness poll)
@@ -386,6 +405,9 @@ try {
   record-spend   --ticket H-n [--tokens N] [--cost-usd X] --note N   (metered spend; terminal tickets accepted)
   list           [--ready] [--status S] [--workstream W] [--assignee A] [--limit N]
   get            <ticket-id>
+  return         --ticket H-n --situation S --question Q --recommendation R [--options JSON]
+  action         --ticket H-n --situation S --action A --why-human W [--if-unanswered C]
+  action-report  --ticket H-n --did D
   product-complete --ticket H-n --artifacts '[{"ref":"repo@<40hex>","author":"name"}]' --note N
   acceptance-verdict --ticket H-n --refs '["repo@<40hex>"]' --verdict pass|fail --note N
   acceptance-check --ticket H-n [--refs '["repo@<40hex>"]'] (exit 0 only for independent acceptance of that manifest)

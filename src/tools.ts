@@ -102,6 +102,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
           "Withhold this ticket from ready queues until a date — 'YYYY-MM-DD' (opens 00:00 UTC that day) or a full ISO instant. Use it when the work genuinely CANNOT start yet: it needs a week of data, a deadline has to pass, a dependency lands on a known day. Without it the only way to say so is shouting in the body, and every agent reading the queue pays a full ticket read to learn it must not act. This is not priority — priority says how much the work matters, not whether it can be started.",
         ),
         needs_human: z.union([z.string(), z.literal(false)]).optional().describe('Mark this as work that needs a sitting with the human by saying, in ONE LINE, what the sitting needs — what he does and roughly what it costs him ("Two clicks in the Cloudflare dashboard to add an Email Routing rule"). That line is what he reads on his dashboard to decide what to pick up, so write it for someone who will not open the ticket. The ticket stays open and is withheld from every agent ready queue. Pass false to clear the marker.'),
+        sitting_with: z.string().optional().describe('The exact agent the human should sit with. Use this with needs_human for discussion, interpretation or guided joint work; never make the human infer the agent from ticket history.'),
         deps: z.array(z.object({ to: z.string(), type: z.enum(DEP_TYPES) })).optional(),
         schedule: z.string().optional().describe(
           "Makes this a RECURRING TEMPLATE: 'every <N><m|h|d>' or 5-field cron (UTC). The template itself is standing work — never ready, never claimed. Due instances spawn automatically on queue reads, linked to the template via a parent dep, and a new instance is skipped while a previous one is still open. Retire the template by cancelling it.",
@@ -252,6 +253,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
         project: z.string().optional().describe("Set or change the project tag; '' clears it"),
         not_before: z.string().optional().describe("Set or move the date gate that withholds this ticket from ready queues — 'YYYY-MM-DD' or a full ISO instant; '' opens it now"),
         needs_human: z.union([z.string(), z.literal(false)]).optional().describe('Mark this as work that needs a sitting with the human by saying, in ONE LINE, what the sitting needs — what he does and roughly what it costs him ("Two clicks in the Cloudflare dashboard to add an Email Routing rule"). That line is what he reads on his dashboard to decide what to pick up, so write it for someone who will not open the ticket. The ticket stays open and is withheld from every agent ready queue. Pass false to clear the marker.'),
+        sitting_with: z.string().optional().describe('The exact agent the human should sit with. Use this with needs_human for discussion, interpretation or guided joint work; never make the human infer the agent from ticket history.'),
         capacity_hold: z.object({
           reason: z.string().describe('Why worthwhile work must not start under the current spending posture'),
           provenance: z.string().describe('Who authorized the hold and where that direction was recorded'),
@@ -356,7 +358,7 @@ Workstream-level findings have no ticket_id and cannot be disposed.`,
         `SHAPE OF THE ASK (H-939). The human reads these in a meeting and answers out loud, so a return is two parts. First the ISSUE — 'situation' then 'question' — enough that he can decide without reconstructing the ticket's history, and no more. Then EITHER your recommendation on its own, which is the normal case, OR two or three genuinely equal choices he can pick by saying a letter. Do not manufacture alternatives: options are for when the choice is really open, and a second course invented to fill the field costs him the same attention as a real one.\n\n` +
         `GOOD, recommendation standing alone: situation: "The staging deploy has been red for two days; the failing step is a lint rule we added last week and nothing else." question: "Turn the rule off for now?" recommendation: "yes — it is our own rule, it caught nothing real, and it is blocking every deploy." if_unanswered: "Nothing reaches staging until this clears."\n\n` +
         `GOOD, a real choice: situation: "Booking the gala venue; Aldrich Hall holds our date but wants a $2k non-refundable deposit by Friday." question: "Pay the deposit?" options: [{label: "pay", consequence: "date locked, $2k sunk if we cancel"}, {label: "wait", consequence: "risk losing the date; two backup venues exist but are smaller"}] recommendation: "pay — the date matters more than the $2k and backups don't fit 200 guests." if_unanswered: "Aldrich releases the date Friday 5pm."\n\n` +
-        `BAD: question: "How should I handle the venue?" — no situation, no decision, nothing to say back.`,
+        `BAD: question: "How should I handle the venue?" — no situation, no decision, nothing to say back. If there is no clear recommendation or closed choice the form can record, this is not an asynchronous decision: use helmo_update_ticket with needs_human and sitting_with so the dashboard names the sitting and agent.`,
       inputSchema: strict({
         ticket_id: z.string(),
         situation: z.string().describe("What you were doing and where it stands — written for someone who hasn't read the ticket"),
@@ -372,6 +374,52 @@ Workstream-level findings have no ticket_id and cannot be disposed.`,
       try {
         const t = store.returnToHuman(resolveActor(actor as Actor | undefined), local(ticket_id), q);
         return ok({ ticket: compact(t), queued: 'awaiting_human' });
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    'helmo_request_action',
+    {
+      description:
+        `Ask the human to DO one concrete thing. This is not permission for an agent to act: it creates an explicit Action for you request, releases the claim, and waits for a completion report. Use helmo_return_to_human for a decision. If the work needs discussion, interpretation or guided joint work, use helmo_update_ticket with needs_human and sitting_with instead.\n\n` +
+        `Say what is happening, the exact action and approximate cost, why only the human can do it, and what delay blocks. An action whose why_human amounts to "I need approval" is a decision and is refused by the store.`,
+      inputSchema: strict({
+        ticket_id: z.string(),
+        situation: z.string().describe("What you were doing and where it stands — written for someone who hasn't read the ticket"),
+        action: z.string().describe('The exact thing the human does, where, and roughly what it costs them'),
+        why_human: z.string().describe("Why this needs the human's own hands rather than the agent's"),
+        if_unanswered: z.string().optional().describe('What happens if the action is not done — cost of delay, deadlines, what it blocks'),
+        actor: actorSchema,
+      }),
+    },
+    async ({ ticket_id, actor, ...request }) => {
+      try {
+        const t = store.requestAction(resolveActor(actor as Actor | undefined), local(ticket_id), request);
+        return ok({ ticket: compact(t), queued: 'awaiting_human' });
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    'helmo_report_action',
+    {
+      description:
+        `Record that the human says they completed the pending Action for you request. Use this when they report completion in conversation or a meeting so they do not have to click the dashboard too. Quote what they actually did. This resumes the ticket to its workstream seat; it cannot close the ticket, choose an option, grant permission, or replace the agent's later verification.`,
+      inputSchema: strict({
+        ticket_id: z.string(),
+        did: z.string().describe("What the human actually did, in their own words; 'done' is not enough state for the next session"),
+        actor: actorSchema,
+      }),
+    },
+    async ({ ticket_id, did, actor }) => {
+      try {
+        const t = store.reportAction(resolveActor(actor as Actor | undefined), local(ticket_id), { did });
+        return ok({ ticket: compact(t) });
       } catch (e) {
         return fail(e);
       }

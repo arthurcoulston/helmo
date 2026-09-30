@@ -102,6 +102,33 @@ describe('a flag that takes no value must not be given one (H-1783)', () => {
   });
 });
 
+describe('explicit human request commands (R-42 I13)', () => {
+  it('requests an action and records the human report without granting permission', () => {
+    const requested = cli(
+      'action', '--ticket', ticket,
+      '--situation', 'The preview is ready and only the registrar remains.',
+      '--action', 'Five minutes in the registrar: bind the domain.',
+      '--why-human', 'The account belongs to Arthur and the agent has no credential.',
+    );
+    expect(requested.status, requested.stderr).toBe(0);
+    expect(read()).toMatchObject({ status: 'awaiting_human', question: null, action: { kind: 'action' } });
+
+    const reported = cli('action-report', '--ticket', ticket, '--did', 'I bound the domain to the supplied nameservers.');
+    expect(reported.status, reported.stderr).toBe(0);
+    expect(read()).toMatchObject({ status: 'open', question: null, action: null });
+  });
+
+  it('names the agent on a sitting rather than burying it in prose', () => {
+    const marked = cli(
+      'update', '--ticket', ticket, '--note', 'This needs interpretation together.',
+      '--needs-human', 'Twenty minutes comparing the migration paths and choosing which risk to carry.',
+      '--sitting-with', 'mason',
+    );
+    expect(marked.status, marked.stderr).toBe(0);
+    expect(read()).toMatchObject({ needs_human: true, sitting_with: 'mason' });
+  });
+});
+
 // H-1830. A verdict is the write that lets reviewed work through, and Helmo's
 // actor is caller-supplied on a store file the user can write. Ward's daily
 // sweep replays every verdict recorded in ward's name so a forged PASS is seen

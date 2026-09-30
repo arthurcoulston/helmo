@@ -42,6 +42,60 @@ describe('the MCP tool surface after the standing notice was retired (H-1126)', 
   });
 });
 
+describe('explicit human request doors (R-42 I11/I13)', () => {
+  it('creates and reports an action without turning it into a decision', async () => {
+    const store = new Store(':memory:');
+    store.setWorkstream(orch, { name: 'estate-ui', seat: 'mason' });
+    const t = store.createTicket(orch, { title: 'Bind the domain', body: 'The preview is ready.', workstream: 'estate-ui', type: 'ops' });
+    const client = await connect(store);
+
+    const requested = await client.callTool({ name: 'helmo_request_action', arguments: {
+      ticket_id: t.id,
+      situation: 'The preview is verified and only the registrar binding remains.',
+      action: 'Five minutes in the registrar: bind example.test to the supplied nameservers.',
+      why_human: 'The registrar account belongs to Arthur and agents have no credential.',
+      if_unanswered: 'The preview stays on its temporary hostname.',
+    } });
+    expect(requested.isError).not.toBe(true);
+    expect(store.getTicket(t.id)).toMatchObject({ status: 'awaiting_human', question: null, action: { kind: 'action' } });
+
+    const answered = await client.callTool({ name: 'helmo_answer_ticket', arguments: { ticket_id: t.id, answer: 'yes' } });
+    expect(answered.isError).toBe(true);
+    expect(store.getTicket(t.id).action).not.toBeNull();
+
+    const reported = await client.callTool({ name: 'helmo_report_action', arguments: {
+      ticket_id: t.id,
+      did: 'I bound example.test to the supplied nameservers.',
+    } });
+    expect(reported.isError).not.toBe(true);
+    expect(store.getTicket(t.id)).toMatchObject({ status: 'open', assignee: 'mason', question: null, action: null });
+    await client.close();
+    store.close();
+  });
+
+  it('exposes the named sitting and routes an unsuitable decision to it', async () => {
+    const store = new Store(':memory:');
+    const t = store.createTicket(orch, { title: 'Shape the migration', body: 'The tradeoff needs discussion.', workstream: 'estate-ui', type: 'planning' });
+    const client = await connect(store);
+    const tools = (await client.listTools()).tools;
+    const decision = tools.find((tool) => tool.name === 'helmo_return_to_human')!;
+    expect(decision.description).toContain('needs_human and sitting_with');
+    const update = tools.find((tool) => tool.name === 'helmo_update_ticket')!;
+    expect(update.inputSchema['properties']).toHaveProperty('sitting_with');
+
+    const marked = await client.callTool({ name: 'helmo_update_ticket', arguments: {
+      ticket_id: t.id,
+      note: 'This needs interpretation rather than an asynchronous choice.',
+      needs_human: 'Twenty minutes comparing the migration paths and agreeing which risk to carry.',
+      sitting_with: 'mason',
+    } });
+    expect(marked.isError).not.toBe(true);
+    expect(store.getTicket(t.id)).toMatchObject({ needs_human: true, sitting_with: 'mason' });
+    await client.close();
+    store.close();
+  });
+});
+
 describe('truth-preserving record edits (R-39 Q3/Q4)', () => {
   async function call(store: Store, args: Record<string, unknown>) {
     const client = await connect(store);

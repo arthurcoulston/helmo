@@ -26,7 +26,7 @@ await client.connect(transport);
 const tools = await client.listTools();
 console.log('TOOLS:', tools.tools.map((t) => t.name).join(', '));
 for (const name of [
-  'helmo_create_ticket', 'helmo_update_ticket', 'helmo_return_to_human', 'helmo_answer_ticket', 'helmo_get_ticket',
+  'helmo_create_ticket', 'helmo_update_ticket', 'helmo_return_to_human', 'helmo_request_action', 'helmo_report_action', 'helmo_answer_ticket', 'helmo_get_ticket',
   'helmo_record_product_completion', 'helmo_record_acceptance_verdict', 'helmo_check_product_acceptance',
 ]) {
   assert(tools.tools.some((t) => t.name === name), `missing MCP tool ${name}`);
@@ -92,6 +92,48 @@ console.log('LAST ANSWER:', JSON.stringify(detail.result.last_answer));
 assert.deepEqual(detail.result.events.map((e) => e.event_type), ['created', 'updated', 'returned', 'answered']);
 assert.deepEqual(detail.result.agent_chain.map((x) => x.split(' ')[0]), ['smoke-intake', 'smoke-builder', 'helmo-orchestrator']);
 assert.equal(detail.result.last_answer.answer, 'Ship it.');
+
+const actionTicket = await call('helmo_create_ticket', {
+  title: 'Bind the smoke-test domain',
+  body: 'The preview is ready; only the registrar binding remains.',
+  workstream: 'helmo-dev',
+  type: 'ops',
+  actor: { name: 'smoke-intake', kind: 'agent', model: 'gpt-5.6-luna', version: 'smoke 1.0' },
+});
+const actionId = actionTicket.result.id;
+const action = await call('helmo_request_action', {
+  ticket_id: actionId,
+  situation: 'The preview is verified and only the registrar binding remains.',
+  action: 'Five minutes in the registrar: bind smoke.example to the supplied nameservers.',
+  why_human: 'The registrar account belongs to the operator and agents have no credential.',
+  actor: { name: 'smoke-builder', kind: 'agent', model: 'gpt-5.6-sol', version: 'smoke 1.0' },
+});
+assert.equal(action.result.ticket.status, 'awaiting_human');
+const wrongResponse = await client.callTool({ name: 'helmo_answer_ticket', arguments: {
+  ticket_id: actionId,
+  answer: 'yes',
+  actor: { name: 'helmo-orchestrator', kind: 'orchestrator' },
+} });
+assert.equal(wrongResponse.isError, true, 'an action accepted a decision response');
+const acted = await call('helmo_report_action', {
+  ticket_id: actionId,
+  did: 'I bound smoke.example to the supplied nameservers.',
+  actor: { name: 'helmo-orchestrator', kind: 'orchestrator' },
+});
+assert.equal(acted.result.ticket.status, 'open');
+
+const sitting = await call('helmo_create_ticket', {
+  title: 'Choose the smoke-test migration path',
+  body: 'The tradeoff needs interpretation together.',
+  workstream: 'helmo-dev',
+  type: 'planning',
+  needs_human: 'Twenty minutes comparing the migration paths and agreeing which risk to carry.',
+  sitting_with: 'smoke-builder',
+  actor: { name: 'smoke-intake', kind: 'agent', model: 'gpt-5.6-luna', version: 'smoke 1.0' },
+});
+assert.equal(sitting.result.ticket.needs_human, 'Twenty minutes comparing the migration paths and agreeing which risk to carry.');
+const sittingDetail = await call('helmo_get_ticket', { ticket_id: sitting.result.id });
+assert.equal(sittingDetail.result.sitting_with, 'smoke-builder');
 
 const sourceRef = `helmo@${'a'.repeat(40)}`;
 const completion = await call('helmo_record_product_completion', {

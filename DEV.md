@@ -121,7 +121,12 @@ orchestrator meetings and the read-only view. Product intent:
   The dashboard's cards landed first, deliberately (H-2530): no tool or CLI
   door reaches either method yet, so no action request exists in any store —
   and had a door landed first, a pending action would have reached a renderer
-  that drew nothing for it. Adding the doors is what remains.
+  that drew nothing for it. `helmo_request_action` / CLI `action` now create
+  that request; `helmo_report_action` / CLI `action-report` record a completion
+  reported in conversation without asking for a second dashboard click. Create
+  and update expose `sitting_with` beside `needs_human`; the decision door tells
+  an asker whose question has no form-actionable recommendation to name that
+  sitting and agent instead.
   Desk claim guard (H-1056): an agent actor with no `session` may file and
   update work but cannot claim an unmarked ticket, including by creating it
   `in_progress`; if it needs a ticket, the build belongs to a loop. Marking an

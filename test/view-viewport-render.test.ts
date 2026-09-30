@@ -320,6 +320,26 @@ describe('a reference can be carried into a conversation in one gesture', () => 
     }
   }, 120_000);
 
+  it('carries the control into the reading the estate landing embeds', async () => {
+    // The landing is the surface Arthur actually reads on his phone, and it
+    // embeds `?section=awaiting` rather than drawing its own tickets. That
+    // document is assembled separately from the main page, so "the main page
+    // has copy controls" says nothing about it.
+    const context = await browser!.newContext({ viewport: { width: 390, height: 900 } });
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin });
+    const page = await context.newPage();
+    try {
+      await page.goto(`${origin}/?section=awaiting`, { waitUntil: 'load' });
+      const button = page.locator('.qcard .copy, .scard .copy').first();
+      const id = await button.getAttribute('data-copy');
+      expect(id, 'the awaiting reading drew no copy control').toMatch(/^H-\d+$/);
+      await button.click();
+      expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(id);
+    } finally {
+      await context.close();
+    }
+  }, 120_000);
+
   it('offers a copy control beside every reference it draws', async () => {
     const page = await withClipboard();
     try {

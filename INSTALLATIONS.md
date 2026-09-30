@@ -215,19 +215,31 @@ to find out. This is a property you can test rather than a promise: break one
 component's stamp, and the mismatch is named in the output of `rev release
 status` and of every command in the installation.
 
-**This release's set.** The three commits and the release id are fixed when the
-version is cut; the table below is what a consumer checks their `RELEASE.json`
-against.
+**This release's set.** The release id and the two Helmo-family commits are
+fixed when the version is cut; the table below is what a consumer checks their
+`RELEASE.json` against.
 
-| component      | version | commit                        |
-| -------------- | ------- | ----------------------------- |
-| `rev`          | 0.1.0   | *filled at the cut*           |
-| `helmo`        | 0.4.0   | *filled at the cut*           |
-| `helmo-roadmap`| 0.1.0   | *filled at the cut*           |
+| component      | version | commit                                      |
+| -------------- | ------- | ------------------------------------------- |
+| `rev`          | 0.1.0   | the commit tagged `v0.1.0` here — `git rev-parse v0.1.0` |
+| `helmo`        | 0.4.0   | *filled at the cut*                         |
+| `helmo-roadmap`| 0.1.0   | *filled at the cut*                         |
 
-Release id: *filled at the cut*. If this table still reads "filled at the cut",
-you are reading the development branch rather than a published release — take
-the values from the release directory's own `RELEASE.json`.
+Release id: *filled at the cut*. If the two Helmo-family rows still read
+"filled at the cut", you are reading the development branch rather than a
+published release — take the values from the release directory's own
+`RELEASE.json`.
+
+`rev`'s row names its tag rather than a sha, and that is not evasion. This
+document ships inside `rev`, and a set is built from the commit the tag names,
+so writing rev's sha here would mean writing a commit's own sha into that
+commit — a value that does not exist until after the file is written. Filling it
+with the sha of the commit *before* the fill produces a table that disagrees
+with the `RELEASE.json` of a perfectly coherent set, which is worse than an
+empty cell: the product would verify the set while this document told you it was
+mixed. The tag resolves to exactly one commit, and `RELEASE.json` records the
+sha the set was actually built from, which is the value every entry point
+checks.
 
 **`MIGRATION.json` is required**, and it is authored rather than generated,
 because it is a claim about consequences no build step can compute:

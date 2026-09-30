@@ -15,7 +15,13 @@ orchestrator meetings and the read-only view. Product intent:
   manifest, requirement, decision, admission and terminal-outcome tables.
   Definition insertion rejects empty/duplicate stages, unknown prerequisites,
   cycles and revision replacement. These tables do not alter ordinary ticket
-  semantics; later guarded-mutation slices own their write APIs.
+  semantics. The bounded decision seam (H-430) writes immutable manifests and
+  requirements against one definition revision, then records decisions from
+  the store-resolved actor only. Requirements bind one exact subject manifest,
+  exact actor name + kind authorities, allowed verdicts and optional creator
+  independence; mismatched manifests, aliases, self-review and cross-scope or
+  repeated revocations refuse. Admission and ticket-mutation enforcement remain
+  later slices.
   Explicitly named installations claim `meta.installation_name` atomically
   with their first event. Every later event under another explicit/inherited
   name refuses; reads remain available and report both names as UNCLEAR.

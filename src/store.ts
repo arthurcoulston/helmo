@@ -228,6 +228,19 @@ CREATE TABLE IF NOT EXISTS workflow_outcomes (
 
 export interface WorkflowStageDefinition { id: string; after?: string[] }
 export interface WorkflowDefinition { workflow_id: string; revision: string; stages: WorkflowStageDefinition[] }
+export interface WorkflowActorRef { name: string; kind: ActorKind }
+export interface WorkflowManifest {
+  id: string; attempt_id: string; kind: string; subjects: string[]; creators: WorkflowActorRef[];
+}
+export interface WorkflowRequirement {
+  id: string; workflow_id: string; definition_revision: string; scope: string; subject_manifest_id: string;
+  allowed_verdicts: ('pass' | 'fail' | 'selection')[]; authorities: WorkflowActorRef[];
+  independence: 'none' | 'different_from_manifest_creators';
+}
+export interface WorkflowDecision {
+  id: string; requirement_id: string; manifest_id: string; verdict: 'pass' | 'fail' | 'selection' | 'revocation';
+  source: string; actor: Actor; revokes_decision_id?: string;
+}
 
 function now(): string {
   return new Date().toISOString();
@@ -482,6 +495,72 @@ export class Store {
     const row = this.db.prepare('SELECT definition FROM workflow_definitions WHERE workflow_id = ? AND revision = ?')
       .get(workflowId, revision) as { definition: string } | undefined;
     return row ? JSON.parse(row.definition) as WorkflowDefinition : null;
+  }
+
+  addWorkflowRun(input: { id: string; workflow_id: string; definition_revision: string }): void {
+    const { id, workflow_id, definition_revision } = input;
+    if (![id, workflow_id, definition_revision].every((v) => typeof v === 'string' && v.trim() === v && v.length)) throw new HelmoError('Workflow run ids and definition references must be non-empty strings without surrounding whitespace.');
+    if (!this.getWorkflowDefinition(workflow_id, definition_revision)) throw new HelmoError(`Workflow definition ${workflow_id}@${definition_revision} does not exist.`);
+    try { this.db.prepare("INSERT INTO workflow_runs (id, workflow_id, definition_revision, state, created_at) VALUES (?, ?, ?, 'created', ?)").run(id, workflow_id, definition_revision, now()); }
+    catch (error) { if (String(error).includes('UNIQUE constraint failed')) throw new HelmoError(`Workflow run ${id} already exists and is immutable.`); throw error; }
+  }
+
+  addWorkflowAttempt(input: { id: string; run_id: string; stage_id: string; ordinal: number }): void {
+    const run = this.db.prepare('SELECT workflow_id, definition_revision FROM workflow_runs WHERE id = ?').get(input.run_id) as { workflow_id: string; definition_revision: string } | undefined;
+    if (!run) throw new HelmoError(`Workflow run ${input.run_id} does not exist.`);
+    const definition = this.getWorkflowDefinition(run.workflow_id, run.definition_revision)!;
+    if (!definition.stages.some((stage) => stage.id === input.stage_id)) throw new HelmoError(`Stage ${input.stage_id} is not in ${run.workflow_id}@${run.definition_revision}.`);
+    if (!input.id?.trim() || input.id.trim() !== input.id || !Number.isInteger(input.ordinal) || input.ordinal < 1) throw new HelmoError('Workflow attempts require an exact id and a positive integer ordinal.');
+    try { this.db.prepare("INSERT INTO workflow_attempts (id, run_id, stage_id, ordinal, state, created_at) VALUES (?, ?, ?, ?, 'created', ?)").run(input.id, input.run_id, input.stage_id, input.ordinal, now()); }
+    catch (error) { if (String(error).includes('UNIQUE constraint failed')) throw new HelmoError(`Workflow attempt ${input.id} or its run/stage/ordinal already exists.`); throw error; }
+  }
+
+  addWorkflowManifest(manifest: WorkflowManifest): void {
+    if (!manifest?.id?.trim() || manifest.id.trim() !== manifest.id || !manifest.attempt_id?.trim() || !manifest.kind?.trim()) throw new HelmoError('Workflow manifests require exact id, attempt_id, and kind values.');
+    if (!Array.isArray(manifest.subjects) || !manifest.subjects.length || manifest.subjects.some((v) => typeof v !== 'string' || !v.trim()) || new Set(manifest.subjects).size !== manifest.subjects.length) throw new HelmoError('Workflow manifests require unique, non-empty exact subjects.');
+    if (!Array.isArray(manifest.creators) || !manifest.creators.length || manifest.creators.some((a) => !a?.name?.trim() || !ACTOR_KINDS.includes(a.kind))) throw new HelmoError('Workflow manifests require at least one creator with an exact name and actor kind.');
+    if (!this.db.prepare('SELECT 1 FROM workflow_attempts WHERE id = ?').get(manifest.attempt_id)) throw new HelmoError(`Workflow attempt ${manifest.attempt_id} does not exist.`);
+    try { this.db.prepare('INSERT INTO workflow_manifests (id, attempt_id, kind, manifest, created_at) VALUES (?, ?, ?, ?, ?)').run(manifest.id, manifest.attempt_id, manifest.kind, JSON.stringify(manifest), now()); }
+    catch (error) { if (String(error).includes('UNIQUE constraint failed')) throw new HelmoError(`Workflow manifest ${manifest.id} already exists and is immutable.`); throw error; }
+  }
+
+  addWorkflowRequirement(requirement: WorkflowRequirement): void {
+    if (!requirement?.id?.trim() || !requirement.scope?.trim() || !requirement.subject_manifest_id?.trim()) throw new HelmoError('Workflow requirements require id, scope, and an exact subject manifest.');
+    if (!this.getWorkflowDefinition(requirement.workflow_id, requirement.definition_revision)) throw new HelmoError(`Workflow definition ${requirement.workflow_id}@${requirement.definition_revision} does not exist.`);
+    const subject = this.db.prepare(`SELECT r.workflow_id, r.definition_revision FROM workflow_manifests m
+      JOIN workflow_attempts a ON a.id = m.attempt_id JOIN workflow_runs r ON r.id = a.run_id WHERE m.id = ?`).get(requirement.subject_manifest_id) as { workflow_id: string; definition_revision: string } | undefined;
+    if (!subject) throw new HelmoError(`Subject manifest ${requirement.subject_manifest_id} does not exist.`);
+    if (subject.workflow_id !== requirement.workflow_id || subject.definition_revision !== requirement.definition_revision) throw new HelmoError(`Subject manifest ${requirement.subject_manifest_id} belongs to ${subject.workflow_id}@${subject.definition_revision}, not ${requirement.workflow_id}@${requirement.definition_revision}.`);
+    const allowed = new Set(['pass', 'fail', 'selection']);
+    if (!requirement.allowed_verdicts?.length || requirement.allowed_verdicts.some((v) => !allowed.has(v))) throw new HelmoError('Workflow requirements need at least one allowed verdict.');
+    if (!requirement.authorities?.length || requirement.authorities.some((a) => !a?.name?.trim() || !ACTOR_KINDS.includes(a.kind))) throw new HelmoError('Workflow requirements need at least one exact actor authority.');
+    if (!['none', 'different_from_manifest_creators'].includes(requirement.independence)) throw new HelmoError('Workflow requirement independence is invalid.');
+    try { this.db.prepare('INSERT INTO workflow_requirements (id, workflow_id, definition_revision, requirement, created_at) VALUES (?, ?, ?, ?, ?)').run(requirement.id, requirement.workflow_id, requirement.definition_revision, JSON.stringify(requirement), now()); }
+    catch (error) { if (String(error).includes('UNIQUE constraint failed')) throw new HelmoError(`Workflow requirement ${requirement.id} already exists and is immutable.`); throw error; }
+  }
+
+  recordWorkflowDecision(actor: Actor, decision: Omit<WorkflowDecision, 'actor'>): WorkflowDecision {
+    validateActor(actor);
+    if (!decision?.id?.trim() || !decision.source?.trim()) throw new HelmoError('Workflow decisions require an immutable id and original decision source.');
+    const row = this.db.prepare('SELECT requirement FROM workflow_requirements WHERE id = ?').get(decision.requirement_id) as { requirement: string } | undefined;
+    if (!row) throw new HelmoError(`Workflow requirement ${decision.requirement_id} does not exist.`);
+    const requirement = JSON.parse(row.requirement) as WorkflowRequirement;
+    if (decision.manifest_id !== requirement.subject_manifest_id) throw new HelmoError(`Decision manifest ${decision.manifest_id} is stale or outside requirement ${requirement.id}; expected ${requirement.subject_manifest_id}.`);
+    if (!requirement.authorities.some((a) => a.name === actor.name && a.kind === actor.kind)) throw new HelmoError(`Actor ${actor.kind}:${actor.name} is not authorized for workflow requirement ${requirement.id}.`);
+    const manifestRow = this.db.prepare('SELECT manifest FROM workflow_manifests WHERE id = ?').get(decision.manifest_id) as { manifest: string } | undefined;
+    if (!manifestRow) throw new HelmoError(`Workflow manifest ${decision.manifest_id} does not exist.`);
+    const manifest = JSON.parse(manifestRow.manifest) as WorkflowManifest;
+    if (requirement.independence === 'different_from_manifest_creators' && manifest.creators.some((a) => a.name === actor.name)) throw new HelmoError(`Actor "${actor.name}" created subject manifest ${manifest.id} and cannot decide independent scope ${requirement.scope}.`);
+    if (decision.verdict === 'revocation') {
+      if (!decision.revokes_decision_id) throw new HelmoError('A workflow revocation must name the exact prior decision it revokes.');
+      const prior = this.db.prepare('SELECT requirement_id, manifest_id, decision FROM workflow_decisions WHERE id = ?').get(decision.revokes_decision_id) as { requirement_id: string; manifest_id: string; decision: string } | undefined;
+      if (!prior || prior.requirement_id !== requirement.id || prior.manifest_id !== manifest.id || (JSON.parse(prior.decision) as WorkflowDecision).verdict === 'revocation') throw new HelmoError('A workflow revocation must target a standing decision in the same requirement and manifest scope.');
+      if (this.db.prepare("SELECT 1 FROM workflow_decisions WHERE json_extract(decision, '$.revokes_decision_id') = ?").get(decision.revokes_decision_id)) throw new HelmoError(`Workflow decision ${decision.revokes_decision_id} is already revoked.`);
+    } else if (!requirement.allowed_verdicts.includes(decision.verdict)) throw new HelmoError(`Verdict ${decision.verdict} is not allowed for workflow requirement ${requirement.id}.`);
+    const stored: WorkflowDecision = { ...decision, actor };
+    try { this.db.prepare('INSERT INTO workflow_decisions (id, requirement_id, manifest_id, decision, created_at) VALUES (?, ?, ?, ?, ?)').run(decision.id, decision.requirement_id, decision.manifest_id, JSON.stringify(stored), now()); }
+    catch (error) { if (String(error).includes('UNIQUE constraint failed')) throw new HelmoError(`Workflow decision ${decision.id} already exists and is immutable.`); throw error; }
+    return stored;
   }
 
   /** Durable name claimed by the first explicitly named writer. A derived-only

@@ -42,6 +42,43 @@ describe('ids', () => {
   });
 });
 
+describe('durable workflow model (H-429)', () => {
+  it('stores immutable acyclic definition revisions without changing ticket behavior', () => {
+    const s = freshStore();
+    const definition = { workflow_id: 'release', revision: 'v1', stages: [{ id: 'build' }, { id: 'review', after: ['build'] }] };
+    s.addWorkflowDefinition(definition);
+    expect(s.getWorkflowDefinition('release', 'v1')).toEqual(definition);
+    expect(() => s.addWorkflowDefinition(definition)).toThrow(/immutable/);
+    expect(create(s).id).toBe('H-1');
+  });
+
+  it('rejects missing stages, unknown prerequisites, and cycles', () => {
+    const s = freshStore();
+    expect(() => s.addWorkflowDefinition({ workflow_id: 'x', revision: '1', stages: [] })).toThrow(/at least one/);
+    expect(() => s.addWorkflowDefinition({ workflow_id: 'x', revision: '1', stages: [{ id: 'a', after: ['missing'] }] })).toThrow(/unknown/);
+    expect(() => s.addWorkflowDefinition({ workflow_id: 'x', revision: '1', stages: [{ id: 'a', after: ['b'] }, { id: 'b', after: ['a'] }] })).toThrow(/cycle/);
+  });
+
+  it('migrates an existing file store and preserves definitions across reopen', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'helmo-workflow-'));
+    const path = join(dir, 'helmo.db');
+    try {
+      const before = new Store(path);
+      create(before);
+      before.close();
+      const migrated = new Store(path);
+      migrated.addWorkflowDefinition({ workflow_id: 'release', revision: 'v1', stages: [{ id: 'review' }] });
+      migrated.close();
+      const restored = new Store(path);
+      expect(restored.getWorkflowDefinition('release', 'v1')?.stages).toEqual([{ id: 'review' }]);
+      expect(restored.getTicket('H-1').title).toBe('Build the importer');
+      restored.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('actor validation', () => {
   it('rejects writes without an actor', () => {
     const s = freshStore();

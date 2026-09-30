@@ -184,7 +184,50 @@ CREATE TABLE IF NOT EXISTS hygiene_dispositions (
   at_cost    REAL,
   PRIMARY KEY (check_name, ticket_id)
 );
+CREATE TABLE IF NOT EXISTS workflow_definitions (
+  workflow_id TEXT NOT NULL,
+  revision TEXT NOT NULL,
+  definition TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (workflow_id, revision)
+);
+CREATE TABLE IF NOT EXISTS workflow_runs (
+  id TEXT PRIMARY KEY, workflow_id TEXT NOT NULL, definition_revision TEXT NOT NULL,
+  state TEXT NOT NULL, created_at TEXT NOT NULL,
+  FOREIGN KEY (workflow_id, definition_revision) REFERENCES workflow_definitions(workflow_id, revision)
+);
+CREATE TABLE IF NOT EXISTS workflow_attempts (
+  id TEXT PRIMARY KEY, run_id TEXT NOT NULL, stage_id TEXT NOT NULL, ordinal INTEGER NOT NULL,
+  state TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(run_id, stage_id, ordinal),
+  FOREIGN KEY (run_id) REFERENCES workflow_runs(id)
+);
+CREATE TABLE IF NOT EXISTS workflow_manifests (
+  id TEXT PRIMARY KEY, attempt_id TEXT NOT NULL, kind TEXT NOT NULL, manifest TEXT NOT NULL,
+  created_at TEXT NOT NULL, FOREIGN KEY (attempt_id) REFERENCES workflow_attempts(id)
+);
+CREATE TABLE IF NOT EXISTS workflow_requirements (
+  id TEXT PRIMARY KEY, workflow_id TEXT NOT NULL, definition_revision TEXT NOT NULL,
+  requirement TEXT NOT NULL, created_at TEXT NOT NULL,
+  FOREIGN KEY (workflow_id, definition_revision) REFERENCES workflow_definitions(workflow_id, revision)
+);
+CREATE TABLE IF NOT EXISTS workflow_decisions (
+  id TEXT PRIMARY KEY, requirement_id TEXT NOT NULL, manifest_id TEXT NOT NULL,
+  decision TEXT NOT NULL, created_at TEXT NOT NULL,
+  FOREIGN KEY (requirement_id) REFERENCES workflow_requirements(id),
+  FOREIGN KEY (manifest_id) REFERENCES workflow_manifests(id)
+);
+CREATE TABLE IF NOT EXISTS workflow_admissions (
+  id TEXT PRIMARY KEY, attempt_id TEXT NOT NULL, admission TEXT NOT NULL, created_at TEXT NOT NULL,
+  FOREIGN KEY (attempt_id) REFERENCES workflow_attempts(id)
+);
+CREATE TABLE IF NOT EXISTS workflow_outcomes (
+  attempt_id TEXT PRIMARY KEY, outcome TEXT NOT NULL, created_at TEXT NOT NULL,
+  FOREIGN KEY (attempt_id) REFERENCES workflow_attempts(id)
+);
 `;
+
+export interface WorkflowStageDefinition { id: string; after?: string[] }
+export interface WorkflowDefinition { workflow_id: string; revision: string; stages: WorkflowStageDefinition[] }
 
 function now(): string {
   return new Date().toISOString();
@@ -321,6 +364,7 @@ export class Store {
     // on how long any caller stalls behind a writer, so it must stay well
     // under the callers' own patience — rev polls on 60s (H-134).
     this.db.pragma('busy_timeout = 5000');
+    this.db.pragma('foreign_keys = ON');
     // The pragma alone is not enough, and the gap is silent: every write here
     // runs in a transaction that reads first (minting an id, loading a ticket),
     // so a DEFERRED begin only asks for the write lock partway through — and
@@ -391,6 +435,46 @@ export class Store {
 
   close(): void {
     this.db.close();
+  }
+
+  addWorkflowDefinition(definition: WorkflowDefinition): void {
+    const workflowId = definition.workflow_id?.trim();
+    const revision = definition.revision?.trim();
+    if (!workflowId || !revision || !Array.isArray(definition.stages) || definition.stages.length === 0) {
+      throw new HelmoError('A workflow definition requires workflow_id, revision, and at least one stage.');
+    }
+    const ids = definition.stages.map((stage) => stage.id?.trim());
+    if (ids.some((id) => !id) || new Set(ids).size !== ids.length) throw new HelmoError('Workflow stage ids must be non-empty and unique.');
+    const known = new Set(ids);
+    for (const stage of definition.stages) {
+      for (const prerequisite of stage.after ?? []) {
+        if (!known.has(prerequisite)) throw new HelmoError(`Workflow stage "${stage.id}" names unknown prerequisite "${prerequisite}".`);
+      }
+    }
+    const visiting = new Set<string>();
+    const visited = new Set<string>();
+    const byId = new Map(definition.stages.map((stage) => [stage.id, stage]));
+    const visit = (id: string): void => {
+      if (visiting.has(id)) throw new HelmoError(`Workflow definition contains a cycle at stage "${id}".`);
+      if (visited.has(id)) return;
+      visiting.add(id);
+      for (const prerequisite of byId.get(id)!.after ?? []) visit(prerequisite);
+      visiting.delete(id); visited.add(id);
+    };
+    for (const id of ids) visit(id);
+    try {
+      this.db.prepare('INSERT INTO workflow_definitions (workflow_id, revision, definition, created_at) VALUES (?, ?, ?, ?)')
+        .run(workflowId, revision, JSON.stringify(definition), now());
+    } catch (error) {
+      if (String(error).includes('UNIQUE constraint failed')) throw new HelmoError(`Workflow definition ${workflowId}@${revision} already exists and is immutable.`);
+      throw error;
+    }
+  }
+
+  getWorkflowDefinition(workflowId: string, revision: string): WorkflowDefinition | null {
+    const row = this.db.prepare('SELECT definition FROM workflow_definitions WHERE workflow_id = ? AND revision = ?')
+      .get(workflowId, revision) as { definition: string } | undefined;
+    return row ? JSON.parse(row.definition) as WorkflowDefinition : null;
   }
 
   /** Durable name claimed by the first explicitly named writer. A derived-only

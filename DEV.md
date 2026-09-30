@@ -10,6 +10,12 @@ orchestrator meetings and the read-only view. Product intent:
 - `store.ts` — the heart: SQLite store (better-sqlite3), append-only event log
   with a global `seq` cursor (Rev's wake signal rides on it), ticket
   materialization, blocking/ready computation, actor validation. Stop
+  Workflow enforcement has an additive, instance-local persistence seam
+  (H-429): immutable JSON definition revisions plus normalized run, attempt,
+  manifest, requirement, decision, admission and terminal-outcome tables.
+  Definition insertion rejects empty/duplicate stages, unknown prerequisites,
+  cycles and revision replacement. These tables do not alter ordinary ticket
+  semantics; later guarded-mutation slices own their write APIs.
   Explicitly named installations claim `meta.installation_name` atomically
   with their first event. Every later event under another explicit/inherited
   name refuses; reads remain available and report both names as UNCLEAR.

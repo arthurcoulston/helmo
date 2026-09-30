@@ -121,7 +121,13 @@ orchestrator meetings and the read-only view. Product intent:
   reviews can close normally and neither `done` nor prose saying PASS can stand
   in for product acceptance. Both events may be appended to terminal tickets;
   they never reopen or rewrite history. Caller identities and authors are
-  provenance assertions, not authenticated identities.
+  provenance assertions, not authenticated identities. Body edits have two
+  preserving modes alongside deliberate whole-field replacement:
+  `body_append` adds exact text, while `body_patch` replaces one unique literal
+  anchor and refuses a missing or repeated anchor before an event is written.
+  Terminal tickets remain closed state: `updateTicket` accepts only append-only
+  notes and evidence on them; every other field still refuses without changing
+  the record (R-39 Q3/Q4, H-2439).
 - `tools.ts` — the MCP tool surface, registered identically by both entry
   points below (H-116). **Tool descriptions carry the behavioral contract for
   every agent** (triage duty, evidence rules, question quality); treat

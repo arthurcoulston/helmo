@@ -70,6 +70,8 @@ export interface UpdateInput {
   cost_usd?: number;
   title?: string;
   body?: string;
+  body_append?: string;
+  body_patch?: { old: string; new: string };
   priority?: number;
   labels?: string[];
   workstream?: string;
@@ -1589,15 +1591,48 @@ export class Store {
     if (!input.note?.trim()) {
       throw new HelmoError('note is required on every update: one or two lines, human terms, saying what actually happened. Notes are the story the human reads.');
     }
-    rejectSwallowedMarkup({ note: input.note, title: input.title, body: input.body, uncertainty_note: input.uncertainty_note });
+    rejectSwallowedMarkup({
+      note: input.note,
+      title: input.title,
+      body: input.body,
+      body_append: input.body_append,
+      body_patch_old: input.body_patch?.old,
+      body_patch_new: input.body_patch?.new,
+      uncertainty_note: input.uncertainty_note,
+    });
     const t = this.getTicket(input.ticket_id);
     const warnings: string[] = [];
     const diffs: Record<string, { from: unknown; to: unknown }> = {};
+    const suppliedKeys = Object.entries(input)
+      .filter(([, value]) => value !== undefined)
+      .map(([key]) => key);
+
+    const bodyModes = [input.body, input.body_append, input.body_patch].filter((v) => v !== undefined).length;
+    if (bodyModes > 1) {
+      throw new HelmoError('Pass only one of body, body_append or body_patch. body replaces the whole field; the other modes preserve untouched text.');
+    }
+    if (input.body_append !== undefined) {
+      if (!input.body_append) throw new HelmoError('body_append must not be empty.');
+      input = { ...input, body: t.body + input.body_append };
+    } else if (input.body_patch !== undefined) {
+      if (!input.body_patch.old) throw new HelmoError('body_patch.old is required as the stale-write anchor.');
+      const first = t.body.indexOf(input.body_patch.old);
+      const last = t.body.lastIndexOf(input.body_patch.old);
+      if (first === -1) throw new HelmoError('body_patch is stale: its old anchor is not in the current body. Nothing was written.');
+      if (first !== last) throw new HelmoError('body_patch is ambiguous: its old anchor occurs more than once. Nothing was written.');
+      input = {
+        ...input,
+        body: t.body.slice(0, first) + input.body_patch.new + t.body.slice(first + input.body_patch.old.length),
+      };
+    }
 
     if (t.status === 'done' || t.status === 'cancelled') {
-      throw new HelmoError(
-        `${t.id} is ${t.status} — terminal. The record is permanent; do not rework closed tickets. If follow-up work is needed, helmo_create_ticket a new one with a 'relates' link to ${t.id}.`,
-      );
+      const forbidden = suppliedKeys.filter((key) => !['ticket_id', 'note', 'evidence'].includes(key));
+      if (forbidden.length) {
+        throw new HelmoError(
+          `${t.id} is ${t.status} — terminal. Only append-only note and evidence are accepted; ${forbidden.join(', ')} would rewrite closed state. If follow-up work is needed, helmo_create_ticket a new one with a 'relates' link to ${t.id}.`,
+        );
+      }
     }
     if (input.handoff_to && input.status) {
       throw new HelmoError('Pass either handoff_to or status, not both — a handoff sets status itself (open, reserved for the receiver).');

@@ -660,6 +660,49 @@ describe('guardrails', () => {
     s.updateTicket(builder, { ticket_id: t.id, note: 'done', status: 'done' });
     expect(() => s.updateTicket(builder, { ticket_id: t.id, note: 'more', status: 'in_progress' })).toThrow(/relates/);
   });
+  it('appends and patches body text without replacing untouched content', () => {
+    const s = freshStore();
+    const t = create(s);
+    const original = t.body;
+    const appended = s.updateTicket(builder, { ticket_id: t.id, note: 'adding the handoff', body_append: '\n\nHandoff: run the smoke.' }).ticket;
+    expect(appended.body).toBe(original + '\n\nHandoff: run the smoke.');
+    const patched = s.updateTicket(builder, {
+      ticket_id: t.id,
+      note: 'the smoke is now specific',
+      body_patch: { old: 'run the smoke', new: 'run npm test' },
+    }).ticket;
+    expect(patched.body).toBe(original + '\n\nHandoff: run npm test.');
+  });
+  it('refuses stale, ambiguous and mixed body changes without writing', () => {
+    const s = freshStore();
+    const t = create(s);
+    s.updateTicket(builder, { ticket_id: t.id, note: 'make a repeated anchor', body_append: '\nGoal: again.' });
+    const before = s.getTicket(t.id);
+    const seq = s.maxSeq();
+    expect(() => s.updateTicket(builder, { ticket_id: t.id, note: 'stale', body_patch: { old: 'not present', new: 'x' } })).toThrow(/stale/);
+    expect(() => s.updateTicket(builder, { ticket_id: t.id, note: 'ambiguous', body_patch: { old: 'Goal:', new: 'Aim:' } })).toThrow(/ambiguous/);
+    expect(() => s.updateTicket(builder, { ticket_id: t.id, note: 'mixed', body_append: 'x', body_patch: { old: 'Goal:', new: 'Aim:' } })).toThrow(/only one/);
+    expect(s.maxSeq()).toBe(seq);
+    expect(s.getTicket(t.id).body).toBe(before.body);
+  });
+  it('accepts only append-only notes and evidence after closure', () => {
+    const s = freshStore();
+    const t = create(s);
+    s.updateTicket(builder, { ticket_id: t.id, note: 'done', status: 'done' });
+    const withNote = s.updateTicket(reviewer, { ticket_id: t.id, note: 'Cross-reference: H-99 records the independent check.' }).ticket;
+    expect(withNote.status).toBe('done');
+    const withEvidence = s.updateTicket(reviewer, {
+      ticket_id: t.id,
+      note: 'attaching the commit omitted at close',
+      evidence: [{ kind: 'commit', ref: 'helmo@' + 'a'.repeat(40) }],
+    }).ticket;
+    expect(withEvidence.evidence).toHaveLength(1);
+    const seq = s.maxSeq();
+    expect(() => s.updateTicket(reviewer, { ticket_id: t.id, note: 'rewrite it', body_append: 'changed' })).toThrow(/Only append-only note and evidence/);
+    expect(() => s.updateTicket(reviewer, { ticket_id: t.id, note: 'reopen it', status: 'open' })).toThrow(/Only append-only note and evidence/);
+    expect(s.maxSeq()).toBe(seq);
+    expect(s.getTicket(t.id)).toMatchObject({ status: 'done', evidence: withEvidence.evidence });
+  });
   it('tokens and cost aggregate across the chain', () => {
     const s = freshStore();
     const t = create(s);

@@ -42,6 +42,53 @@ describe('the MCP tool surface after the standing notice was retired (H-1126)', 
   });
 });
 
+describe('truth-preserving record edits (R-39 Q3/Q4)', () => {
+  async function call(store: Store, args: Record<string, unknown>) {
+    const client = await connect(store);
+    const res = await client.callTool({ name: 'helmo_update_ticket', arguments: args });
+    await client.close();
+    return { text: (res.content as { text: string }[])[0]!.text, isError: res.isError === true };
+  }
+
+  it('publishes safe append and anchored patch inputs', async () => {
+    const store = new Store(':memory:');
+    const client = await connect(store);
+    const tool = (await client.listTools()).tools.find((t) => t.name === 'helmo_update_ticket')!;
+    const properties = tool.inputSchema['properties'] as Record<string, unknown>;
+    expect(properties).toHaveProperty('body_append');
+    expect(properties).toHaveProperty('body_patch');
+    await client.close();
+    store.close();
+  });
+
+  it('refuses a stale MCP body anchor before recording its note', async () => {
+    const store = new Store(':memory:');
+    const t = store.createTicket(orch, { title: 'Ship it', body: 'Current body.', workstream: 'helmo-dev', type: 'build' });
+    const seq = store.maxSeq();
+    const res = await call(store, { ticket_id: t.id, note: 'stale attempt', body_patch: { old: 'Earlier body.', new: 'New body.' } });
+    expect(res.isError).toBe(true);
+    expect(res.text).toContain('stale');
+    expect(store.maxSeq()).toBe(seq);
+    expect(store.getTicket(t.id).body).toBe('Current body.');
+    store.close();
+  });
+
+  it('appends evidence through MCP after done but refuses state changes', async () => {
+    const store = new Store(':memory:');
+    const t = store.createTicket(orch, { title: 'Ship it', body: 'Current body.', workstream: 'helmo-dev', type: 'build' });
+    store.updateTicket(orch, { ticket_id: t.id, note: 'done', status: 'done' });
+    const evidence = await call(store, { ticket_id: t.id, note: 'late proof', evidence: [{ kind: 'url', ref: 'https://example.test/proof' }] });
+    expect(evidence.isError).toBe(false);
+    expect(store.getTicket(t.id).evidence).toHaveLength(1);
+    const seq = store.maxSeq();
+    const rewrite = await call(store, { ticket_id: t.id, note: 'change title', title: 'Different' });
+    expect(rewrite.isError).toBe(true);
+    expect(store.maxSeq()).toBe(seq);
+    expect(store.getTicket(t.id).title).toBe('Ship it');
+    store.close();
+  });
+});
+
 // Steering fields carry numbers and names only. A prose field here would be
 // standing instruction every agent reads on every queue pass, outside caps
 // and review — so the shapes are pinned, and a new string field fails here

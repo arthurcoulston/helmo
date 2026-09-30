@@ -40,7 +40,7 @@ const COMMAND_FLAGS: Record<string, readonly string[]> = {
   'acceptance-verdict': ['ticket', 'refs', 'verdict', 'note'],
   'acceptance-check': ['ticket', 'refs'],
   create: ['title', 'body', 'workstream', 'type', 'priority', 'status', 'assignee', 'dep', 'dep-type', 'schedule', 'not-before', 'needs-human'],
-  update: ['ticket', 'note', 'status', 'evidence-kind', 'evidence-ref', 'confidence', 'uncertainty-note', 'blast-radius', 'tokens', 'cost-usd', 'handoff-to', 'not-before', 'needs-human', 'no-needs-human', 'takeover'],
+  update: ['ticket', 'note', 'status', 'evidence-kind', 'evidence-ref', 'confidence', 'uncertainty-note', 'blast-radius', 'tokens', 'cost-usd', 'handoff-to', 'not-before', 'needs-human', 'no-needs-human', 'takeover', 'body-append', 'body-old', 'body-new'],
   return: ['ticket', 'situation', 'question', 'options', 'recommendation', 'if-unanswered'],
 };
 
@@ -309,6 +309,11 @@ try {
       break;
     }
     case 'update': {
+      const bodyOld = flag('body-old');
+      const bodyNew = flag('body-new');
+      if ((bodyOld === undefined) !== (bodyNew === undefined)) {
+        throw new HelmoError('--body-old and --body-new must be passed together.');
+      }
       const { ticket, warnings } = store.updateTicket(actor(), {
         ticket_id: req('ticket'),
         note: req('note'),
@@ -322,7 +327,9 @@ try {
         handoff_to: flag('handoff-to'),
         not_before: flag('not-before'),
         needs_human: has('no-needs-human') ? false : flag('needs-human'),
-        takeover: has('takeover'),
+        takeover: has('takeover') ? true : undefined,
+        body_append: flag('body-append'),
+        body_patch: bodyOld === undefined ? undefined : { old: bodyOld, new: bodyNew! },
       });
       out({ id: ticket.id, status: ticket.status, warnings });
       break;
@@ -362,7 +369,7 @@ try {
   rename-workstream --from X --to Y --note N   (relabel every ticket incl. closed; one evented rename)
   workstream-set --name W [--budget-usd X] [--seat A | --seat '']   (operator steering; actor kind human/orchestrator only; seat = agent unassigned filings are reserved to)
   create         --title T --body B --workstream W --type TY [--priority P] [--status S] [--assignee A] [--dep H-n --dep-type TY] [--schedule 'every 30m' | '0 0 * * *'] [--not-before 2026-09-10]
-  update         --ticket H-n --note N [--status S] [--evidence-kind K --evidence-ref R] [--confidence C] [--blast-radius B] [--tokens N] [--cost-usd X] [--handoff-to A] [--not-before 2026-09-10 | ''] [--takeover]
+  update         --ticket H-n --note N [--status S] [--evidence-kind K --evidence-ref R] [--body-append T | --body-old OLD --body-new NEW] [--confidence C] [--blast-radius B] [--tokens N] [--cost-usd X] [--handoff-to A] [--not-before 2026-09-10 | ''] [--takeover]
   return         --ticket H-n --situation S --question Q --recommendation R [--options '[{"label":..,"consequence":..}]' (2-3, only for a real choice)] [--if-unanswered U]
 Writes read identity from HELMO_ACTOR env or --actor JSON. DB path from HELMO_DB (default ~/.helmo/helmo.db).`);
       process.exit(cmd ? 1 : 0);

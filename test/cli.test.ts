@@ -257,6 +257,14 @@ describe('a flag the command has no field for (R-39 Q9)', () => {
     expect(snapshot()).toBe(before);
   });
 
+  it('requires both halves of an anchored body patch', () => {
+    const before = snapshot();
+    const r = cli('update', '--ticket', ticket, '--note', 'incomplete patch', '--body-old', 'before');
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('--body-old and --body-new must be passed together');
+    expect(snapshot()).toBe(before);
+  });
+
   it('catches the --flag=value form too', () => {
     const r = cli('update', '--ticket', ticket, '--note', 'n', '--blast-radus=records');
 

@@ -405,29 +405,26 @@ shell carrying the wrong `REV_HOME` deletes the neighbour.
 
 ## Every entry point to review and repoint
 
-A manifest alone is not a complete install. Pinning one entry point and
-believing the installation isolated is how an upstream rebuild reaches an
-installation that never restarted anything — so after selecting a release, walk
-every path any part of your setup names:
+A manifest alone is not a complete install. Selecting a release tells the *next*
+start of each entry point which code to load; it does not go and find the entry
+points for you. Pinning one and believing the installation isolated is how an
+upstream rebuild reaches an installation nobody upgraded — so after selecting a
+release, walk every path any part of your setup names.
 
-- **Rev**: the roster's `helmo_cli` and `helmo_mcp_server`, each loop's `cwd`,
-  MCP server commands and `skills` paths; `REV_CLI`; the dashboard; the service
-  definition (for a pinned installation, `<REV_HOME>/service/launch.mjs`, not a
-  `cli.js` inside a release).
-- **Helmo**: the CLI, the stdio MCP server, the remote surface, the view.
-- **Roadmap**: the MCP server and the read-only view. Both migrate a store by
-  opening it, so both are entry points for this purpose.
-- **Anything you wrote yourself** that names a product path: wrapper scripts,
-  guards, agent or editor configs, service units not installed by
-  `rev service install`, and shell profiles exporting `REV_HOME`, `HELMO_DB` or
-  `ROADMAP_DB`.
+That walk is its own document, because it is a checklist you work down with a
+shell open rather than something you read once:
+**[ENTRY-POINTS.md](ENTRY-POINTS.md)**. It covers Rev's roster, `REV_CLI`, the
+service definition and the dashboard; Helmo's three binaries and the roadmap's
+two; the `HELMO_HOME`/`HELMO_DB` and `ROADMAP_HOME`/`ROADMAP_DB` pairs; and the
+paths you wrote yourself, which nothing in the release knows about.
 
-Verify rather than trust. The products answer this question themselves:
-`installation: <label> (<home>)` on Rev's read surfaces and mutation
-confirmations; the `installation` field in Helmo CLI results; the startup
-installation line on the MCP servers and views; and the *running* build — not
-the configured one — in `rev status`, `rev service status` and `/health.json`.
-A process that stayed up across an upgrade is the one whose answer changes.
+It also covers verifying rather than trusting. The products answer the question
+themselves — the `installation:` line on Rev's read surfaces and mutation
+confirmations, the `installation` field inside every Helmo CLI result and error,
+the startup line on the MCP servers and views, and the *running* build rather
+than the configured one in `rev status`, `rev service status` and
+`/health.json`. A process that stayed up across an upgrade is the one whose
+answer changes, and `STALE` is what it says.
 
 ## Removing one installation
 

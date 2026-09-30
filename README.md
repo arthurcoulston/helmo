@@ -14,6 +14,9 @@ a decision.
   installation assembled from immutable releases sets `INSTALLATION_RELEASE` to
   its selection file; Rev then verifies the complete Rev/Helmo/Roadmap commit
   set and refuses to run from any other checkout.
+- What to review and repoint when you change a release:
+  [ENTRY-POINTS.md](ENTRY-POINTS.md) — the checklist of every path your setup
+  names, and how to verify what is actually running rather than trust it.
 - Ops role for humans-with-agents: [WATCH-OFFICER.md](WATCH-OFFICER.md) — "summon the watch officer"
 
 ## Status: MVP

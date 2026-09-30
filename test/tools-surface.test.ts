@@ -4,6 +4,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { Store } from '../src/store.js';
 import { buildServer } from '../src/tools.js';
 import { Actor } from '../src/types.js';
+import { questionFingerprint } from '../src/presentation.js';
 
 // What the tool surface offers IS the guidance agents act on, so retiring a
 // mechanism means retiring its tool and its response field, not just its docs
@@ -37,6 +38,52 @@ describe('the MCP tool surface after the standing notice was retired (H-1126)', 
     const text = (res.content as { text: string }[])[0]!.text;
     expect(JSON.parse(text).result).not.toHaveProperty('notice');
     expect(text).toContain('helmo-dev');
+    await client.close();
+    store.close();
+  });
+});
+
+describe('mistaken human returns through the MCP boundary (H-391)', () => {
+  it('pins the contract and records a non-consent correction only for the inspected ask with an owner', async () => {
+    const store = new Store(':memory:');
+    const ticket = store.createTicket(orch, {
+      title: 'Prepare the client brief', body: 'The team must finish preparation before escalating.', workstream: 'helmo-dev', type: 'build',
+    });
+    const asked = store.returnToHuman(orch, ticket.id, {
+      situation: 'Preparation was mistakenly treated as complete.', question: 'Approve the incomplete brief?', recommendation: 'Wait for preparation.',
+    });
+    const fingerprint = questionFingerprint(asked.question!);
+    const client = await connect(store);
+    const tool = (await client.listTools()).tools.find((t) => t.name === 'helmo_withdraw_human_return')!;
+    expect(Object.keys(tool.inputSchema['properties'] as object).sort()).toEqual([
+      'actor', 'question_fingerprint', 'reason', 'recovery_owner', 'ticket_id',
+    ]);
+
+    const ownerless = await client.callTool({
+      name: tool.name,
+      arguments: { ticket_id: ticket.id, question_fingerprint: fingerprint, recovery_owner: '', reason: 'Preparation remains team-owned.' },
+    });
+    expect(ownerless.isError).toBe(true);
+    expect(JSON.stringify(ownerless)).toContain('recovery_owner is required');
+
+    const stale = await client.callTool({
+      name: tool.name,
+      arguments: { ticket_id: ticket.id, question_fingerprint: 'stale-question', recovery_owner: 'orchestrator', reason: 'Preparation remains team-owned.' },
+    });
+    expect(stale.isError).toBe(true);
+    expect(JSON.stringify(stale)).toContain('no longer asking the expected question');
+
+    const corrected = await client.callTool({
+      name: tool.name,
+      arguments: { ticket_id: ticket.id, question_fingerprint: fingerprint, recovery_owner: 'orchestrator', reason: 'Preparation remains team-owned.' },
+    });
+    expect(corrected.isError).not.toBe(true);
+    expect(JSON.parse((corrected.content as { text: string }[])[0]!.text).result).toMatchObject({
+      correction: 'return_withdrawn', human_answer_recorded: false,
+      ticket: { id: ticket.id, status: 'open', assignee: 'orchestrator' },
+    });
+    expect(store.lastAnswer(ticket.id)).toBeNull();
+    expect(store.getEvents(ticket.id).filter((e) => e.event_type === 'return_withdrawn')).toHaveLength(1);
     await client.close();
     store.close();
   });

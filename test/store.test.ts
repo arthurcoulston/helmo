@@ -88,6 +88,46 @@ describe('durable workflow model (H-429)', () => {
 });
 
 describe('trusted scoped workflow decisions (H-430)', () => {
+  it('consumes exact standing test authority before returning a covered operation to the human', () => {
+    const s = new Store(':memory:', undefined, reviewer);
+    s.addWorkflowDefinition({ workflow_id: 'field-test', revision: 'v1', stages: [{ id: 'exercise' }] });
+    s.addWorkflowRun({ id: 'run-test', workflow_id: 'field-test', definition_revision: 'v1' });
+    s.addWorkflowAttempt({ id: 'attempt-test', run_id: 'run-test', stage_id: 'exercise', ordinal: 1 });
+    const operation = { target: 'fictional-service', recipient: 'robot@example.test', tenant: 'sandbox-a', data_class: 'synthetic', visibility: 'private', cost: 'none', effect: 'delivery-record' };
+    s.addWorkflowManifest({ id: 'operation-a', attempt_id: 'attempt-test', kind: 'operation', subjects: ['fictional-service:sandbox-a'], creators: [builder], operation });
+    s.addWorkflowRequirement({ id: 'test-role', workflow_id: 'field-test', definition_revision: 'v1', scope: 'test_authority', subject_manifest_id: 'operation-a', allowed_verdicts: ['pass', 'fail'], authorities: [reviewer], independence: 'different_from_manifest_creators' });
+    s.recordWorkflowDecision({ id: 'authority-a', requirement_id: 'test-role', manifest_id: 'operation-a', verdict: 'pass', source: 'role:tester' });
+    const t = create(s);
+    const returned = s.returnToHuman(builder, t.id, { situation: 'The synthetic delivery is prepared.', question: 'Send it?', recommendation: 'yes', operation_manifest_id: 'operation-a' });
+    expect(returned).toMatchObject({ status: 'open', assignee: null, question: null });
+    const changed = create(s);
+    s.returnToHuman(builder, changed.id, { situation: 'The recipient changed.', question: 'Send it?', recommendation: 'yes', operation_manifest_id: 'missing-changed-operation' });
+    expect(s.getTicket(changed.id).status).toBe('awaiting_human');
+
+    s.addWorkflowManifest({ id: 'operation-b', attempt_id: 'attempt-test', kind: 'operation', subjects: ['fictional-service:sandbox-b'], creators: [builder], operation: { ...operation, tenant: 'sandbox-b' }, supersedes_manifest_id: 'operation-a' });
+    const stale = create(s);
+    s.returnToHuman(builder, stale.id, { situation: 'The tenant evidence is stale.', question: 'Send it?', recommendation: 'no', operation_manifest_id: 'operation-a' });
+    expect(s.getTicket(stale.id).status).toBe('awaiting_human');
+
+    s.recordWorkflowDecision({ id: 'revoke-a', requirement_id: 'test-role', manifest_id: 'operation-a', verdict: 'revocation', source: 'role:revoked', revokes_decision_id: 'authority-a' });
+    const revoked = create(s);
+    s.returnToHuman(builder, revoked.id, { situation: 'The authority was revoked.', question: 'Send it?', recommendation: 'no', operation_manifest_id: 'operation-a' });
+    expect(s.getTicket(revoked.id).status).toBe('awaiting_human');
+  });
+
+  it('requires every exact operation dimension and retains a failed acceptance gate', () => {
+    const s = new Store(':memory:', undefined, reviewer);
+    s.addWorkflowDefinition({ workflow_id: 'field-test', revision: 'v1', stages: [{ id: 'exercise' }] });
+    s.addWorkflowRun({ id: 'run-test', workflow_id: 'field-test', definition_revision: 'v1' });
+    s.addWorkflowAttempt({ id: 'attempt-test', run_id: 'run-test', stage_id: 'exercise', ordinal: 1 });
+    expect(() => s.addWorkflowManifest({ id: 'partial', attempt_id: 'attempt-test', kind: 'operation', subjects: ['x'], creators: [builder], operation: { target: 'x' } as never })).toThrow(/recipient, tenant, data_class, visibility, cost, effect/);
+    s.addWorkflowManifest({ id: 'public-operation', attempt_id: 'attempt-test', kind: 'operation', subjects: ['public'], creators: [builder], operation: { target: 'site', recipient: 'public', tenant: 'client', data_class: 'client', visibility: 'public', cost: 'paid', effect: 'publication' } });
+    s.addWorkflowRequirement({ id: 'failed-check', workflow_id: 'field-test', definition_revision: 'v1', scope: 'test_authority', subject_manifest_id: 'public-operation', allowed_verdicts: ['pass', 'fail'], authorities: [reviewer], independence: 'different_from_manifest_creators' });
+    s.recordWorkflowDecision({ id: 'fail-public', requirement_id: 'failed-check', manifest_id: 'public-operation', verdict: 'fail', source: 'acceptance:failed' });
+    const t = create(s);
+    s.returnToHuman(builder, t.id, { situation: 'This is public client data.', question: 'Publish?', recommendation: 'no', operation_manifest_id: 'public-operation' });
+    expect(s.getTicket(t.id).status).toBe('awaiting_human');
+  });
   function decisionStore(actor: Actor = reviewer) {
     const s = new Store(':memory:', undefined, actor);
     s.addWorkflowDefinition({ workflow_id: 'release', revision: 'v1', stages: [{ id: 'review' }] });

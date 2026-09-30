@@ -243,6 +243,7 @@ export interface WorkflowDefinition { workflow_id: string; revision: string; sta
 export interface WorkflowActorRef { name: string; kind: ActorKind }
 export interface WorkflowManifest {
   id: string; attempt_id: string; kind: string; subjects: string[]; creators: WorkflowActorRef[];
+  operation?: { target: string; recipient: string; tenant: string; data_class: string; visibility: string; cost: string; effect: string };
   supersedes_manifest_id?: string;
 }
 export interface WorkflowRequirement {
@@ -580,6 +581,10 @@ export class Store {
     if (!manifest?.id?.trim() || manifest.id.trim() !== manifest.id || !manifest.attempt_id?.trim() || !manifest.kind?.trim()) throw new HelmoError('Workflow manifests require exact id, attempt_id, and kind values.');
     if (!Array.isArray(manifest.subjects) || !manifest.subjects.length || manifest.subjects.some((v) => typeof v !== 'string' || !v.trim()) || new Set(manifest.subjects).size !== manifest.subjects.length) throw new HelmoError('Workflow manifests require unique, non-empty exact subjects.');
     if (!Array.isArray(manifest.creators) || !manifest.creators.length || manifest.creators.some((a) => !a?.name?.trim() || !ACTOR_KINDS.includes(a.kind))) throw new HelmoError('Workflow manifests require at least one creator with an exact name and actor kind.');
+    if (manifest.kind === 'operation') {
+      const fields = ['target', 'recipient', 'tenant', 'data_class', 'visibility', 'cost', 'effect'] as const;
+      if (!manifest.operation || fields.some((field) => typeof manifest.operation![field] !== 'string' || !manifest.operation![field].trim() || manifest.operation![field].trim() !== manifest.operation![field])) throw new HelmoError(`Operation manifests require exact ${fields.join(', ')} values.`);
+    } else if (manifest.operation) throw new HelmoError('Only operation manifests may carry operation fields.');
     if (!this.db.prepare('SELECT 1 FROM workflow_attempts WHERE id = ?').get(manifest.attempt_id)) throw new HelmoError(`Workflow attempt ${manifest.attempt_id} does not exist.`);
     if (manifest.supersedes_manifest_id) {
       const prior = this.db.prepare('SELECT attempt_id, kind FROM workflow_manifests WHERE id = ?').get(manifest.supersedes_manifest_id) as { attempt_id: string; kind: string } | undefined;
@@ -2407,8 +2412,30 @@ export class Store {
     // Normalised on the way in: every reader downstream sees an array.
     // The kind is explicit from the first write; a stored request without
     // one is a decision written before kinds existed (R-42 I13).
-    const stored: HumanRequest = { kind: 'decision', ...q, options };
+    const { operation_manifest_id, ...question } = q;
+    const stored: HumanRequest = { kind: 'decision', ...question, options };
     return this.db.transaction(() => {
+      if (operation_manifest_id) {
+        const manifestRow = this.db.prepare('SELECT manifest FROM workflow_manifests WHERE id = ?').get(operation_manifest_id) as { manifest: string } | undefined;
+        const manifest = manifestRow ? JSON.parse(manifestRow.manifest) as WorkflowManifest : undefined;
+        const superseded = this.db.prepare("SELECT 1 FROM workflow_manifests WHERE json_extract(manifest, '$.supersedes_manifest_id') = ?").get(operation_manifest_id);
+        if (manifest?.kind === 'operation' && manifest.operation && !superseded) {
+          const requirementRows = this.db.prepare("SELECT requirement FROM workflow_requirements WHERE json_extract(requirement, '$.subject_manifest_id') = ? ORDER BY id").all(operation_manifest_id) as { requirement: string }[];
+          for (const requirementRow of requirementRows) {
+            const requirement = JSON.parse(requirementRow.requirement) as WorkflowRequirement;
+            if (requirement.scope !== 'test_authority') continue;
+            const decisions = this.db.prepare('SELECT decision FROM workflow_decisions WHERE requirement_id = ? AND manifest_id = ? ORDER BY rowid')
+              .all(requirement.id, operation_manifest_id).map((row) => JSON.parse((row as { decision: string }).decision) as WorkflowDecision);
+            const revoked = new Set(decisions.filter((decision) => decision.verdict === 'revocation').map((decision) => decision.revokes_decision_id));
+            const standing = decisions.filter((decision) => decision.verdict !== 'revocation' && !revoked.has(decision.id)).at(-1);
+            if (standing && standing.verdict !== 'fail') {
+              const ts = now();
+              this.append(ts, t.id, 'human_return_covered', actor, { operation_manifest_id, requirement_id: requirement.id, decision_id: standing.id, operation: manifest.operation });
+              return this.getTicket(t.id);
+            }
+          }
+        }
+      }
       // Inside the transaction for the same reason the answer's fingerprint
       // check is (H-1053): the answer can land between the caller's read and
       // its write. That is exactly the shape this refuses — on H-2099 a single

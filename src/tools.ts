@@ -369,13 +369,14 @@ Workstream-level findings have no ticket_id and cannot be disposed.`,
           .describe('Omit when your recommendation is the answer. Include only for a genuinely open choice: 2 or 3, each {label, consequence}, answerable by saying a letter'),
         recommendation: z.string().describe('Always required: the action you recommend, or the specific thing you need from the human, in one sentence. You have context they lack'),
         if_unanswered: z.string().optional().describe('What happens if no answer comes — cost of delay, deadlines, what it blocks'),
+        operation_manifest_id: z.string().optional().describe('Exact immutable operation manifest. A standing trusted test_authority decision suppresses this escalation; absent, stale, revoked, or failed authority leaves the human gate intact.'),
         actor: actorSchema,
       }),
     },
     async ({ ticket_id, actor, ...q }) => {
       try {
         const t = store.returnToHuman(resolveActor(actor as Actor | undefined), local(ticket_id), q);
-        return ok({ ticket: compact(t), queued: 'awaiting_human' });
+        return ok({ ticket: compact(t), queued: t.status === 'awaiting_human' ? 'awaiting_human' : 'covered_by_standing_authority' });
       } catch (e) {
         return fail(e);
       }

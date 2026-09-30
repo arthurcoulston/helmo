@@ -109,7 +109,7 @@ export interface Question {
 
 /** What an asker may send: `options` omitted entirely when the recommendation
  *  stands on its own. The stored Question always carries the array. */
-export type QuestionInput = Omit<Question, 'options'> & { options?: Question['options'] };
+export type QuestionInput = Omit<Question, 'options'> & { options?: Question['options']; operation_manifest_id?: string };
 
 /** What one request asks the human to DO (R-42 I13). Arthur's complaint was
  *  that agents used the question path for two different things — "decide this"

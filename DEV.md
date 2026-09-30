@@ -88,6 +88,17 @@ orchestrator meetings and the read-only view. Product intent:
   A question in `awaiting_human` is not demoted this way even with an open
   blocker: answering it is how the operator clears the block, so it stays where
   he can act on it.
+  A caller that is about to return a concrete external operation may name an
+  immutable `operation_manifest_id`. An operation manifest is complete only
+  when it fixes target, recipient, tenant, data class, visibility, cost and
+  effect. If a trusted, unrevoked workflow decision with scope
+  `test_authority` stands on that exact manifest, Helmo records
+  `human_return_covered` and leaves the ticket open instead of spending a
+  human decision. Missing, changed, revoked or failed evidence follows the
+  ordinary `awaiting_human` path. The manifest is authority for the described
+  act only; it does not turn missing deployment or provider preparation into
+  a permission question.
+
   `needs_human` is that sitting's one line, not a flag (H-1761): it takes the
   string saying what the sitting is for and roughly what it costs him, stored as
   `sitting` and rendered as the card's ask; `false` clears both, and

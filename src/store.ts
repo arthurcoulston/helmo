@@ -253,7 +253,15 @@ export interface WorkflowDefinition { workflow_id: string; revision: string; sta
 export interface WorkflowActorRef { name: string; kind: ActorKind }
 export interface WorkflowManifest {
   id: string; attempt_id: string; kind: string; subjects: string[]; creators: WorkflowActorRef[];
-  operation?: { target: string; recipient: string; tenant: string; data_class: string; visibility: string; cost: string; effect: string };
+  operation?: {
+    target: string; recipient: string; tenant: string;
+    data_class: 'synthetic' | 'client' | 'other';
+    visibility: 'private' | 'public';
+    cost: 'none' | 'paid';
+    effect: 'non_destructive' | 'destructive';
+    is_test: boolean;
+    recipient_in_registry: boolean;
+  };
   supersedes_manifest_id?: string;
 }
 export interface WorkflowRequirement {
@@ -594,6 +602,7 @@ export class Store {
     if (manifest.kind === 'operation') {
       const fields = ['target', 'recipient', 'tenant', 'data_class', 'visibility', 'cost', 'effect'] as const;
       if (!manifest.operation || fields.some((field) => typeof manifest.operation![field] !== 'string' || !manifest.operation![field].trim() || manifest.operation![field].trim() !== manifest.operation![field])) throw new HelmoError(`Operation manifests require exact ${fields.join(', ')} values.`);
+      if (typeof manifest.operation.is_test !== 'boolean' || typeof manifest.operation.recipient_in_registry !== 'boolean') throw new HelmoError('Operation manifests require exact is_test and recipient_in_registry evidence.');
     } else if (manifest.operation) throw new HelmoError('Only operation manifests may carry operation fields.');
     if (!this.db.prepare('SELECT 1 FROM workflow_attempts WHERE id = ?').get(manifest.attempt_id)) throw new HelmoError(`Workflow attempt ${manifest.attempt_id} does not exist.`);
     if (manifest.supersedes_manifest_id) {
@@ -2441,7 +2450,14 @@ export class Store {
         const manifestRow = this.db.prepare('SELECT manifest FROM workflow_manifests WHERE id = ?').get(operation_manifest_id) as { manifest: string } | undefined;
         const manifest = manifestRow ? JSON.parse(manifestRow.manifest) as WorkflowManifest : undefined;
         const superseded = this.db.prepare("SELECT 1 FROM workflow_manifests WHERE json_extract(manifest, '$.supersedes_manifest_id') = ?").get(operation_manifest_id);
-        if (manifest?.kind === 'operation' && manifest.operation && !superseded) {
+        const coveredSyntheticTest = manifest?.operation
+          && manifest.operation.is_test === true
+          && manifest.operation.recipient_in_registry === true
+          && manifest.operation.data_class === 'synthetic'
+          && manifest.operation.visibility === 'private'
+          && manifest.operation.cost === 'none'
+          && manifest.operation.effect === 'non_destructive';
+        if (manifest?.kind === 'operation' && coveredSyntheticTest && !superseded) {
           const requirementRows = this.db.prepare("SELECT requirement FROM workflow_requirements WHERE json_extract(requirement, '$.subject_manifest_id') = ? ORDER BY id").all(operation_manifest_id) as { requirement: string }[];
           for (const requirementRow of requirementRows) {
             const requirement = JSON.parse(requirementRow.requirement) as WorkflowRequirement;

@@ -90,9 +90,12 @@ orchestrator meetings and the read-only view. Product intent:
   he can act on it.
   A caller that is about to return a concrete external operation may name an
   immutable `operation_manifest_id`. An operation manifest is complete only
-  when it fixes target, recipient, tenant, data class, visibility, cost and
-  effect. If a trusted, unrevoked workflow decision with scope
-  `test_authority` stands on that exact manifest, Helmo records
+  when it fixes target, recipient, tenant, data class, visibility, cost,
+  effect, test-tenant evidence and registry-recipient evidence. If the exact
+  operation is a verified test tenant and registry recipient using synthetic
+  data, private visibility, no cost and a non-destructive effect, and a
+  trusted, unrevoked workflow decision with scope `test_authority` stands on
+  that exact manifest, Helmo records
   `human_return_covered` and leaves the ticket open instead of spending a
   human decision. Missing, changed, revoked or failed evidence follows the
   ordinary `awaiting_human` path. The manifest is authority for the described

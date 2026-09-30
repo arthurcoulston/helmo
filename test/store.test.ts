@@ -93,7 +93,7 @@ describe('trusted scoped workflow decisions (H-430)', () => {
     s.addWorkflowDefinition({ workflow_id: 'field-test', revision: 'v1', stages: [{ id: 'exercise' }] });
     s.addWorkflowRun({ id: 'run-test', workflow_id: 'field-test', definition_revision: 'v1' });
     s.addWorkflowAttempt({ id: 'attempt-test', run_id: 'run-test', stage_id: 'exercise', ordinal: 1 });
-    const operation = { target: 'fictional-service', recipient: 'robot@example.test', tenant: 'sandbox-a', data_class: 'synthetic', visibility: 'private', cost: 'none', effect: 'delivery-record' };
+    const operation = { target: 'fictional-service', recipient: 'robot@example.test', tenant: 'sandbox-a', data_class: 'synthetic', visibility: 'private', cost: 'none', effect: 'non_destructive', is_test: true, recipient_in_registry: true } as const;
     s.addWorkflowManifest({ id: 'operation-a', attempt_id: 'attempt-test', kind: 'operation', subjects: ['fictional-service:sandbox-a'], creators: [builder], operation });
     s.addWorkflowRequirement({ id: 'test-role', workflow_id: 'field-test', definition_revision: 'v1', scope: 'test_authority', subject_manifest_id: 'operation-a', allowed_verdicts: ['pass', 'fail'], authorities: [reviewer], independence: 'different_from_manifest_creators' });
     s.recordWorkflowDecision({ id: 'authority-a', requirement_id: 'test-role', manifest_id: 'operation-a', verdict: 'pass', source: 'role:tester' });
@@ -121,11 +121,28 @@ describe('trusted scoped workflow decisions (H-430)', () => {
     s.addWorkflowRun({ id: 'run-test', workflow_id: 'field-test', definition_revision: 'v1' });
     s.addWorkflowAttempt({ id: 'attempt-test', run_id: 'run-test', stage_id: 'exercise', ordinal: 1 });
     expect(() => s.addWorkflowManifest({ id: 'partial', attempt_id: 'attempt-test', kind: 'operation', subjects: ['x'], creators: [builder], operation: { target: 'x' } as never })).toThrow(/recipient, tenant, data_class, visibility, cost, effect/);
-    s.addWorkflowManifest({ id: 'public-operation', attempt_id: 'attempt-test', kind: 'operation', subjects: ['public'], creators: [builder], operation: { target: 'site', recipient: 'public', tenant: 'client', data_class: 'client', visibility: 'public', cost: 'paid', effect: 'publication' } });
-    s.addWorkflowRequirement({ id: 'failed-check', workflow_id: 'field-test', definition_revision: 'v1', scope: 'test_authority', subject_manifest_id: 'public-operation', allowed_verdicts: ['pass', 'fail'], authorities: [reviewer], independence: 'different_from_manifest_creators' });
-    s.recordWorkflowDecision({ id: 'fail-public', requirement_id: 'failed-check', manifest_id: 'public-operation', verdict: 'fail', source: 'acceptance:failed' });
+    const base = { target: 'fictional-service', recipient: 'robot@example.test', tenant: 'sandbox-a', data_class: 'synthetic', visibility: 'private', cost: 'none', effect: 'non_destructive', is_test: true, recipient_in_registry: true } as const;
+    const unsafe = [
+      ['public-operation', { ...base, visibility: 'public' as const }],
+      ['paid-operation', { ...base, cost: 'paid' as const }],
+      ['client-data-operation', { ...base, data_class: 'client' as const }],
+      ['destructive-operation', { ...base, effect: 'destructive' as const }],
+      ['non-test-operation', { ...base, is_test: false }],
+      ['unregistered-operation', { ...base, recipient_in_registry: false }],
+    ] as const;
+    for (const [id, operation] of unsafe) {
+      s.addWorkflowManifest({ id, attempt_id: 'attempt-test', kind: 'operation', subjects: [id], creators: [builder], operation });
+      s.addWorkflowRequirement({ id: `authority-${id}`, workflow_id: 'field-test', definition_revision: 'v1', scope: 'test_authority', subject_manifest_id: id, allowed_verdicts: ['pass', 'fail'], authorities: [reviewer], independence: 'different_from_manifest_creators' });
+      s.recordWorkflowDecision({ id: `pass-${id}`, requirement_id: `authority-${id}`, manifest_id: id, verdict: 'pass', source: 'acceptance:passed' });
+      const ticket = create(s);
+      s.returnToHuman(builder, ticket.id, { situation: 'This operation is outside the synthetic test boundary.', question: 'Proceed?', recommendation: 'no', operation_manifest_id: id });
+      expect(s.getTicket(ticket.id).status).toBe('awaiting_human');
+    }
+    s.addWorkflowManifest({ id: 'failed-covered', attempt_id: 'attempt-test', kind: 'operation', subjects: ['failed-covered'], creators: [builder], operation: base });
+    s.addWorkflowRequirement({ id: 'failed-check', workflow_id: 'field-test', definition_revision: 'v1', scope: 'test_authority', subject_manifest_id: 'failed-covered', allowed_verdicts: ['pass', 'fail'], authorities: [reviewer], independence: 'different_from_manifest_creators' });
+    s.recordWorkflowDecision({ id: 'fail-covered', requirement_id: 'failed-check', manifest_id: 'failed-covered', verdict: 'fail', source: 'acceptance:failed' });
     const t = create(s);
-    s.returnToHuman(builder, t.id, { situation: 'This is public client data.', question: 'Publish?', recommendation: 'no', operation_manifest_id: 'public-operation' });
+    s.returnToHuman(builder, t.id, { situation: 'The synthetic test failed acceptance.', question: 'Proceed?', recommendation: 'no', operation_manifest_id: 'failed-covered' });
     expect(s.getTicket(t.id).status).toBe('awaiting_human');
   });
   function decisionStore(actor: Actor = reviewer) {

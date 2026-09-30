@@ -33,13 +33,16 @@ const SENTENCES = [
   "Evidence refs are immutable — repo@sha for a commit, an absolute path for a file — so a stranger can follow them months from now.",
 ];
 
-/** As long as the longest token the deployed record draws (128 characters, a
+/** As long as the longest token the deployed record draws (137 characters, a
  *  workspace path) — but a path is not the hard case: a browser may break
  *  after each slash in it. DIGEST is the hard case, a 64-character run with
  *  no break opportunity anywhere in it, which is what the record's commit
- *  refs actually look like and what decides whether a row fits a phone. */
+ *  refs actually look like and what decides whether a row fits a phone.
+ *
+ *  Invented, not copied: this file ships publicly, so the path is a synthetic
+ *  one of the same length and shape as the real evidence path it stands for. */
 const LONG_REF =
-  '/Users/arthurcoulston/projects/gp-crew/agents/builder/workspace/h202-2026-09-29/snapshots/served-record-at-capacity-warm-second-fetch.log';
+  '/Users/operator/projects/example-crew/agents/builder/workspace/h202-2026-09-29/snapshots/served-records-at-capacity-warm-second-fetch.log';
 const DIGEST = (i: number) => `${(i * 2654435761) >>> 0}`.padStart(10, '9').repeat(7).slice(0, 64);
 
 /** Deterministic: the same seed every run, so a timing or byte number moving

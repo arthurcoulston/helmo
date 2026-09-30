@@ -190,7 +190,12 @@ orchestrator meetings and the read-only view. Product intent:
   nobody is bound to was ready to no one (fourteen clean tickets sat for days,
   H-1024). Seats do not bypass self-triage — the filer's own ticket still waits
   for another actor's touch. Hygiene reports `unseated_pool` once per stream
-  that has unassigned open work and no seat. `seat: ''` clears it. Templates
+  that has unassigned open work and no seat, counting only work a seat could
+  actually run: a pool entirely held for capacity or gated to a future date is
+  withheld from every loop for a stronger reason, and asking for a routing
+  decision there is a demand on the operator he has already answered (H-2556).
+  Both gates are self-clearing, so the finding returns on its own. `seat: ''`
+  clears it. Templates
   themselves stay unassigned (the H-171 stall was an inherited reservation to
   a loopless seat; a seat is a deliberate binding to a looped one).
   Human direction relayed by an orchestrator is judgment even when the relay

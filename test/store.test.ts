@@ -2386,6 +2386,12 @@ describe('human sitting gate migration (H-1028)', () => {
 });
 
 describe('workstream seats (H-1026)', () => {
+  const park = {
+    reason: 'R-25 is parked while Good Plumb is the ship-next focus.',
+    provenance: "Arthur's 2026-09-22 desk-session direction",
+    reconsider_when: 'Release when R-25 unparks.',
+  };
+  const pools = (s: Store) => s.hygiene().filter((f) => f.check === 'unseated_pool');
   it('an unassigned filing in a seated workstream is reserved to the seat at creation', () => {
     const s = freshStore();
     expect(() => s.setWorkstream(builder, { name: 'rev-dev', seat: 'builder-loop' })).toThrow(/operator steering/);
@@ -2468,10 +2474,48 @@ describe('workstream seats (H-1026)', () => {
     create(s, { workstream: 'rev-dev' });
     create(s, { workstream: 'rev-dev', assignee: 'reviewer-loop' }); // reserved: not pool
     create(s, { workstream: 'rev-dev', type: 'ops', schedule: 'every 30m' }); // standing: not pool
-    const pools = () => s.hygiene().filter((f) => f.check === 'unseated_pool');
-    expect(pools()).toEqual([expect.objectContaining({ workstream: 'rev-dev', detail: expect.stringMatching(/^2 unassigned open tickets/) })]);
+    expect(pools(s)).toEqual([expect.objectContaining({ workstream: 'rev-dev', detail: expect.stringMatching(/^2 unassigned open tickets/) })]);
     s.setWorkstream(orch, { name: 'rev-dev', seat: 'builder-loop' });
-    expect(pools()).toEqual([]);
+    expect(pools(s)).toEqual([]);
+  });
+
+  // H-2556: a seat cannot make held work run, so asking for one is a decision
+  // the human has already made arriving as a fresh demand — Arthur parked R-25
+  // on 2026-09-23 and was asked a week later to seat 'voice' for its only
+  // ticket. A stream is only unseated-and-stranded for work a loop could start.
+  it('counts only work a seat could run: a held or date-gated pool is not stranded', () => {
+    const s = freshStore();
+    const held = create(s, { workstream: 'voice' });
+    s.updateTicket(orch, { ticket_id: held.id, note: 'parking the white paper with the rest of R-25', capacity_hold: park });
+    create(s, { workstream: 'canon', not_before: new Date(Date.now() + 86_400_000).toISOString() });
+    expect(pools(s)).toEqual([]);
+
+    // Same unseated stream, one ticket nothing is withholding: the seat is
+    // genuinely missing now, and the count names only that ticket.
+    create(s, { workstream: 'voice' });
+    expect(pools(s)).toEqual([expect.objectContaining({ workstream: 'voice', detail: expect.stringMatching(/^1 unassigned open ticket in 'voice'/) })]);
+  });
+
+  it('a live bounded release makes the held pool stranded again; expiry withdraws it', () => {
+    const s = freshStore();
+    const t = create(s, { workstream: 'voice' });
+    s.updateTicket(orch, { ticket_id: t.id, note: 'parking the white paper', capacity_hold: park });
+    expect(pools(s)).toEqual([]);
+
+    const release = { batch_id: 'voice-2026-09-30', until: '2099-01-01T00:00:00Z', stop_conditions: 'Stop new starts on a changed posture.', shared_reserve: 'One operator session clear.' };
+    s.updateTicket(orch, { ticket_id: t.id, note: 'opening a bounded window on the batch', capacity_hold: { ...park, release } });
+    expect(pools(s)).toEqual([expect.objectContaining({ workstream: 'voice' })]);
+
+    s.updateTicket(orch, { ticket_id: t.id, note: 'recording the same batch past its expiry', capacity_hold: { ...park, release: { ...release, until: '2000-01-01T00:00:00Z' } } });
+    expect(pools(s)).toEqual([]);
+  });
+
+  it('a date gate clears itself: the finding returns once the gate opens', () => {
+    const s = freshStore();
+    const gated = create(s, { workstream: 'voice', not_before: '2099-01-01T00:00:00Z' });
+    expect(pools(s)).toEqual([]);
+    s.updateTicket(orch, { ticket_id: gated.id, note: 'the data landed early', not_before: '' });
+    expect(pools(s)).toEqual([expect.objectContaining({ workstream: 'voice' })]);
   });
 });
 

@@ -27,6 +27,16 @@ const ACCOUNTED_WORKSTREAMS = new Set(['security']);
 // where free prose is one more steering field nobody owns (the H-1186 lesson).
 const ACCOUNTING_LABELS = new Set(['acct:direction', 'acct:security', 'acct:estate']);
 
+// The two "is this withheld from the executable set?" clauses, written once.
+// EXECUTABLE_HOLD mirrors capacityReleased() exactly — no hold at all, or a
+// bounded release still running — and EXECUTABLE_DATE mirrors the H-732 date
+// gate. Each takes one ISO instant as its next parameter. Sharing the spelling
+// is the H-2321 lesson: when two queries answer "can this start?" in their own
+// words, the one nobody obeys drifts, and here the drift reached Arthur as a
+// demand to route work he had deliberately parked (H-2556).
+const EXECUTABLE_HOLD = "(capacity_hold IS NULL OR json_extract(capacity_hold, '$.release.until') > ?)";
+const EXECUTABLE_DATE = '(not_before IS NULL OR not_before <= ?)';
+
 function refuseUnmarkedDeskClaim(actor: Actor, needsHuman: boolean): void {
   if (actor.kind !== 'agent' || actor.session || needsHuman) return;
   throw new HelmoError(
@@ -979,9 +989,9 @@ export class Store {
       // withheld rather than offered. Shouting it in the body was the only
       // tool available, and it cost every reader a full ticket read to learn
       // it must not act — H-718 was read and released seven times in one day.
-      clauses.push('(not_before IS NULL OR not_before <= ?)');
+      clauses.push(EXECUTABLE_DATE);
       params.push(now());
-      clauses.push("(capacity_hold IS NULL OR json_extract(capacity_hold, '$.release.until') > ?)");
+      clauses.push(EXECUTABLE_HOLD);
       params.push(now());
       if (routedReady) {
         clauses.push('((workstream = ? AND assignee IS NULL) OR assignee = ?)');
@@ -1067,7 +1077,11 @@ export class Store {
     // the more useful of the two answers, and one id in two lists just makes
     // the reader check both for the same ticket.
     const rows = this.db
-      .prepare("SELECT id FROM tickets WHERE status = 'open' AND schedule IS NULL AND needs_human = 0 AND (not_before IS NULL OR not_before <= ?) AND (capacity_hold IS NULL OR json_extract(capacity_hold, '$.release.until') > ?) AND (assignee IS NULL OR assignee = ?) ORDER BY priority ASC, created_at ASC")
+      .prepare(
+        `SELECT id FROM tickets WHERE status = 'open' AND schedule IS NULL AND needs_human = 0
+           AND ${EXECUTABLE_DATE} AND ${EXECUTABLE_HOLD} AND (assignee IS NULL OR assignee = ?)
+         ORDER BY priority ASC, created_at ASC`,
+      )
       .all(now(), now(), caller) as { id: string }[];
     return rows.map((r) => r.id).filter((id) => !this.isBlocked(id) && this.selfFiledUntouched(id, caller));
   }
@@ -1108,7 +1122,7 @@ export class Store {
     const rows = this.db.prepare(
       `SELECT id FROM tickets
        WHERE status = 'open' AND schedule IS NULL AND needs_human = 1
-         AND (capacity_hold IS NULL OR json_extract(capacity_hold, '$.release.until') > ?)
+         AND ${EXECUTABLE_HOLD}
          AND (assignee IS NULL OR assignee = ?)
        ORDER BY priority ASC, created_at ASC`,
     ).all(now(), caller) as { id: string }[];
@@ -1160,8 +1174,8 @@ export class Store {
       .prepare(
         `SELECT id, assignee, created_at FROM tickets
          WHERE status = 'open' AND schedule IS NULL AND needs_human = 0
-           AND (not_before IS NULL OR not_before <= ?)
-           AND (capacity_hold IS NULL OR json_extract(capacity_hold, '$.release.until') > ?)
+           AND ${EXECUTABLE_DATE}
+           AND ${EXECUTABLE_HOLD}
          ORDER BY priority ASC, created_at ASC`,
       )
       .all(nowTs.toISOString(), nowTs.toISOString()) as { id: string; assignee: string | null; created_at: string }[]) {
@@ -1289,14 +1303,22 @@ export class Store {
     // workstream with no seat is ready to no loop — rev loops draw only from
     // their bound stream's pool and tickets in their name. One finding per
     // stream: the fix is a seat, not a disposition per ticket.
+    // Only work a seat could actually run is counted (H-2556): a stream whose
+    // pool is entirely held for capacity, or gated to a future date, is not
+    // stranded for want of routing, and asking Arthur to seat it is a decision
+    // he cannot usefully make — R-25's parked white paper asked him to seat
+    // 'voice' a week after he put it on ice. Both gates are self-clearing, so
+    // the finding returns of its own accord when the work becomes runnable.
     for (const r of this.db
       .prepare(
         `SELECT t.workstream, COUNT(*) AS n FROM tickets t
          WHERE t.status = 'open' AND t.assignee IS NULL AND t.schedule IS NULL AND t.needs_human = 0
+           AND ${EXECUTABLE_DATE}
+           AND ${EXECUTABLE_HOLD}
            AND NOT EXISTS (SELECT 1 FROM workstreams w WHERE w.name = t.workstream AND w.seat IS NOT NULL)
          GROUP BY t.workstream`,
       )
-      .all() as { workstream: string; n: number }[]) {
+      .all(nowTs.toISOString(), nowTs.toISOString()) as { workstream: string; n: number }[]) {
       findings.push({
         check: 'unseated_pool',
         workstream: r.workstream,
@@ -1319,8 +1341,8 @@ export class Store {
         `SELECT t.id, t.workstream, t.labels FROM tickets t
          WHERE t.status = 'open' AND t.schedule IS NULL AND t.needs_human = 0
            AND (t.project IS NULL OR trim(t.project) = '')
-           AND (t.not_before IS NULL OR t.not_before <= ?)
-           AND (t.capacity_hold IS NULL OR json_extract(t.capacity_hold, '$.release.until') > ?)
+           AND ${EXECUTABLE_DATE}
+           AND ${EXECUTABLE_HOLD}
            AND NOT EXISTS (SELECT 1 FROM events e WHERE e.ticket_id = t.id AND e.event_type = 'created'
                              AND json_extract(e.payload, '$.spawned_from') IS NOT NULL)
          ORDER BY priority ASC, created_at ASC`,

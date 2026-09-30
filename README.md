@@ -27,6 +27,14 @@ For an immutable multi-product installation, set `INSTALLATION_RELEASE` to
 its `ADOPTED.json`. Every Helmo entry point verifies the selected
 Rev/Helmo/Roadmap commit set and refuses code from another checkout.
 
+Running more than one installation, or changing which release one runs? Helmo's
+three entry points — `helmo-cli`, `helmo-mcp` and `helmo-view` — are each a path
+something in your setup names, and a running view or MCP server keeps the code
+it loaded until it restarts. The checklist of every path to review, and the
+surfaces that tell you what is actually running, is
+[ENTRY-POINTS.md](https://github.com/arthurcoulston/rev/blob/main/ENTRY-POINTS.md)
+in the Rev repo — it covers the Helmo family standing without Rev as well.
+
 Manual setup, if you prefer:
 
 ```

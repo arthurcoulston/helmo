@@ -111,6 +111,55 @@ export interface Question {
  *  stands on its own. The stored Question always carries the array. */
 export type QuestionInput = Omit<Question, 'options'> & { options?: Question['options'] };
 
+/** What one request asks the human to DO (R-42 I13). Arthur's complaint was
+ *  that agents used the question path for two different things — "decide this"
+ *  and "please go and do this" — and he could not tell which, so an action
+ *  came back through Ratify as though it were permission.
+ *
+ *  `why_human` is the field that keeps them apart. If the honest answer is
+ *  "an agent could do this, I just want it approved first", there is no action
+ *  to request and the asker owes a decision instead. Requiring the reason is
+ *  the only place that distinction cannot be skipped. */
+export interface ActionRequest {
+  situation: string;
+  /** What the human does, concretely enough to act on without opening the
+   *  ticket, and roughly what it costs them. */
+  action: string;
+  /** Why this needs the human's own hands rather than an agent's. */
+  why_human: string;
+  if_unanswered?: string;
+}
+
+/** The stored pending request, discriminated. A request written before the
+ *  kind existed carries no `kind` and reads as a decision, which is what it
+ *  was: R-42's migration rule is that no new meaning is inferred from an old
+ *  record, and every kind is explicit from its first write. */
+export type HumanRequest =
+  | ({ kind: 'decision' } & Question)
+  | ({ kind: 'action' } & ActionRequest);
+
+export const REQUEST_KINDS = ['decision', 'action'] as const;
+export type RequestKind = (typeof REQUEST_KINDS)[number];
+
+/** The human reporting that they did it. Deliberately NOT an `Answer`: there
+ *  is no `resolution` and no `chosen_option`, so this cannot close a ticket
+ *  and cannot record a choice. A completed action is not permission, and it is
+ *  not the agent's later verification that the action worked; those are three
+ *  separate records and the shape is what holds them apart. */
+export interface ActionReport {
+  /** What they actually did, in their own words. */
+  did: string;
+}
+
+/** One recorded action report, as the sweep and any auditor read it back. */
+export interface ActedEvent {
+  seq: number;
+  ts: string;
+  ticket_id: string;
+  actor: Pick<Actor, 'name' | 'kind'> & { session?: string };
+  did: string;
+}
+
 export interface Answer {
   answer: string;
   chosen_option?: string;
@@ -161,13 +210,18 @@ export interface Ticket {
   confidence: Confidence | null;
   uncertainty_note: string | null;
   blast_radius: BlastRadius;
+  /** The pending DECISION, unchanged in type and meaning. An action-pending
+   *  ticket leaves this null, so a reader that knows only about questions
+   *  cannot mistake an action for one. */
   question: Question | null;
+  action: ActionRequest | null; // the pending ACTION for the human (R-42 I13)
   tokens_total: number;
   cost_usd_total: number;
   schedule: string | null; // set = recurring template (spawns instances, never ready itself)
   not_before: string | null; // ISO instant before which the ticket is withheld from ready queues (H-732)
   needs_human: boolean; // open work requiring a sitting with the operator; withheld from agent queues
   sitting: string | null; // what that sitting needs from the operator, in one line (H-1761)
+  sitting_with: string | null; // the agent to sit with; a prose line cannot be asked which one (R-42 I13)
   capacity_hold: CapacityHold | null; // deliberate spending hold; visible, never ready or directly claimable
   created_at: string;
   updated_at: string;
@@ -194,7 +248,7 @@ export interface Dep {
   type: DepType;
 }
 
-export type EventType = 'created' | 'updated' | 'returned' | 'answered' | 'linked' | 'unlinked' | 'spend' | 'workstream_set' | 'workstream_renamed' | 'hygiene_disposed' | 'notice_set' | 'product_completed' | 'acceptance_verdict';
+export type EventType = 'created' | 'updated' | 'returned' | 'answered' | 'linked' | 'unlinked' | 'spend' | 'workstream_set' | 'workstream_renamed' | 'hygiene_disposed' | 'notice_set' | 'product_completed' | 'acceptance_verdict' | 'acted';
 
 /** The standing notice: a one-line current priority with its provenance,
  *  riding along on every ticket-queue response the way workstream steering

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { AVATAR_MARKS } from './estate-avatars.generated.js';
-import { ActorKind, Question, Ticket } from './types.js';
+import { ActionRequest, ActorKind, HumanRequest, Question, Ticket } from './types.js';
 
 const MARKS = new Set<string>(AVATAR_MARKS);
 
@@ -25,6 +25,21 @@ export function questionFingerprint(q: Question): string {
     (q.options ?? []).map((o) => [o.label, o.consequence]),
   ]);
   return createHash('sha256').update(canonical).digest('hex').slice(0, 16);
+}
+
+/** The same binding for an action request. Kept separate from
+ *  `questionFingerprint` rather than generalised into it, because that
+ *  function's output IS the consent token on every card currently drawn
+ *  (H-1053) and a shared canonical form would change it for decisions. */
+export function actionFingerprint(a: ActionRequest): string {
+  const canonical = JSON.stringify(['action', a.situation, a.action, a.why_human, a.if_unanswered ?? '']);
+  return createHash('sha256').update(canonical).digest('hex').slice(0, 16);
+}
+
+/** The fingerprint of whichever kind of request is pending. A decision's is
+ *  byte-identical to what `questionFingerprint` has always returned. */
+export function requestFingerprint(r: HumanRequest): string {
+  return r.kind === 'action' ? actionFingerprint(r) : questionFingerprint(r);
 }
 
 export interface PresentedAsk {

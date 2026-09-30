@@ -1,11 +1,11 @@
 import Database from 'better-sqlite3';
 import { projectAcceptance } from './acceptance.js';
 import type { Installation } from './install.js';
-import { questionFingerprint } from './presentation.js';
+import { actionFingerprint, questionFingerprint } from './presentation.js';
 import { parseSchedule } from './schedule.js';
 import {
-  Actor, ActorKind, ACTOR_KINDS, Answer, AnswerEvent, BlastRadius, BLAST_RADII, CapacityHold, Confidence, Dep, DepType, Evidence,
-  HelmoError, HelmoEvent, Notice, ProductAcceptance, ProductArtifact, Question, QuestionInput, Status, Ticket, TicketProgress, VerdictEvent, Workstream, WorkstreamInfo,
+  ActionReport, ActionRequest, Actor, ActorKind, ACTOR_KINDS, Answer, AnswerEvent, BlastRadius, BLAST_RADII, CapacityHold, Confidence, Dep, DepType, Evidence,
+  HelmoError, HelmoEvent, HumanRequest, Notice, ProductAcceptance, ProductArtifact, Question, QuestionInput, Status, Ticket, TicketProgress, VerdictEvent, Workstream, WorkstreamInfo,
 } from './types.js';
 
 const STALE_CLAIM_HOURS = 24;
@@ -53,6 +53,7 @@ export interface CreateInput {
   schedule?: string; // makes this a recurring template
   not_before?: string; // withhold from ready queues until this date/instant
   needs_human?: string | false; // the one line the sitting needs; never agent-ready
+  sitting_with?: string; // the agent to sit with
   spawned_from?: string; // internal: set by materializeDue on instances
   due?: string; // internal: the slot this instance was spawned for
 }
@@ -79,6 +80,7 @@ export interface UpdateInput {
   project?: string | null; // '' clears the tag
   not_before?: string | null; // '' clears the gate
   needs_human?: string | false; // the one line the sitting needs, or false to clear
+  sitting_with?: string; // the agent to sit with; '' clears it
   capacity_hold?: CapacityHold | null; // null releases the deliberate hold
 }
 
@@ -144,6 +146,7 @@ CREATE TABLE IF NOT EXISTS tickets (
   not_before     TEXT,
   needs_human    INTEGER NOT NULL DEFAULT 0,
   sitting        TEXT,
+  sitting_with   TEXT,
   capacity_hold  TEXT,
   created_at     TEXT NOT NULL,
   updated_at     TEXT NOT NULL,
@@ -212,21 +215,35 @@ function parseNotBefore(value: string): string {
 // `true` marked the ticket and told the dashboard nothing, so it drew a row
 // that read like backlog and Arthur skipped five of them. The line is what the
 // card says; requiring it here is the only place it cannot be forgotten.
-function parseSitting(value: string | boolean | undefined): { needs_human: boolean; sitting: string | null } | undefined {
-  if (value === undefined) return undefined;
-  if (value === false) return { needs_human: false, sitting: null };
+//
+// The line asks what the SITTING needs — the two of you in a room — and not
+// "what the human does", which is what it used to ask (R-42 I13). That older
+// wording is an ACTION's line, and asking for it here is why H-2164 records a
+// sitting line reading "no separate sitting is needed": the field was the only
+// way past `refuseUnmarkedDeskClaim`, so an agent asserted a request it was
+// denying in the same breath. Actions have their own path now.
+function parseSitting(
+  value: string | boolean | undefined,
+  withAgent: string | undefined,
+): { needs_human: boolean; sitting: string | null; sitting_with: string | null } | undefined {
+  const agent = withAgent?.trim();
+  if (value === undefined) {
+    if (withAgent === undefined) return undefined;
+    throw new HelmoError('sitting_with names the agent to sit with, so it only means something alongside needs_human. Mark the sitting in the same call.');
+  }
+  if (value === false) return { needs_human: false, sitting: null, sitting_with: null };
   if (value === true) {
     throw new HelmoError(
-      'needs_human takes the one line the sitting needs, not `true`. Say what the human does, concretely enough to act on without opening the ticket — e.g. "Two clicks in the Cloudflare dashboard: add an Email Routing rule for plumb.arthurcoulston.com". Pass false to clear the marker.',
+      'needs_human takes the one line the sitting needs, not `true`. Say what the sitting is for, concretely enough to decide whether to pick it up without opening the ticket — e.g. "Twenty minutes going through the three shortlisted vendors and picking one". Pass false to clear the marker.',
     );
   }
   const line = value.trim();
   if (line.length < 20 || !/\s/.test(line)) {
     throw new HelmoError(
-      `needs_human "${line}" does not say what the sitting needs. Write the line the human reads on the dashboard: what he does, and roughly what it costs him.`,
+      `needs_human "${line}" does not say what the sitting needs. Write the line the human reads on the dashboard: what the sitting is for, and roughly what it costs him.`,
     );
   }
-  return { needs_human: true, sitting: line };
+  return { needs_human: true, sitting: line, sitting_with: agent || null };
 }
 
 function validateActor(actor: Actor): void {
@@ -347,6 +364,14 @@ export class Store {
     // dashboard says so rather than guessing.
     try {
       this.db.exec('ALTER TABLE tickets ADD COLUMN sitting TEXT');
+    } catch {
+      /* column already exists */
+    }
+    // Additive migration for the agent a sitting is with (R-42 I13). Rows
+    // marked before it exists keep a null, and the dashboard says it does not
+    // know rather than naming a seat nobody chose.
+    try {
+      this.db.exec('ALTER TABLE tickets ADD COLUMN sitting_with TEXT');
     } catch {
       /* column already exists */
     }
@@ -473,7 +498,11 @@ export class Store {
     let pending: string | null = null;
     for (const r of rows) {
       if (r.event_type === 'returned') {
-        pending = questionFingerprint(JSON.parse(r.payload) as Question);
+        const req = JSON.parse(r.payload) as HumanRequest;
+        // The mirror of the clear in `actedRequests`, and unreachable for the
+        // mirror reason: `answerTicket` refuses a pending action, so an action
+        // return is never followed by an `answered`.
+        pending = req.kind === 'action' ? null : questionFingerprint(req as Question);
       } else if (pending) {
         answered.set(pending, {
           answer: JSON.parse(r.payload) as Answer,
@@ -793,11 +822,13 @@ export class Store {
       findings.push({ check: 'phantom_block', ticket_id: r.id, detail: `unblocked ${age(r.freed)}h ago (${r.targets} closed) but untouched since` });
     }
 
-    // Aging questions.
+    // Aging questions — and aging actions, which wait in the same queue and
+    // are reported as what they are rather than as questions.
     for (const r of this.db
-      .prepare("SELECT id, updated_at FROM tickets WHERE status = 'awaiting_human' AND updated_at < ?")
-      .all(hoursAgo(AGING_QUESTION_HOURS)) as { id: string; updated_at: string }[]) {
-      findings.push({ check: 'aging_question', ticket_id: r.id, detail: `question waiting ${Math.floor(age(r.updated_at) / 24)}d` });
+      .prepare("SELECT id, updated_at, question FROM tickets WHERE status = 'awaiting_human' AND updated_at < ?")
+      .all(hoursAgo(AGING_QUESTION_HOURS)) as { id: string; updated_at: string; question: string | null }[]) {
+      const kind = r.question && (JSON.parse(r.question) as HumanRequest).kind === 'action' ? 'action' : 'question';
+      findings.push({ check: 'aging_question', ticket_id: r.id, detail: `${kind} waiting ${Math.floor(age(r.updated_at) / 24)}d` });
     }
 
     // Spend anomalies: cost far above the workstream norm (H-19 made cost real).
@@ -1561,7 +1592,7 @@ export class Store {
       if (input.status === 'in_progress') throw new HelmoError('A recurring template is standing work — it cannot be in_progress; its instances are.');
     }
     if (input.not_before) input = { ...input, not_before: parseNotBefore(input.not_before) };
-    const sitting = parseSitting(input.needs_human);
+    const sitting = parseSitting(input.needs_human, input.sitting_with);
     const status = input.status ?? 'open';
     if (status === 'in_progress') refuseUnmarkedDeskClaim(actor, Boolean(sitting?.needs_human));
     if (status === 'in_progress' && !input.assignee) input = { ...input, assignee: actor.name };
@@ -1593,7 +1624,7 @@ export class Store {
       if (input.project) payload['project'] = input.project;
       if (input.schedule) payload['schedule'] = input.schedule;
       if (input.not_before) payload['not_before'] = input.not_before;
-      if (sitting?.needs_human) { payload['needs_human'] = true; payload['sitting'] = sitting.sitting; }
+      if (sitting?.needs_human) { payload['needs_human'] = true; payload['sitting'] = sitting.sitting; payload['sitting_with'] = sitting.sitting_with; }
       if (input.spawned_from) { payload['spawned_from'] = input.spawned_from; payload['due'] = input.due; }
       this.append(ts, id, 'created', actor, payload);
       this.applyCreated(ts, payload);
@@ -1701,6 +1732,11 @@ export class Store {
 
     // status transitions
     if (input.status) {
+      if (t.status === 'awaiting_human' && t.action) {
+        throw new HelmoError(
+          `${t.id} is awaiting_human — it is asking the human to DO something, not to decide it: "${t.action.action}". Its status moves when the action is reported, and helmo_report_action is how you record it. IF THEY HAVE DONE IT — at the desk, in conversation, anywhere — record it now with helmo_report_action, saying what they actually did; that resumes the work and is not permission for anything. If they have NOT done it, leave it: you may still add notes and evidence.`,
+        );
+      }
       if (t.status === 'awaiting_human') {
         throw new HelmoError(
           `${t.id} is awaiting_human — its status moves when the human's answer is recorded, and helmo_answer_ticket is how you record it. IF THE HUMAN HAS ANSWERED — in a meeting, at the desk, anywhere — relay it now with helmo_answer_ticket (resolution 'done' closes it, 'resume' reopens it for whoever takes it next); that is a normal thing for any agent to do, not a role you need. Quote their reasoning, not just the choice. If they have NOT answered, leave it: you may still add notes and evidence.`,
@@ -1799,10 +1835,11 @@ export class Store {
     // The marker and its line are one fact, so they move together (H-1761):
     // a sitting can never be marked without saying what it needs, and
     // clearing it takes the line away with it.
-    const sitting = parseSitting(input.needs_human);
+    const sitting = parseSitting(input.needs_human, input.sitting_with);
     if (sitting) {
       if (sitting.needs_human !== t.needs_human) diffs['needs_human'] = { from: t.needs_human, to: sitting.needs_human };
       if (sitting.sitting !== t.sitting) diffs['sitting'] = { from: t.sitting, to: sitting.sitting };
+      if (sitting.sitting_with !== t.sitting_with) diffs['sitting_with'] = { from: t.sitting_with, to: sitting.sitting_with };
     }
     // Moving genuinely unassigned work into a seated stream is another way it
     // can enter that pool. Keep the same ownership invariant at this door.
@@ -1963,7 +2000,9 @@ export class Store {
     }
     rejectSwallowedMarkup({ situation: q.situation, question: q.question, recommendation: q.recommendation, if_unanswered: q.if_unanswered });
     // Normalised on the way in: every reader downstream sees an array.
-    const stored: Question = { ...q, options };
+    // The kind is explicit from the first write; a stored request without
+    // one is a decision written before kinds existed (R-42 I13).
+    const stored: HumanRequest = { kind: 'decision', ...q, options };
     return this.db.transaction(() => {
       // Inside the transaction for the same reason the answer's fingerprint
       // check is (H-1053): the answer can land between the caller's read and
@@ -2000,6 +2039,14 @@ export class Store {
     if (t.status !== 'awaiting_human') {
       throw new HelmoError(`${t.id} is ${t.status}, not awaiting_human — there is no pending question to answer.`);
     }
+    // The whole point of separating the kinds (R-42 I13): an action is not
+    // answered, it is done. Letting this through would write question = NULL
+    // and silently discard the action request.
+    if (t.action) {
+      throw new HelmoError(
+        `${t.id} is asking the human to DO something, not to decide it: "${t.action.action}". There is no answer to record. When they have done it, record that with helmo_report_action; a completed action is not permission and does not close the ticket.`,
+      );
+    }
     if (!a.answer?.trim()) throw new HelmoError('answer is required: the decision plus the human\'s reasoning and any new constraints.');
     rejectSwallowedMarkup({ answer: a.answer });
     const resolution = a.resolution ?? 'resume';
@@ -2022,6 +2069,123 @@ export class Store {
       }
       return this.getTicket(t.id);
     }).immediate();
+  }
+
+  /** Ask the human to DO something (R-42 I13). The same axis as a question —
+   *  `awaiting_human`, claim released, nobody working it — because that is what
+   *  a pending request is. What differs is the response: an action comes back
+   *  through `reportAction`, never through an answer, so a completed action can
+   *  never be recorded as permission.
+   *
+   *  `why_human` is required. Arthur's complaint was not that agents asked him
+   *  to do things, it was that he could not tell "please do this" from "may I
+   *  do this"; an asker who cannot say why their own hands will not serve owes
+   *  a decision instead. */
+  requestAction(actor: Actor, ticketId: string, r: ActionRequest): Ticket {
+    validateActor(actor);
+    const t = this.getTicket(ticketId);
+    if (t.status !== 'open' && t.status !== 'in_progress') {
+      throw new HelmoError(`${t.id} is ${t.status}; only open or in_progress tickets can be handed an action for the human.`);
+    }
+    if (!r.situation?.trim()) {
+      throw new HelmoError('situation is required: what you were doing and where it stands, for someone who has not read the ticket.');
+    }
+    if (!r.action?.trim()) {
+      throw new HelmoError('action is required: what the human does, concretely enough to act on without opening the ticket, and roughly what it costs them.');
+    }
+    if (!r.why_human?.trim()) {
+      throw new HelmoError(
+        'why_human is required: say why this needs the human\'s own hands rather than yours. If an agent could do it and you only want it approved first, this is a decision, not an action — return it with helmo_return_to_human and let them answer it.',
+      );
+    }
+    rejectSwallowedMarkup({ situation: r.situation, action: r.action, why_human: r.why_human, if_unanswered: r.if_unanswered });
+    const stored: { kind: 'action' } & ActionRequest = { kind: 'action', ...r };
+    return this.db.transaction(() => {
+      // The same guard the re-ask has, for the same reason (H-2126): a session
+      // that did not see the report land would otherwise put a job the human
+      // has already done back on their dashboard.
+      const already = this.actedRequests(t.id).get(actionFingerprint(stored));
+      if (already) {
+        const said = already.report.did.replace(/\s+/g, ' ').trim();
+        throw new HelmoError(
+          `${t.id} has already had this exact action reported done — ${already.by} recorded it at ${already.at}: "${said.length > 200 ? `${said.slice(0, 200)}…` : said}". Read it with helmo_get_ticket and act on it. If something about it did not work, say what: an action that accounts for what they already did and names what is still missing.`,
+        );
+      }
+      const ts = now();
+      this.append(ts, t.id, 'returned', actor, stored as unknown as Record<string, unknown>);
+      this.db
+        .prepare("UPDATE tickets SET status = 'awaiting_human', assignee = NULL, question = ?, updated_at = ? WHERE id = ?")
+        .run(JSON.stringify(stored), ts, t.id);
+      return this.getTicket(t.id);
+    }).immediate();
+  }
+
+  /** The human reporting that they did it. This resumes the work and does
+   *  nothing else: there is no resolution to pass and no option to choose, so
+   *  it cannot close a ticket, cannot grant anything, and is not the agent's
+   *  later verification that the action worked. Those are three separate
+   *  records, and this signature is what keeps them from collapsing into one.
+   *
+   *  `expectRequest` is the fingerprint of the request the reporter was looking
+   *  at, checked inside the write transaction for the same reason the answer's
+   *  is (H-1053): consent belongs to the request it was given for, not to the
+   *  ticket id. */
+  reportAction(actor: Actor, ticketId: string, report: ActionReport, expectRequest?: string): Ticket {
+    validateActor(actor);
+    const t = this.getTicket(ticketId);
+    if (t.status !== 'awaiting_human') {
+      throw new HelmoError(`${t.id} is ${t.status}, not awaiting_human — there is no pending action to report.`);
+    }
+    if (t.question) {
+      throw new HelmoError(
+        `${t.id} is asking the human to DECIDE something, not to do it: "${t.question.question}". Record what they said with helmo_answer_ticket, quoting their reasoning.`,
+      );
+    }
+    if (!report.did?.trim()) {
+      throw new HelmoError('did is required: what the human actually did, in their own words. "Done" tells the next session nothing about what state the world is in now.');
+    }
+    rejectSwallowedMarkup({ did: report.did });
+    return this.db.transaction(() => {
+      const ts = now();
+      if (expectRequest !== undefined) {
+        const cur = this.getTicket(t.id);
+        if (cur.status !== 'awaiting_human' || !cur.action || actionFingerprint(cur.action) !== expectRequest) {
+          throw new HelmoError(`${t.id} is no longer asking for what was on screen — reload and read the current request before reporting it done.`);
+        }
+      }
+      const assignee = this.workstreamSeat(t.workstream);
+      this.append(ts, t.id, 'acted', actor, { did: report.did, assignee } as unknown as Record<string, unknown>);
+      this.db.prepare("UPDATE tickets SET status = 'open', assignee = ?, question = NULL, updated_at = ? WHERE id = ?").run(assignee, ts, t.id);
+      return this.getTicket(t.id);
+    }).immediate();
+  }
+
+  /** Actions on this ticket that have been reported done, by fingerprint. The
+   *  action half of `answeredAsks`, kept separate because a report is not an
+   *  answer and has no resolution or chosen option to carry. */
+  actedRequests(ticketId: string): Map<string, { report: ActionReport; at: string; by: string }> {
+    const rows = this.db
+      .prepare("SELECT event_type, actor, payload, ts FROM events WHERE ticket_id = ? AND event_type IN ('returned', 'acted') ORDER BY seq")
+      .all(ticketId) as { event_type: string; actor: string; payload: string; ts: string }[];
+    const done = new Map<string, { report: ActionReport; at: string; by: string }>();
+    let pending: string | null = null;
+    for (const r of rows) {
+      if (r.event_type === 'returned') {
+        const req = JSON.parse(r.payload) as HumanRequest;
+        // Belt-and-braces, and known to be unreachable: a decision return
+        // cannot be followed by an `acted`, because `reportAction` refuses a
+        // pending decision and `requestAction` refuses an awaiting_human
+        // ticket. The refusals are the guard; this clear only means that if
+        // one ever stops holding, a report is dropped rather than recorded
+        // against the wrong request. No test covers it — nothing legal gets
+        // here.
+        pending = req.kind === 'action' ? actionFingerprint(req) : null;
+      } else if (pending) {
+        done.set(pending, { report: JSON.parse(r.payload) as ActionReport, at: r.ts, by: (JSON.parse(r.actor) as Actor).name });
+        pending = null;
+      }
+    }
+    return done;
   }
 
   linkTickets(actor: Actor, fromId: string, toId: string, type: DepType, action: 'add' | 'remove'): void {
@@ -2086,6 +2250,10 @@ export class Store {
             }
             break;
           }
+          case 'acted':
+            this.db.prepare("UPDATE tickets SET status = 'open', assignee = ?, question = NULL, updated_at = ? WHERE id = ?")
+              .run(ev.payload['assignee'] ?? null, ev.ts, ev.ticket_id);
+            break;
           case 'spend':
             this.applySpend(ev.ticket_id, ev.payload);
             break;
@@ -2200,13 +2368,13 @@ export class Store {
   private applyCreated(ts: string, p: Record<string, unknown>): void {
     this.db
       .prepare(
-        `INSERT INTO tickets (id, title, body, workstream, project, type, labels, status, priority, assignee, schedule, not_before, needs_human, sitting, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO tickets (id, title, body, workstream, project, type, labels, status, priority, assignee, schedule, not_before, needs_human, sitting, sitting_with, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         p['id'], p['title'], p['body'], p['workstream'], p['project'] ?? null, p['type'],
         JSON.stringify(p['labels'] ?? []), p['status'] ?? 'open', p['priority'] ?? 2, p['assignee'] ?? null,
-        p['schedule'] ?? null, p['not_before'] ?? null, p['needs_human'] ? 1 : 0, p['sitting'] ?? null, ts, ts,
+        p['schedule'] ?? null, p['not_before'] ?? null, p['needs_human'] ? 1 : 0, p['sitting'] ?? null, p['sitting_with'] ?? null, ts, ts,
       );
   }
 
@@ -2216,7 +2384,7 @@ export class Store {
     const params: unknown[] = [ts];
     const jsonFields = new Set(['labels', 'evidence']);
     for (const [field, d] of Object.entries(diffs)) {
-      if (!['title', 'body', 'workstream', 'project', 'type', 'labels', 'status', 'priority', 'assignee', 'evidence', 'confidence', 'uncertainty_note', 'blast_radius', 'not_before', 'needs_human', 'sitting', 'capacity_hold'].includes(field)) continue;
+      if (!['title', 'body', 'workstream', 'project', 'type', 'labels', 'status', 'priority', 'assignee', 'evidence', 'confidence', 'uncertainty_note', 'blast_radius', 'not_before', 'needs_human', 'sitting', 'sitting_with', 'capacity_hold'].includes(field)) continue;
       sets.push(`${field} = ?`);
       params.push(
         field === 'needs_human'
@@ -2324,11 +2492,26 @@ function rowToTicket(row: Record<string, unknown>): Ticket {
     ...(row as unknown as Ticket),
     labels: JSON.parse(row['labels'] as string),
     evidence: JSON.parse(row['evidence'] as string),
-    question: row['question'] ? JSON.parse(row['question'] as string) : null,
+    ...splitRequest(row['question'] as string | null),
     capacity_hold: row['capacity_hold'] ? JSON.parse(row['capacity_hold'] as string) : null,
     needs_human: Boolean(row['needs_human']),
     sitting: (row['sitting'] as string | null) ?? null,
+    sitting_with: (row['sitting_with'] as string | null) ?? null,
   };
+}
+
+/** One stored column, two read fields (R-42 I13). `question` keeps its exact
+ *  meaning — the pending DECISION — so answer.ts, view.ts, tools.ts and every
+ *  external `get_ticket` consumer are unchanged, and a reader that knows only
+ *  about questions sees null on an action ticket instead of misreading the
+ *  action as a decision it could ratify.
+ *
+ *  A request stored before `kind` existed has none, and reads as the decision
+ *  it was. Nothing infers a kind from prose. */
+function splitRequest(stored: string | null): { question: Question | null; action: ActionRequest | null } {
+  if (!stored) return { question: null, action: null };
+  const r = JSON.parse(stored) as HumanRequest;
+  return r.kind === 'action' ? { question: null, action: r } : { question: r as Question, action: null };
 }
 
 function capacityReleased(hold: CapacityHold): boolean {

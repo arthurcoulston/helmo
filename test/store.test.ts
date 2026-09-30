@@ -3,7 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { questionFingerprint } from '../src/presentation.js';
+import { actionFingerprint, questionFingerprint } from '../src/presentation.js';
 import { Store } from '../src/store.js';
 import { Actor, ActorKind, HelmoError } from '../src/types.js';
 
@@ -2141,5 +2141,263 @@ describe('unaccounted work (H-1126): nothing on the ticket says what it is for',
     const [instance] = s.materializeDue(new Date(Date.now() + 31 * 60_000));
     expect(instance).toBeDefined();
     expect(unaccounted(s)).toEqual([]);
+  });
+});
+
+describe('actions for the human, told apart from decisions (R-42 I13)', () => {
+  const act = {
+    situation: 'The mail route is built and tested; the last step is a DNS record only the domain owner can add.',
+    action: 'Two clicks in the Cloudflare dashboard: add the MX record for plumb.example.com. About five minutes.',
+    why_human: 'The API token in the estate is read-only by design, so no agent here can write a DNS record.',
+    if_unanswered: 'The route stays dark and the intake form bounces',
+  };
+  const q = {
+    situation: 'Two vendors quoted and both are viable.',
+    question: 'Which vendor?',
+    recommendation: 'Take the cheaper one',
+  };
+
+  it('a pending action waits in the same queue as a question but is never read as one', () => {
+    const s = freshStore();
+    const t = s.requestAction(builder, create(s).id, act);
+    expect(t.status).toBe('awaiting_human');
+    expect(t.assignee).toBeNull(); // the claim is released, same as a question
+    expect(t.action?.action).toBe(act.action);
+    // The point of the split: a reader that knows only about questions sees
+    // nothing to ratify rather than an action wearing a decision's clothes.
+    expect(t.question).toBeNull();
+  });
+
+  it('requires the reason the human\'s own hands are needed, which is what separates an action from a request for permission', () => {
+    const s = freshStore();
+    expect(() => s.requestAction(builder, create(s).id, { ...act, why_human: '' })).toThrow(/why_human is required/);
+    // And the refusal says where such an ask belongs instead.
+    expect(() => s.requestAction(builder, create(s).id, { ...act, why_human: '  ' })).toThrow(/this is a decision, not an action/);
+    expect(() => s.requestAction(builder, create(s).id, { ...act, action: '' })).toThrow(/action is required/);
+    expect(() => s.requestAction(builder, create(s).id, { ...act, situation: '' })).toThrow(/situation is required/);
+  });
+
+  it('reporting it done resumes the work and cannot be permission for anything', () => {
+    const s = freshStore();
+    expect(s.setWorkstream(orch, { name: 'estate-ui', seat: 'builder-loop' }).seat).toBe('builder-loop');
+    const t = create(s, { workstream: 'estate-ui' });
+    s.requestAction(builder, t.id, act);
+    const after = s.reportAction(relayedHuman, t.id, { did: 'Added the MX record; it resolves.' });
+    // Resumed to the seat, exactly as an answered question is.
+    expect(after.status).toBe('open');
+    expect(after.assignee).toBe('builder-loop');
+    expect(after.action).toBeNull();
+    // Recorded as its own kind of event, carrying what they actually did.
+    const acted = s.getEvents(t.id).filter((e) => e.event_type === 'acted');
+    expect(acted).toHaveLength(1);
+    expect(acted[0]!.payload['did']).toBe('Added the MX record; it resolves.');
+    // And NOT as an answer: nothing here can be read back as a decision the
+    // human made or a choice they endorsed.
+    expect(s.getEvents(t.id).filter((e) => e.event_type === 'answered')).toHaveLength(0);
+    expect(s.lastAnswer(t.id)).toBeNull();
+    expect(acted[0]!.payload['chosen_option']).toBeUndefined();
+    expect(acted[0]!.payload['resolution']).toBeUndefined();
+  });
+
+  it('has no shape that could close a ticket — a completed action is not a finished ticket', () => {
+    const s = freshStore();
+    const t = create(s);
+    s.requestAction(builder, t.id, act);
+    // `reportAction` takes no resolution, so unlike an answer there is no
+    // argument that ends the work. An extra key cannot smuggle one in.
+    const sneaky = { did: 'Added the record.', resolution: 'done', chosen_option: 'yes' } as unknown as { did: string };
+    const after = s.reportAction(relayedHuman, t.id, sneaky);
+    expect(after.status).toBe('open');
+    expect(after.closed_at).toBeNull();
+    const acted = s.getEvents(t.id).find((e) => e.event_type === 'acted')!;
+    expect(Object.keys(acted.payload).sort()).toEqual(['assignee', 'did']);
+  });
+
+  it('requires what they actually did, because "done" tells the next session nothing', () => {
+    const s = freshStore();
+    const t = create(s);
+    s.requestAction(builder, t.id, act);
+    expect(() => s.reportAction(relayedHuman, t.id, { did: '   ' })).toThrow(/did is required/);
+    expect(s.getTicket(t.id).status).toBe('awaiting_human');
+  });
+
+  it('the two paths refuse each other rather than discarding the pending request', () => {
+    const s = freshStore();
+    const onAction = create(s);
+    s.requestAction(builder, onAction.id, act);
+    expect(() => s.answerTicket(orch, onAction.id, { answer: 'Go ahead', resolution: 'resume' })).toThrow(/asking the human to DO something/);
+    // The refusal matters because answering used to be the only path: without
+    // it the write would have set question = NULL and lost the action.
+    expect(s.getTicket(onAction.id).action?.action).toBe(act.action);
+    expect(s.getTicket(onAction.id).status).toBe('awaiting_human');
+
+    const onQuestion = create(s);
+    s.returnToHuman(builder, onQuestion.id, q);
+    expect(() => s.reportAction(relayedHuman, onQuestion.id, { did: 'I did it' })).toThrow(/asking the human to DECIDE something/);
+    expect(s.getTicket(onQuestion.id).question?.question).toBe('Which vendor?');
+    expect(s.getTicket(onQuestion.id).status).toBe('awaiting_human');
+  });
+
+  it('binds a report to the exact request that was drawn (H-1053)', () => {
+    const s = freshStore();
+    const t = create(s);
+    const asked = s.requestAction(builder, t.id, act);
+    const stale = actionFingerprint(asked.action!);
+    s.reportAction(relayedHuman, t.id, { did: 'Added it.' });
+    s.requestAction(builder, t.id, { ...act, action: 'Now also add the TXT record for SPF. Two more minutes.' });
+    expect(() => s.reportAction(relayedHuman, t.id, { did: 'Done' }, stale)).toThrow(/no longer asking for what was on screen/);
+    expect(s.getTicket(t.id).status).toBe('awaiting_human');
+    const current = actionFingerprint(s.getTicket(t.id).action!);
+    expect(s.reportAction(relayedHuman, t.id, { did: 'Added the TXT record too.' }, current).status).toBe('open');
+  });
+
+  it('refuses re-asking for an action the human has already done (H-2126)', () => {
+    const s = freshStore();
+    const t = create(s);
+    s.requestAction(builder, t.id, act);
+    s.reportAction(relayedHuman, t.id, { did: 'Added the MX record at 09:12; dig confirms it.' });
+    expect(() => s.requestAction(builder, t.id, act)).toThrow(/already had this exact action reported done/);
+    // The refusal carries what they did, so the caller needs no second read.
+    expect(() => s.requestAction(builder, t.id, act)).toThrow(/dig confirms it/);
+    expect(s.getTicket(t.id).status).toBe('open');
+    expect(s.getEvents(t.id).filter((e) => e.event_type === 'returned')).toHaveLength(1);
+    // A genuinely different action goes through.
+    expect(s.requestAction(builder, t.id, { ...act, action: 'Add the TXT record as well. Two minutes.' }).status).toBe('awaiting_human');
+  });
+
+  it('each re-ask guard reports only its own kind of request', () => {
+    // Both kinds live in the one `returned` event stream, so each guard map
+    // has to recognise its own. What this does NOT prove is the two maps'
+    // clears for the other kind: those are unreachable behind the refusals
+    // above, and the comments in the store say so rather than implying cover.
+    const s = freshStore();
+    const t = create(s);
+    s.requestAction(builder, t.id, act);
+    s.reportAction(relayedHuman, t.id, { did: 'Added it.' });
+    s.returnToHuman(builder, t.id, q);
+    s.answerTicket(orch, t.id, { answer: 'The cheaper one.', resolution: 'resume' });
+    // Each guard sees its own kind, and only its own.
+    expect([...s.actedRequests(t.id).keys()]).toEqual([actionFingerprint(act)]);
+    expect([...s.answeredAsks(t.id).keys()]).toEqual([questionFingerprint({ ...q, options: [] })]);
+    expect(() => s.requestAction(builder, t.id, act)).toThrow(/already had this exact action reported done/);
+    expect(() => s.returnToHuman(builder, t.id, q)).toThrow(/already had this exact ask answered/);
+  });
+
+  it('an update refuses while an action is pending, and names the report as the way out', () => {
+    const s = freshStore();
+    const t = create(s);
+    s.requestAction(builder, t.id, act);
+    expect(() => s.updateTicket(builder, { ticket_id: t.id, note: 'picking this up', status: 'in_progress' })).toThrow(
+      /asking the human to DO something/,
+    );
+    expect(() => s.updateTicket(builder, { ticket_id: t.id, note: 'picking this up', status: 'in_progress' })).toThrow(/helmo_report_action/);
+    // Notes and evidence still land, as they do on a pending question.
+    expect(s.updateTicket(builder, { ticket_id: t.id, note: 'waiting on the DNS record' }).ticket.status).toBe('awaiting_human');
+  });
+
+  it('a request rebuilds from the log with its kind intact', () => {
+    const s = freshStore();
+    const onAction = create(s);
+    const onQuestion = create(s);
+    s.requestAction(builder, onAction.id, act);
+    s.returnToHuman(builder, onQuestion.id, q);
+    const reported = create(s);
+    s.requestAction(builder, reported.id, act);
+    s.reportAction(relayedHuman, reported.id, { did: 'Added it.' });
+    const before = s.dumpState();
+    s.rebuild();
+    expect(s.dumpState()).toEqual(before);
+    expect(s.getTicket(onAction.id).action?.action).toBe(act.action);
+    expect(s.getTicket(onAction.id).question).toBeNull();
+    expect(s.getTicket(onQuestion.id).question?.question).toBe('Which vendor?');
+    expect(s.getTicket(onQuestion.id).action).toBeNull();
+    expect(s.getTicket(reported.id).status).toBe('open');
+  });
+
+  it('a request stored before kinds existed reads as the decision it was', () => {
+    // R-42's migration rule: no new meaning is inferred from an old record.
+    // Every question ever returned is kind-less on disk, and must keep coming
+    // back through the question path rather than becoming an unanswerable
+    // action.
+    const dir = mkdtempSync(join(tmpdir(), 'helmo-reqkind-'));
+    const path = join(dir, 'helmo.db');
+    try {
+      const s = new Store(path);
+      const t = create(s);
+      s.returnToHuman(builder, t.id, q);
+      const db = (s as unknown as { db: { exec(sql: string): void } }).db;
+      db.exec(`UPDATE tickets SET question = json_remove(question, '$.kind') WHERE id = '${t.id}'`);
+      const legacy = s.getTicket(t.id);
+      expect(legacy.question?.question).toBe('Which vendor?');
+      expect(legacy.action).toBeNull();
+      // And it is still answerable, which is the whole requirement.
+      expect(s.answerTicket(orch, t.id, { answer: 'The cheaper one.', resolution: 'resume' }).status).toBe('open');
+      s.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('a sitting names the agent to sit with (R-42 I13)', () => {
+  const line = 'Twenty minutes going through the three shortlisted vendors and picking one.';
+
+  it('carries the agent alongside the line, and clears with the marker', () => {
+    const s = freshStore();
+    const t = create(s, { needs_human: line, sitting_with: 'builder-loop' });
+    expect(t.needs_human).toBe(true);
+    expect(t.sitting).toBe(line);
+    expect(t.sitting_with).toBe('builder-loop');
+    const cleared = s.updateTicket(orch, { ticket_id: t.id, note: 'no sitting needed after all', needs_human: false }).ticket;
+    expect(cleared.needs_human).toBe(false);
+    expect(cleared.sitting).toBeNull();
+    expect(cleared.sitting_with).toBeNull();
+  });
+
+  it('clearing the marker wins over an agent named in the same breath', () => {
+    const s = freshStore();
+    const t = create(s, { needs_human: line, sitting_with: 'builder-loop' });
+    const cleared = s.updateTicket(orch, { ticket_id: t.id, note: 'dropped', needs_human: false, sitting_with: 'reviewer-loop' }).ticket;
+    expect(cleared.needs_human).toBe(false);
+    expect(cleared.sitting_with).toBeNull();
+  });
+
+  it('refuses the agent without the sitting, because alone it says nothing', () => {
+    const s = freshStore();
+    const t = create(s);
+    expect(() => s.updateTicket(orch, { ticket_id: t.id, note: 'who with?', sitting_with: 'builder-loop' })).toThrow(/alongside needs_human/);
+    expect(s.getTicket(t.id).sitting_with).toBeNull();
+  });
+
+  it('leaves a sitting marked before the field existed with no agent, rather than guessing one', () => {
+    // The three sittings open when this landed carry no line at all, let alone
+    // an agent. A field that inferred one from prose would print a seat nobody
+    // chose, confidently.
+    const dir = mkdtempSync(join(tmpdir(), 'helmo-sitwith-'));
+    const path = join(dir, 'helmo.db');
+    try {
+      const before = new Store(path);
+      const t = create(before, { needs_human: line });
+      (before as unknown as { db: { exec(sql: string): void } }).db.exec('ALTER TABLE tickets DROP COLUMN sitting_with');
+      before.close();
+
+      const after = new Store(path);
+      expect(after.getTicket(t.id).needs_human).toBe(true);
+      expect(after.getTicket(t.id).sitting).toBe(line);
+      expect(after.getTicket(t.id).sitting_with).toBeNull();
+      after.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('asks the sitting line for what the sitting is for, not for what the human does alone', () => {
+    // H-2164 recorded a sitting line saying "no separate sitting is needed":
+    // the field was the only way past the desk-claim gate, so an agent
+    // asserted a request it was denying in the same breath. The guidance now
+    // asks about the sitting; an action goes down its own path.
+    const s = freshStore();
+    expect(() => create(s, { needs_human: true as unknown as string })).toThrow(/what the sitting is for/);
+    expect(() => create(s, { needs_human: 'do it' })).toThrow(/what the sitting needs/);
   });
 });

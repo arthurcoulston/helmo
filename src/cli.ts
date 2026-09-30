@@ -24,12 +24,33 @@ const [cmd, ...rest] = process.argv.slice(2);
 // than a redirect (H-2473, src/install.ts). Taken out of `rest` here so that
 // no command's own positional arguments have to know it might be there.
 const requestedInstall = takeInstallFlag(rest);
+const commandName = process.env['REV_COMMAND_NAME']?.trim() || 'rev';
 // Validate a pinned release before even reading the roster. Every command,
 // including read-only surfaces and the supervisor, enters through this file.
-// `release` is the deliberate exception, and it has to be: those commands are
-// how a broken selection is repaired, so gating them on the selection being
-// sound would put the repair behind the fault (H-2493). They report it instead.
-if (cmd !== 'release') targetLine();
+//
+// Two families are deliberately exempt, and they have to be: they are the only
+// two ways out of a broken selection, so gating them on it being sound would
+// put the repair behind the fault (H-2493). `release` moves the selection;
+// `install` — whose only verb is the removal — takes the installation away. The
+// exemption has to live in THIS list and nowhere else: a handler that asks
+// `requireTarget` to skip the check never reaches its own argument, which is
+// how `install remove` shipped unreachable behind a gate its own comment said
+// it was exempt from (H-2522).
+const UNPINNED = ['release', 'install'];
+if (!UNPINNED.includes(cmd ?? '')) {
+  try {
+    targetLine();
+  } catch (e) {
+    // A refusal that leaves the operator a `rm -rf` is the H-2431 shape. The
+    // stack trace from inside the check named neither escape, so it said one.
+    console.error(
+      `${e instanceof Error ? e.message : String(e)}\n`
+      + `Read what broke with: ${commandName} release status  (then ${commandName} release upgrade <release directory>)\n`
+      + `Or take this installation's records away entirely with: ${commandName} install remove`,
+    );
+    process.exit(1);
+  }
+}
 
 /**
  * What the supervisor loaded, read from the RUNNING marker it wrote at startup.
@@ -48,7 +69,6 @@ function takeInstallFlag(args: string[]): string | undefined {
   return i === -1 ? undefined : args.splice(i, 2)[1] ?? '';
 }
 
-const commandName = process.env['REV_COMMAND_NAME']?.trim() || 'rev';
 const rosterSource = commandName === 'rev' ? '~/.rev/roster.toml (REV_HOME to override)' : '~/.rev-gp/roster.toml (fixed by gp-rev)';
 
 function cliActor(): { label: string; human: boolean } {
@@ -340,6 +360,8 @@ switch (cmd) {
     // 'unchecked', for the same reason `release` is: a removal is one of the two
     // ways out of a broken selection, so gating it on the selection being sound
     // would leave an installation that cannot run and cannot be removed either.
+    // This argument is only half of it — `UNPINNED` at the top of this file is
+    // what lets the command reach it at all (H-2522).
     const t = requireTarget(`${commandName} install remove`, requestedInstall, 'unchecked');
     console.log(targetLine(t));
     const plan = removalPlan(t.label, g);

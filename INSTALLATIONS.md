@@ -273,20 +273,24 @@ A half-written or hand-edited selection is not a transient state; it is an
 installation that cannot run. All three products refuse with `incoherent release
 set`, naming the product and what is wrong.
 
-The `rev release` family is the **one family exempt from that check**, and has
-to be: it is how a broken selection is repaired, so gating it on the selection
-being sound would put the repair behind the fault.
+Two families are **exempt from that check**, and have to be: they are the only
+two ways out, so gating them on the selection being sound would put the escape
+behind the fault. Everything else in the installation refuses, in lines naming
+both of these.
 
 - `rev release status` reports the incoherence as lines instead of throwing —
   `release: UNREADABLE — …`, or `INCOHERENT` with every fault listed — because
   it is what an operator runs to find out what broke.
 - `rev release upgrade <dir>` repairs it, and says plainly that nothing was
   retained to roll back to, rather than leaving you to discover that later.
+- `rev install remove` is the other way out, for an installation you want gone
+  rather than repaired. It prints its plan and takes nothing without
+  `--confirm`, the same as always, and the unreadable selection file is one of
+  the things it removes.
 
-Repair the selection before doing anything else with the installation,
-including removing it: every other command in the installation — `rev install
-remove` included — enters through the same pin check and refuses while the
-selection is unreadable.
+So a broken selection is a choice of two, not a dead end: repair it, or remove
+the installation. Neither needs a hand `rm -rf`, and reaching for one is how a
+shell carrying the wrong `REV_HOME` deletes the neighbour.
 
 ## Every entry point to review and repoint
 

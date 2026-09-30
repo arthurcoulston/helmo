@@ -485,11 +485,16 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
     bytes are durable and the name pointing at them is not. The selection it
     replaces is retained whole INSIDE the new one, so a rollback is the same
     write in the other direction and one rename moves both or neither.
-  - **`rev release` is the one family exempt from the pin check** in cli.ts,
-    and has to be: it is how a broken selection is repaired, so gating it on
-    the selection being sound would put the repair behind the fault. `status`
-    reports the incoherence as lines instead of throwing, and `upgrade` over an
-    unreadable selection says plainly that nothing was retained to roll back to.
+  - **`rev release` is one of the two families exempt from the pin check** in
+    cli.ts (`install` is the other), and has to be: it is how a broken
+    selection is repaired, so gating it on the selection being sound would put
+    the repair behind the fault. `status` reports the incoherence as lines
+    instead of throwing, and `upgrade` over an unreadable selection says
+    plainly that nothing was retained to roll back to. The exemption lives in
+    `UNPINNED` at the top of cli.ts and nowhere else — a handler passing
+    `requireTarget` its `'unchecked'` argument never reaches that argument if
+    the module gate stopped it first, which is exactly how `install remove`
+    shipped unreachable (H-2522).
   - It changes one file and restarts nothing: a running process keeps the code
     it loaded and takes the release when it next starts. Operating a service
     here would be operating one the command has not established it owns.
@@ -523,7 +528,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
     removed); a `REV_HOME` that contains the account's own home directory is
     refused outright. Like `rev release`, it runs `unchecked`: a removal is one
     of the two ways out of a broken selection, so gating it on the selection
-    being sound would leave an installation that can neither run nor be removed.
+    being sound would leave an installation that can neither run nor be
+    removed. That takes BOTH halves — the `'unchecked'` argument here and the
+    `install` entry in cli.ts's `UNPINNED`. It shipped with only the first, so
+    the exemption was unreachable until H-2522.
   - **A liveness read must not create what it reads.** `occupiedPid` goes
     through `stateDir`, which `mkdir`s — so asking it of an already-removed
     installation rebuilt that installation's Rev home, and the next plan had

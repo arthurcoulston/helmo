@@ -281,7 +281,11 @@ describe('the release commands (H-2493)', () => {
   });
 
   // The property the whole command family exists for: a selection bad enough
-  // to stop every other command must not stop the command that repairs it.
+  // to stop every other command must not stop the commands that get OUT of it.
+  // There are two, and this case only checked one until H-2522 — `install
+  // remove` passed 'unchecked' downstream but the module-level gate in cli.ts
+  // exempted the `release` family alone, so it threw before reaching its own
+  // argument. Asserting the escapes as a set is what keeps the next one honest.
   it('runs while the selection is broken, which is exactly when every other command refuses', () => {
     const dir = root();
     const home = join(dir, '.rev');
@@ -293,10 +297,26 @@ describe('the release commands (H-2493)', () => {
     const status = rev(home, ['status'], { INSTALLATION_RELEASE: file });
     expect(status.status).not.toBe(0);
     expect(status.stderr).toContain('incoherent release set');
+    // The refusal is lines, not a throw from inside the check: an operator
+    // reading a stack trace is told nothing about either way out, and the way
+    // around a dead end here is a hand `rm -rf` (H-2431).
+    expect(status.stderr).not.toMatch(/^\s+at /m);
+    expect(status.stderr).toContain('rev release status');
+    expect(status.stderr).toContain('rev install remove');
 
     const shown = rev(home, ['release', 'status'], { INSTALLATION_RELEASE: file });
     expect(shown.status, shown.stderr).toBe(0);
     expect(shown.stdout).toContain('UNREADABLE');
+
+    // The other escape. Only the plan is run here — it is the act that proves
+    // the command got past the gate, and it writes nothing, so the rest of this
+    // case still has an installation to repair.
+    const removal = rev(home, ['install', 'remove'], { INSTALLATION_RELEASE: file });
+    expect(removal.status, `${removal.stdout}${removal.stderr}`).toBe(0);
+    expect(removal.stdout).toContain(home);
+    expect(removal.stdout).toContain(file);
+    expect(removal.stdout).toContain('Nothing was removed');
+    expect(existsSync(file)).toBe(true);
 
     const repaired = rev(home, ['release', 'upgrade', makeRelease(dir, 'good')], { INSTALLATION_RELEASE: file });
     expect(repaired.status, repaired.stderr).toBe(0);

@@ -162,6 +162,13 @@ so repairing the selection brings the supervisor back with no command run.
 
 ## Which versions go together, and what a migration cannot undo
 
+**A version here is a commit, not an npm version.** Each product carries its own
+`package.json` version, and nothing in the release machinery reads one. What
+identifies a set is the release directory's name and the three commits its
+`RELEASE.json` names. Two builds of the same `helmo` version are different
+members of different sets if they came from different commits, and the product
+will say so.
+
 **The rule the product enforces.** A release set is valid when, for each of
 `rev`, `helmo` and `helmo-roadmap`: the set's `RELEASE.json` names a commit for
 it; its `dist` holds JavaScript; and its `BUILD.json` stamp names *exactly* that
@@ -175,6 +182,47 @@ Three products at three arbitrary versions is therefore not a supported
 combination and cannot be made into one by editing a file: the set is what is
 verified, and a mismatch is visible rather than masquerading as a completed
 upgrade.
+
+**What a refusal looks like.** Every fault, named, with the repair, and nothing
+written:
+
+```
+$ rev release upgrade /srv/releases/2026.09-1
+installation: acme.rev (/srv/acme/rev)
+/srv/releases/2026.09-1 is not a release set this installation can run:
+  - /srv/releases/2026.09-1/MIGRATION.json is missing or unreadable (ENOENT: no such file or
+    directory). A release states its data compatibility and its rollback limit before it can be
+    selected, because after the upgrade is too late: {"data_compatibility":"compatible",
+    "rollback":{"supported":true}}, or "one_way" with {"supported":false,"limit":"<what cannot
+    be recovered, and how to>"}
+  - rev is built from 999999999999 but the manifest names aaaaaaaaaaaa — this set is mixed
+  - /srv/releases/2026.09-1/helmo/dist holds no JavaScript — helmo is not built in this release
+  - helmo-roadmap was built from a dirty tree, so commit cccccccccccc does not identify the
+    bytes in /srv/releases/2026.09-1/helmo-roadmap/dist — rebuild it from a clean checkout
+```
+
+That is one command reporting four separate faults, and it exits non-zero with
+the installation still on the release it was running. The same check stands in
+front of every entry point: a set that goes incoherent later refuses each
+product with `incoherent release set: <product>: ...`, and `rev release status`
+answers `INCOHERENT` with the same list, because that is what an operator runs
+to find out. This is a property you can test rather than a promise: break one
+component's stamp, and the mismatch is named in the output of `rev release
+status` and of every command in the installation.
+
+**This release's set.** The three commits and the release id are fixed when the
+version is cut; the table below is what a consumer checks their `RELEASE.json`
+against.
+
+| component      | version | commit                        |
+| -------------- | ------- | ----------------------------- |
+| `rev`          | 0.1.0   | *filled at the cut*           |
+| `helmo`        | 0.4.0   | *filled at the cut*           |
+| `helmo-roadmap`| 0.1.0   | *filled at the cut*           |
+
+Release id: *filled at the cut*. If this table still reads "filled at the cut",
+you are reading the development branch rather than a published release — take
+the values from the release directory's own `RELEASE.json`.
 
 **`MIGRATION.json` is required**, and it is authored rather than generated,
 because it is a claim about consequences no build step can compute:
@@ -195,12 +243,74 @@ A release that has not declared this **cannot be selected at all** — after the
 upgrade is too late to ask. The declaration is copied *into* the selection when
 the release is selected, so a rollback can be refused in the limit's own words
 with the release directory long gone. A `one_way` release that also claims
-rollback is supported is refused as self-contradictory: an operator would
-otherwise find out which half was wrong by losing data.
+rollback is supported is refused as self-contradictory — `MIGRATION.json
+declares a one-way data migration and also says rollback is supported — one of
+those is wrong, and an operator would find out which by losing data` — because
+an operator would otherwise learn which half was wrong by losing data.
 
-The compatibility matrix and migration statement for a particular version ship
-with that version's release notes; this section is the rule they are written
-against.
+You are told the limit **before** the pointer moves, not when you try to go
+back. An upgrade into a one-way release prints its declaration as it selects it,
+and a later `rev release rollback` refuses in those same words and exits 1:
+
+```
+$ rev release rollback
+refusing to roll back out of 2026.10-1: it declares a one-way data migration.
+  <the limit this release declared>
+Rolling the pointer back to 2026.09-1 would leave 2026.10-1's data in front of
+code that cannot read it. Recover from a pre-upgrade backup as above, then
+select the older release.
+```
+
+**This release's migrations** are declared in the release directory's own
+`MIGRATION.json`, written when the version is cut. Read it before you upgrade —
+`rev release status` reads it back to you afterwards on the `data compatibility`
+line — and treat `one_way` as meaning the backup below is your only way back.
+
+**Opening a Helmo-family store migrates it.** Helmo and the roadmap migrate
+their store on open, so the *first command of the new release aimed at an
+installation* is what migrates that installation's records — not the pointer
+move, which touches one file. Two consequences:
+
+- Take your backup before you run anything from the new release against the
+  installation, not merely before `rev release upgrade`.
+- This is why `--installation` is resolved and asserted *before* the store is
+  opened: a command aimed at the wrong installation would otherwise have
+  already written to it by the time it refused.
+
+**Back up before you upgrade.** A recovery limit is only actionable if you have
+something to recover from. Ask the installation what it owns rather than
+guessing — reading the plan is safe, and the deletion it describes needs a
+separate `--confirm`:
+
+```bash
+rev install remove          # no --confirm: prints the plan, removes nothing
+```
+
+Everything it lists under "removing" is what a backup must contain. In the
+general case that is:
+
+- `REV_HOME` whole — controls, `roster.toml`, `state/`, the service launcher.
+- The Helmo store this installation names, and the roadmap store it names —
+  **each with its `-wal` and `-shm` sidecars**. A SQLite database copied without
+  its write-ahead log is not the records; it is the records as of some earlier
+  moment.
+- The selection file `INSTALLATION_RELEASE` names.
+
+```bash
+rev stop                                      # a live supervisor writes into REV_HOME
+cp -a "$REV_HOME" /backups/acme-rev-2026-09-30
+cp -a ~/.helmo-acme/helmo.db{,-wal,-shm} /backups/
+cp -a "$INSTALLATION_RELEASE" /backups/release.json
+```
+
+To put it back: stop the installation again, restore each path over the top of
+the current one — store and sidecars together, never the `.db` alone — restore
+the selection file, and start. The restored selection names the older release
+directory, so the older code comes back with the records it can read. Nothing in
+a release directory needs restoring: a release directory is shared between
+installations and no operation here writes to one. If one has been rebuilt under
+the same name in the meantime, rollback refuses and names the component and both
+commits rather than restoring something else under the old label.
 
 ## Upgrading
 
@@ -263,8 +373,9 @@ is, when:
   under the same name is a different set wearing the old one's label, and the
   refusal names the component and both commits.
 
-Recovering from a one-way release means restoring the pre-upgrade backup and
-then selecting the older release. That is why a release states its limit before
+Recovering from a one-way release means restoring the pre-upgrade backup (the
+procedure is under *Which versions go together*) and then selecting the older
+release. That is why a release states its limit before
 it can be selected.
 
 ## When the selection breaks

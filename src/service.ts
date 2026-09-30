@@ -317,25 +317,31 @@ export function serviceStart(): void {
  * Only a definition that names THIS home is touched — it is unambiguously this
  * installation's own, which is what makes removing it safe rather than a guess.
  */
-function retireLegacyService(kind: 'launchd' | 'systemd', current: string): void {
+export function retireLegacyService(
+  kind: 'launchd' | 'systemd',
+  current: string,
+  { launch = launchctl, system = systemctl }: { launch?: typeof launchctl; system?: typeof systemctl } = {},
+): string | null {
   const legacy = serviceFilePath(kind, legacyServiceLabel());
-  if (legacy === current || !existsSync(legacy)) return;
-  if (definedHome(kind, readFileSync(legacy, 'utf8')) !== revHome()) return;
+  if (legacy === current || !existsSync(legacy)) return null;
+  const owner = definedHome(kind, readFileSync(legacy, 'utf8'));
+  if (owner === null || resolve(owner) !== resolve(revHome())) return null;
   if (kind === 'launchd') {
     try {
-      launchctl('bootout', `gui/${process.getuid!()}/${legacyServiceLabel()}`);
+      launch('bootout', `gui/${process.getuid!()}/${legacyServiceLabel()}`);
     } catch {
       /* not loaded is fine — the file still has to go */
     }
   } else {
     try {
-      systemctl('disable', '--now', unitNameFor(legacyServiceLabel()));
+      system('disable', '--now', unitNameFor(legacyServiceLabel()));
     } catch {
       /* not enabled is fine */
     }
   }
   rmSync(legacy);
   console.log(`Retired this installation's previous service definition ${legacy}: its identity is now ${serviceLabel()}.`);
+  return legacy;
 }
 
 export function serviceStatusLine(): string {

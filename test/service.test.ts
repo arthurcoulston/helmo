@@ -1,8 +1,8 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, it, expect } from 'vitest';
-import { definedHome, installLaunchd, launchdPlist, legacyServiceLabel, serviceLabel, systemdUnit, systemdUnitName } from '../src/service.js';
+import { definedHome, installLaunchd, launchdPlist, legacyServiceLabel, retireLegacyService, serviceLabel, systemdUnit, systemdUnitName } from '../src/service.js';
 
 describe('service unit generation', () => {
   it('launchd: restarts on crash only — a graceful drain (exit 0) stays down', () => {
@@ -194,5 +194,93 @@ describe('a service definition says which installation it belongs to', () => {
   it('a definition with no REV_HOME reads as unowned, so an old install stays upgradeable', () => {
     expect(definedHome('launchd', '<plist><key>Label</key><string>dev.rev</string></plist>')).toBe(null);
     expect(definedHome('systemd', '[Service]\nExecStart=/node /cli.js run\n')).toBe(null);
+  });
+});
+
+// H-2452: a non-conventional home's label gained a path digest, so a service
+// installed under the old basename-only name is still on disk and still
+// loaded. Reinstalling without retiring it leaves two definitions for one
+// installation and two supervisors racing one queue. It removes a file, so it
+// is driven here rather than trusted.
+describe('the migration retires this installation\'s previous definition, and only its own', () => {
+  const saved = { home: process.env['REV_HOME'], label: process.env['REV_LABEL'], HOME: process.env['HOME'] };
+  afterEach(() => {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+
+  /** A HOME of our own, so `serviceFilePath` writes inside the test. */
+  const stand = (revHome: string) => {
+    const home = mkdtempSync(join(tmpdir(), 'rev-migrate-'));
+    mkdirSync(join(home, 'Library', 'LaunchAgents'), { recursive: true });
+    process.env['HOME'] = home;
+    process.env['REV_HOME'] = revHome;
+    delete process.env['REV_LABEL'];
+    const at = (label: string) => join(home, 'Library', 'LaunchAgents', `${label}.plist`);
+    return { home, at };
+  };
+
+  it('boots out and removes a definition left at this home\'s previous label', () => {
+    const revHomePath = '/tmp/customer-a/.rev';
+    const { at } = stand(revHomePath);
+    const legacy = at(legacyServiceLabel());
+    writeFileSync(legacy, launchdPlist('/node', '/cli.js', { label: legacyServiceLabel(), home: revHomePath, path: '/p', logPath: '/l' }));
+    const calls: string[][] = [];
+
+    const retired = retireLegacyService('launchd', at(serviceLabel()), { launch: (...args) => calls.push(args) });
+
+    expect(retired).toBe(legacy);
+    expect(existsSync(legacy)).toBe(false);
+    expect(calls).toEqual([['bootout', `gui/${process.getuid!()}/dev.rev`]]);
+  });
+
+  it('leaves a definition that names a DIFFERENT installation alone', () => {
+    const { at } = stand('/tmp/customer-a/.rev');
+    const legacy = at(legacyServiceLabel());
+    const other = launchdPlist('/node', '/cli.js', { label: 'dev.rev', home: '/tmp/customer-b/.rev', path: '/p', logPath: '/l' });
+    writeFileSync(legacy, other);
+    const calls: string[][] = [];
+
+    expect(retireLegacyService('launchd', at(serviceLabel()), { launch: (...args) => calls.push(args) })).toBe(null);
+    expect(readFileSync(legacy, 'utf8')).toBe(other);
+    expect(calls).toEqual([]);
+  });
+
+  it('a definition with no REV_HOME is not ours to remove either', () => {
+    const { at } = stand('/tmp/customer-a/.rev');
+    const legacy = at(legacyServiceLabel());
+    writeFileSync(legacy, '<plist><key>Label</key><string>dev.rev</string></plist>');
+    expect(retireLegacyService('launchd', at(serviceLabel()))).toBe(null);
+    expect(existsSync(legacy)).toBe(true);
+  });
+
+  it('a conventional home has nothing to retire: the label never moved', () => {
+    const { at } = stand(join(userInfo().homedir, '.rev'));
+    expect(serviceLabel()).toBe(legacyServiceLabel());
+    // The current definition IS the legacy one, so there is nothing to remove
+    // even when the file exists — which is what protects the live install.
+    const file = at(serviceLabel());
+    writeFileSync(file, launchdPlist('/node', '/cli.js', { label: 'dev.rev', home: process.env['REV_HOME']!, path: '/p', logPath: '/l' }));
+    expect(retireLegacyService('launchd', file)).toBe(null);
+    expect(existsSync(file)).toBe(true);
+  });
+
+  it('the systemd path disables the old unit before removing it', () => {
+    const revHomePath = '/tmp/customer-a/.rev';
+    const home = mkdtempSync(join(tmpdir(), 'rev-migrate-'));
+    mkdirSync(join(home, '.config', 'systemd', 'user'), { recursive: true });
+    process.env['HOME'] = home;
+    process.env['REV_HOME'] = revHomePath;
+    delete process.env['REV_LABEL'];
+    const unitFile = (label: string) => join(home, '.config', 'systemd', 'user', `${label.replace(/^dev\./, '').replace(/\./g, '-')}.service`);
+    const legacy = unitFile(legacyServiceLabel());
+    writeFileSync(legacy, systemdUnit('/node', '/cli.js', { home: revHomePath, path: '/p', label: legacyServiceLabel() }));
+    const calls: string[][] = [];
+
+    expect(retireLegacyService('systemd', unitFile(serviceLabel()), { system: (...args) => calls.push(args) })).toBe(legacy);
+    expect(existsSync(legacy)).toBe(false);
+    expect(calls).toEqual([['disable', '--now', 'rev']]);
   });
 });

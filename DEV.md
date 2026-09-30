@@ -47,8 +47,21 @@ append-only event log, materialized state, `.immediate()` write transactions
   guidance-as-deployed (Helmo's rule). v1 postures baked into them:
   ship_next is FYI to the fleet, not tasking; the charter is derived from
   the human's document, never authored here.
+- `install.ts` — which installation this process is (H-2472), the sibling of
+  helmo:src/install.ts. Both entry points resolve the store here rather than
+  each reading `ROADMAP_DB` on its own, so they cannot disagree about the
+  target. `ROADMAP_HOME` names the installation and `ROADMAP_DB` names its
+  store; either one alone determines the other, so every existing caller keeps
+  working. Both set and disagreeing is refused BEFORE the store is opened,
+  naming both candidates. The installation's NAME is shared rather than
+  invented here — `ROADMAP_LABEL`, then `HELMO_LABEL` for the same reason this
+  honours `HELMO_ACTOR`, then the supervisor's `REV_LABEL` (rev:src/service.ts,
+  H-2452), then derived from the roadmap's own home, keyed on the password
+  database rather than on a `$HOME` the installation itself could have written.
+  One installation, one name, whichever of the three products you ask.
 - `server.ts` — MCP stdio entry. Store at `~/.helmo-roadmap/roadmap.db`
-  (`ROADMAP_DB` overrides); identity from `ROADMAP_ACTOR`, falling back to
+  (`ROADMAP_HOME` or `ROADMAP_DB` overrides, and setting both to disagree is
+  refused); identity from `ROADMAP_ACTOR`, falling back to
   `HELMO_ACTOR` so estates provisioned for Helmo need no second variable.
 - `view.ts` — read-only dashboard at :4410 (`ROADMAP_VIEW_PORT`). Ship-next
   expanded on top, charter strip, everything else collapsed in derived rank

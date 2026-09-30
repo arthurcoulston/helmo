@@ -394,6 +394,22 @@ orchestrator meetings and the read-only view. Product intent:
   The 08-06 corpus audit is archival; do not retrofit it (its rename map is in
   crew/agents/mason/workspace/h4-evidence-audit-20260806.md).
 - `types.ts` — the shared vocabulary (statuses, blast radii, confidence).
+- `install.ts` — which installation this process is (H-2472). All four entry
+  points resolve it here rather than each reading `HELMO_DB` on its own, so
+  they cannot disagree about the target. `HELMO_HOME` names the installation
+  and `HELMO_DB` names its store; either one alone determines the other, so a
+  bare `HELMO_DB` (Rev's roster) and a bare default both keep working. Both set
+  and disagreeing is refused BEFORE the store is opened, naming both
+  candidates — a silent precedence rule is the bug, and an inherited value
+  quietly beating an explicit one is the worst case. The installation's NAME is
+  not a registry: `REV_LABEL` is the identity rev's supervisor derives from its
+  own home and writes into the service environment (rev:src/service.ts,
+  H-2452), so everything Rev spawns agrees for free; `HELMO_LABEL` overrides it
+  for a Helmo standing without Rev; failing both it is derived from Helmo's own
+  home by the same rule, keyed on the password database rather than on a `$HOME`
+  the installation itself could have written. `requireInstallation(env, report)`
+  takes the reporter because the CLI's contract is that every failure it prints
+  is one JSON object.
 - `schedule.ts` — recurring-ticket schedules (H-22): 'every N<m|h|d>' or 5-field
   cron, UTC. A ticket with `schedule` set is a TEMPLATE — standing work, never
   ready itself. Instances spawn lazily on ticket-list reads (the read path is
@@ -451,7 +467,8 @@ orchestrator meetings and the read-only view. Product intent:
 - View: `node dist/view.js` (port via `HELMO_VIEW_PORT`, default 4400; binds
   127.0.0.1 — `HELMO_VIEW_HOST` to change). Restart it after rebuilding — the
   running process holds old code.
-- Store lives at `~/.helmo/helmo.db` (`HELMO_DB` overrides). Agent identity comes
+- Store lives at `~/.helmo/helmo.db` — `HELMO_HOME` or `HELMO_DB` overrides,
+  and setting both to disagree is refused (`install.ts`). Agent identity comes
   from `HELMO_ACTOR` env (JSON) for loops; the interactive user-scope env is
   deliberately name+kind only, so interactive writes must pass a truthful
   per-call `actor` override (name, model, harness version) or be rejected (H-3).

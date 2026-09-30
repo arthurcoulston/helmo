@@ -405,7 +405,6 @@ try {
   record-spend   --ticket H-n [--tokens N] [--cost-usd X] --note N   (metered spend; terminal tickets accepted)
   list           [--ready] [--status S] [--workstream W] [--assignee A] [--limit N]
   get            <ticket-id>
-  return         --ticket H-n --situation S --question Q --recommendation R [--options JSON]
   action         --ticket H-n --situation S --action A --why-human W [--if-unanswered C]
   action-report  --ticket H-n --did D
   product-complete --ticket H-n --artifacts '[{"ref":"repo@<40hex>","author":"name"}]' --note N

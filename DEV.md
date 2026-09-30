@@ -377,6 +377,37 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   removal this installation's own business rather than a guess. Conventional
   homes are unaffected: `~/.rev` and `~/.rev-gp` compute the same labels they
   always did, verified against both live plists.
+  **A pinned definition names a launcher, never a release** (H-2511). A
+  definition is written once and nothing rewrites it, so the path it carries is
+  frozen at install time. It used to be `process.argv[1]`, which under a release
+  selection is a `cli.js` *inside* a release directory — so after `rev release
+  upgrade` the job the service manager brought back exec'd the release the
+  installation had just left, was stopped by `selectedRelease()` as an uncaught
+  throw, and under `KeepAlive` was brought back to fail again, with launchd.log
+  the only account of it. The upgrade's own output promises the opposite. So
+  when `INSTALLATION_RELEASE` is set, `serviceInstall` writes
+  `<REV_HOME>/service/launch.mjs` (`launcherPath()`, `writeLauncher()`) and the
+  definition names that:
+  - It resolves the selection at **start**, so a release change is picked up by
+    a restart with no reinstall — which is exactly what the upgrade says.
+  - It hands over **in the same process** (`process.argv[1] = cli; await
+    import(...)`), so the manager's signals, its exit timeout and the pid it
+    supervises all reach the supervisor itself, and everything downstream — the
+    loop drivers the supervisor spawns, `REV_CLI`, the command line the
+    sentinels record — is what it would have been had the manager named that
+    file directly.
+  - It decides as little as possible: it is the one file a release change cannot
+    update. *Verifying* the set stays in `selectedRelease()`, which now passes
+    because the code came from the directory the selection names.
+  - A selection it cannot resolve still refuses, as **one line** naming the
+    installation and the repair rather than a stack trace, and exits non-zero on
+    purpose: the manager retries, so a repaired selection brings the supervisor
+    back with no command run.
+  - **Unpinned installations are untouched** — no launcher, and the definition
+    still names the `cli.js` it was installed from.
+  A definition installed before this change still names a release directory;
+  `stalePinnedService()` finds it and `rev release upgrade|rollback` says so,
+  where the promise is made, rather than leaving it for launchd.log.
   systemd gets `KillMode=mixed` and a timeout longer than rev's drain, so a stop
   signals the supervisor rather than every process in the cgroup (H-467).
   launchd is different: it clamps `ExitTimeOut` at 60s even when the plist asks

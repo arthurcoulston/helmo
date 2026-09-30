@@ -410,3 +410,35 @@ describe('a reference can be carried into a conversation in one gesture', () => 
     }
   }, 120_000);
 });
+
+describe('every offered decision can be answered from the card', () => {
+  for (const gesture of ['mouse', 'keyboard', 'touch'] as const) {
+    it(`sends the stored option letter by ${gesture}`, async () => {
+      const context = await browser!.newContext({ viewport: { width: 390, height: 900 }, hasTouch: gesture === 'touch' });
+      const page = await context.newPage();
+      let sent: Record<string, unknown> | null = null;
+      await page.route('**/answer', async (route) => {
+        sent = route.request().postDataJSON() as Record<string, unknown>;
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+      });
+      try {
+        await page.goto(`${origin}${AT_EVERY_WIDTH}`, { waitUntil: 'load' });
+        const choice = page.locator('.qcard .choice[data-choice="b"]');
+        if (gesture === 'mouse') await choice.click();
+        else if (gesture === 'keyboard') {
+          await choice.focus();
+          await page.keyboard.press('Enter');
+        } else {
+          const box = await choice.boundingBox();
+          expect(box).not.toBeNull();
+          await page.touchscreen.tap(box!.x + box!.width / 2, box!.y + box!.height / 2);
+        }
+        await expect.poll(() => sent).not.toBeNull();
+        expect(sent).toMatchObject({ choice: 'b' });
+        expect(sent).not.toHaveProperty('ratify');
+      } finally {
+        await context.close();
+      }
+    }, 120_000);
+  }
+});

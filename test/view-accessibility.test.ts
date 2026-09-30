@@ -41,7 +41,10 @@ describe('view accessibility', () => {
 
   it('keeps the one-click answer control touch-sized', () => {
     expect(view).toMatch(/\.ratify\s*\{[^}]*min-height:\s*44px/);
+    expect(view).toMatch(/\.option\.choice\s*\{[^}]*min-height:\s*44px/);
     expect(bodyOf('questionCard')).toContain('Ratify recommendation');
+    expect(bodyOf('questionCard')).toContain('class="option choice"');
+    expect(bodyOf('questionCard')).toContain('data-choice="${esc(o.letter)}"');
   });
 
   it('puts the issue and its answer before the folded context', () => {

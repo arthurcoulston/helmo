@@ -101,6 +101,8 @@ describe('Awaiting-you section route', () => {
     expect(html).toContain('class="qcard"');
     expect(html).toContain('<span class="opt-letter">a</span>yes');
     expect(html).toContain('<span class="opt-letter">b</span>no');
+    expect(html).toContain('class="option choice" data-choice="a"');
+    expect(html).toContain('class="option choice" data-choice="b"');
     expect(html).toContain('yes — one renderer keeps the meanings together.');
     expect(html).toContain('If unanswered: The landing stays split.');
     expect(html).toContain('last &lt;recorded&gt; &amp; update');
@@ -148,14 +150,14 @@ describe('Awaiting-you section route', () => {
     const answered = await fetch(`http://127.0.0.1:${port}/answer`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', [ANSWER_HEADER]: nonce! },
-      body: JSON.stringify({ ticket_id: ticket.id, ratify: true, question_fingerprint: fingerprint }),
+      body: JSON.stringify({ ticket_id: ticket.id, choice: 'b', question_fingerprint: fingerprint }),
     });
     expect(answered.status).toBe(200);
     expect(await answered.json()).toMatchObject({ ok: true, id: ticket.id, status: 'open' });
     const inspect = new Store(db);
     expect(inspect.lastAnswer(ticket.id)).toMatchObject({
-      answer: 'Ratified from the dashboard',
-      chosen_option: 'yes — one renderer keeps the meanings together.',
+      answer: 'Selected b (no) from the dashboard',
+      chosen_option: 'no',
       resolution: 'resume',
     });
     expect(inspect.getEvents(ticket.id).find((event) => event.event_type === 'answered')?.actor).toMatchObject({

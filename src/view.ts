@@ -358,7 +358,8 @@ function details(t: Ticket): string {
 
 // The hero: a question awaiting the human. The decision comes first; its
 // supporting situation stays one disclosure below it (H-974). With an operator
-// configured, ratifying the recommendation is the answer surface (H-90).
+// configured, every offered choice is an answer surface and ratifying the
+// recommendation remains the default (R-42 I11).
 //
 // The letters are shared presentation logic (H-939), not this card's own: Arthur says "b" in a
 // meeting and whoever relays it may be reading the phone queue rather than this
@@ -369,7 +370,9 @@ function questionCard(t: Ticket): string {
   const a = ask(q);
   const opt = (o: { letter: string; label: string; consequence: string }) => {
     const inner = `<span class="opt-label"><span class="opt-letter">${esc(o.letter)}</span>${esc(o.label)}</span><span class="opt-consequence">${esc(o.consequence)}</span>`;
-    return `<div class="option">${inner}</div>`;
+    return operator
+      ? `<button type="button" class="option choice" data-choice="${esc(o.letter)}" aria-label="Choose ${esc(o.letter)}: ${esc(o.label)} — ${esc(o.consequence)}">${inner}</button>`
+      : `<div class="option">${inner}</div>`;
   };
   return `<article class="qcard" id="${esc(t.id)}" data-ticket="${esc(t.id)}" data-ask="${esc(a.fingerprint)}">
     <header>${ref(t.id)} ${title(t.title, 'qtitle')}
@@ -751,6 +754,9 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; color: 
    of push. */
 .option { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 12px; padding: 7px 10px;
   border: 1px solid var(--hairline); border-radius: var(--radius-inner); }
+.option.choice { width: 100%; min-height: 44px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.option.choice:hover, .option.choice:focus-visible { border-color: var(--link); }
+.option.choice:disabled { opacity: 0.5; cursor: default; }
 /* The first breakpoint in this file, and it is content that decided it, not a
    device: a 150px label column plus the gap and the padding leaves the
    consequence under 100px on a phone — a ribbon three words wide that shrinking
@@ -787,7 +793,7 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; color: 
 .context summary { color: var(--ink-3); cursor: pointer; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
 .situation { color: var(--ink-2); margin: 6px 0 0; }
 
-/* ---- the answer surface (H-90): one deliberate acceptance, disagreement stays a meeting ---- */
+/* ---- the answer surface (H-90, R-42 I11): only answers already on the card ---- */
 .ratify { min-height: 44px; padding: 5px 14px; border: 1px solid var(--link); border-radius: var(--radius-control); background: var(--link); color: var(--link-ink);
   font: inherit; font-weight: 600; cursor: pointer; }
 .ratify:disabled { opacity: 0.5; cursor: default; }
@@ -1019,11 +1025,12 @@ document.addEventListener('click', async (e) => {
     return;
   }
 
-  const send = e.target.closest('.ratify');
+  const send = e.target.closest('.ratify, .choice');
   if (send) {
     const card = send.closest('.qcard');
     const status = card.querySelector('.ratify-status');
-    send.disabled = true;
+    const controls = card.querySelectorAll('.ratify, .choice');
+    for (const control of controls) control.disabled = true;
     status.classList.remove('err');
     status.textContent = 'recording…';
     try {
@@ -1032,7 +1039,7 @@ document.addEventListener('click', async (e) => {
         headers: { 'content-type': 'application/json', 'x-helmo-answer': document.documentElement.dataset.answer },
         body: JSON.stringify({
           ticket_id: card.dataset.ticket,
-          ratify: true,
+          ...(send.classList.contains('choice') ? { choice: send.dataset.choice } : { ratify: true }),
           question_fingerprint: card.dataset.ask,
         }),
       });
@@ -1043,7 +1050,7 @@ document.addEventListener('click', async (e) => {
     } catch (err) {
       status.classList.add('err');
       status.textContent = String(err.message || err);
-      send.disabled = false;
+      for (const control of controls) control.disabled = false;
     }
   }
 });

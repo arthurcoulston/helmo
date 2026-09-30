@@ -1,14 +1,15 @@
 // The one write route (H-90), on its own so it can be tested: POST /answer
-// ratifies the recommendation on a pending question and does nothing else.
+// records one of the answers the pending question itself offers and does
+// nothing else. Ratifying the recommendation remains the default path.
 //
 // It used to also accept a free-text payload — a reasoning field and a
 // resume/done/cancelled select, from the form the dashboard used to draw.
 // Ward's review of the estate's remote path (H-1053) named that capability
 // the defect: the form was gone from the page, but the ROUTE could still
 // record arbitrary answers and close or cancel tickets as Arthur, now from
-// anywhere the shell is reachable. Disagreement is a meeting, by Arthur's own
-// account of how he works, so the route says the one thing the button says.
-import { questionFingerprint } from './presentation.js';
+// anywhere the shell is reachable. The route therefore accepts only what the
+// current card says: ratify, or a letter from its stored closed option set.
+import { ask, questionFingerprint } from './presentation.js';
 import { Store } from './store.js';
 import { Actor, HelmoError } from './types.js';
 
@@ -47,20 +48,29 @@ export function answerRequest(
   if (h('origin') && !ctx.sameOrigin.has(h('origin'))) return fail(403, 'cross-origin answer refused');
   if (h('sec-fetch-site') && h('sec-fetch-site') !== 'same-origin' && h('sec-fetch-site') !== 'none') return fail(403, 'cross-site answer refused');
   if (h(ANSWER_HEADER) !== ctx.nonce) return fail(403, 'missing or stale answer token — reload the dashboard');
-  let p: { ticket_id?: unknown; ratify?: unknown; question_fingerprint?: unknown };
+  let p: { ticket_id?: unknown; ratify?: unknown; choice?: unknown; question_fingerprint?: unknown };
   try {
     p = JSON.parse(body) as typeof p;
   } catch {
     return fail(400, 'the answer body is not JSON.');
   }
   if (!p || typeof p !== 'object' || Array.isArray(p)) return fail(400, 'the answer body must be a JSON object.');
-  if (p.ratify !== true) return fail(400, 'this route only ratifies a recommendation: send {ticket_id, ratify: true, question_fingerprint}.');
+  const allowed = new Set(['ticket_id', 'ratify', 'choice', 'question_fingerprint']);
+  if (Object.keys(p).some((key) => !allowed.has(key))) {
+    return fail(400, 'this route accepts only a stored choice or ratification; free text and resolution changes are refused.');
+  }
+  const ratifying = p.ratify === true && p.choice === undefined;
+  const choosing = p.ratify === undefined && typeof p.choice === 'string' && p.choice.length > 0;
+  if (!ratifying && !choosing) {
+    return fail(400, 'send exactly one answer: ratify: true, or choice: the letter of an offered option.');
+  }
   if (typeof p.ticket_id !== 'string' || !p.ticket_id.trim()) return fail(400, 'ticket_id is required.');
   if (typeof p.question_fingerprint !== 'string' || !p.question_fingerprint.trim()) {
-    return fail(400, 'question_fingerprint is required — it says which question is being ratified.');
+    return fail(400, 'question_fingerprint is required — it says which question is being answered.');
   }
   try {
     const pending = ctx.store.getTicket(p.ticket_id);
+    const presented = pending.question ? ask(pending.question) : null;
     const recommendation = pending.question?.recommendation?.trim();
     if (!recommendation) return fail(400, 'the ticket has no pending recommendation to ratify.');
     // Checked here for a plain message, and again inside the write
@@ -68,11 +78,15 @@ export function answerRequest(
     if (questionFingerprint(pending.question!) !== p.question_fingerprint) {
       return fail(409, 'the question on screen is not the one on the ticket now — reload and read it again.');
     }
+    const selected = choosing ? presented?.options?.find((option) => option.letter === p.choice) : undefined;
+    if (choosing && !selected) return fail(400, `the pending question does not offer choice ${JSON.stringify(p.choice)}.`);
     const actor: Actor = { name: ctx.operator, kind: 'human', session: 'dashboard' };
     const t = ctx.store.answerTicket(
       actor,
       p.ticket_id,
-      { answer: 'Ratified from the dashboard', chosen_option: recommendation, resolution: 'resume' },
+      selected
+        ? { answer: `Selected ${selected.letter} (${selected.label}) from the dashboard`, chosen_option: selected.label, resolution: 'resume' }
+        : { answer: 'Ratified from the dashboard', chosen_option: recommendation, resolution: 'resume' },
       p.question_fingerprint,
     );
     return { code: 200, body: { ok: true, id: t.id, status: t.status } };

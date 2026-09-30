@@ -84,12 +84,17 @@ orchestrator meetings and the read-only view. Product intent:
   the claim released is what that status means. The one stored request column
   carries `kind`; a request without one reads as the decision it was, so no
   existing row is rewritten or reinterpreted. `Ticket` splits that column into
-  `question` — the pending decision, unchanged in type and meaning, so
-  `answer.ts`, `view.ts` and every external `get_ticket` consumer are
-  untouched — and `action`. That split is what stops a reader knowing only
+  `question` — the pending decision, unchanged in type and meaning — and
+  `action`. External `get_ticket` consumers therefore keep the old decision
+  shape. That split is what stops a reader knowing only
   about questions from offering Ratify on an action. `questionFingerprint`
   names its fields rather than serialising the request, so `kind` did not move
-  the hash a dashboard built before kinds already drew.
+  the hash a dashboard built before kinds already drew. The dashboard answer
+  route accepts either the old `{ratify: true}` or one letter produced by
+  `presentation.ask`; it resolves that letter against the current stored
+  options after checking the fingerprint. Labels, free text, invented letters,
+  mixed answers and resolution changes are not an input shape, so exposing all
+  offered choices does not restore the broad write capability removed in H-1053.
   `requestAction` requires `why_human`: an asker who cannot say why their own
   hands will not serve owes a decision instead. `reportAction` takes what the
   operator did and nothing else — no resolution, no chosen option — so by shape
@@ -293,16 +298,18 @@ orchestrator meetings and the read-only view. Product intent:
   against a forged one-liner, NOT a wall against local agents (same-user
   box; ward's threat model). The route itself lives in `answer.ts` so its
   refusals are testable without a socket (`test/answer.test.ts`), and since
-  H-1053 it does exactly ONE thing: ratify the pending recommendation. It
-  takes `{ticket_id, ratify: true, question_fingerprint}` and nothing else —
-  the free-text/resolution payload of the removed form is gone, because a
+  H-1053 it can record only an answer the current decision card itself offers:
+  the old `{ticket_id, ratify: true, question_fingerprint}` remains the default,
+  and `{ticket_id, choice: <letter>, question_fingerprint}` selects from the
+  stored options through `presentation.ask`'s shared lettering. The
+  free-text/resolution payload of the removed form stays gone, because a
   route reachable from the phone that can close or cancel a ticket as Arthur
   is a capability the UI's shape does not narrow (ward's review). The
   fingerprint (`feed.questionFingerprint`, carried in `asks.fingerprint`) is
   the ask the clicker was looking at; `answerTicket` re-checks it INSIDE the
   write transaction, so a card answered and re-asked while it sat on a phone
-  cannot have the new question ratified in the human's name. Disagreement is
-  a meeting, which is how Arthur said he works. Dashboard answers render marked as such. Everything else
+  cannot answer the new question in the human's name. A response outside the
+  offered set is still a meeting. Dashboard answers render marked as such. Everything else
   stays disclosure toggles and evidence links; add no other write affordance. Shows the
   needs-grooming strip from `store.hygiene()` (H-23) — twelve deterministic
   record checks. `awaiting_second_eyes` (H-1069) makes every currently ready,

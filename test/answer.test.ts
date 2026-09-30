@@ -15,7 +15,10 @@ const builder: Actor = { name: 'mason', kind: 'agent', model: 'claude-opus-5', v
 const ask: Question = {
   situation: 'The deposit is due Friday and the venue holds nothing without it.',
   question: 'Pay the deposit?',
-  options: [],
+  options: [
+    { label: 'pay', consequence: 'the date is held' },
+    { label: 'wait', consequence: 'the date may go' },
+  ],
   recommendation: 'pay it — the date matters more than the money',
 };
 
@@ -50,6 +53,32 @@ describe('the answer route', () => {
     // came in on — an answer with no meeting behind it says so.
     const answered = store.getEvents(id).find((e) => e.event_type === 'answered')!;
     expect(answered.actor).toMatchObject({ name: 'arthur', kind: 'human', session: 'dashboard' });
+  });
+
+  it('records only a letter the stored question actually offers', () => {
+    const { store, id, fingerprint } = asking();
+    const out = answerRequest(headers(), JSON.stringify({ ticket_id: id, choice: 'b', question_fingerprint: fingerprint }), ctx(store));
+    expect(out.code).toBe(200);
+    expect(store.lastAnswer(id)).toMatchObject({
+      answer: 'Selected b (wait) from the dashboard',
+      chosen_option: 'wait',
+      resolution: 'resume',
+    });
+  });
+
+  it('refuses a label, an unoffered letter, and more than one answer without writing', () => {
+    for (const payload of [
+      { choice: 'wait' },
+      { choice: 'c' },
+      { choice: 'b', ratify: true },
+      { ratify: true, reasoning: 'and close it' },
+    ]) {
+      const { store, id, fingerprint } = asking();
+      const out = answerRequest(headers(), JSON.stringify({ ticket_id: id, question_fingerprint: fingerprint, ...payload }), ctx(store));
+      expect(out.code).toBe(400);
+      expect(store.getTicket(id).status).toBe('awaiting_human');
+      expect(store.lastAnswer(id)).toBeNull();
+    }
   });
 
   it('refuses the free-text payload the old form used to send', () => {

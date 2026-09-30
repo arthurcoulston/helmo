@@ -4,7 +4,7 @@ This is Helmo Roadmap's first published set of release notes. It is scoped to
 the independent-installations release and does not reconstruct what came before
 it; earlier history is in the git log.
 
-## Unreleased
+## v0.1.0 — 2026-09-30
 
 The roadmap can be installed more than once under one account. Each installation
 has a name that both entry points resolve and print, a store it alone writes, a

@@ -165,22 +165,35 @@ function shipNextCard(r: Ranked): string {
   </article>`;
 }
 
+/** Deliberately NOT <details>/<summary>. The row draws its own reference
+ *  through ref(), which brings a copy control with it, and a <summary> is an
+ *  interactive element — so a button inside one is axe's `nested-interactive`
+ *  (serious), and a real defect: a screen reader cannot reach the copy control
+ *  separately from the disclosure, and a pointer gesture over the two is
+ *  ambiguous between copying and opening (H-2447). Helmo's view.ts spells the
+ *  same disclosure the same way, for the same reason. The rank and the
+ *  explanation sit beside the button rather than inside it, which keeps the
+ *  row drawing exactly as it did — the explanation's indent is measured from
+ *  the row's edge, not the button's. */
 function row(r: Ranked): string {
   const p = r.project;
   const noCite = !r.citations.length && store.listObjectives().length > 0;
-  return `<details class="prow" id="${esc(p.id)}">
-    <summary>
+  const panel = `b-${esc(p.id)}`;
+  return `<div class="prow" id="${esc(p.id)}">
+    <div class="rhead">
       <span class="rank">${r.rank}</span>
       ${ref(p.id, 'pid')}
-      <span class="rtitle">${esc(p.title)}</span>
-      <span class="badge quiet">${esc(STATUS_LABEL[p.status] ?? p.status)}</span>
-      ${r.blocked_by.length ? `<span class="badge serious">⛔ waits on ${esc(r.blocked_by.join(', '))}</span>` : ''}
-      ${noCite ? '<span class="badge quiet">∅ advances nothing stated</span>' : ''}
-      <span class="rmeta">${money(p, r.effort)} · ${esc(rel(p.updated_at))}</span>
+      <button type="button" class="rtoggle" aria-expanded="false" aria-controls="${panel}">
+        <span class="rtitle">${esc(p.title)}</span>
+        <span class="badge quiet">${esc(STATUS_LABEL[p.status] ?? p.status)}</span>
+        ${r.blocked_by.length ? `<span class="badge serious">⛔ waits on ${esc(r.blocked_by.join(', '))}</span>` : ''}
+        ${noCite ? '<span class="badge quiet">∅ advances nothing stated</span>' : ''}
+        <span class="rmeta">${money(p, r.effort)} · ${esc(rel(p.updated_at))}</span>
+      </button>
       <span class="explain">${esc(r.explanation)}</span>
-    </summary>
-    ${details(r)}
-  </details>`;
+    </div>
+    <div class="rbody" id="${panel}" hidden>${details(r)}</div>
+  </div>`;
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -192,13 +205,20 @@ const STATUS_LABEL: Record<string, string> = {
 // Off-list rows: shipped (watching/stable) and archived projects carry no
 // rank — the body and the trail are what a reader comes for.
 function shelfRow(p: Project): string {
-  return `<details class="prow" id="${esc(p.id)}">
-    <summary>${ref(p.id, 'pid')}<span class="rtitle">${esc(p.title)}</span>
-      <span class="badge quiet">${esc(STATUS_LABEL[p.status] ?? p.status)}</span>
-      <span class="rmeta">${p.actual_usd ? `$${p.actual_usd.toFixed(2)} metered · ` : ''}${esc(rel(p.closed_at ?? p.updated_at))}</span></summary>
-    ${p.body ? `<div class="body">${esc(p.body)}</div>` : ''}
-    ${timeline(store.getEvents(p.id))}
-  </details>`;
+  const panel = `b-${esc(p.id)}`;
+  return `<div class="prow" id="${esc(p.id)}">
+    <div class="rhead">${ref(p.id, 'pid')}
+      <button type="button" class="rtoggle" aria-expanded="false" aria-controls="${panel}">
+        <span class="rtitle">${esc(p.title)}</span>
+        <span class="badge quiet">${esc(STATUS_LABEL[p.status] ?? p.status)}</span>
+        <span class="rmeta">${p.actual_usd ? `$${p.actual_usd.toFixed(2)} metered · ` : ''}${esc(rel(p.closed_at ?? p.updated_at))}</span>
+      </button>
+    </div>
+    <div class="rbody" id="${panel}" hidden>
+      ${p.body ? `<div class="body">${esc(p.body)}</div>` : ''}
+      ${timeline(store.getEvents(p.id))}
+    </div>
+  </div>`;
 }
 
 // The charter projection: the human's hand, read-only here by double measure.
@@ -365,14 +385,21 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; color: 
 .cstate { color: var(--ink); }
 
 /* ---- ranked rows ---- */
+/* The head is a flex line whose items are siblings, never nested: the rank,
+   the reference (which carries its own copy control), the disclosure button
+   that owns the title and badges, and the explanation on its own wrapped line.
+   The button is stripped back to inherited type and made a wrapping flex
+   container, so the row draws as it did — see row() for why it is not a
+   <summary>. */
 .prow { border-bottom: 1px solid var(--hairline); }
-.prow summary { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; padding: 9px 4px; cursor: pointer; list-style: none; }
-.prow summary::-webkit-details-marker { display: none; }
+.rhead { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; padding: 9px 4px; }
+.rtoggle { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  margin: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 /* The one place the estate's --accent belongs: it is a hover SURFACE in
    shadcn's vocabulary, which is exactly this row's job. Aliasing it here rather
    than to --surface matters — --card and --background are the same white in
    the light palette, so a --surface hover would be no hover at all. */
-.prow summary:hover { background: var(--accent); }
+.rhead:hover { background: var(--accent); }
 .rank { font-variant-numeric: tabular-nums; color: var(--ink-3); font-size: 12px; min-width: 20px; text-align: right; }
 .rtitle { font-weight: 500; }
 .rmeta { margin-left: auto; text-align: right; }
@@ -380,11 +407,12 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; color: 
 
 /* ---- shared detail ---- */
 details.more { margin-top: 10px; }
-details.more summary, .prow > summary { font-size: 13.5px; }
+details.more summary, .prow .rhead { font-size: 13.5px; }
 details.more summary { font-size: 12px; color: var(--ink-3); cursor: pointer; }
 .body { white-space: pre-wrap; color: var(--ink-2); font-size: 13px; background: var(--page);
   border: 1px solid var(--hairline); border-radius: var(--radius-inner); padding: 10px 14px; margin: 8px 0; }
 .prow .body { background: var(--surface); }
+.rbody[hidden] { display: none; }
 .park { color: var(--ink-2); font-size: 12.5px; margin: 4px 0; }
 .cite { font-size: 12.5px; color: var(--ink-2); margin: 3px 0; }
 .claim { display: block; font-size: 12.5px; color: var(--ink-2); margin: 3px 0; }
@@ -433,13 +461,21 @@ function copyWithoutTheApi(text) {
 }
 
 document.addEventListener('click', async (e) => {
+  // The project rows' disclosure. <details> would open itself, but its
+  // <summary> cannot hold the row's copy control without nesting one
+  // interactive element in another (H-2447), so the open/closed state is
+  // carried on aria-expanded and the panel's hidden attribute instead.
+  const toggle = e.target.closest('.rtoggle');
+  if (toggle) {
+    const wasOpen = toggle.getAttribute('aria-expanded') === 'true';
+    toggle.setAttribute('aria-expanded', wasOpen ? 'false' : 'true');
+    const panel = document.getElementById(toggle.getAttribute('aria-controls'));
+    if (panel) panel.hidden = wasOpen;
+    return;
+  }
+
   const copy = e.target.closest('.copy');
   if (!copy) return;
-  // Most of these controls sit inside a <summary>, whose activation behaviour
-  // is to toggle its disclosure. Engines differ on whether an interactive
-  // descendant is exempted from that, so the exemption is stated here rather
-  // than assumed: one gesture, one effect.
-  e.preventDefault();
   const text = copy.dataset.copy;
   let ok = false;
   try {
@@ -474,6 +510,15 @@ setInterval(async () => {
     const doc = new DOMParser().parseFromString(await r.text(), 'text/html');
     const open = new Set([...document.querySelectorAll('details[open]')].map((d) => d.id).filter(Boolean));
     for (const id of open) doc.getElementById(id)?.setAttribute('open', '');
+    // The project rows are a button and a panel rather than a <details>, so
+    // their open state lives in two places and both have to come across.
+    for (const b of document.querySelectorAll('.rtoggle[aria-expanded="true"]')) {
+      const id = b.getAttribute('aria-controls');
+      const panel = doc.getElementById(id);
+      if (!panel) continue;
+      panel.removeAttribute('hidden');
+      doc.querySelector('[aria-controls="' + id + '"]')?.setAttribute('aria-expanded', 'true');
+    }
     const y = scrollY;
     document.body.replaceWith(doc.body);
     scrollTo(0, y);

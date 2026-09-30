@@ -49,7 +49,13 @@ describe('every reference can be carried into a conversation', () => {
     expect(view).toContain('id="copy-status"');
     expect(view).toContain('aria-live="polite"');
     expect(view).toContain('aria-label="Copy ${esc(id)}"');
-    expect(js.slice(js.indexOf("closest('.copy')"), js.indexOf('const text'))).toContain('e.preventDefault()');
+    // The control cannot toggle the row because it is not inside the thing
+    // that toggles it. A <summary> is interactive, so a button within one is
+    // axe's `nested-interactive` and unreachable on its own terms (H-2447):
+    // the rows spell their disclosure as a sibling button and a panel.
+    expect(view).not.toMatch(/<summary>[^<]*\$\{ref\(/);
+    expect(view).toContain('class="rtoggle" aria-expanded="false"');
+    expect(js).toContain("e.target.closest('.rtoggle')");
   });
 
   it('stops the refresh from pulling a focused control out from under a reader', () => {

@@ -3,6 +3,7 @@ import {
   ACTOR_KINDS, Actor, ActorKind, Bet, Citation, Claim, Dep, DepType, EFFORT_SIZES, Horizon, Objective,
   Project, ProjectSnapshot, Ranked, ReadinessReview, ReadinessVerdict, RoadmapError, RoadmapEvent, SHIPPED, Status, TERMINAL, VALUE_LEVELS,
 } from './types.js';
+import { Installation } from './install.js';
 
 export interface CreateInput {
   title: string;
@@ -131,9 +132,9 @@ function rejectSwallowedMarkup(fields: Record<string, string | undefined | null>
 
 export class Store {
   private db: Database.Database;
-  private installation?: { label: string; source: string };
+  private installation?: Installation;
 
-  constructor(path: string, installation?: { label: string; source: string }) {
+  constructor(path: string, installation?: Installation) {
     this.installation = installation;
     this.db = new Database(path);
     this.db.pragma('journal_mode = WAL');
@@ -147,6 +148,15 @@ export class Store {
 
   close(): void {
     this.db.close();
+  }
+
+  /** The installation this store was opened as, for a surface that has to
+   *  qualify a record reference with it or check one against it (H-2506).
+   *  Undefined for a store opened without one — a library caller or a test —
+   *  where a qualified reference has nothing to check and is refused rather
+   *  than assumed. */
+  installationTarget(): Installation | undefined {
+    return this.installation;
   }
 
   /** Durable name claimed by the first explicitly named writer. A derived-only

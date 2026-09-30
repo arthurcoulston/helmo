@@ -125,10 +125,20 @@ function mismatch(i: Installation, requested?: string): string | null {
   if (requested === undefined) return null;
   const want = requested.trim();
   if (!want) return '--installation was given no value (name the installation, or drop the flag).';
-  if (want === i.label || resolve(want) === i.home || resolve(want) === i.db) return null;
+  if (namesInstallation(i, want)) return null;
   return `--installation named '${want}', but this process resolves installation '${i.label}' (home ${i.home}, store ${i.db}) `
     + 'from the environment. Nothing was opened or written. --installation asserts the target and cannot move it: '
     + 'point ROADMAP_HOME or ROADMAP_DB at the installation you meant.';
+}
+
+/**
+ * Does this spelling name this installation? One rule for both places an
+ * operator or an agent can assert a target — the `--installation` flag and the
+ * qualifier on a record reference (reference.ts, H-2506) — so the two cannot
+ * drift into accepting different words for the same install.
+ */
+export function namesInstallation(i: Installation, want: string): boolean {
+  return want === i.label || resolve(want) === i.home || resolve(want) === i.db;
 }
 
 /**

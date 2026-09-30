@@ -306,13 +306,13 @@ describe('the store owns its explicitly named installation (H-2488)', () => {
   it('claims atomically on the first mutation and refuses another inherited name without changing records', () => {
     const dir = mkdtempSync(join(tmpdir(), 'roadmap-store-identity-'));
     const path = join(dir, 'roadmap.db');
-    const first = new Store(path, { label: 'dev.rev.personal', source: 'REV_LABEL' });
+    const first = new Store(path, { label: 'dev.rev.personal', source: 'REV_LABEL', home: dir, db: path, release: null });
     expect(first.installationIdentity()).toEqual({ process: 'dev.rev.personal', stored: null, clear: true });
     const project = first.createProject(mason, { title: 'Named store' });
     expect(first.installationIdentity()).toEqual({ process: 'dev.rev.personal', stored: 'dev.rev.personal', clear: true });
     first.close();
 
-    const wrong = new Store(path, { label: 'dev.rev.gp', source: 'REV_LABEL' });
+    const wrong = new Store(path, { label: 'dev.rev.gp', source: 'REV_LABEL', home: dir, db: path, release: null });
     expect(wrong.getProject(project.id).title).toBe('Named store');
     expect(wrong.installationIdentity()).toEqual({ process: 'dev.rev.gp', stored: 'dev.rev.personal', clear: false });
     expect(() => wrong.updateProject(mason, { project_id: project.id, note: 'must not land', title: 'Wrong target' }))
@@ -323,7 +323,7 @@ describe('the store owns its explicitly named installation (H-2488)', () => {
   });
 
   it('does not give a derived-only store a durable name', () => {
-    const store = new Store(':memory:', { label: 'dev.roadmap', source: 'derived' });
+    const store = new Store(':memory:', { label: 'dev.roadmap', source: 'derived', home: ':memory:', db: ':memory:', release: null });
     store.createProject(mason, { title: 'Old single install' });
     expect(store.installationIdentity()).toEqual({ process: 'dev.roadmap', stored: null, clear: true });
     store.close();

@@ -4,6 +4,7 @@ import { Store } from './store.js';
 import { Actor, ACTOR_KINDS, DEP_TYPES, EFFORT_SIZES, HORIZONS, Project, RoadmapError, STATUSES, VALUE_LEVELS } from './types.js';
 import { running } from './build.js';
 import { Installation } from './install.js';
+import { localRecordRef, qualifiedRecordRef } from './reference.js';
 
 // Single source of truth for the MCP tool surface, Helmo-style: tool
 // descriptions are guidance-as-deployed. Edit them here and only here.
@@ -37,6 +38,12 @@ function compact(p: Project) {
 export function buildServer(store: Store, envActor: Actor | null, install?: Installation): McpServer {
   const resolveActor = (override?: Actor): Actor => override ?? envActor ?? ({} as Actor);
   const identity = store.installationIdentity();
+  // The installation references are minted from and checked against is the one
+  // the STORE was opened as, not the one this call was handed: a surface that
+  // qualified ids with one identity while serving another's records would hand
+  // out references that are wrong in the one way this whole mechanism exists to
+  // prevent. `install` remains the argument for naming the process.
+  const target = store.installationTarget() ?? install;
   const label = install?.label ?? identity.process ?? identity.stored ?? 'unknown';
   const ok = (data: unknown, warnings: string[] = []) => {
     const ids = new Set<string>();
@@ -48,10 +55,19 @@ export function buildServer(store: Store, envActor: Actor | null, install?: Inst
     visit(data);
     return result({
       installation: { name: label, clear: identity.clear, ...(identity.stored ? { stored: identity.stored } : {}), build: running() },
-      references: [...ids].map((id) => ({ id, qualified: `${label}:${id}` })),
+      // `id` stays bare, so every caller reading it is unaffected; `qualified`
+      // is the spelling that survives being carried to another installation,
+      // because there it refuses instead of resolving (H-2506). Until then it
+      // was `<label>:<id>` — a second idiom for Helmo's `<id>@<label>`, and one
+      // no installation, not even the one that minted it, would accept back.
+      references: [...ids].map((id) => ({ id, qualified: qualifiedRecordRef(id, target) })),
       ...data as object,
     }, warnings);
   };
+  /** Resolve an incoming reference to a local id before it reaches the store:
+   *  bare ids pass through, a qualifier naming this installation is dropped,
+   *  one naming another refuses (H-2506). */
+  const local = (ref: string): string => localRecordRef(ref, target);
 
   const server = new McpServer({ name: 'helmo-roadmap', version: '0.1.0' });
 
@@ -83,14 +99,14 @@ export function buildServer(store: Store, envActor: Actor | null, install?: Inst
     {
       description:
         `Fetch one project: current fields, computed blocked-ness, deps, all claims (value/effort, with authors and reasons), objective citations, and the event history. Use it before shaping, critiquing, or re-ranking — the history is where earlier judgments and their reasons live.\n\n` +
-        `The response also carries 'revision', the project's state as of this read — every field here is read under one snapshot, so the revision belongs to the text beside it. If what you write next depends on what you just read — reshaping a description, judging it ready, reversing a status — pass that number back as roadmap_update_project's 'if_revision' and the write is refused if a second writer moved the project in between. It covers this project's own record: 'blocked_by' and incoming 'deps' are facts about OTHER projects and can change without moving it, so a decision that turns on the dependency graph needs more than this token.`,
+        `The response also carries 'revision', the project's state as of this read — every field here is read under one snapshot, so the revision belongs to the text beside it. If what you write next depends on what you just read — reshaping a description, judging it ready, reversing a status — pass that number back as roadmap_update_project's 'if_revision' and the write is refused if a second writer moved the project in between. It covers this project's own record: 'blocked_by' and incoming 'deps' are facts about OTHER projects and can change without moving it, so a decision that turns on the dependency graph needs more than this token.\n\nA bare id means this installation's record, and every result says on its envelope which installation that is. The 'references' array pairs each id this result mentions with that id qualified by the installation (R-4@dev.roadmap) — quote THAT anywhere the reference may travel, because ids are minted per installation and the qualified form is REFUSED by any other rather than answered with its own unrelated R-4. Every tool here takes either spelling.`,
       inputSchema: { project_id: z.string() },
     },
     async ({ project_id }) => {
       try {
         // One snapshot, not seven reads — see Store.projectSnapshot for why the
         // revision is worthless if the body beside it came from another one.
-        const { project, ...rest } = store.projectSnapshot(project_id);
+        const { project, ...rest } = store.projectSnapshot(local(project_id));
         return ok({ ...project, ...rest });
       } catch (e) {
         return fail(e);
@@ -165,7 +181,7 @@ export function buildServer(store: Store, envActor: Actor | null, install?: Inst
     },
     async ({ actor, ...input }) => {
       try {
-        const { project, revision, warnings } = store.updateProject(resolveActor(actor as Actor | undefined), input);
+        const { project, revision, warnings } = store.updateProject(resolveActor(actor as Actor | undefined), { ...input, project_id: local(input.project_id) });
         return ok({ ...compact(project), revision }, warnings);
       } catch (e) {
         return fail(e);
@@ -191,7 +207,7 @@ export function buildServer(store: Store, envActor: Actor | null, install?: Inst
     },
     async ({ actor, ...input }) => {
       try {
-        return ok(store.recordClaim(resolveActor(actor as Actor | undefined), input));
+        return ok(store.recordClaim(resolveActor(actor as Actor | undefined), { ...input, project_id: local(input.project_id) }));
       } catch (e) {
         return fail(e);
       }
@@ -213,7 +229,7 @@ export function buildServer(store: Store, envActor: Actor | null, install?: Inst
     },
     async ({ actor, ...input }) => {
       try {
-        const { project, readiness } = store.recordReadinessVerdict(resolveActor(actor as Actor | undefined), input);
+        const { project, readiness } = store.recordReadinessVerdict(resolveActor(actor as Actor | undefined), { ...input, project_id: local(input.project_id) });
         return ok({ project: compact(project), readiness });
       } catch (e) {
         return fail(e);
@@ -236,7 +252,7 @@ export function buildServer(store: Store, envActor: Actor | null, install?: Inst
     },
     async ({ actor, ...input }) => {
       try {
-        return ok({ citations: store.cite(resolveActor(actor as Actor | undefined), input) });
+        return ok({ citations: store.cite(resolveActor(actor as Actor | undefined), { ...input, project_id: local(input.project_id), objective_id: local(input.objective_id) }) });
       } catch (e) {
         return fail(e);
       }
@@ -258,8 +274,10 @@ export function buildServer(store: Store, envActor: Actor | null, install?: Inst
     },
     async ({ from_id, to_id, type, action, actor }) => {
       try {
-        store.link(resolveActor(actor as Actor | undefined), from_id, to_id, type, action ?? 'add');
-        return ok({ linked: action !== 'remove', from_id, to_id, type });
+        const from = local(from_id);
+        const to = local(to_id);
+        store.link(resolveActor(actor as Actor | undefined), from, to, type, action ?? 'add');
+        return ok({ linked: action !== 'remove', from_id: from, to_id: to, type });
       } catch (e) {
         return fail(e);
       }
@@ -281,7 +299,7 @@ export function buildServer(store: Store, envActor: Actor | null, install?: Inst
     },
     async ({ actor, ...input }) => {
       try {
-        const { project, ship_next_count } = store.setShipNext(resolveActor(actor as Actor | undefined), input);
+        const { project, ship_next_count } = store.setShipNext(resolveActor(actor as Actor | undefined), { ...input, project_id: local(input.project_id) });
         // Crowding is the only thing worth saying back: until H-1126 this also
         // told the caller to update Helmo's standing notice, which no longer exists.
         const crowded = ship_next_count >= 3
@@ -308,7 +326,7 @@ export function buildServer(store: Store, envActor: Actor | null, install?: Inst
     },
     async ({ actor, ...input }) => {
       try {
-        return ok(compact(store.recordActual(resolveActor(actor as Actor | undefined), input)));
+        return ok(compact(store.recordActual(resolveActor(actor as Actor | undefined), { ...input, project_id: local(input.project_id) })));
       } catch (e) {
         return fail(e);
       }
@@ -335,7 +353,7 @@ export function buildServer(store: Store, envActor: Actor | null, install?: Inst
     },
     async ({ actor, ...input }) => {
       try {
-        return ok(store.setCharterItem(resolveActor(actor as Actor | undefined), input));
+        return ok(store.setCharterItem(resolveActor(actor as Actor | undefined), { ...input, ...(input.id ? { id: local(input.id) } : {}) }));
       } catch (e) {
         return fail(e);
       }

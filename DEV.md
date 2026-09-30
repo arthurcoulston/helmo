@@ -74,14 +74,28 @@ append-only event log, materialized state, `.immediate()` write transactions
   environment refuses before the store is opened, naming both candidates, and
   `ROADMAP_HOME`/`ROADMAP_DB` remain the only things that move the target. A
   bare `--installation` refuses rather than reading as absent.
+- `reference.ts` — the record reference that says which installation minted it
+  (H-2506), the sibling of `helmo:src/reference.ts` and deliberately the same
+  spelling: `R-4@dev.roadmap`, split at the FIRST `@`, qualifier in any of the
+  three forms `--installation` takes. Both directions matter and the inbound one
+  is load-bearing — `tools.ts` resolves every incoming `project_id`,
+  `objective_id` and dep endpoint through `localRecordRef` BEFORE it reaches the
+  store, so a reference carried in from another installation refuses having read
+  and written nothing, instead of resolving against this store's unrelated
+  record of the same name. A bare id keeps working everywhere. The identity it
+  is checked against is `store.installationTarget()`, not the `install` argument
+  `buildServer` was handed: a surface cannot qualify with one identity while
+  serving another's records. Until H-2506 this half did not exist and the
+  advertised form was `<installation>:<id>` — a second idiom for the same thing
+  that no installation, not even the minting one, would accept back.
 - `build.ts` — the build this process actually loaded (H-2491). Long-lived
   surfaces snapshot their own compiled directory before serving and compare it
   afresh on every report. A rebuild beneath them is `stale`; source runs and
   unreadable code are `unverifiable`; the named commit is always the loaded
   one. `postbuild` writes `dist/BUILD.json`, and every MCP result carries the
   installation and build state. It also collects every returned project,
-  objective, and bet id into `references`, pairing the legacy id with its
-  installation-qualified form (`<installation>:<id>`), so existing fields stay
+  objective, and bet id into `references`, pairing the bare id with its
+  installation-qualified form (`<id>@<installation>`), so existing fields stay
   compatible while an agent can carry an identity that cannot cross-resolve.
 - `server.ts` — MCP stdio entry. Store at `~/.helmo-roadmap/roadmap.db`
   (`ROADMAP_HOME` or `ROADMAP_DB` overrides, and setting both to disagree is

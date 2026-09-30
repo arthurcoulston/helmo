@@ -8,10 +8,12 @@ a decision.
 
 - Product & architecture: [rev-product-description.md](rev-product-description.md)
 - Agent-led install (the primary path): [AGENT-INSTALL.md](AGENT-INSTALL.md)
-
-An installation assembled from immutable releases can set
-`INSTALLATION_RELEASE` to its `ADOPTED.json`. Rev then verifies the complete
-Rev/Helmo/Roadmap commit set and refuses to run from any other checkout.
+- Running more than one installation, and changing which release one runs:
+  [INSTALLATIONS.md](INSTALLATIONS.md) — install identity, pinned releases,
+  upgrade, rollback and removal. One installation needs none of it. An
+  installation assembled from immutable releases sets `INSTALLATION_RELEASE` to
+  its selection file; Rev then verifies the complete Rev/Helmo/Roadmap commit
+  set and refuses to run from any other checkout.
 - Ops role for humans-with-agents: [WATCH-OFFICER.md](WATCH-OFFICER.md) — "summon the watch officer"
 
 ## Status: MVP

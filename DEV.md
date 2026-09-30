@@ -3,6 +3,11 @@
 Rev keeps agent loops turning: process supervision for autonomous loops
 that draw work from Helmo. Rev never reads ticket content; Helmo never
 manages a process. Product doc: `rev-product-description.md`.
+`INSTALLATIONS.md` is the consumer's account of install identity, pinned
+releases, upgrade, rollback and removal — what `install.ts`, `release.ts`,
+`remove.ts` and the service-definition section below look like from outside.
+It is a published promise: a change to any of those modules' behaviour is a
+change to that document in the same pass.
 Renamed from Capstan 2026-08-05 (H-53); Helm event history before then carries
 the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
 

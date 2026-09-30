@@ -243,6 +243,50 @@ describe('workflow invalidation and quarantine (H-432)', () => {
     s.addWorkflowManifest({ id: 'new', attempt_id: 'attempt-1', kind: 'input', subjects: ['repo@new'], creators: [builder], supersedes_manifest_id: 'old' });
     expect(() => s.updateTicket(builder, { ticket_id: ticket.id, note: 'resume', handoff_to: reviewer.name })).toThrow(/invalidation/);
   });
+
+  it('refuses every ticket mutation that could launder a quarantined attempt', () => {
+    const s = new Store(':memory:', undefined, reviewer);
+    s.addWorkflowDefinition({ workflow_id: 'release', revision: 'v1', stages: [{ id: 'review' }] });
+    s.addWorkflowRun({ id: 'run-1', workflow_id: 'release', definition_revision: 'v1' });
+    s.addWorkflowAttempt({ id: 'attempt-1', run_id: 'run-1', stage_id: 'review', ordinal: 1 });
+    s.addWorkflowManifest({ id: 'old', attempt_id: 'attempt-1', kind: 'output', subjects: ['repo@old'], creators: [builder] });
+    s.addWorkflowRequirement({ id: 'check', workflow_id: 'release', definition_revision: 'v1', scope: 'technical', subject_manifest_id: 'old', allowed_verdicts: ['pass'], authorities: [reviewer], independence: 'different_from_manifest_creators' });
+    s.recordWorkflowDecision({ id: 'pass', requirement_id: 'check', manifest_id: 'old', verdict: 'pass', source: 'review:old' });
+    const ticket = create(s, { workflow_attempt_id: 'attempt-1' });
+    const parent = create(s);
+    const replacementParent = create(s);
+    s.linkTickets(builder, ticket.id, parent.id, 'parent', 'add');
+    triage(s, ticket.id);
+    s.updateTicket(builder, { ticket_id: ticket.id, note: 'start', status: 'in_progress' });
+    s.addWorkflowManifest({ id: 'new', attempt_id: 'attempt-1', kind: 'output', subjects: ['repo@new'], creators: [builder], supersedes_manifest_id: 'old' });
+
+    expect(() => s.updateTicket(builder, { ticket_id: ticket.id, note: 'finish stale output', status: 'done', evidence: [{ kind: 'commit', ref: 'helmo@stale' }] })).toThrow(/invalidation/);
+    expect(() => s.updateTicket(builder, { ticket_id: ticket.id, note: 'cancel stale output', status: 'cancelled' })).toThrow(/invalidation/);
+    expect(() => s.updateTicket(builder, { ticket_id: ticket.id, note: 'rename stale output', labels: ['accepted'] })).toThrow(/invalidation/);
+    expect(() => s.linkTickets(builder, ticket.id, parent.id, 'parent', 'remove')).toThrow(/invalidation/);
+    expect(() => s.linkTickets(builder, ticket.id, replacementParent.id, 'parent', 'add')).toThrow(/invalidation/);
+    expect(() => create(s, { workflow_attempt_id: 'attempt-1' })).toThrow(/cannot be cloned/);
+    expect(() => s.updateTicket(builder, { ticket_id: ticket.id, note: 'unbind stale output', workflow_attempt_id: undefined } as never)).toThrow(/immutable ticket binding/);
+    expect(s.getTicket(ticket.id)).toMatchObject({ status: 'in_progress', labels: [], workflow_attempt_id: 'attempt-1' });
+
+    s.rebuild();
+    expect(s.getTicket(ticket.id)).toMatchObject({ status: 'in_progress', labels: [], workflow_attempt_id: 'attempt-1' });
+  });
+
+  it('quarantines an admission when a later decision replaces the admitted verdict', () => {
+    const s = new Store(':memory:', undefined, reviewer);
+    s.addWorkflowDefinition({ workflow_id: 'release', revision: 'v1', stages: [{ id: 'review' }] });
+    s.addWorkflowRun({ id: 'run-1', workflow_id: 'release', definition_revision: 'v1' });
+    s.addWorkflowAttempt({ id: 'attempt-1', run_id: 'run-1', stage_id: 'review', ordinal: 1 });
+    s.addWorkflowManifest({ id: 'output', attempt_id: 'attempt-1', kind: 'output', subjects: ['repo@candidate'], creators: [builder] });
+    s.addWorkflowRequirement({ id: 'check', workflow_id: 'release', definition_revision: 'v1', scope: 'technical', subject_manifest_id: 'output', allowed_verdicts: ['pass', 'fail'], authorities: [reviewer], independence: 'different_from_manifest_creators' });
+    s.recordWorkflowDecision({ id: 'pass', requirement_id: 'check', manifest_id: 'output', verdict: 'pass', source: 'review:pass' });
+    const ticket = create(s, { workflow_attempt_id: 'attempt-1' }); triage(s, ticket.id);
+    s.updateTicket(builder, { ticket_id: ticket.id, note: 'start', status: 'in_progress' });
+
+    s.recordWorkflowDecision({ id: 'later-fail', requirement_id: 'check', manifest_id: 'output', verdict: 'fail', source: 'review:correction' });
+    expect(() => s.updateTicket(builder, { ticket_id: ticket.id, note: 'finish despite corrected verdict', status: 'done', evidence: [{ kind: 'commit', ref: 'helmo@candidate' }] })).toThrow(/invalidation/);
+  });
 });
 
 describe('actor validation', () => {

@@ -81,11 +81,13 @@ no separate convention doc is required.
 
 Workflow-bound tickets use immutable definitions, attempts, manifests,
 requirements, decisions, admissions, and outcomes. Admission is checked in the
-same transaction as every supported start or resume. Revoking a decision or
-explicitly superseding a manifest appends an invalidation, quarantines only the
-affected attempt and its downstream stage descendants, and makes later
-admission fail closed; sibling branches and the historical records remain
-intact. Ordinary tickets retain their existing lifecycle semantics.
+same transaction as every supported start or resume. Replacing or revoking a
+decision, or explicitly superseding a manifest, appends an invalidation,
+quarantines only the affected attempt and its downstream stage descendants,
+and makes later admission fail closed. A quarantined ticket cannot be closed,
+cancelled, relabelled, reparented, cloned, or unbound; sibling branches and the
+historical records remain intact. Ordinary tickets retain their existing
+lifecycle semantics.
 
 ### Product acceptance
 

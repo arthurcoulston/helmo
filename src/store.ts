@@ -633,9 +633,14 @@ export class Store {
       if (this.db.prepare("SELECT 1 FROM workflow_decisions WHERE json_extract(decision, '$.revokes_decision_id') = ?").get(decision.revokes_decision_id)) throw new HelmoError(`Workflow decision ${decision.revokes_decision_id} is already revoked.`);
     } else if (!requirement.allowed_verdicts.includes(decision.verdict)) throw new HelmoError(`Verdict ${decision.verdict} is not allowed for workflow requirement ${requirement.id}.`);
     const stored: WorkflowDecision = { ...decision, actor };
+    const existing = this.db.prepare('SELECT decision FROM workflow_decisions WHERE requirement_id = ? AND manifest_id = ? ORDER BY rowid')
+      .all(requirement.id, manifest.id).map((row) => JSON.parse((row as { decision: string }).decision) as WorkflowDecision);
+    const revoked = new Set(existing.filter((item) => item.verdict === 'revocation').map((item) => item.revokes_decision_id));
+    const superseded = existing.filter((item) => item.verdict !== 'revocation' && !revoked.has(item.id)).at(-1);
     try { this.db.transaction(() => {
       this.db.prepare('INSERT INTO workflow_decisions (id, requirement_id, manifest_id, decision, created_at) VALUES (?, ?, ?, ?, ?)').run(decision.id, decision.requirement_id, decision.manifest_id, JSON.stringify(stored), now());
       if (decision.verdict === 'revocation') this.invalidateWorkflowFromDecision(decision.revokes_decision_id!, `decision:${decision.id}`);
+      else if (superseded) this.invalidateWorkflowFromDecision(superseded.id, `decision:${decision.id}`);
     })(); }
     catch (error) { if (String(error).includes('UNIQUE constraint failed')) throw new HelmoError(`Workflow decision ${decision.id} already exists and is immutable.`); throw error; }
     return stored;
@@ -708,6 +713,15 @@ export class Store {
     this.db.prepare('INSERT INTO workflow_admissions (id, attempt_id, admission, created_at) VALUES (?, ?, ?, ?)')
       .run(admission.id, attemptId, JSON.stringify(admission), now());
     this.db.prepare("UPDATE workflow_attempts SET state = 'running' WHERE id = ?").run(attemptId);
+  }
+
+  private refuseQuarantinedWorkflowMutation(ticketId: string, operation: string): void {
+    const row = this.db.prepare(`SELECT a.id FROM tickets t
+      JOIN workflow_attempts a ON a.id = t.workflow_attempt_id
+      WHERE t.id = ? AND a.state = 'quarantined'`).get(ticketId) as { id: string } | undefined;
+    if (row) {
+      throw new HelmoError(`workflow_admission_denied ${JSON.stringify({ attempt_id: row.id, operation, missing: [], stale: ['invalidation'], failed: [] })}`);
+    }
   }
 
   /** Durable name claimed by the first explicitly named writer. A derived-only
@@ -1936,8 +1950,13 @@ export class Store {
     for (const d of input.deps ?? []) this.getTicket(d.to); // existence check before mint
 
     return this.db.transaction(() => {
-      if (input.workflow_attempt_id && !this.db.prepare('SELECT 1 FROM workflow_attempts WHERE id = ?').get(input.workflow_attempt_id)) {
-        throw new HelmoError(`Workflow attempt ${input.workflow_attempt_id} does not exist; the ticket was not created.`);
+      if (input.workflow_attempt_id) {
+        if (!this.db.prepare('SELECT 1 FROM workflow_attempts WHERE id = ?').get(input.workflow_attempt_id)) {
+          throw new HelmoError(`Workflow attempt ${input.workflow_attempt_id} does not exist; the ticket was not created.`);
+        }
+        if (this.db.prepare('SELECT id FROM tickets WHERE workflow_attempt_id = ?').get(input.workflow_attempt_id)) {
+          throw new HelmoError(`Workflow attempt ${input.workflow_attempt_id} is already immutably bound to a ticket; it cannot be cloned.`);
+        }
       }
       const id = this.mintId();
       const ts = now();
@@ -1984,6 +2003,9 @@ export class Store {
       body_patch_new: input.body_patch?.new,
       uncertainty_note: input.uncertainty_note,
     });
+    if (Object.prototype.hasOwnProperty.call(input, 'workflow_attempt_id')) {
+      throw new HelmoError('workflow_attempt_id is an immutable ticket binding; it cannot be changed or removed.');
+    }
     const t = this.getTicket(input.ticket_id);
     const warnings: string[] = [];
     const diffs: Record<string, { from: unknown; to: unknown }> = {};
@@ -2201,6 +2223,9 @@ export class Store {
 
     return this.db.transaction(() => {
       const ts = now();
+      if (t.workflow_attempt_id && (input.status === 'done' || input.status === 'cancelled' || input.labels !== undefined)) {
+        this.refuseQuarantinedWorkflowMutation(t.id, input.status ?? 'relabel');
+      }
       if (t.workflow_attempt_id && (input.status === 'in_progress' || input.handoff_to !== undefined)) {
         this.admitWorkflow(t.id, t.workflow_attempt_id, input.handoff_to !== undefined ? 'handoff' : 'claim');
       }
@@ -2533,6 +2558,7 @@ export class Store {
     if (fromId === toId) throw new HelmoError('A ticket cannot link to itself.');
     this.db.transaction(() => {
       const ts = now();
+      if (type === 'parent') this.refuseQuarantinedWorkflowMutation(fromId, action === 'add' ? 'reparent' : 'unparent');
       if (action === 'add') {
         this.checkNoBlocksCycle(fromId, toId, type);
         this.append(ts, fromId, 'linked', actor, { to: toId, type });

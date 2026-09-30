@@ -4,7 +4,7 @@ This is Rev's first published set of release notes. It is scoped to the
 independent-installations release and does not reconstruct what came before it;
 earlier history is in the git log.
 
-## Unreleased
+## v0.1.0 — 2026-09-30
 
 Two Rev installations can now run under one login without reaching into each
 other: each has a name, a service identity bound to its own home, a store it

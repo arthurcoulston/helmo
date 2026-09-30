@@ -252,9 +252,20 @@ switch (cmd) {
   }
   case 'service': {
     const verb = rest[0];
-    if (verb === 'install') serviceInstall();
-    else if (verb === 'uninstall') serviceUninstall();
-    else if (verb === 'start') serviceStart();
+    // A refusal here is the ordinary answer, not a crash: it is how one
+    // installation declines to operate another's service (H-2452). Print what
+    // it said and the way out, without a stack trace over the top of it.
+    const refusable = (act: () => void) => {
+      try {
+        act();
+      } catch (e) {
+        console.error(e instanceof Error ? e.message : String(e));
+        process.exit(1);
+      }
+    };
+    if (verb === 'install') refusable(serviceInstall);
+    else if (verb === 'uninstall') refusable(serviceUninstall);
+    else if (verb === 'start') refusable(serviceStart);
     else if (verb === 'status') console.log(serviceStatusLine());
     else {
       console.error(`usage: ${commandName} service <install|uninstall|start|status>  (stop the machine with: ${commandName} stop)`);

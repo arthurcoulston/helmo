@@ -323,19 +323,60 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
 - `service.ts` — reboot resilience: launchd plist (KeepAlive on crash only —
   a drain exits 0 and stays down) / systemd user unit. Units embed
   install-time PATH and REV_HOME because service managers strip env.
-  **The service identity follows the Rev home** (`serviceLabel()`,
-  `systemdUnitName()`, H-2210). It was the constant `dev.rev`, and that one
-  string is also the plist filename and the bootout/kickstart address — so two
-  fleets under one login fought over one job and one file, and the second
-  install silently replaced the first. The derivation strips a leading `.` and
-  a leading `rev` from the home's basename: `~/.rev` → `dev.rev` (unchanged, so
-  an existing install is untouched — and it must hold whether `REV_HOME` is
-  unset or explicitly the default, because the installed plist exports
-  `REV_HOME=~/.rev` back to the process); `~/.rev-gp` → `dev.rev.gp` and
-  systemd `rev-gp`. `REV_LABEL` overrides it outright, which is the escape when
-  two homes share a basename. The label is a parameter of `launchdPlist` and
-  `installLaunchd` rather than a module constant, so the plist a call writes and
-  the job it boots out can never disagree.
+  **The service identity is the resolved Rev home** (`serviceLabel()`,
+  `systemdUnitName()`, H-2210 then H-2452). It was the constant `dev.rev`, and
+  that one string is also the plist filename and the bootout/kickstart address —
+  so two fleets under one login fought over one job and one file, and the second
+  install silently replaced the first. H-2210 derived it from the home's
+  basename, which was still one identity for many installs:
+  `/tmp/customer-a/.rev` and `/tmp/customer-b/.rev` are both `.rev`. Redirecting
+  `HOME` does not separate them either — a plist *filename* lives under `$HOME`,
+  but launchd's namespace is the uid's (`gui/<uid>/<label>`), so two installs
+  under one account share one bootout and kickstart address whatever `HOME`
+  says. Hence:
+  - A **conventional home** keeps the label it is already bootstrapped under,
+    by rule and not by name: a direct child of the **account's** home directory
+    called `.rev` or `.rev-<suffix>` cannot collide with another such home.
+    `~/.rev` → `dev.rev`, `~/.rev-gp` → `dev.rev.gp` and systemd `rev-gp`. This
+    must hold whether `REV_HOME` is unset or explicitly the default, because the
+    installed plist exports `REV_HOME=~/.rev` back to the process.
+  - **Anywhere else** the label carries eight hex of a SHA-256 of the resolved
+    home path, after a readable part taken from the home's basename or, when
+    that is a bare `.rev`, from the directory holding it:
+    `/tmp/customer-a/.rev` → `dev.rev.customer-a.3f9a…`. Stable across restarts,
+    distinct per install, no new state store.
+  - The account's home comes from the **password database** (`userInfo()`), not
+    from `$HOME`, for the same reason the plist is a hazard here: a service
+    manager hands a daemon an environment the software under test may have
+    written, so an identity keyed on `$HOME` is keyed on something a second
+    install can set. `$HOME` still decides *where* the definition file goes —
+    that is `serviceFile()`, and it must stay that way, because it is also what
+    lets a test fixture contain a write.
+  - The input is `resolve()`d, not `realpath`ed: a home reached through a
+    symlink is a second identity, and `REV_LABEL` is the override for that.
+  `REV_LABEL` overrides the derivation outright, and **`serviceInstall` writes it
+  into the service environment** (plist `EnvironmentVariables`, systemd
+  `Environment=`), so a job restarted with the bare environment a service
+  manager gives daemons resolves the identity it was installed under rather than
+  re-deriving a different one. The label is a parameter of `launchdPlist`,
+  `systemdUnit` and `installLaunchd` rather than a module constant, so the plist
+  a call writes and the job it boots out can never disagree.
+  **Ownership before a destructive act.** The derivation can no longer collide,
+  but an operator can still point two installs at one explicit `REV_LABEL`, and
+  then the label says nothing about who a service belongs to. `install`,
+  `uninstall` and `start` therefore read the definition already on disk and
+  refuse when its `REV_HOME` is a different installation's (`definedHome()`,
+  `assertOwnService()`), naming both homes and the way out; the `rev service`
+  CLI prints that refusal as an error rather than a stack trace. A definition
+  carrying no `REV_HOME` reads as unowned, which is what keeps a pre-H-2210
+  install upgradeable.
+  **Migration.** A non-conventional home's label gains its digest, so a service
+  installed under the old basename-only name is still on disk and still loaded.
+  `serviceInstall` retires it (`legacyServiceLabel()`, `retireLegacyService()`)
+  — but only when that definition names *this* home, which is what makes the
+  removal this installation's own business rather than a guess. Conventional
+  homes are unaffected: `~/.rev` and `~/.rev-gp` compute the same labels they
+  always did, verified against both live plists.
   systemd gets `KillMode=mixed` and a timeout longer than rev's drain, so a stop
   signals the supervisor rather than every process in the cgroup (H-467).
   launchd is different: it clamps `ExitTimeOut` at 60s even when the plist asks

@@ -115,6 +115,8 @@ orchestrator meetings and the read-only view. Product intent:
   event log: `product_completed` names immutable full `repo@commit` refs and
   their authors; `acceptance_verdict` records a non-author PASS or FAIL against
   exactly the latest refs. A new completion makes every older verdict stale.
+  The projection itself lives in `acceptance.ts`, not here, because the replay
+  that gates its rollout has to run the real decision rather than a copy.
   Ticket status and type are deliberately outside this calculation, so generic
   reviews can close normally and neither `done` nor prose saying PASS can stand
   in for product acceptance. Both events may be appended to terminal tickets;
@@ -490,6 +492,16 @@ orchestrator meetings and the read-only view. Product intent:
   `failed`; only a current non-author PASS is `accepted`. A caller checking a
   different release manifest gets `pending/stale_verdict`, even if the record
   still contains an accepted older candidate.
+- A completion carries a verdict SET, not its newest verdict (H-2432, R-39 A1,
+  crew `projects/r39/VERDICT-SET-CONTRACT.md` §2). Within one completion a
+  reviewer's latest verdict is theirs and replaces their own earlier one;
+  aggregation then runs across reviewers, and the strictest governs. A FAIL is
+  cleared only by a new completion — no later PASS on the same refs can clear
+  it, which is exactly the overwrite this replaced. Disagreement reports as the
+  distinct reason `contested`, and `verdicts[]` carries the whole set; the
+  singular `verdict` still names the one that governs, so readers written
+  before the set keep working. This was not theoretical: on H-94 a PASS landed
+  557 ms after a FAIL and the release path saw only the PASS.
 - `listTickets` sorts terminal statuses last, then priority, then age — agents
   are told to open every iteration with `{assignee: <name>}`, and a first page
   of closed tickets reads as an empty queue (H-258, then H-669). The view

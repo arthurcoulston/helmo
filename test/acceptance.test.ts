@@ -123,6 +123,90 @@ describe('explicit product acceptance', () => {
     }).state).toBe('accepted');
   });
 
+  // VERDICT-SET-CONTRACT.md §2 (R-39 A1, H-2432). Before this, the governing
+  // verdict was .at(-1): on H-94 a PASS landed 557 ms after a FAIL and erased
+  // it from the release path.
+  describe('the verdict set', () => {
+    const ward: Actor = { name: 'ward', kind: 'agent', model: 'gpt-6-astra', version: 'rev 0.4', session: 'rev:ward' };
+
+    function verdict(s: Store, id: string, actor: Actor, v: 'pass' | 'fail', ref = sha('a')) {
+      return s.recordAcceptanceVerdict(actor, { ticket_id: id, refs: [ref], verdict: v, note: `Reviewed: ${v}.` });
+    }
+
+    it('keeps a FAIL standing under a later PASS from another reviewer', () => {
+      const s = new Store(':memory:');
+      const t = ticket(s);
+      complete(s, t.id);
+      verdict(s, t.id, proof, 'fail');
+      const after = verdict(s, t.id, ward, 'pass');
+      expect(after).toMatchObject({ state: 'failed', reason: 'contested' });
+      expect(after.verdict).toMatchObject({ actor: proof, verdict: 'fail' });
+      expect(after.verdicts.map((v) => [v.actor.name, v.verdict])).toEqual([['proof', 'fail'], ['ward', 'pass']]);
+    });
+
+    it('reports the same disagreement the same way whichever order it arrives in', () => {
+      const s = new Store(':memory:');
+      const t = ticket(s);
+      complete(s, t.id);
+      verdict(s, t.id, ward, 'pass');
+      expect(verdict(s, t.id, proof, 'fail')).toMatchObject({ state: 'failed', reason: 'contested' });
+    });
+
+    it('separates reviewers who agree it failed from reviewers who disagree', () => {
+      const s = new Store(':memory:');
+      const t = ticket(s);
+      complete(s, t.id);
+      verdict(s, t.id, proof, 'fail');
+      expect(verdict(s, t.id, ward, 'fail')).toMatchObject({ state: 'failed', reason: 'review_failed' });
+    });
+
+    it('lets a reviewer correct their own verdict without anyone overwriting anyone else', () => {
+      const s = new Store(':memory:');
+      const t = ticket(s);
+      complete(s, t.id);
+      verdict(s, t.id, proof, 'fail');
+      const corrected = verdict(s, t.id, proof, 'pass');
+      expect(corrected).toMatchObject({ state: 'accepted', reason: 'independently_accepted' });
+      // The superseded opinion is still reported; it is only no longer theirs.
+      expect(corrected.verdicts).toHaveLength(2);
+      expect(corrected.verdict).toMatchObject({ verdict: 'pass' });
+    });
+
+    it('clears a standing FAIL only with a new completion, never with a later PASS', () => {
+      const s = new Store(':memory:');
+      const t = ticket(s);
+      complete(s, t.id);
+      verdict(s, t.id, proof, 'fail');
+      expect(verdict(s, t.id, ward, 'pass').state).toBe('failed');
+      complete(s, t.id, sha('b'));
+      expect(s.productAcceptance(t.id)).toMatchObject({ state: 'pending', reason: 'stale_verdict', verdicts: [] });
+      expect(verdict(s, t.id, proof, 'pass', sha('b'))).toMatchObject({ state: 'accepted', verdicts: [{ refs: [sha('b')] }] });
+    });
+
+    it('keeps one qualifying PASS sufficient — no quorum was introduced here', () => {
+      const s = new Store(':memory:');
+      const t = ticket(s);
+      complete(s, t.id);
+      expect(verdict(s, t.id, proof, 'pass')).toMatchObject({ state: 'accepted', reason: 'independently_accepted' });
+    });
+
+    it('still accepts a second reviewer at the door, so disagreement is never destroyed on write', () => {
+      const s = new Store(':memory:');
+      const t = ticket(s);
+      complete(s, t.id);
+      verdict(s, t.id, proof, 'pass');
+      expect(() => verdict(s, t.id, ward, 'fail')).not.toThrow();
+      expect(s.getEvents(t.id).filter((e) => e.event_type === 'acceptance_verdict')).toHaveLength(2);
+    });
+
+    it('reports no verdicts where there is nothing that qualifies', () => {
+      const s = new Store(':memory:');
+      const t = ticket(s);
+      complete(s, t.id);
+      expect(s.productAcceptance(t.id).verdicts).toEqual([]);
+    });
+  });
+
   it('requires full immutable commit refs and survives event-log rebuild', () => {
     const s = new Store(':memory:');
     const t = ticket(s);

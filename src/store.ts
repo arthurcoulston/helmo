@@ -1,10 +1,10 @@
 import Database from 'better-sqlite3';
+import { projectAcceptance } from './acceptance.js';
 import { questionFingerprint } from './presentation.js';
 import { parseSchedule } from './schedule.js';
 import {
   Actor, ActorKind, ACTOR_KINDS, Answer, AnswerEvent, BlastRadius, BLAST_RADII, CapacityHold, Confidence, Dep, DepType, Evidence,
-  AcceptanceVerdict, HelmoError, HelmoEvent, Notice, ProductAcceptance, ProductArtifact,
-  ProductCompletion, Question, QuestionInput, Status, Ticket, TicketProgress, VerdictEvent, Workstream, WorkstreamInfo,
+  HelmoError, HelmoEvent, Notice, ProductAcceptance, ProductArtifact, Question, QuestionInput, Status, Ticket, TicketProgress, VerdictEvent, Workstream, WorkstreamInfo,
 } from './types.js';
 
 const STALE_CLAIM_HOURS = 24;
@@ -387,49 +387,19 @@ export class Store {
 
   /** Current product acceptance for a ticket. Generic ticket status and type
    *  do not participate: acceptance exists only after an explicit completion
-   *  event. A newer completion always invalidates an older verdict. */
+   *  event. A newer completion always invalidates an older verdict.
+   *
+   *  The decision itself is `projectAcceptance` in ./acceptance.ts — a pure
+   *  function over the event log, so the deploy gate that measures this rule
+   *  against a live store runs the same code rather than a copy of it. */
   productAcceptance(ticketId: string, expectedRefs?: string[]): ProductAcceptance {
     this.getTicket(ticketId);
     const rows = this.db
       .prepare("SELECT * FROM events WHERE ticket_id = ? AND event_type IN ('product_completed','acceptance_verdict') ORDER BY seq")
       .all(ticketId) as Record<string, unknown>[];
-    const events = rows.map(rowToEvent);
-    const completionEvent = events.filter((e) => e.event_type === 'product_completed').at(-1);
-    if (!completionEvent) {
-      return { state: 'not_requested', reason: 'no_completion', completion: null, verdict: null };
-    }
-    const completion: ProductCompletion = {
-      seq: completionEvent.seq,
-      ts: completionEvent.ts,
-      actor: completionEvent.actor,
-      artifacts: completionEvent.payload['artifacts'] as ProductArtifact[],
-      note: completionEvent.payload['note'] as string,
-    };
-    const verdictEvent = events.filter((e) => e.event_type === 'acceptance_verdict' && e.seq > completion.seq).at(-1);
-    if (!verdictEvent) {
-      const anyEarlierVerdict = events.some((e) => e.event_type === 'acceptance_verdict');
-      return { state: 'pending', reason: anyEarlierVerdict ? 'stale_verdict' : 'missing_verdict', completion, verdict: null };
-    }
-    const verdict: AcceptanceVerdict = {
-      seq: verdictEvent.seq,
-      ts: verdictEvent.ts,
-      actor: verdictEvent.actor,
-      refs: verdictEvent.payload['refs'] as string[],
-      verdict: verdictEvent.payload['verdict'] as 'pass' | 'fail',
-      note: verdictEvent.payload['note'] as string,
-    };
-    const refs = completion.artifacts.map((a) => a.ref).sort();
-    if (JSON.stringify(verdict.refs.slice().sort()) !== JSON.stringify(refs)) {
-      return { state: 'pending', reason: 'stale_verdict', completion, verdict };
-    }
-    if (completion.actor.name === verdict.actor.name || completion.artifacts.some((a) => a.author === verdict.actor.name)) {
-      return { state: 'pending', reason: 'self_authored_verdict', completion, verdict };
-    }
-    if (verdict.verdict === 'fail') return { state: 'failed', reason: 'review_failed', completion, verdict };
-    if (expectedRefs && JSON.stringify(normalizeRefs(expectedRefs)) !== JSON.stringify(refs)) {
-      return { state: 'pending', reason: 'stale_verdict', completion, verdict };
-    }
-    return { state: 'accepted', reason: 'independently_accepted', completion, verdict };
+    // normalizeRefs here, not in the projection: rejecting a caller's
+    // unusable ref is validation of the question, and the replay asks none.
+    return projectAcceptance(rows.map(rowToEvent), expectedRefs ? normalizeRefs(expectedRefs) : undefined);
   }
 
   /** Latest recorded human-readable update for each requested ticket. This is

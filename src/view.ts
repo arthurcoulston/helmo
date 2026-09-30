@@ -106,7 +106,12 @@ function acceptanceBadge(t: Ticket): string {
   const acceptance = store.productAcceptance(t.id);
   if (acceptance.state === 'not_requested') return '';
   const cls = acceptance.state === 'accepted' ? 'accent' : acceptance.state === 'failed' ? 'critical' : 'warning';
-  const label = acceptance.state === 'accepted' ? 'accepted' : acceptance.state === 'failed' ? 'acceptance failed' : 'acceptance pending';
+  // Reviewers disagreeing is not reviewers agreeing it failed. Neither ships,
+  // so the state is the same; the badge says which, because disagreement is
+  // the expensive signal and a shared label would lose it (VERDICT-SET-CONTRACT §2.3).
+  const label = acceptance.state === 'accepted' ? 'accepted'
+    : acceptance.reason === 'contested' ? 'acceptance contested'
+    : acceptance.state === 'failed' ? 'acceptance failed' : 'acceptance pending';
   const mark = acceptance.state === 'accepted' ? '✓' : acceptance.state === 'failed' ? '✕' : '◌';
   return `<span class="badge ${cls}" title="${esc(acceptance.reason.replaceAll('_', ' '))}">${mark} ${label}</span>`;
 }

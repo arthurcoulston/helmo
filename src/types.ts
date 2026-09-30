@@ -69,9 +69,21 @@ export interface AcceptanceVerdict {
 
 export interface ProductAcceptance {
   state: 'not_requested' | 'pending' | 'failed' | 'accepted';
-  reason: 'no_completion' | 'missing_verdict' | 'stale_verdict' | 'self_authored_verdict' | 'review_failed' | 'independently_accepted';
+  /** `contested` is deliberately distinct from `review_failed`: the release
+   *  path treats them identically — neither ships — but a human reading the
+   *  dashboard needs to know whether the reviewers agree it failed or whether
+   *  they disagree. Agreement between agents is cheap; disagreement is the
+   *  expensive signal, and collapsing the two would lose it (R-34 §0.4). */
+  reason: 'no_completion' | 'missing_verdict' | 'stale_verdict' | 'self_authored_verdict' | 'review_failed' | 'contested' | 'independently_accepted';
   completion: ProductCompletion | null;
+  /** The verdict that GOVERNS: the earliest standing FAIL if one exists, and
+   *  otherwise the newest PASS. Readers that predate the verdict set keep
+   *  working unchanged. */
   verdict: AcceptanceVerdict | null;
+  /** Every qualifying verdict on the current completion, in `seq` order,
+   *  including a reviewer's superseded earlier opinions. Disagreement is
+   *  reported here, never resolved away. */
+  verdicts: AcceptanceVerdict[];
 }
 
 export interface TicketProgress {

@@ -49,7 +49,10 @@ const esc = (s: unknown) =>
  *
  *  `href` is for the few references that are also links. The control is the
  *  link's SIBLING, never inside it — nesting a button in an anchor makes one
- *  gesture ambiguous between navigating and copying. */
+ *  gesture ambiguous between navigating and copying. The same rule binds every
+ *  CALLER: what this returns must never be placed inside another interactive
+ *  element, which is why the ticket rows spell their disclosure as a button
+ *  beside it rather than as a <summary> around it (H-2447). */
 function ref(id: string, href?: string): string {
   const shown = href === undefined ? esc(id) : `<a href="${esc(href)}">${esc(id)}</a>`;
   return `<span class="tid">${shown}<button type="button" class="copy" data-copy="${esc(id)}" aria-label="Copy ${esc(id)}" title="Copy ${esc(id)}">⧉</button></span>`;
@@ -336,32 +339,48 @@ function sittingBadge(t: Ticket): string {
     : '<span class="badge accent">🪑 needs a sitting</span>';
 }
 
-// Everything else: a quiet row that opens.
+/** Everything else: a quiet row that opens.
+ *
+ *  Deliberately NOT <details>/<summary>. The row draws its own reference
+ *  through ref(), which brings a copy control with it, and a <summary> is an
+ *  interactive element — so a button inside one is axe's `nested-interactive`
+ *  (serious), and a real defect: a screen reader cannot reach the copy control
+ *  separately from the disclosure, and a pointer gesture over the two is
+ *  ambiguous between copying and opening (H-2447). Spelling the disclosure out
+ *  as a button with its own panel puts the reference BESIDE the control that
+ *  opens the row rather than inside it. What renders is unchanged; what is
+ *  interactive is. The disclosures in the row's body are still <details>:
+ *  nothing inside them is interactive, so nothing there is nested. */
 function row(t: Ticket, opts: { showDone?: boolean } = {}): string {
   const waits = t.status === 'open' ? blockedBy(t) : [];
   const noEv = t.status === 'done' && t.evidence.length === 0;
-  return `<details class="trow" id="${esc(t.id)}">
-    <summary>
+  const panel = `b-${esc(t.id)}`;
+  return `<div class="trow" id="${esc(t.id)}">
+    <div class="rhead">
       ${ref(t.id)}
-      <span class="rtitle">${esc(t.title)}</span>
-      ${prioBadge(t)}
-      ${waits.length ? `<span class="badge serious">⛔ waits on ${esc(waits.join(', '))}</span>` : ''}
-      ${t.schedule ? `<span class="badge">↻ ${esc(t.schedule)}</span>` : ''}
-      ${gated(t) ? `<span class="badge">⏰ not before ${esc(t.not_before!.slice(0, 10))}</span>` : ''}
-      ${held(t) ? `<span class="badge">⏸ on hold · ${esc(t.capacity_hold!.reason)}</span>` : ''}
-      ${sittingBadge(t)}
-      ${noEv ? '<span class="badge critical">✱ no evidence</span>' : ''}
-      ${confBadge(t)} ${blastBadge(t)} ${acceptanceBadge(t)}
-      <span class="rmeta">${esc(t.workstream)}${t.project ? ` · ${esc(t.project)}` : ''} · ${esc(t.type)}${t.assignee ? ` · ${esc(t.assignee)}` : ''} ${money(t)} · ${esc(
-        rel(opts.showDone ? (t.closed_at ?? t.updated_at) : t.updated_at)
-      )}</span>
-      ${opts.showDone ? chain(t) : ''}
-    </summary>
-    ${t.needs_human && t.sitting && t.status === 'open' ? `<p class="later"><span class="decision-label sits">🪑 You do, after</span>${esc(t.sitting)}</p>` : ''}
-    ${progressLine(t)}
-    ${opts.showDone ? `<div class="evrow">${evidenceLinks(t)}</div>` : ''}
-    ${details(t)}
-  </details>`;
+      <button type="button" class="rtoggle" aria-expanded="false" aria-controls="${panel}">
+        <span class="rtitle">${esc(t.title)}</span>
+        ${prioBadge(t)}
+        ${waits.length ? `<span class="badge serious">⛔ waits on ${esc(waits.join(', '))}</span>` : ''}
+        ${t.schedule ? `<span class="badge">↻ ${esc(t.schedule)}</span>` : ''}
+        ${gated(t) ? `<span class="badge">⏰ not before ${esc(t.not_before!.slice(0, 10))}</span>` : ''}
+        ${held(t) ? `<span class="badge">⏸ on hold · ${esc(t.capacity_hold!.reason)}</span>` : ''}
+        ${sittingBadge(t)}
+        ${noEv ? '<span class="badge critical">✱ no evidence</span>' : ''}
+        ${confBadge(t)} ${blastBadge(t)} ${acceptanceBadge(t)}
+        <span class="rmeta">${esc(t.workstream)}${t.project ? ` · ${esc(t.project)}` : ''} · ${esc(t.type)}${t.assignee ? ` · ${esc(t.assignee)}` : ''} ${money(t)} · ${esc(
+          rel(opts.showDone ? (t.closed_at ?? t.updated_at) : t.updated_at)
+        )}</span>
+        ${opts.showDone ? chain(t) : ''}
+      </button>
+    </div>
+    <div class="rbody" id="${panel}" hidden>
+      ${t.needs_human && t.sitting && t.status === 'open' ? `<p class="later"><span class="decision-label sits">🪑 You do, after</span>${esc(t.sitting)}</p>` : ''}
+      ${progressLine(t)}
+      ${opts.showDone ? `<div class="evrow">${evidenceLinks(t)}</div>` : ''}
+      ${details(t)}
+    </div>
+  </div>`;
 }
 
 // ---------- page assembly ----------
@@ -694,10 +713,20 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; color: 
 .later { color: var(--ink-2); margin: 8px 0 0; font-size: 13.5px; }
 
 /* ---- quiet rows ---- */
+/* The head is a flex line with two items: the reference (which carries its own
+   copy control) and the disclosure button that owns everything else. They are
+   siblings so that neither is inside the other — see row() for why. The button
+   is stripped back to inherited type and made the wrapping flex container the
+   <summary> used to be, so the row draws exactly as it did. */
 .trow { border-bottom: 1px solid var(--hairline); }
-.trow summary { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; padding: 9px 4px; cursor: pointer; list-style: none; }
-.trow summary::-webkit-details-marker { display: none; }
-.trow summary:hover { background: var(--surface); }
+.rhead { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; padding: 9px 4px; }
+.rhead:hover { background: var(--surface); }
+/* Mobile-first, as the rest of this file is: below 700px the reference takes a
+   line of its own and the rest of the row gets the full width under it, which
+   is what the single wrapping <summary> used to do at that width. The ≥700px
+   block puts them back on one line. */
+.rtoggle { flex: 1 1 100%; min-width: 0; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  margin: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .rtitle { font-weight: 500; }
 .rmeta { flex-basis: 100%; text-align: left; }
 .evrow { flex-basis: 100%; display: flex; gap: 12px; flex-wrap: wrap; }
@@ -713,6 +742,7 @@ details.more summary { font-size: 12px; color: var(--ink-3); cursor: pointer; }
 .body { white-space: pre-wrap; min-width: 0; color: var(--ink-2); font-size: 13px; background: var(--page);
   border: 1px solid var(--hairline); border-radius: var(--radius-inner); padding: 10px 14px; margin: 8px 0; }
 .trow .body { background: var(--surface); }
+.rbody[hidden] { display: none; }
 .uncertain { color: var(--serious); font-size: 13px; margin: 6px 0; }
 .dep { font-size: 12.5px; color: var(--ink-2); margin: 2px 0; }
 .dep-label { color: var(--ink-3); text-transform: uppercase; font-size: 10.5px; letter-spacing: 0.05em; margin-right: 6px; }
@@ -730,6 +760,7 @@ footer { margin-top: 48px; color: var(--ink-3); font-size: 11.5px; border-top: 1
 .refresh-warning { display: block; margin-top: 6px; color: var(--critical); font-weight: 600; }
 .refresh-warning[hidden] { display: none; }
 @media (min-width: 700px) {
+  .rtoggle { flex-basis: 0; }
   .rmeta { flex-basis: auto; margin-left: auto; text-align: right; }
   .evrow { padding-left: 44px; }
 }
@@ -775,6 +806,15 @@ setInterval(async () => {
     const doc = new DOMParser().parseFromString(await r.text(), 'text/html');
     const open = new Set([...document.querySelectorAll('details[open]')].map((d) => d.id).filter(Boolean));
     for (const id of open) doc.getElementById(id)?.setAttribute('open', '');
+    // The ticket rows are a button and a panel rather than a <details>, so
+    // their open state lives in two places and both have to come across.
+    for (const b of document.querySelectorAll('.rtoggle[aria-expanded="true"]')) {
+      const id = b.getAttribute('aria-controls');
+      const panel = doc.getElementById(id);
+      if (!panel) continue;
+      panel.removeAttribute('hidden');
+      doc.querySelector('[aria-controls="' + id + '"]')?.setAttribute('aria-expanded', 'true');
+    }
     const y = scrollY;
     document.body.replaceWith(doc.body);
     if (sectionObserver) {
@@ -815,13 +855,21 @@ function copyWithoutTheApi(text) {
 }
 
 document.addEventListener('click', async (e) => {
+  // The ticket rows' disclosure. <details> would open itself, but its
+  // <summary> cannot hold the row's copy control without nesting one
+  // interactive element in another (H-2447), so the open/closed state is
+  // carried on aria-expanded and the panel's hidden attribute instead.
+  const toggle = e.target.closest('.rtoggle');
+  if (toggle) {
+    const wasOpen = toggle.getAttribute('aria-expanded') === 'true';
+    toggle.setAttribute('aria-expanded', wasOpen ? 'false' : 'true');
+    const panel = document.getElementById(toggle.getAttribute('aria-controls'));
+    if (panel) panel.hidden = wasOpen;
+    return;
+  }
+
   const copy = e.target.closest('.copy');
   if (copy) {
-    // Most of these controls sit inside a <summary>, whose activation
-    // behaviour is to toggle its disclosure. Engines differ on whether an
-    // interactive descendant is exempted from that, so the exemption is
-    // stated here rather than assumed: one gesture, one effect.
-    e.preventDefault();
     const text = copy.dataset.copy;
     let ok = false;
     try {

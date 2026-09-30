@@ -151,11 +151,21 @@ describe('the page holds still in a browser at every width it supports', () => {
   it('lays the icons out at the size the CSS gives them', async () => {
     const page = await laidOut(AT_EVERY_WIDTH, 390);
     try {
+      // Open a row first, so the marks inside a row's body are measured too.
+      // A collapsed row's panel is `hidden`, which means display:none and no
+      // layout at all — unlike the closed <details> these rows used to be,
+      // whose contents Chromium laid out regardless (H-2447). That is the
+      // better bargain on a 244-row page, but it does mean an unopened body
+      // has no boxes to read, so the test has to open one rather than measure
+      // a mark that was never laid out and call the zero a pass.
+      await page.locator('.rtoggle').first().click();
       const marks = await page.evaluate(() =>
-        Array.from(document.querySelectorAll('svg.mark')).map((el) => {
-          const box = el.getBoundingClientRect();
-          return { w: Math.round(box.width), h: Math.round(box.height) };
-        }),
+        Array.from(document.querySelectorAll('svg.mark'))
+          .filter((el) => el.checkVisibility())
+          .map((el) => {
+            const box = el.getBoundingClientRect();
+            return { w: Math.round(box.width), h: Math.round(box.height) };
+          }),
       );
       // An inline <svg> with a viewBox and no CSS size lays out at 300x150.
       // Nothing in the served bytes can tell you whether the rule that stops
@@ -234,19 +244,64 @@ describe('a reference can be carried into a conversation in one gesture', () => 
   it('puts the exact reference on the clipboard, and nothing beside it', async () => {
     const page = await withClipboard();
     try {
-      const row = page.locator('details.trow').first();
+      const row = page.locator('.trow').first();
       const id = (await row.getAttribute('id'))!;
       expect(id).toMatch(/^H-\d+$/);
       await row.locator('.copy').first().click();
       expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(id);
-      // The control sits inside the row's <summary>. One gesture, one effect:
-      // if copying also toggled the disclosure, every tap would dump a ticket
-      // body onto the screen. Chromium spares a real <button> from a summary's
-      // activation behaviour, so what this measures is that the control stays
-      // a real button — `e.preventDefault()` in the handler is the belt for
-      // the engines that do not, and only the source test can see it.
-      expect(await row.evaluate((el: HTMLDetailsElement) => el.open)).toBe(false);
+      // One gesture, one effect: if copying also opened the row, every tap
+      // would dump a ticket body onto the screen. The control and the
+      // disclosure are siblings rather than one inside the other (H-2447),
+      // so this is a property of the markup, not of an engine's goodwill.
+      expect(await row.locator('.rtoggle').getAttribute('aria-expanded')).toBe('false');
+      expect(await row.locator('.rbody').isVisible()).toBe(false);
       expect(await page.locator('#copy-status').textContent()).toBe(`${id} copied`);
+    } finally {
+      await page.context().close();
+    }
+  }, 120_000);
+
+  it('opens and closes the row it says it controls', async () => {
+    // The rows stopped being <details> when the copy control had to come out
+    // of their <summary> (H-2447), so the browser no longer does this for us:
+    // the disclosure is ours to get right, in both directions, and on a
+    // keyboard as well as a pointer.
+    const page = await withClipboard();
+    try {
+      const row = page.locator('.trow').first();
+      const toggle = row.locator('.rtoggle');
+      const body = row.locator('.rbody');
+      expect(await body.isVisible()).toBe(false);
+      await toggle.click();
+      expect(await body.isVisible()).toBe(true);
+      expect(await toggle.getAttribute('aria-expanded')).toBe('true');
+      // aria-controls has to name the panel that actually moved, or a screen
+      // reader is told about a region the sighted reader never sees.
+      expect(await toggle.getAttribute('aria-controls')).toBe(await body.getAttribute('id'));
+      await toggle.press('Enter');
+      expect(await body.isVisible()).toBe(false);
+      expect(await toggle.getAttribute('aria-expanded')).toBe('false');
+    } finally {
+      await page.context().close();
+    }
+  }, 120_000);
+
+  it('puts no interactive control inside a <summary>, anywhere on the page', async () => {
+    // The defect this guards is the one that took the live acceptance checks
+    // red (H-2447): a copy button inside a row's <summary>. A <summary> is
+    // itself interactive, so anything focusable within it is unreachable on
+    // its own terms. Stated over the whole rendered document rather than over
+    // the rows, because the next one will be drawn somewhere else.
+    const page = await withClipboard();
+    try {
+      const nested = await page.evaluate(() =>
+        [...document.querySelectorAll('summary')].flatMap((sum) =>
+          [...sum.querySelectorAll('a[href], button, input, select, textarea, [tabindex], [contenteditable]')].map(
+            (el) => sum.textContent?.trim().slice(0, 40) + ' → ' + el.outerHTML.slice(0, 80)
+          )
+        )
+      );
+      expect(nested, 'an interactive control is nested inside a <summary>').toEqual([]);
     } finally {
       await page.context().close();
     }
@@ -255,10 +310,10 @@ describe('a reference can be carried into a conversation in one gesture', () => 
   it('copies from the keyboard as well as the pointer', async () => {
     const page = await withClipboard();
     try {
-      const button = page.locator('details.trow').first().locator('.copy').first();
+      const button = page.locator('.trow').first().locator('.copy').first();
       await button.focus();
       await page.keyboard.press('Enter');
-      const id = (await page.locator('details.trow').first().getAttribute('id'))!;
+      const id = (await page.locator('.trow').first().getAttribute('id'))!;
       expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(id);
     } finally {
       await page.context().close();
@@ -308,7 +363,7 @@ describe('a reference can be carried into a conversation in one gesture', () => 
     const page = await context.newPage();
     try {
       await page.goto(`${origin}${AT_EVERY_WIDTH}`, { waitUntil: 'load' });
-      const row = page.locator('details.trow').first();
+      const row = page.locator('.trow').first();
       const id = (await row.getAttribute('id'))!;
       await row.locator('.copy').first().click();
       expect(await page.evaluate(() => (window as unknown as { __handed: string[] }).__handed)).toEqual([id]);

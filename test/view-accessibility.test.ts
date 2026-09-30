@@ -12,11 +12,14 @@ function bodyOf(name: string): string {
 }
 
 describe('view accessibility', () => {
-  it('keeps evidence links outside the disclosure summary', () => {
+  it('keeps evidence links outside the control that opens the row', () => {
+    // Evidence links are interactive, so they belong in the panel, never in
+    // the row's own disclosure control — the same rule that moved the copy
+    // button out of the <summary> this row used to have (H-2447).
     const row = bodyOf('row');
-    const summaryEnd = row.indexOf('</summary>');
-    expect(summaryEnd).toBeGreaterThan(-1);
-    expect(row.indexOf('evidenceLinks(t)')).toBeGreaterThan(summaryEnd);
+    const toggleEnd = row.indexOf('</button>');
+    expect(toggleEnd).toBeGreaterThan(-1);
+    expect(row.indexOf('evidenceLinks(t)')).toBeGreaterThan(toggleEnd);
   });
 
   it('keeps the one-click answer control touch-sized', () => {
@@ -76,9 +79,16 @@ describe('view accessibility', () => {
   it('copies without the Clipboard API, which plain http does not have', () => {
     expect(view).toContain('function copyWithoutTheApi(text)');
     expect(view).toContain("document.execCommand('copy')");
-    // Copying an ID inside a <summary> must not also toggle its disclosure.
-    const handler = view.slice(view.indexOf("const copy = e.target.closest('.copy')"));
-    expect(handler.slice(0, handler.indexOf('const text'))).toContain('e.preventDefault()');
+  });
+
+  it('never draws a copy control inside the element that opens a row', () => {
+    // The nesting itself is what H-2447 cost us — a serious axe finding on
+    // every live acceptance stop. The browser test proves the rendered page;
+    // this holds the source shape a reader of this file could undo, which is
+    // the row going back to <details>/<summary> with ref() inside it.
+    expect(bodyOf('row')).not.toContain('<summary>');
+    expect(bodyOf('row')).toContain('aria-expanded="false"');
+    expect(bodyOf('row')).toContain('aria-controls="${panel}"');
   });
 
   it('does not replace the page while a reader has keyboard focus', () => {

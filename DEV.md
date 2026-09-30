@@ -59,6 +59,9 @@ append-only event log, materialized state, `.immediate()` write transactions
   H-2452), then derived from the roadmap's own home, keyed on the password
   database rather than on a `$HOME` the installation itself could have written.
   One installation, one name, whichever of the three products you ask.
+  A pinned installation sets `INSTALLATION_RELEASE` to its `ADOPTED.json`;
+  both entry points verify the complete three-product commit set against its
+  `RELEASE.json` and refuse unless this code is the selected Roadmap directory.
   H-2474 adds the naming discipline on top: each entry point prints
   `installationLine()` at startup (the MCP server on STDERR — stdout is the
   protocol channel), and `--installation <name|home|db>` on either entry point's

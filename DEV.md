@@ -79,7 +79,10 @@ append-only event log, materialized state, `.immediate()` write transactions
   afresh on every report. A rebuild beneath them is `stale`; source runs and
   unreadable code are `unverifiable`; the named commit is always the loaded
   one. `postbuild` writes `dist/BUILD.json`, and every MCP result carries the
-  installation, build state, and installation-qualified reference scope.
+  installation and build state. It also collects every returned project,
+  objective, and bet id into `references`, pairing the legacy id with its
+  installation-qualified form (`<installation>:<id>`), so existing fields stay
+  compatible while an agent can carry an identity that cannot cross-resolve.
 - `server.ts` — MCP stdio entry. Store at `~/.helmo-roadmap/roadmap.db`
   (`ROADMAP_HOME` or `ROADMAP_DB` overrides, and setting both to disagree is
   refused); identity from `ROADMAP_ACTOR`, falling back to

@@ -38,11 +38,20 @@ export function buildServer(store: Store, envActor: Actor | null, install?: Inst
   const resolveActor = (override?: Actor): Actor => override ?? envActor ?? ({} as Actor);
   const identity = store.installationIdentity();
   const label = install?.label ?? identity.process ?? identity.stored ?? 'unknown';
-  const ok = (data: unknown, warnings: string[] = []) => result({
-    installation: { name: label, clear: identity.clear, ...(identity.stored ? { stored: identity.stored } : {}), build: running() },
-    reference_scope: `${label}:`,
-    ...data as object,
-  }, warnings);
+  const ok = (data: unknown, warnings: string[] = []) => {
+    const ids = new Set<string>();
+    const visit = (value: unknown): void => {
+      if (typeof value === 'string' && /^(R|OBJ|BET)-\d+$/.test(value)) ids.add(value);
+      else if (Array.isArray(value)) value.forEach(visit);
+      else if (value && typeof value === 'object') Object.values(value).forEach(visit);
+    };
+    visit(data);
+    return result({
+      installation: { name: label, clear: identity.clear, ...(identity.stored ? { stored: identity.stored } : {}), build: running() },
+      references: [...ids].map((id) => ({ id, qualified: `${label}:${id}` })),
+      ...data as object,
+    }, warnings);
+  };
 
   const server = new McpServer({ name: 'helmo-roadmap', version: '0.1.0' });
 

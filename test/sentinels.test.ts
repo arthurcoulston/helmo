@@ -89,6 +89,9 @@ describe('owned sentinels', () => {
     expect(sOwner('legacy-owned', 'PACE')).toBe(null);
     sSet('legacy-owned', 'PACE', 'park\nby=maintenance\n');
     expect(sOwner('legacy-owned', 'PACE')).toBe(null);
+    sSet('legacy-owned', 'PACE', 'park\nby=maintenance\nat=not-a-timestamp\npid=123\nreason=window\nexpires_at=not-a-timestamp\n');
+    expect(sValue('legacy-owned', 'PACE')).toBe('park');
+    expect(sOwner('legacy-owned', 'PACE')).toBe(null);
   });
 
   it('parses owned controls and releases only the exact observation', () => {
@@ -111,5 +114,6 @@ describe('owned sentinels', () => {
     expect(paceAutoRelease(base, Date.parse('2026-09-29T16:00:00.000Z'), () => true)).toBe('pace-expired');
     expect(paceAutoRelease({ ...base, expires_at: 'never' }, Date.now(), () => false)).toBe('pace-orphaned');
     expect(paceAutoRelease({ ...base, expires_at: 'never' }, Date.now(), () => true)).toBe(null);
+    expect(paceAutoRelease({ ...base, at: 'not-a-timestamp', expires_at: 'not-a-timestamp' }, Date.now(), () => false)).toBe(null);
   });
 });

@@ -41,6 +41,10 @@ export type SentinelOwner = {
   expires_at: string;
 };
 
+function validOwnerTime(value: string, allowNever = false): boolean {
+  return (allowNever && value === 'never') || Number.isFinite(Date.parse(value));
+}
+
 export function sOwner(loop: string, s: Sentinel): SentinelOwner | null {
   const content = sGet(loop, s);
   if (content === null) return null;
@@ -50,7 +54,7 @@ export function sOwner(loop: string, s: Sentinel): SentinelOwner | null {
     return at > 0 ? [line.slice(0, at), line.slice(at + 1)] : ['', ''];
   }));
   const pid = Number(fields.pid);
-  if (!fields.by || !fields.at || !Number.isInteger(pid) || !fields.reason || !fields.expires_at) return null;
+  if (!fields.by || !validOwnerTime(fields.at) || !Number.isInteger(pid) || !fields.reason || !fields.expires_at || !validOwnerTime(fields.expires_at, true)) return null;
   return { value, by: fields.by, at: fields.at, pid, reason: fields.reason, expires_at: fields.expires_at };
 }
 
@@ -75,7 +79,7 @@ export function sPendingPid(loop: string): number | null {
 }
 
 export function paceAutoRelease(owner: SentinelOwner | null, now = Date.now(), alive = writerAlive): 'pace-expired' | 'pace-orphaned' | null {
-  if (!owner || owner.by === 'human') return null;
+  if (!owner || owner.by === 'human' || !validOwnerTime(owner.at) || !validOwnerTime(owner.expires_at, true)) return null;
   if (owner.expires_at !== 'never' && Date.parse(owner.expires_at) <= now) return 'pace-expired';
   return alive(owner.pid) ? null : 'pace-orphaned';
 }

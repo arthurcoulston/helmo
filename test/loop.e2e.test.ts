@@ -52,6 +52,24 @@ function seedTicket(e: Env, title: string): string {
   return (helm(e, ['create', '--title', title, '--body', 'test work: claim me, complete me', '--workstream', 'rev-test', '--type', 'ops']) as { id: string }).id;
 }
 
+function workflowAdmissionProxy(e: Env, response: object, denied = false): string {
+  const calls = join(e.home, 'launch-admit-calls');
+  const proxy = join(e.home, 'workflow-helmo-proxy.mjs');
+  writeFileSync(proxy, `import { appendFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+const args = process.argv.slice(2);
+if (args[0] === 'launch-admit') {
+  appendFileSync(${JSON.stringify(calls)}, JSON.stringify(args.slice(1)) + '\\n');
+  ${denied ? `process.stderr.write(JSON.stringify(${JSON.stringify(response)})); process.exit(1);` : `process.stdout.write(JSON.stringify(${JSON.stringify(response)})); process.exit(0);`}
+}
+const result = spawnSync(process.execPath, [${JSON.stringify(HELM_CLI)}, ...args], { env: process.env, stdio: 'inherit' });
+process.exit(result.status ?? 1);
+`);
+  const roster = join(e.home, 'roster.toml');
+  writeFileSync(roster, readFileSync(roster, 'utf8').replace(`helmo_cli = "${HELM_CLI}"`, `helmo_cli = "${proxy}"`));
+  return calls;
+}
+
 // Prompt assertions read the compiled prompt from a file the mock writes, not
 // from rev's stdout. The loop prints only the last 2000 characters of a
 // session's output (loop.ts), so the head of a long prompt never reaches the
@@ -125,6 +143,63 @@ process.exit(result.status ?? 1);
 // more e2e file elsewhere in the suite is enough to push them over (found
 // while landing H-1089). Budget for the suite's own load, not the quiet case.
 describe('rev e2e (mock runtime, real helm store)', { timeout: 30000 }, () => {
+  it.each([
+    ['missing', { error: 'workflow_admission_denied', ticket_id: 'H-1', missing: ['requirement:technical'], stale: [], failed: [] }],
+    ['stale', { error: 'workflow_admission_denied', ticket_id: 'H-1', missing: [], stale: ['manifest:input'], failed: [] }],
+    ['failed', { error: 'workflow_admission_denied', ticket_id: 'H-1', missing: [], stale: [], failed: ['requirement:technical'] }],
+  ])('does not launch a workflow-bound candidate whose requirements are %s', (_kind, denial) => {
+    const e = setup(`[loops.gated-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = "touch $REV_HOME/session-launched"
+`);
+    seedTicket(e, 'Workflow-bound candidate');
+    const calls = workflowAdmissionProxy(e, denial, true);
+
+    rev(e, ['run', 'gated-loop', '--count', '1']);
+
+    expect(existsSync(join(e.home, 'session-launched'))).toBe(false);
+    expect(JSON.parse(readFileSync(calls, 'utf8').trim())).toEqual([
+      '--workstream', 'rev-test', '--assignee', 'gated-loop', '--launch-id', expect.stringMatching(/^rev:gated-loop:/),
+    ]);
+  });
+
+  it('launches ordinary ready work and an exactly admitted workflow candidate once', () => {
+    const e = setup(`[loops.admitted-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = "echo launched >> $REV_HOME/sessions"
+`);
+    const id = seedTicket(e, 'Admitted candidate');
+    const calls = workflowAdmissionProxy(e, {
+      admitted: true, ticket_id: id, workflow_attempt_id: 'attempt-1', admission_id: 'launch-admission-1', launch_id: 'echoed-by-helmo',
+    });
+
+    rev(e, ['run', 'admitted-loop', '--count', '1']);
+
+    expect(readFileSync(join(e.home, 'sessions'), 'utf8').trim().split('\n')).toEqual(['launched']);
+    expect(readFileSync(calls, 'utf8').trim().split('\n')).toHaveLength(1);
+  });
+
+  it('rechecks launch admission after a direct restart instead of bypassing the prior denial', () => {
+    const e = setup(`[loops.restart-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = "touch $REV_HOME/session-launched"
+`);
+    seedTicket(e, 'Still gated after restart');
+    const calls = workflowAdmissionProxy(e, { error: 'workflow_admission_denied', ticket_id: 'H-1', missing: ['requirement:technical'], stale: [], failed: [] }, true);
+
+    rev(e, ['run', 'restart-loop', '--count', '1']);
+    rev(e, ['run', 'restart-loop', '--count', '1']);
+
+    expect(existsSync(join(e.home, 'session-launched'))).toBe(false);
+    expect(readFileSync(calls, 'utf8').trim().split('\n')).toHaveLength(2);
+  });
+
   it('wakes on ready work, session completes it via helm-cli, then idles', () => {
     // The mock "agent": claims the first ready ticket and completes it with evidence.
     const e = setup(`[loops.test-loop]

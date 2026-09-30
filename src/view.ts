@@ -8,17 +8,18 @@
 // element remains disclosure toggles and evidence hyperlinks.
 import { randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { ANSWER_HEADER, answerRequest } from './answer.js';
 import { ESTATE_AVATARS } from './estate-avatars.generated.js';
+import { requireInstallation } from './install.js';
 import { ask, CLOSED_TAIL, markFor, recordTickets } from './presentation.js';
 import { ESTATE_TOKENS } from './estate-tokens.generated.js';
 import { Store } from './store.js';
 import { HygieneFinding } from './store.js';
 import { Actor, ActorKind, HelmoError, Ticket, HelmoEvent, TicketProgress } from './types.js';
 
-const dbPath = process.env['HELMO_DB'] ?? join(homedir(), '.helmo', 'helmo.db');
+const install = requireInstallation();
+const dbPath = install.db;
 const port = Number(process.env['HELMO_VIEW_PORT'] ?? 4400);
 const host = process.env['HELMO_VIEW_HOST'] ?? '127.0.0.1';
 const operator = process.env['HELMO_OPERATOR']?.trim() || null;
@@ -1062,5 +1063,5 @@ server.listen(port, host, () => {
   sameOrigin.add(`http://127.0.0.1:${boundPort}`);
   sameOrigin.add(`http://localhost:${boundPort}`);
   process.send?.({ type: 'helmo-view-ready', port: boundPort });
-  console.log(`Helmo view: http://localhost:${boundPort} — db: ${dbPath}${operator ? ` — answers enabled for ${operator}` : ' (read-only; set HELMO_OPERATOR to answer)'}`);
+  console.log(`Helmo view: http://localhost:${boundPort} — install: ${install.label} — db: ${dbPath}${operator ? ` — answers enabled for ${operator}` : ' (read-only; set HELMO_OPERATOR to answer)'}`);
 });

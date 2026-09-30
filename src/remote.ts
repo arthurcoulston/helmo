@@ -11,9 +11,8 @@
 // Streamable HTTP pattern.
 import { createServer, IncomingMessage, ServerResponse } from 'node:http';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { homedir } from 'node:os';
 import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { requireInstallation } from './install.js';
 import { Store } from './store.js';
 import { buildServer } from './tools.js';
 
@@ -23,9 +22,9 @@ if (!token || token.length < 24) {
   process.exit(1);
 }
 
-const dbPath = process.env['HELMO_DB'] ?? join(homedir(), '.helmo', 'helmo.db');
-mkdirSync(join(dbPath, '..'), { recursive: true });
-const store = new Store(dbPath);
+const install = requireInstallation();
+mkdirSync(install.home, { recursive: true });
+const store = new Store(install.db);
 
 const port = Number(process.env['HELMO_REMOTE_PORT'] ?? 4401);
 
@@ -66,5 +65,5 @@ createServer((req: IncomingMessage, res: ServerResponse) => {
     }
   });
 }).listen(port, '127.0.0.1', () =>
-  console.log(`Helmo remote MCP: http://127.0.0.1:${port} (Streamable HTTP, bearer-gated) — db: ${dbPath}`),
+  console.log(`Helmo remote MCP: http://127.0.0.1:${port} (Streamable HTTP, bearer-gated) — install: ${install.label} — db: ${install.db}`),
 );

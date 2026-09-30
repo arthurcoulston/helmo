@@ -3,8 +3,7 @@
 // harnesses (Rev), scripts, and script-runner agents. Same actor rules as
 // the MCP server: writes require an identity (HELMO_ACTOR env or --actor JSON).
 // The binary is `helmo-cli`, matching its siblings `helmo-mcp` and `helmo-view`.
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { requireInstallation } from './install.js';
 import { Store } from './store.js';
 import { Actor, DepType, HelmoError, writingActor } from './types.js';
 
@@ -104,7 +103,11 @@ function has(name: string): boolean {
   return args.includes(`--${name}`);
 }
 
-const store = new Store(process.env['HELMO_DB'] ?? join(homedir(), '.helmo', 'helmo.db'));
+const install = requireInstallation(process.env, (error) => {
+  console.error(JSON.stringify({ error }));
+  process.exit(1);
+});
+const store = new Store(install.db);
 
 function actor(): Actor {
   const override = flag('actor');
@@ -371,7 +374,8 @@ try {
   create         --title T --body B --workstream W --type TY [--priority P] [--status S] [--assignee A] [--dep H-n --dep-type TY] [--schedule 'every 30m' | '0 0 * * *'] [--not-before 2026-09-10]
   update         --ticket H-n --note N [--status S] [--evidence-kind K --evidence-ref R] [--body-append T | --body-old OLD --body-new NEW] [--confidence C] [--blast-radius B] [--tokens N] [--cost-usd X] [--handoff-to A] [--not-before 2026-09-10 | ''] [--takeover]
   return         --ticket H-n --situation S --question Q --recommendation R [--options '[{"label":..,"consequence":..}]' (2-3, only for a real choice)] [--if-unanswered U]
-Writes read identity from HELMO_ACTOR env or --actor JSON. DB path from HELMO_DB (default ~/.helmo/helmo.db).`);
+Writes read identity from HELMO_ACTOR env or --actor JSON. Installation from HELMO_HOME (default ~/.helmo) or HELMO_DB naming the store
+directly; set both only if they agree. Its name is REV_LABEL when Rev started this process, or HELMO_LABEL, else derived from the home.`);
       process.exit(cmd ? 1 : 0);
   }
 } catch (e) {

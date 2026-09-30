@@ -706,6 +706,21 @@ is actually demonstrated. The roadmap ships the same control, spelled the same
 way (`helmo-roadmap/src/view.ts`); it has no browser in its toolchain, so it
 asserts the shape and leans on this repo for the behaviour.
 
+## Opening a result (R-42 I5, H-2422)
+
+A closed row separates three things that used to read as one evidence tail:
+URL evidence is the product result, every other evidence kind is review
+evidence, and `productAcceptance()` is the release state. The first reachable
+result is the primary 44px `View result` action; an absent URL says no product
+result is linked rather than promoting a commit or file into one.
+
+A localhost URL is about the machine serving Helmo, not the phone reading it.
+It therefore ships without an `href` and becomes a link in
+`enableDeviceLocalResults()` only when the page itself is on localhost. A
+remote reader sees `Result available on the estate machine` and cannot be sent
+to their own device's port. The same hydration runs after the 15-second body
+replacement, or a link would work only until the first refresh.
+
 ## Neighbors
 
 Rev (formerly Capstan), a sibling project, supervises the bash loops that draw

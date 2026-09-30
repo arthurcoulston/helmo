@@ -127,6 +127,14 @@ orchestrator meetings and the read-only view. Product intent:
   every agent** (triage duty, evidence rules, question quality); treat
   description edits as seriously as code — they are guidance-as-deployed, and
   they live here and only here so local and remote agents can never drift.
+  Every tool's arguments go through `strict()`, so an undeclared key is refused
+  during validation instead of stripped (R-39 Q9): handed a raw shape the SDK
+  wraps it in a plain object, and `capacity_hold` on a create or a misspelled
+  `projekt` returned a new ticket ID with the field quietly unset. The refusal
+  happens before the handler, so the record is untouched — and `tools-surface`
+  fails if any tool is left off the rule. It is the same rule `cli.ts` enforces
+  over its flags; a strict schema also publishes `additionalProperties: false`
+  in `listTools`, which is what an agent reads before it guesses at a field.
 - `server.ts` — MCP stdio entry (local agents; thin wrapper over tools.ts).
 - `remote.ts` — MCP Streamable HTTP entry (H-116): same tools, for remote
   agents reaching Helmo through the crew-mcp worker (OAuth front door) over
@@ -170,7 +178,16 @@ orchestrator meetings and the read-only view. Product intent:
   silently unset and the failure looked exactly like success for a day (H-1782).
   A value that itself begins with `--` must therefore use `--flag=value`, which
   is what the callers passing free text do (`crew:tools/estate/memo-drain.mjs`,
-  `crew:tools/github-listen.mjs`). Rev uses
+  `crew:tools/github-listen.mjs`). `COMMAND_FLAGS` closes the other half of the
+  same silence (R-39 Q9): a flag the command has no field for is refused before
+  anything is read, because `flag()` returns undefined for a flag nobody
+  declared and undefined is what "not passed" looks like — `create --project
+  R-41` filed an untagged ticket and `update --assinee mason` reserved nobody,
+  both exiting 0. The lock runs both ways, so the table cannot drift behind the
+  code: `flag()`/`has()` refuse a name their own command does not declare, which
+  reddens in the suite rather than in front of a caller. There are still fields
+  the MCP surface takes and this one cannot (`capacity_hold`, `confidence` on
+  create, an edge — H-2225); the refusal now says so instead of dropping them. Rev uses
   it for wake-checks, escalations, and spend write-back (`record-spend` +
   `actor-tickets`, H-19; their optional `--session` filter lets Rev isolate
   its stamped loop session from desk work under the same actor name (H-878);

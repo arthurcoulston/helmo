@@ -19,6 +19,18 @@ const actorSchema = z
   .optional()
   .describe('Who is writing. Omit only when HELMO_ACTOR in the server environment already names you exactly (loops get accurate per-agent env). Interactive sessions: the env identity is a static placeholder that cannot know your name or model — pass your true identity on every write: {name: your crew name, kind: "agent", model: your exact model ID, version: your harness version, e.g. "claude-code-" + output of `claude --version`}. Writes without a truthful complete identity are rejected.');
 
+// Every tool's arguments go through one strict object, and helmo-cli enforces
+// the same rule over its flags (R-39 Q9). Handed a raw shape the MCP SDK wraps
+// it in a plain object, which STRIPS an undeclared key instead of refusing it:
+// a misspelled `projekt`, or a `capacity_hold` that only exists on update, used
+// to return success with the field simply unset — the expensive failure, where
+// it worked and it was wrong and nothing complained (H-1186 is the same class
+// one layer down). A strict object refuses during argument validation, before
+// the handler runs, so a refused call leaves the record untouched.
+function strict<S extends z.ZodRawShape>(shape: S) {
+  return z.object(shape).strict();
+}
+
 function ok(data: unknown, warnings: string[] = []): { content: { type: 'text'; text: string }[] } {
   const body: Record<string, unknown> = { result: data };
   if (warnings.length) body['warnings'] = warnings;
@@ -56,7 +68,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
         `Say what accounts for this work: a 'project' tag when it belongs to a named project, an 'obj:OBJ-n' label when it serves a charter objective directly, or — when it is justified some other way — one of exactly three labels: 'acct:direction' (the human said so, on the record), 'acct:security' (keeping the estate safe), 'acct:estate' (keeping the estate running). The label is what hygiene reads; still say WHY in the body, because the label names the category and only the body names the reason. Work carrying none of these is reported by hygiene as unaccounted, and someone has to reconstruct why it exists.\n\n` +
         `Returns the new ticket ID (e.g. "H-142"). Reference it in commits, files, and messages you produce for this work. For 'workstream', check existing names first (helmo_list_tickets) before inventing a new one. Deps edges always point FROM this new ticket; for a reverse-direction edge (e.g. an existing ticket blocked by this new one) use helmo_link_tickets after creation.\n\n` +
         `Stop discipline: before filing a follow-on ticket, answer "who is waiting on this, and what will they do with it?" If the honest answer is "nobody, nothing yet", record it as residuals in the current ticket's body instead. When real loose ends remain, consolidate them into ONE follow-up ticket rather than fanning out several small ones. Note: a ticket you file does not enter YOUR OWN ready queue until a human, an orchestrator relaying the human, or another agent touches it — discovery is always welcome, but executing your own discoveries takes a second pair of eyes.`,
-      inputSchema: {
+      inputSchema: strict({
         title: z.string(),
         body: z.string(),
         workstream: z.string(),
@@ -75,7 +87,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
           "Makes this a RECURRING TEMPLATE: 'every <N><m|h|d>' or 5-field cron (UTC). The template itself is standing work — never ready, never claimed. Due instances spawn automatically on queue reads, linked to the template via a parent dep, and a new instance is skipped while a previous one is still open. Retire the template by cancelling it.",
         ),
         actor: actorSchema,
-      },
+      }),
     },
     async ({ actor, ...input }) => {
       try {
@@ -92,10 +104,10 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
     {
       description:
         `Fetch one ticket by ID. format "state" (default) returns current fields plus any pending question and the last human answer — enough to work. format "history" additionally returns the full event log (who did what, when, with diffs) — use it when resuming unfamiliar work, investigating, or preparing a meeting.`,
-      inputSchema: {
+      inputSchema: strict({
         ticket_id: z.string(),
         format: z.enum(['state', 'history']).optional(),
-      },
+      }),
     },
     async ({ ticket_id, format }) => {
       try {
@@ -132,7 +144,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
         `Start every loop iteration with {assignee: <your name>} — this returns both work you're mid-way through (in_progress) and work handed to you that you haven't started (open + reserved). Then {ready: true} for new work. Answered questions come back as unassigned open tickets — the ready queue surfaces them; you don't need to have been the agent who asked.\n\n` +
         `Triage duty: if you pass over a ready ticket BECAUSE it needs something only the human can supply (a missing input, an unrecorded location, a decision), do not route around it silently — file its question with helmo_return_to_human first (no claim needed), then take other work. Helmo cannot see that kind of blockage; only you can. A known-blocked ticket left quietly in the ready queue stalls until someone else rediscovers what you already knew.\n\n` +
         `The response's 'workstreams' carry each stream's seat and budget where set: 'budget_usd'/'spent_usd'/'remaining_usd' disclose the stream's budget. budget_usd 0 is the explicit no-cap sentinel: remaining_usd is null and runnable work must remain runnable. A positive budget is a finite plan — front-load the highest-value work so stopping at any point is safe. What done means for a stream is never a field here: it is the seat's profile or the project body. Ready-queue triage rule: tickets you filed yourself are withheld from your own ready queue until a human, an orchestrator relaying the human, or another agent touches them; they appear under 'awaiting_triage' (and stay available to everyone else). Date-gated work appears under 'gated'. Work needing the operator present appears under 'with_human'. Deliberate spending holds appear under 'capacity_held': they stay visible but never enter the executable queue until a separate update releases the hold.`,
-      inputSchema: {
+      inputSchema: strict({
         ready: z.boolean().optional(),
         status: z.enum(STATUSES).optional(),
         workstream: z.string().optional(),
@@ -143,7 +155,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
         limit: z.number().int().optional(),
         cursor: z.number().int().optional(),
         actor: actorSchema,
-      },
+      }),
     },
     async ({ actor, ...filter }) => {
       try {
@@ -187,7 +199,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
         `Handing off to another agent: set handoff_to with a note saying what you did and what the receiver should do. This releases your claim and reserves the ticket for them; they'll find it via their own list call. Helmo records the pass; making the receiving agent run is your harness's job. Use handoff for round trips (builder→reviewer→builder) on one piece of work; if the delegated work is its own deliverable, create a linked ticket instead.\n\n` +
         `Stopping well: when the marginal value of continuing drops — ask "what did the last stretch of work actually buy, and who is waiting for more?" — close the ticket with the residual loose ends documented in the body rather than pushing on. Closing at diminishing returns is a success state, not a failure. If the workstream discloses a budget, treat it as the plan: front-load the highest-value work, and when it is spent, close out honestly instead of continuing quietly.\n\n` +
         `Do NOT use this to ask the human anything — use helmo_return_to_human, which exists for that.`,
-      inputSchema: {
+      inputSchema: strict({
         ticket_id: z.string(),
         note: z.string(),
         status: z.enum(['open', 'in_progress', 'done', 'cancelled']).optional(),
@@ -219,7 +231,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
           }).optional(),
         }).nullable().optional().describe('Set a deliberate capacity hold, optionally with a temporary bounded-batch release, or pass null to remove it. A release makes only the tickets carrying its batch_id executable until its expiry; the original hold then applies again automatically. Dependencies, dates, reservations, and human/review gates still apply.'),
         actor: actorSchema,
-      },
+      }),
     },
     async ({ actor, ...input }) => {
       try {
@@ -236,7 +248,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
     {
       description:
         `Run Helmo's deterministic record checks. Returns current findings only; it changes nothing and makes no judgment about them. Use this for cultivation sweeps instead of reading the store directly. Most live-ticket findings clear by acting on the ticket. A finding on a terminal ticket that has been examined and needs no further work — and a spend_anomaly you have accounted for on live work — is recorded with helmo_dispose_hygiene_finding, which is what stops the next sweep re-reporting it. Writing the same conclusion as a fresh note each sweep does not: the note is not read by this check, and the reading itself is metered onto the ticket.`,
-      inputSchema: {},
+      inputSchema: strict({}),
     },
     async () => {
       try {
@@ -258,12 +270,12 @@ On a DONE or CANCELLED ticket the judgment stands for good, and is append-once.
 On LIVE work the one disposable finding is 'spend_anomaly'. Every other check reports a state that masking could hide indefinitely, so those still clear only by acting on the ticket. Spend is different: it is a number that only grows, and "this cost is accounted for" stays true until the number moves. So a live acknowledgement is recorded at the figure it answered for and the finding returns on its own once the ticket has cost half as much again — acknowledge it afresh then. Use this the FIRST time you find a spend anomaly accounted for; do not write the same conclusion as a new note every sweep, because nothing reads those notes and each re-reading is itself charged to the ticket.
 
 Workstream-level findings have no ticket_id and cannot be disposed.`,
-      inputSchema: {
+      inputSchema: strict({
         check: z.string(),
         ticket_id: z.string(),
         reason: z.string(),
         actor: actorSchema,
-      },
+      }),
     },
     async ({ actor, ...input }) => {
       try {
@@ -280,13 +292,13 @@ Workstream-level findings have no ticket_id and cannot be disposed.`,
     {
       description:
         `Add or remove a typed link between tickets. Types: 'blocks' (from_id cannot proceed until to_id is done — affects the ready queue; use sparingly, only for true prerequisites), 'parent' (from_id is a subtask of to_id), 'discovered_from' (from_id was found while working on to_id — lineage, no blocking), 'relates' (soft association). Direction matters for 'blocks': to make ticket A wait on new subtask B, the edge is from_id: A, to_id: B. Linking well is what makes the human's dashboard show the shape of the work instead of a flat list.`,
-      inputSchema: {
+      inputSchema: strict({
         from_id: z.string(),
         to_id: z.string(),
         type: z.enum(DEP_TYPES),
         action: z.enum(['add', 'remove']).optional().describe("default 'add'"),
         actor: actorSchema,
-      },
+      }),
     },
     async ({ from_id, to_id, type, action, actor }) => {
       try {
@@ -309,7 +321,7 @@ Workstream-level findings have no ticket_id and cannot be disposed.`,
         `GOOD, recommendation standing alone: situation: "The staging deploy has been red for two days; the failing step is a lint rule we added last week and nothing else." question: "Turn the rule off for now?" recommendation: "yes — it is our own rule, it caught nothing real, and it is blocking every deploy." if_unanswered: "Nothing reaches staging until this clears."\n\n` +
         `GOOD, a real choice: situation: "Booking the gala venue; Aldrich Hall holds our date but wants a $2k non-refundable deposit by Friday." question: "Pay the deposit?" options: [{label: "pay", consequence: "date locked, $2k sunk if we cancel"}, {label: "wait", consequence: "risk losing the date; two backup venues exist but are smaller"}] recommendation: "pay — the date matters more than the $2k and backups don't fit 200 guests." if_unanswered: "Aldrich releases the date Friday 5pm."\n\n` +
         `BAD: question: "How should I handle the venue?" — no situation, no decision, nothing to say back.`,
-      inputSchema: {
+      inputSchema: strict({
         ticket_id: z.string(),
         situation: z.string().describe("What you were doing and where it stands — written for someone who hasn't read the ticket"),
         question: z.string().describe('The single decision needed'),
@@ -318,7 +330,7 @@ Workstream-level findings have no ticket_id and cannot be disposed.`,
         recommendation: z.string().describe('Always required: the action you recommend, or the specific thing you need from the human, in one sentence. You have context they lack'),
         if_unanswered: z.string().optional().describe('What happens if no answer comes — cost of delay, deadlines, what it blocks'),
         actor: actorSchema,
-      },
+      }),
     },
     async ({ ticket_id, actor, ...q }) => {
       try {
@@ -335,13 +347,13 @@ Workstream-level findings have no ticket_id and cannot be disposed.`,
     {
       description:
         `Record the human's answer to a ticket in 'awaiting_human'. Normally called by the orchestrator during a meeting, relaying the human's words. Capture their reasoning, not just the choice — it teaches future agents. resolution: 'resume' (default: ticket returns to 'open', unassigned, ready for any qualified agent — the original asker was a loop iteration that no longer exists), 'done' (the human accepted the work or made it moot), 'cancelled' (the human killed it). The answer is stored on the ticket; the next agent to claim it gets the full picture via helmo_get_ticket.`,
-      inputSchema: {
+      inputSchema: strict({
         ticket_id: z.string(),
         answer: z.string().describe("The decision plus any new constraints or context the human added — their reasoning, not just the choice"),
         chosen_option: z.string().optional().describe('Label of the chosen option, if the human picked one'),
         resolution: z.enum(['resume', 'done', 'cancelled']).optional(),
         actor: actorSchema,
-      },
+      }),
     },
     async ({ ticket_id, actor, resolution, ...a }) => {
       try {
@@ -359,12 +371,12 @@ Workstream-level findings have no ticket_id and cannot be disposed.`,
       description:
         `Set a workstream's budget_usd and/or seat — the human's steering surface. Call this ONLY to relay a decision the human stated explicitly; the write requires actor kind 'human' or 'orchestrator', and agent-kind writes are rejected: an agent must never set or raise the budget of the stream it draws work from, nor route the stream to itself.\n\n` +
         `Steering is numbers and names only. There is no goal field: what done means for a stream lives in the seat's profile or the project body, never in a store field every agent reads on every queue pass (H-1186). The budget is a disclosed plan, not a kill switch: agents see remaining balance on every queue read and are expected to front-load the highest-value work and close out honestly when it is spent. The seat is the agent every unassigned filing in the stream (recurring instances included) is reserved to at creation, so a loop bound elsewhere still finds it; a stream with no seat is ready to no loop, and hygiene reports it as unseated_pool. Partial updates are fine — a field you omit keeps its current value; seat '' clears the seat.`,
-      inputSchema: {
+      inputSchema: strict({
         name: z.string().describe('The workstream being steered'),
         budget_usd: z.number().min(0).optional().describe('Total budget for the stream in USD; spend already recorded counts against it'),
         seat: z.string().optional().describe("Agent name unassigned filings here are reserved to at creation; '' clears it"),
         actor: actorSchema,
-      },
+      }),
     },
     async ({ actor, ...input }) => {
       try {
@@ -380,12 +392,12 @@ Workstream-level findings have no ticket_id and cannot be disposed.`,
     {
       description:
         `Record that a product build is ready for independent acceptance. This is separate from ticket status: closing a generic review remains legitimate, while a product ship gate reads only this explicit record. Name every reviewed source snapshot as repo@ plus the full 40-character commit hash and name that commit's author. A later completion supersedes every earlier verdict and returns acceptance to pending, which is the remediation handback. This write is append-only and is allowed on terminal tickets.`,
-      inputSchema: {
+      inputSchema: strict({
         ticket_id: z.string(),
         artifacts: z.array(z.object({ ref: z.string(), author: z.string() })).min(1),
         note: z.string(),
         actor: actorSchema,
-      },
+      }),
     },
     async ({ actor, ...input }) => {
       try {
@@ -401,13 +413,13 @@ Workstream-level findings have no ticket_id and cannot be disposed.`,
     {
       description:
         `Record PASS or FAIL from a non-author reviewer against the latest product completion's exact immutable refs. The store rejects a missing completion, a ref mismatch, or a reviewer who authored any reviewed commit. FAIL is a first-class acceptance state; after remediation, the builder records a new completion and the gate returns to pending until another non-author verdict. Prose saying PASS and ticket status done never count as acceptance. This write is append-only and is allowed on terminal tickets.`,
-      inputSchema: {
+      inputSchema: strict({
         ticket_id: z.string(),
         refs: z.array(z.string()).min(1),
         verdict: z.enum(['pass', 'fail']),
         note: z.string(),
         actor: actorSchema,
-      },
+      }),
     },
     async ({ actor, ...input }) => {
       try {
@@ -423,10 +435,10 @@ Workstream-level findings have no ticket_id and cannot be disposed.`,
     {
       description:
         `Read the explicit product acceptance gate for one ticket. Only state "accepted" may ship. No completion is not_requested; a missing, stale, or self-authored verdict is pending; FAIL is failed. Generic ticket type and status do not affect this gate. For a process exit suitable for release scripts, use helmo-cli acceptance-check.`,
-      inputSchema: {
+      inputSchema: strict({
         ticket_id: z.string(),
         refs: z.array(z.string()).optional().describe('Optional exact release manifest; when supplied, acceptance of any other refs remains pending/stale'),
-      },
+      }),
     },
     async ({ ticket_id, refs }) => {
       try {

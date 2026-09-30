@@ -222,3 +222,106 @@ describe('the verdicts replay (H-1830)', () => {
     expect(r.stderr).toContain("takes a reviewer's NAME");
   });
 });
+
+// R-39 Q9, the other half of the same silence. `flag()` returns undefined for a
+// flag nobody declared, and undefined is what "not passed" looks like — so
+// `create --project R-41` filed an untagged ticket and `update --assinee mason`
+// reserved nobody, both exiting 0. The MCP surface refuses the same class with
+// a strict input schema; these hold the CLI to the identical rule.
+describe('a flag the command has no field for (R-39 Q9)', () => {
+  function snapshot() {
+    const s = new Store(dbPath);
+    const state = JSON.stringify({ state: s.dumpState(), seq: s.maxSeq() });
+    s.close();
+    return state;
+  }
+
+  it('refuses a field the CLI has no flag for, rather than filing the ticket without it', () => {
+    const before = snapshot();
+    const r = cli('create', '--title', 'Ship the release gate', '--body', 'Goal: gate the release. Current state: not started.',
+      '--workstream', 'helmo-dev', '--type', 'build', '--project', 'R-41');
+
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('--project');
+    expect(r.stderr).toContain('go through the MCP server');
+    expect(snapshot()).toBe(before);
+  });
+
+  it('refuses a misspelled flag by name and leaves the ticket untouched', () => {
+    const before = snapshot();
+    const r = cli('update', '--ticket', ticket, '--note', 'handing this on', '--assinee', 'mason');
+
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('--assinee');
+    expect(r.stderr).toContain('--handoff-to'); // the flag it should have reached for
+    expect(snapshot()).toBe(before);
+  });
+
+  it('catches the --flag=value form too', () => {
+    const r = cli('update', '--ticket', ticket, '--note', 'n', '--blast-radus=records');
+
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('--blast-radus');
+  });
+
+  it('lets every ordinary write through', () => {
+    const r = cli('update', '--ticket', ticket, '--note', 'the importer reads ./data now', '--blast-radius', 'records', '--confidence', 'routine');
+
+    expect(r.status).toBe(0);
+    expect(read().blast_radius).toBe('records');
+    expect(read().confidence).toBe('routine');
+  });
+
+  it('refuses an unknown flag on a read command as well, so a filter that does not exist cannot look like no filter', () => {
+    const r = cli('list', '--project', 'R-41');
+
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('--project');
+  });
+
+  // One tsx spawn per command, so this one is slow on purpose: the table is
+  // only trustworthy if every command has actually been run against it.
+  it('declares every flag its own code reads, so the table cannot drift behind it', { timeout: 60_000 }, () => {
+    // The refusal is only as good as the table. A flag the code reads but the
+    // table omits would refuse every legitimate caller, so flag()/has() assert
+    // the other direction and this exercises each command once.
+    const ok = (...argv: string[]) => {
+      const r = cli(...argv);
+      expect(r.stderr).not.toContain('does not list it in COMMAND_FLAGS');
+      return r;
+    };
+    ok('wake-check', '--since-seq', '0', '--workstream', 'helmo-dev', '--assignee', 'builder-loop');
+    ok('seat-check', '--assignee', 'builder-loop');
+    ok('actor-activity', '--name', 'builder-loop', '--since-seq', '0', '--session', 's', '--advancing');
+    ok('actor-tickets', '--name', 'builder-loop', '--since-seq', '0', '--session', 's');
+    ok('actor-spend', '--name', 'builder-loop', '--since-seq', '0', '--session', 's');
+    ok('answers', '--since-seq', '0', '--session', 'dashboard');
+    ok('verdicts', '--since-seq', '0', '--workstream', 'helmo-dev');
+    ok('hygiene');
+    ok('workstream', '--name', 'helmo-dev');
+    ok('list', '--ready', '--status', 'open', '--workstream', 'helmo-dev', '--assignee', 'builder-loop', '--limit', '5');
+    ok('get', '--ticket', ticket);
+    ok('acceptance-check', '--ticket', ticket, '--refs', '[]');
+    ok('record-spend', '--ticket', ticket, '--tokens', '10', '--cost-usd', '0.01', '--note', 'metered');
+    ok('update', '--ticket', ticket, '--note', 'every update flag at once', '--status', 'in_progress',
+      '--evidence-kind', 'commit', '--evidence-ref', 'helmo@' + 'a'.repeat(40), '--confidence', 'spot_check',
+      '--uncertainty-note', 'where the doubt is', '--blast-radius', 'records', '--tokens', '10', '--cost-usd', '0.01',
+      '--handoff-to', 'mason', '--not-before', '', '--takeover');
+    ok('create', '--title', 'Every create flag at once', '--body', 'Goal: exercise the table. Current state: none.',
+      '--workstream', 'helmo-dev', '--type', 'build', '--priority', '2', '--status', 'open', '--assignee', 'mason',
+      '--dep', ticket, '--dep-type', 'relates', '--not-before', '2026-12-01', '--needs-human', 'Two clicks in a dashboard');
+    ok('return', '--ticket', ticket, '--situation', 'Where this stands.', '--question', 'Which way?',
+      '--recommendation', 'This way.', '--if-unanswered', 'It waits.');
+    ok('hygiene-dispose', '--check', 'spend_anomaly', '--ticket', ticket, '--reason', 'accounted for');
+    ok('rename-workstream', '--from', 'helmo-dev', '--to', 'helmo-dev', '--note', 'no-op rename');
+    ok('workstream-set', '--name', 'helmo-dev', '--budget-usd', '1', '--seat', 'mason');
+    ok('purge-orphan', '--ticket', ticket, '--confirm');
+    ok('product-complete', '--ticket', ticket, '--artifacts', '[]', '--note', 'n');
+    ok('acceptance-verdict', '--ticket', ticket, '--refs', '[]', '--verdict', 'pass', '--note', 'n');
+    // `--no-needs-human` and `--schedule` have no companion above: they conflict
+    // with a flag already exercised, so each gets its own minimal call.
+    ok('update', '--ticket', ticket, '--note', 'clearing the marker', '--no-needs-human');
+    ok('create', '--title', 'A recurring template', '--body', 'Goal: recur. Current state: none.',
+      '--workstream', 'helmo-dev', '--type', 'ops', '--schedule', 'every 1d');
+  });
+});

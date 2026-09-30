@@ -103,3 +103,76 @@ describe('the steering surface after the workstream goal was retired (H-1186)', 
     store.close();
   });
 });
+
+// R-39 Q9. Handed a raw shape the SDK wraps it in a plain object, which strips
+// an undeclared key: `capacity_hold` on a create, or a misspelled `projekt`,
+// returned a new ticket ID with the field quietly unset. helmo-cli enforces the
+// same rule over its flags; these hold the MCP door to it.
+describe('a key the tool does not declare (R-39 Q9)', () => {
+  async function call(store: Store, name: string, args: Record<string, unknown>) {
+    const client = await connect(store);
+    const res = await client.callTool({ name, arguments: args });
+    await client.close();
+    return { text: (res.content as { text: string }[])[0]!.text, isError: res.isError === true };
+  }
+
+  const NEW_TICKET = { title: 'Ship the release gate', body: 'Goal: gate the release. Current state: not started.', workstream: 'helmo-dev', type: 'build' };
+
+  it('refuses the undeclared keys by name and creates nothing', async () => {
+    const store = new Store(':memory:');
+    const before = JSON.stringify({ state: store.dumpState(), seq: store.maxSeq() });
+
+    const r = await call(store, 'helmo_create_ticket', { ...NEW_TICKET, projekt: 'R-41', capacity_hold: { reason: 'held' } });
+
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain('projekt');
+    expect(r.text).toContain('capacity_hold');
+    expect(JSON.stringify({ state: store.dumpState(), seq: store.maxSeq() })).toBe(before);
+    store.close();
+  });
+
+  it('refuses a misspelled key on an update without writing the note', async () => {
+    const store = new Store(':memory:');
+    const t = store.createTicket(orch, NEW_TICKET);
+
+    const r = await call(store, 'helmo_update_ticket', { ticket_id: t.id, note: 'handing this on', assinee: 'mason' });
+
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain('assinee');
+    expect(store.getTicket(t.id).assignee).toBeNull();
+    store.close();
+  });
+
+  it('refuses an unknown filter on a read, so a filter that does not exist cannot read as no filter', async () => {
+    const store = new Store(':memory:');
+    store.createTicket(orch, NEW_TICKET);
+
+    const r = await call(store, 'helmo_list_tickets', { labels: ['acct:estate'] });
+
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain('labels');
+    store.close();
+  });
+
+  it('still accepts every key it declares', async () => {
+    const store = new Store(':memory:');
+    const r = await call(store, 'helmo_create_ticket', {
+      ...NEW_TICKET, project: 'R-41', labels: ['acct:estate'], priority: 1, status: 'open',
+      assignee: 'mason', not_before: '2026-12-01', needs_human: 'Two clicks in a dashboard', actor: orch,
+    });
+
+    expect(r.isError).toBe(false);
+    const t = store.getTicket(JSON.parse(r.text).result.id as string);
+    expect(t).toMatchObject({ project: 'R-41', labels: ['acct:estate'], priority: 1, assignee: 'mason' });
+    store.close();
+  });
+
+  it('declares the arguments of every tool strictly, so no door is left on the old rule', async () => {
+    const store = new Store(':memory:');
+    const client = await connect(store);
+    const loose = (await client.listTools()).tools.filter((t) => (t.inputSchema as { additionalProperties?: unknown }).additionalProperties !== false);
+    expect(loose.map((t) => t.name)).toEqual([]);
+    await client.close();
+    store.close();
+  });
+});

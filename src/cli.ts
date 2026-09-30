@@ -11,12 +11,76 @@ import { Actor, DepType, HelmoError, writingActor } from './types.js';
 const args = process.argv.slice(2);
 const cmd = args.shift();
 
+// Every flag each command understands. The other half of the same silence
+// (R-39 Q9): an undeclared flag used to be dropped without a word, so
+// `create --project R-41` filed an untagged ticket and `update --assinee mason`
+// reserved nothing, both reporting success. The CLI genuinely has no flag for
+// several fields the MCP surface takes (H-2225) — a gap you could only find by
+// reading the source. Now it says so. `--actor` is understood everywhere; on
+// `verdicts` it names the reviewer to filter on rather than the writer.
+// The matching rule on the MCP side is the strict input schema in tools.ts.
+const COMMAND_FLAGS: Record<string, readonly string[]> = {
+  'wake-check': ['since-seq', 'workstream', 'assignee'],
+  'seat-check': ['assignee'],
+  'purge-orphan': ['ticket', 'confirm'],
+  'actor-activity': ['name', 'since-seq', 'session', 'advancing'],
+  'actor-tickets': ['name', 'since-seq', 'session'],
+  'actor-spend': ['name', 'since-seq', 'session'],
+  answers: ['since-seq', 'session'],
+  verdicts: ['since-seq', 'workstream'],
+  hygiene: [],
+  'hygiene-dispose': ['check', 'ticket', 'reason'],
+  workstream: ['name'],
+  'workstream-set': ['name', 'budget-usd', 'seat'],
+  'rename-workstream': ['from', 'to', 'note'],
+  'record-spend': ['ticket', 'tokens', 'cost-usd', 'note'],
+  list: ['ready', 'status', 'workstream', 'assignee', 'limit'],
+  get: ['ticket'],
+  'product-complete': ['ticket', 'artifacts', 'note'],
+  'acceptance-verdict': ['ticket', 'refs', 'verdict', 'note'],
+  'acceptance-check': ['ticket', 'refs'],
+  create: ['title', 'body', 'workstream', 'type', 'priority', 'status', 'assignee', 'dep', 'dep-type', 'schedule', 'not-before', 'needs-human'],
+  update: ['ticket', 'note', 'status', 'evidence-kind', 'evidence-ref', 'confidence', 'uncertainty-note', 'blast-radius', 'tokens', 'cost-usd', 'handoff-to', 'not-before', 'needs-human', 'no-needs-human', 'takeover'],
+  return: ['ticket', 'situation', 'question', 'options', 'recommendation', 'if-unanswered'],
+};
+
+function allowedFlags(command: string): string[] {
+  return [...(COMMAND_FLAGS[command] ?? []), 'actor'];
+}
+
+/** Refuse an argv flag the command has no field for, before anything is
+ *  written. Every `--`-prefixed token is a flag and never a value: a value
+ *  beginning with `--` has to arrive through `--name=value` (see `flag`). */
+function checkKnownFlags(command: string): void {
+  const allowed = new Set(allowedFlags(command));
+  const unknown = args
+    .filter((a) => a.startsWith('--'))
+    .map((a) => a.slice(2).split('=')[0] ?? '')
+    .filter((n) => !allowed.has(n));
+  if (unknown.length) {
+    throw new HelmoError(
+      `'${command}' does not understand ${unknown.map((n) => `--${n}`).join(', ')}. It takes: ${allowedFlags(command).sort().map((n) => `--${n}`).join(' ')}. ` +
+        'A flag with no field behind it used to be dropped in silence and the write reported success with that field unset. For a field helmo-cli has no flag for, go through the MCP server.',
+    );
+  }
+}
+
+/** The other direction, so the table cannot drift behind the code: a command
+ *  that reads a flag it does not declare would refuse every caller who passed
+ *  it. This fires in the suite, not in front of a user. */
+function declared(name: string): void {
+  if (cmd && COMMAND_FLAGS[cmd] && !allowedFlags(cmd).includes(name)) {
+    throw new HelmoError(`Internal: '${cmd}' reads --${name} but does not list it in COMMAND_FLAGS, so a caller passing it is refused.`);
+  }
+}
+
 // A flag that takes a value must be given one. Written bare — `--needs-human`
 // as the last argument, or immediately before another flag — it used to read
 // as undefined, indistinguishable from never passed, so the write succeeded
 // with the field silently unset (H-1782, H-1783). `--name=value` is the escape
 // hatch for a value that itself begins with `--`.
 function flag(name: string): string | undefined {
+  declared(name);
   const prefix = `--${name}=`;
   const inline = args.find((a) => a.startsWith(prefix));
   if (inline !== undefined) return inline.slice(prefix.length);
@@ -33,6 +97,7 @@ function flag(name: string): string | undefined {
 // The mirror image for a flag that takes none: `--takeover=true` would be
 // ignored by an `includes` check, which is the same silence from the other side.
 function has(name: string): boolean {
+  declared(name);
   if (args.some((a) => a.startsWith(`--${name}=`))) {
     throw new HelmoError(`--${name} takes no value — pass it bare.`);
   }
@@ -60,6 +125,10 @@ function out(data: unknown): void {
 }
 
 try {
+  // Before any command reads a flag, and so before any write: an unrecognized
+  // flag is a refusal, not a shrug. An unrecognized COMMAND still falls through
+  // to the usage text below.
+  if (cmd && COMMAND_FLAGS[cmd]) checkKnownFlags(cmd);
   switch (cmd) {
     case 'wake-check': {
       // The harness idle poll: one call answers "should this loop wake, and at

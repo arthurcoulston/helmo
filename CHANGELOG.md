@@ -15,6 +15,21 @@
 
 ### Fixed
 
+- A field neither front door declares is refused instead of silently dropped
+  (R-39 Q9, H-2421). The MCP surface was handed raw shapes, which the SDK wraps
+  in a plain object that STRIPS an undeclared key, so `capacity_hold` on a
+  create or a misspelled `projekt` returned a new ticket ID with the field
+  quietly unset. `helmo-cli` had the mirror image: `flag()` returns undefined
+  for a flag nobody declared, and undefined is what "not passed" looks like, so
+  `create --project R-41` filed an untagged ticket and `update --assinee mason`
+  reserved nobody — both exiting 0. Both doors now refuse by name and write
+  nothing, including on reads, where a filter that does not exist used to read
+  as no filter at all. Every flag Rev, the daily sweep, `memo-drain`,
+  `github-listen`, `publish` and the configuration gate pass is declared, and
+  `--flag=value` remains the escape hatch for free text. Fields `helmo-cli`
+  still has no flag for (H-2225) are now named in the refusal rather than
+  dropped; go through the MCP server for those.
+
 - A sitting the operator cannot reach yet is drawn as blocked work, not as work
   awaiting him (H-202). An open blocker, a future `not_before` or an active
   capacity hold now decides "Awaiting you" the same way it decides Ready: the

@@ -1669,12 +1669,15 @@ export class Store {
           `SELECT DISTINCT ticket_id AS id FROM events
            WHERE seq > ? AND (
              event_type = 'created'
+             OR (event_type = 'unlinked' AND json_extract(payload, '$.type') = 'blocks')
              OR (event_type = 'answered' AND json_extract(payload, '$.resolution') = 'resume')
              OR (event_type = 'updated' AND (
                json_type(payload, '$.diffs.assignee') IS NOT NULL
                OR json_extract(payload, '$.diffs.status.to') = 'open'
+               OR json_type(payload, '$.diffs.workstream') IS NOT NULL
                OR json_type(payload, '$.diffs.not_before') IS NOT NULL
                OR json_type(payload, '$.diffs.capacity_hold') IS NOT NULL
+               OR json_extract(payload, '$.diffs.needs_human.to') = 0
              ))
            )`,
         )

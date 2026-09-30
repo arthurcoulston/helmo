@@ -359,8 +359,9 @@ Pinned releases accept both the historical three-component layout and C1's one
   The Store's bounded `newlyReadySince` read supports the event-driven half of
   wake-check: it intersects the canonical current-ready set (up to 1,000 IDs)
   with readiness-causing events after the cursor, plus date gates that crossed
-  after that event's timestamp. Two indexed event queries cover direct route /
-  gate changes and blocker closure; notes, spend, unrelated close-out, and
+  after that event's timestamp. Indexed event queries cover direct route /
+  gate changes, removal or closure of blockers, clearing a human sitting, and
+  moving unassigned work into the watched stream; notes, spend, unrelated close-out, and
   self-filed untouched work cannot enter through that intersection. The first
   non-meter touch by another actor (or a human/orchestrator relay) is also an
   edge: it releases self-triage for the filing or its recurring template;

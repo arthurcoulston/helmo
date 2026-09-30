@@ -20,6 +20,14 @@ For an immutable multi-product installation, set `INSTALLATION_RELEASE` to
 its `ADOPTED.json`. Both Roadmap entry points verify the selected
 Rev/Helmo/Roadmap commit set and refuse code from another checkout.
 
+Running more than one installation, or changing which release one runs? Both
+entry points — `roadmap-mcp` and `roadmap-view` — are paths something in your
+setup names, and both migrate a store by opening it, so a view started from the
+wrong release matters as much as the server. The checklist of every path to
+review, and the surfaces that tell you what is actually running, is
+[ENTRY-POINTS.md](https://github.com/arthurcoulston/rev/blob/main/ENTRY-POINTS.md)
+in the Rev repo.
+
 To run it yourself: requires Node.js and npm. No Helmo server, Crew
 checkout, or Estate checkout is needed to run this product. The SQLite
 dependency may need a native build toolchain when a prebuilt binary is

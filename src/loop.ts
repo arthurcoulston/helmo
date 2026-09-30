@@ -338,7 +338,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
         logEvent(l.name, 'blocked', `kind=capacity reason=${capacity.reason}`);
         let investigationTicket: string | null = null;
         try {
-          investigationTicket = escalateBlocked(g, l, capacity.reason, '', dir);
+          investigationTicket = escalateBlocked(g, l, capacity.reason, '', dir, 'capacity');
           console.log(`rev: '${l.name}' BLOCKED — escalated as Helm ticket ${investigationTicket}.`);
         } catch (e) {
           console.error(`rev: '${l.name}' BLOCKED — escalation failed (${String(e).slice(0, 200)}).`);
@@ -561,7 +561,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
         sSet(l.name, 'BLOCKED', `kind=anomaly\nreason=${anomaly.reason}\nat=${at}\n`);
         let investigationTicket: string | null = null;
         try {
-          investigationTicket = escalateBlocked(g, l, anomaly.reason, res.outputTail, dir);
+          investigationTicket = escalateBlocked(g, l, anomaly.reason, res.outputTail, dir, 'anomaly');
           logEvent(l.name, 'escalated', `ticket=${investigationTicket}`);
         } catch (e) {
           logEvent(l.name, 'escalate-failed', String(e).slice(0, 200));

@@ -737,7 +737,15 @@ node ${HELM_CLI} update --ticket $ID --note "claimed by mock" --status in_progre
 node ${HELM_CLI} update --ticket $ID --note "completed by mock" --status done --evidence-kind file --evidence-ref /tmp/out
 echo "rev-mock-usage tokens=1000 cost_usd=7.00"
 '''
+
+[loops.reviewer]
+workstream = "review"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = "true"
 `);
+    mkdirSync(join(e.home, 'state', 'reviewer'), { recursive: true });
+    writeFileSync(join(e.home, 'state', 'reviewer', 'RUNNING'), `${process.pid}\n`);
     writeFileSync(join(e.home, 'token-log'), Array.from({ length: 5 }, (_, i) =>
       `2026-09-29T0${i}:00:00.000Z loop=anomaly-loop runtime=mock model=mock-mid tokens=100 cost_usd=1\n`,
     ).join(''));
@@ -754,6 +762,7 @@ echo "rev-mock-usage tokens=1000 cost_usd=7.00"
       measured_against: { mean_cost_usd: 1, window: 5 },
     });
     expect(detail.investigation_ticket).toMatch(/^H-/);
+    expect(helm(e, ['get', detail.investigation_ticket])).toMatchObject({ status: 'open', assignee: 'reviewer', priority: 0 });
     expect(readFileSync(join(e.home, 'state', 'anomaly-loop', 'events.log'), 'utf8')).toMatch(/anomaly.*observed=\$7\.00 mean=\$1\.00/);
   });
 

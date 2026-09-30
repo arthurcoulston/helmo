@@ -340,6 +340,65 @@ node ${HELM_CLI} update --ticket $ID --note "kept producing" --evidence-kind oth
     }
   });
 
+  it('accepts one matching peer false-alarm disposition without involving the human (H-188)', { timeout: 60000 }, async () => {
+    const e = setup(`[loops.worker]
+workstream = "ws-worker"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = "true"
+
+[loops.reviewer]
+workstream = "ws-review"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = "true"
+`);
+    const reason = 'anomaly: fixture rate';
+    const ticket = (helm(e, ['create', '--title', "Loop 'worker' is blocked: needs a decision", '--body', 'investigate', '--workstream', 'rev-test', '--type', 'ops', '--priority', '0', '--assignee', 'reviewer']) as { id: string }).id;
+    helm(e, ['update', '--ticket', ticket, '--note', 'claimed investigation and proved the fixture baseline stale', '--status', 'in_progress', '--evidence-kind', 'other', '--evidence-ref', `rev:false_alarm:${encodeURIComponent(reason)}`],
+      '{"name":"reviewer","kind":"agent","model":"t","version":"0","session":"rev:reviewer"}');
+    const dir = join(e.home, 'state', 'worker');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'BLOCKED'), `kind=anomaly\nreason=${reason}\n`);
+    writeFileSync(join(dir, 'BLOCKED.json'), JSON.stringify({ kind: 'anomaly', reason, investigation_ticket: ticket }));
+    const { proc } = startFleet(e);
+    try {
+      await waitFor(() => loopPid(e, 'worker') !== null, 'peer-released loop running');
+      await waitFor(() => (helm(e, ['get', ticket]) as { status: string }).status === 'done', 'investigation closed after healthy restart');
+      expect(existsSync(join(dir, 'BLOCKED'))).toBe(false);
+      expect(readFileSync(join(dir, 'events.log'), 'utf8')).toMatch(/agent-resume.*BLOCKED cleared/);
+      expect((helm(e, ['list', '--status', 'awaiting_human']) as { tickets: unknown[] }).tickets).toHaveLength(0);
+    } finally {
+      proc.kill('SIGKILL');
+    }
+  });
+
+  it('sends a same-reason relapse to the human instead of releasing twice (H-188)', { timeout: 60000 }, async () => {
+    const e = setup(`[loops.worker]
+workstream = "ws-worker"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = "true"
+`);
+    const reason = 'capacity: fixture exhausted';
+    const ticket = (helm(e, ['create', '--title', "Loop 'worker' is blocked: needs a decision", '--body', 'investigate', '--workstream', 'rev-test', '--type', 'ops', '--priority', '0', '--assignee', 'reviewer']) as { id: string }).id;
+    helm(e, ['update', '--ticket', ticket, '--note', 'claimed investigation and found one false alarm', '--status', 'in_progress', '--evidence-kind', 'other', '--evidence-ref', `rev:false_alarm:${encodeURIComponent(reason)}`],
+      '{"name":"reviewer","kind":"agent","model":"t","version":"0","session":"rev:reviewer"}');
+    const dir = join(e.home, 'state', 'worker');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'BLOCKED'), `kind=capacity\nreason=${reason}\n`);
+    writeFileSync(join(dir, 'BLOCKED.json'), JSON.stringify({ kind: 'capacity', reason, investigation_ticket: ticket }));
+    writeFileSync(join(dir, '.auto_release.json'), JSON.stringify({ reason, at: new Date().toISOString() }));
+    const { proc } = startFleet(e);
+    try {
+      await waitFor(() => (helm(e, ['get', ticket]) as { status: string }).status === 'awaiting_human', 'relapse returned to human');
+      expect(loopPid(e, 'worker')).toBeNull();
+      expect(existsSync(join(dir, 'BLOCKED'))).toBe(true);
+    } finally {
+      proc.kill('SIGKILL');
+    }
+  });
+
   // The restarted loop does not die on its first failed run: it fails, retries,
   // and only the burn breaker halts it, so its death is a couple of seconds
   // out. Against min_uptime_seconds = 1 that is a race the supervisor can win

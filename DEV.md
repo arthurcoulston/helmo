@@ -168,7 +168,13 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   cost with the preceding five parseable iterations and refreshes the same plan
   window to measure percentage-point movement. A trip writes both the halt
   sentinel and `BLOCKED.json` with the observed values, baseline, time and
-  escalation ticket, which `/health.json` and the dashboard surface. **No
+  escalation ticket, which `/health.json` and the dashboard surface. An
+  anomaly or terminal-capacity trip is assigned at priority 0 to the first
+  live, unblocked roster peer. A peer can authorize one restart by attaching
+  an exact `rev:false_alarm:<encoded reason>` evidence ref; the supervisor
+  matches it to `BLOCKED.json`, clears only BLOCKED, and proves minimum uptime
+  before closing the investigation. A same-reason relapse inside the configured
+  window, or the absence of a live peer, routes to the human instead. **No
   percent is ever converted to tokens or dollars**, in either direction.
 - `shim.ts` — the runtime adapter (claude / codex / mock). Owns non-interactive
   flags, constitution injection (fail-closed), `cleanEnv()` (strips parent

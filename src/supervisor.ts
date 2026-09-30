@@ -12,7 +12,7 @@
 // poll_seconds of `rev resume`.
 import { spawn, ChildProcess } from 'node:child_process';
 import { ancestryBroken, ancestryStamp } from './ancestry.js';
-import { closeSync, openSync } from 'node:fs';
+import { closeSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { stateDir } from './config.js';
 import { respawnDecide } from './ladder.js';
@@ -21,7 +21,7 @@ import { rotateOpenFd } from './logretention.js';
 import { logEvent, occupiedPid, pidAlive, runningStamp, sClear, sGet, sHas, sSet, streakReset } from './sentinels.js';
 import { endSessionGroup, sessionGroupsOf } from './shim.js';
 import { REDEPLOY_EXIT, RedeployRequest, armRedeployWatch, readRedeploy, reportRedeployLanded } from './redeploy.js';
-import { answeredResumeEscalation, completeAnsweredResume, failAnsweredResume, cliError } from './helm.js';
+import { agentFalseAlarmDisposition, answeredResumeEscalation, completeAnsweredResume, failAnsweredResume, returnRelapseToHuman, cliError } from './helm.js';
 import { GlobalConfig, LoopConfig } from './types.js';
 
 const SUP = 'supervisor';
@@ -46,6 +46,25 @@ function scheduledResumeAt(name: string): number | null {
   if (!value) return null;
   const at = Date.parse(value);
   return Number.isFinite(at) ? at : null;
+}
+
+function agentResume(g: GlobalConfig, l: LoopConfig): { ticket: string; reason: string } | null {
+  try {
+    const detail = JSON.parse(readFileSync(join(stateDir(l.name), 'BLOCKED.json'), 'utf8')) as { kind?: string; reason?: string; investigation_ticket?: string };
+    if (!['anomaly', 'capacity'].includes(detail.kind ?? '') || !detail.reason || !detail.investigation_ticket) return null;
+    if (!agentFalseAlarmDisposition(g, detail.investigation_ticket, detail.reason)) return null;
+    const historyPath = join(stateDir(l.name), '.auto_release.json');
+    let previous: { reason?: string; at?: string } = {};
+    try { previous = JSON.parse(readFileSync(historyPath, 'utf8')) as typeof previous; } catch { /* first release */ }
+    if (previous.reason === detail.reason && Date.now() - Date.parse(previous.at ?? '') < g.relapse_window_seconds * 1000) {
+      returnRelapseToHuman(g, l, detail.investigation_ticket, detail.reason);
+      return null;
+    }
+    writeFileSync(historyPath, `${JSON.stringify({ reason: detail.reason, at: new Date().toISOString() })}\n`);
+    return { ticket: detail.investigation_ticket, reason: detail.reason };
+  } catch {
+    return null;
+  }
 }
 
 /** Resolves with the process exit code: 0 for a drain that should stay down,
@@ -227,12 +246,13 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
         }
         if (sHas(name, 'BLOCKED')) {
           try {
-            const ticket = answeredResumeEscalation(g, s.cfg);
+            const agent = agentResume(g, s.cfg);
+            const ticket = agent?.ticket ?? answeredResumeEscalation(g, s.cfg);
             if (ticket) {
               s.resumeTicket = ticket;
               sClear(name, 'BLOCKED');
               streakReset(name, 'fail', 'limit');
-              logEvent(name, 'answer-resume', `ticket=${ticket} BLOCKED cleared`);
+              logEvent(name, agent ? 'agent-resume' : 'answer-resume', `ticket=${ticket} BLOCKED cleared${agent ? ` reason=${agent.reason}` : ''}`);
             }
           } catch (e) {
             logEvent(name, 'answer-resume-check-failed', String(e).slice(0, 200));

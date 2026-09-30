@@ -273,6 +273,26 @@ describe('workflow invalidation and quarantine (H-432)', () => {
     expect(s.getTicket(ticket.id)).toMatchObject({ status: 'in_progress', labels: [], workflow_attempt_id: 'attempt-1' });
   });
 
+  it.each(['done', 'cancelled'] as const)('refuses awaiting-human resolution as %s after quarantine', (resolution) => {
+    const s = new Store(':memory:', undefined, reviewer);
+    s.addWorkflowDefinition({ workflow_id: 'release', revision: 'v1', stages: [{ id: 'review' }] });
+    s.addWorkflowRun({ id: 'run-1', workflow_id: 'release', definition_revision: 'v1' });
+    s.addWorkflowAttempt({ id: 'attempt-1', run_id: 'run-1', stage_id: 'review', ordinal: 1 });
+    s.addWorkflowManifest({ id: 'old', attempt_id: 'attempt-1', kind: 'output', subjects: ['repo@old'], creators: [builder] });
+    s.addWorkflowRequirement({ id: 'check', workflow_id: 'release', definition_revision: 'v1', scope: 'technical', subject_manifest_id: 'old', allowed_verdicts: ['pass'], authorities: [reviewer], independence: 'different_from_manifest_creators' });
+    s.recordWorkflowDecision({ id: 'pass', requirement_id: 'check', manifest_id: 'old', verdict: 'pass', source: 'review:old' });
+    const ticket = create(s, { workflow_attempt_id: 'attempt-1' });
+    triage(s, ticket.id);
+    s.updateTicket(builder, { ticket_id: ticket.id, note: 'start', status: 'in_progress' });
+    s.returnToHuman(builder, ticket.id, { situation: 'The release is ready.', question: 'Close it?', recommendation: 'yes' });
+    s.addWorkflowManifest({ id: 'new', attempt_id: 'attempt-1', kind: 'output', subjects: ['repo@new'], creators: [builder], supersedes_manifest_id: 'old' });
+    const before = s.getEvents(ticket.id).length;
+
+    expect(() => s.answerTicket(relayedHuman, ticket.id, { answer: 'Close it.', resolution })).toThrow(/invalidation/);
+    expect(s.getEvents(ticket.id)).toHaveLength(before);
+    expect(s.getTicket(ticket.id)).toMatchObject({ status: 'awaiting_human', workflow_attempt_id: 'attempt-1' });
+  });
+
   it('quarantines an admission when a later decision replaces the admitted verdict', () => {
     const s = new Store(':memory:', undefined, reviewer);
     s.addWorkflowDefinition({ workflow_id: 'release', revision: 'v1', stages: [{ id: 'review' }] });

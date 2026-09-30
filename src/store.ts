@@ -2421,6 +2421,7 @@ export class Store {
       }
       const assignee = resolution === 'resume' ? this.workstreamSeat(t.workstream) : null;
       if (resolution === 'resume' && t.workflow_attempt_id) this.admitWorkflow(t.id, t.workflow_attempt_id, 'answer_resume');
+      if (resolution !== 'resume') this.refuseQuarantinedWorkflowMutation(t.id, `answer_${resolution}`);
       this.append(ts, t.id, 'answered', actor, { ...a, resolution, assignee } as unknown as Record<string, unknown>);
       if (resolution === 'resume') {
         this.db.prepare("UPDATE tickets SET status = 'open', assignee = ?, question = NULL, updated_at = ? WHERE id = ?").run(assignee, ts, t.id);

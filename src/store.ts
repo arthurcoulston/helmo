@@ -2531,14 +2531,25 @@ export class Store {
       if (cur.status !== 'awaiting_human' || !cur.question || questionFingerprint(cur.question) !== expectQuestion) {
         throw new HelmoError(`${cur.id} is no longer asking the expected question — reload before withdrawing it; a real answer or replacement ask wins.`);
       }
+      const owner = recoveryOwner.trim();
+      const cutoff = new Date(Date.now() - SILENT_ASSIGNEE_HOURS * 3_600_000).toISOString();
+      const lastOwnerEvent = this.db.prepare(
+        `SELECT ts, json_extract(actor, '$.kind') AS kind FROM events
+         WHERE json_extract(actor, '$.name') = ? ORDER BY seq DESC LIMIT 1`,
+      ).get(owner) as { ts: string; kind: ActorKind } | undefined;
+      const callerIsOwner = actor.name === owner && actor.kind !== 'human';
+      const ownerIsLive = lastOwnerEvent && lastOwnerEvent.kind !== 'human' && lastOwnerEvent.ts >= cutoff;
+      if (!callerIsOwner && !ownerIsLive) {
+        throw new HelmoError(`recovery_owner '${owner}' is not an available agent or orchestrator: it has no non-human Helmo activity in the last ${SILENT_ASSIGNEE_HOURS / 24} days. Leave the question intact until a live owner can receive the work.`);
+      }
       const returned = this.db.prepare("SELECT payload FROM events WHERE ticket_id = ? AND event_type = 'returned' ORDER BY seq DESC LIMIT 1").get(cur.id) as { payload: string } | undefined;
       const outcomeOwner = returned ? (JSON.parse(returned.payload)['outcome_owner'] as string | null | undefined) ?? null : null;
       const ts = now();
       this.append(ts, cur.id, 'return_withdrawn', actor, {
-        question_fingerprint: expectQuestion, reason, recovery_owner: recoveryOwner, outcome_owner: outcomeOwner,
+        question_fingerprint: expectQuestion, reason, recovery_owner: owner, outcome_owner: outcomeOwner,
       });
       this.db.prepare("UPDATE tickets SET status = 'open', assignee = ?, question = NULL, updated_at = ? WHERE id = ?")
-        .run(recoveryOwner.trim(), ts, cur.id);
+        .run(owner, ts, cur.id);
       return this.getTicket(cur.id);
     }).immediate();
   }

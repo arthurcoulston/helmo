@@ -68,19 +68,26 @@ describe('mistaken human returns through the MCP boundary (H-391)', () => {
 
     const stale = await client.callTool({
       name: tool.name,
-      arguments: { ticket_id: ticket.id, question_fingerprint: 'stale-question', recovery_owner: 'orchestrator', reason: 'Preparation remains team-owned.' },
+      arguments: { ticket_id: ticket.id, question_fingerprint: 'stale-question', recovery_owner: orch.name, reason: 'Preparation remains team-owned.' },
     });
     expect(stale.isError).toBe(true);
     expect(JSON.stringify(stale)).toContain('no longer asking the expected question');
 
+    const unavailable = await client.callTool({
+      name: tool.name,
+      arguments: { ticket_id: ticket.id, question_fingerprint: fingerprint, recovery_owner: 'nonexistent-seat', reason: 'Preparation remains team-owned.' },
+    });
+    expect(unavailable.isError).toBe(true);
+    expect(JSON.stringify(unavailable)).toContain('not an available agent or orchestrator');
+
     const corrected = await client.callTool({
       name: tool.name,
-      arguments: { ticket_id: ticket.id, question_fingerprint: fingerprint, recovery_owner: 'orchestrator', reason: 'Preparation remains team-owned.' },
+      arguments: { ticket_id: ticket.id, question_fingerprint: fingerprint, recovery_owner: orch.name, reason: 'Preparation remains team-owned.' },
     });
     expect(corrected.isError).not.toBe(true);
     expect(JSON.parse((corrected.content as { text: string }[])[0]!.text).result).toMatchObject({
       correction: 'return_withdrawn', human_answer_recorded: false,
-      ticket: { id: ticket.id, status: 'open', assignee: 'orchestrator' },
+      ticket: { id: ticket.id, status: 'open', assignee: orch.name },
     });
     expect(store.lastAnswer(ticket.id)).toBeNull();
     expect(store.getEvents(ticket.id).filter((e) => e.event_type === 'return_withdrawn')).toHaveLength(1);

@@ -248,7 +248,9 @@ orchestrator meetings and the read-only view. Product intent:
   `helmo_withdraw_human_return` is the non-consent recovery path for a mistaken
   escalation: it revision-checks the exact pending request, appends a distinct
   event, preserves prior answers and holds, and requires an explicit recovery
-  owner before reopening preparation.
+  owner before reopening preparation. The owner must be the current non-human
+  caller or a non-human actor recorded active in the last seven days; otherwise
+  the write refuses atomically and leaves the pending question intact.
 - `server.ts` — MCP stdio entry (local agents; thin wrapper over tools.ts).
 - `remote.ts` — MCP Streamable HTTP entry (H-116): same tools, for remote
   agents reaching Helmo through the crew-mcp worker (OAuth front door) over

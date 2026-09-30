@@ -488,6 +488,43 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   - It changes one file and restarts nothing: a running process keeps the code
     it loaded and takes the release when it next starts. Operating a service
     here would be operating one the command has not established it owns.
+- `remove.ts` — **the one command that deletes an installation's records**
+  (H-2512). `rev install remove [--confirm]`. Every other removal rev has keeps
+  the data: `rev service uninstall` takes the definition and leaves the store,
+  the controls and the selection byte-for-byte. That left the
+  independent-installations contract with a line nothing could satisfy — the
+  spec asks a release to prove that "uninstall of A, deleting only A's data,
+  leaves B's store and controls untouched" — and the only removal an operator
+  had was a hand `rm -rf` in a shell carrying the other installation's
+  `REV_HOME`, which is the H-2431 shape with no product refusal in the way.
+  - **It is a separate verb, not a flag.** `rev service uninstall --also-data`
+    would make the difference between keeping and deleting every record a word
+    someone can miss. The two removals are distinguishable at the command line.
+  - **The plan is printed before anything goes, and `--confirm` is a second
+    act.** Without it the command writes nothing and exits 0, which is also how
+    an operator finds out what the installation actually owns.
+  - **The boundary is the installation home** — `dirname` of the resolved Rev
+    home. Rev's home, the Helmo store the roster names, the roadmap store
+    `ROADMAP_DB`/`ROADMAP_HOME` names, and the selection, each with its SQLite
+    `-wal`/`-shm` beside it. A path outside that boundary is reported as left in
+    place with the reason, never followed: a shell carrying the target's
+    `REV_HOME` and the neighbour's `HELMO_DB` is exactly the case, and the
+    neighbour's store survives it. A product this installation names no store
+    for gets no default assumed — the default is the shared one.
+  - **Order, each refusal naming the command that clears it.** A standing
+    service definition blocks it (`rev service uninstall` first, or a manager
+    keeps bringing back a supervisor whose home this deleted); a live supervisor
+    blocks it (`rev stop` first — it writes state back into a home being
+    removed); a `REV_HOME` that contains the account's own home directory is
+    refused outright. Like `rev release`, it runs `unchecked`: a removal is one
+    of the two ways out of a broken selection, so gating it on the selection
+    being sound would leave an installation that can neither run nor be removed.
+  - **A liveness read must not create what it reads.** `occupiedPid` goes
+    through `stateDir`, which `mkdir`s — so asking it of an already-removed
+    installation rebuilt that installation's Rev home, and the next plan had
+    something to take again. The check is skipped when there is no home.
+  - Release directories are never touched: a release is shared between
+    installations, and `rev release` is what a version change goes through.
 - `sentinels.ts` / `config.ts` — sentinel files + roster loading. A loop's
   optional `skills = [...]` (paths) are appended whole to its constitution at
   spawn — how a Drive-touching loop carries crew `skills/file-stewardship.md`
@@ -576,6 +613,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   127.0.0.1, `REV_VIEW_HOST` to change) — restart after rebuild. It has no
   authentication: widening the host serves every loop's home path, spend and
   event trace to anyone who reaches the port.
+- Delete an installation: `node dist/cli.js install remove` prints exactly what
+  would go and removes nothing; `--confirm` does it. There is no undo and no
+  other command brings it back. To remove only the service and keep every
+  record, that is still `service uninstall`.
 - What a seat's session is made of, as JSON, without running one:
   `node dist/cli.js session-spec <seat> --session <actor stamp> [--provider
   claude] [--tier high] [--model M] [--cwd P] [--constitution P] [--version V]`.

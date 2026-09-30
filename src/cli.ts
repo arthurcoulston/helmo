@@ -11,6 +11,7 @@ import { selectRun } from './routing.js';
 import { runLoop } from './loop.js';
 import { serviceFile, serviceInstall, serviceStart, serviceStatusLine, serviceUninstall, stalePinnedService } from './service.js';
 import { requireTarget, target, targetLine } from './install.js';
+import { planLines, removalPlan, removeInstallation } from './remove.js';
 import { ReleaseError, describe as describeRelease, migrationLine, rollback, selectionFile, upgrade } from './release.js';
 import { readRedeploy, requestRedeploy, watchRedeploy } from './redeploy.js';
 import { logEvent, pidAlive, processObservation, sClear, sGet, sHas, sPendingPid, sSetOwned, sValue, streakReset } from './sentinels.js';
@@ -68,6 +69,7 @@ const COMMAND_HELP: Record<string, string> = {
   stop: `usage: ${commandName} stop [<loop>]`,
   resume: `usage: ${commandName} resume <loop>`,
   service: `usage: ${commandName} service <install|uninstall|start|status>`,
+  install: `usage: ${commandName} install remove [--confirm]`,
   release: `usage: ${commandName} release <status | upgrade <release directory> | rollback>`,
   redeploy: `usage: ${commandName} redeploy [--ticket <id>] [--reason "<why>"]`,
   pace: `usage: ${commandName} pace <loop> <fraction (0,1] | park | clear>`,
@@ -326,6 +328,40 @@ switch (cmd) {
     refusable(act);
     break;
   }
+  // The only command that deletes an installation's records (H-2512). Its own
+  // module carries why it is shaped the way it is; here it is two acts, because
+  // a removal with no undo should not be one keystroke: the first prints what
+  // would go, the second does it.
+  case 'install': {
+    if (rest[0] !== 'remove') {
+      console.error(`${COMMAND_HELP['install']}  (to remove only the service and KEEP every record: ${commandName} service uninstall)`);
+      process.exit(1);
+    }
+    // 'unchecked', for the same reason `release` is: a removal is one of the two
+    // ways out of a broken selection, so gating it on the selection being sound
+    // would leave an installation that cannot run and cannot be removed either.
+    const t = requireTarget(`${commandName} install remove`, requestedInstall, 'unchecked');
+    console.log(targetLine(t));
+    const plan = removalPlan(t.label, g);
+    for (const line of planLines(plan)) console.log(line);
+    if (plan.blocked) {
+      console.error(`refusing to ${commandName} install remove: ${plan.blocked}`);
+      process.exit(1);
+    }
+    if (!rest.includes('--confirm')) {
+      console.log(
+        `Nothing was removed. This is the one operation with no undo — no other ${commandName} command brings these back.\n`
+        + `Confirm with: ${commandName} install remove --confirm`,
+      );
+      break;
+    }
+    for (const path of removeInstallation(plan)) console.log(`Removed: ${path}`);
+    console.log(
+      `Installation ${plan.label} is removed. Release directories were not touched: a release is shared between installations, `
+      + `and ${commandName} release is what a version change goes through.`,
+    );
+    break;
+  }
   // The one family that runs while the selection is broken, because it is what
   // repairs it. Every refusal below leaves the installation on the release it
   // is already running (H-2493, src/release.ts).
@@ -512,6 +548,7 @@ switch (cmd) {
   status                   supervisor + every loop's state at a glance
   session-spec <seat>      the composed session as JSON (model, cwd, skills, MCP, env) — reads nothing else
   service <verb>           install|uninstall|start|status — survive reboots (launchd/systemd)
+  install remove           delete this installation's records, controls and selection (no undo; --confirm)
   release <verb>           status|upgrade <dir>|rollback — which release set this installation runs
   redeploy [--ticket <id>] [--reason "<why>"]
                            activate a committed fix: drain after in-flight iterations, come back on the new code

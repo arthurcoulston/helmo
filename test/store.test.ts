@@ -925,6 +925,18 @@ describe('return to human / answer', () => {
     expect(s.getEvents(t.id).some((e) => e.event_type === 'return_withdrawn')).toBe(false);
   });
 
+  it('recognizes recent non-human activity despite a later same-name human event (H-391)', () => {
+    const s = freshStore();
+    const t = create(s);
+    const asked = s.returnToHuman(builder, t.id, q);
+    const collision = create(s);
+    const collisionAsk = s.returnToHuman(builder, collision.id, q);
+    s.answerTicket({ name: builder.name, kind: 'human' }, collision.id, { answer: 'Handled separately.', resolution: 'resume' }, questionFingerprint(collisionAsk.question!));
+
+    const recovered = s.withdrawHumanReturn(orch, t.id, questionFingerprint(asked.question!), builder.name, 'Preparation remains team-owned.');
+    expect(recovered).toMatchObject({ status: 'open', assignee: builder.name, question: null });
+  });
+
   it('refuses a recovery owner that has been silent beyond the live-seat window (H-391)', () => {
     vi.useFakeTimers();
     try {

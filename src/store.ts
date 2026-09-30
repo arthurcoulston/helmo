@@ -2533,12 +2533,15 @@ export class Store {
       }
       const owner = recoveryOwner.trim();
       const cutoff = new Date(Date.now() - SILENT_ASSIGNEE_HOURS * 3_600_000).toISOString();
-      const lastOwnerEvent = this.db.prepare(
-        `SELECT ts, json_extract(actor, '$.kind') AS kind FROM events
-         WHERE json_extract(actor, '$.name') = ? ORDER BY seq DESC LIMIT 1`,
-      ).get(owner) as { ts: string; kind: ActorKind } | undefined;
+      const recentOwnerEvent = this.db.prepare(
+        `SELECT 1 AS found FROM events
+         WHERE json_extract(actor, '$.name') = ?
+           AND json_extract(actor, '$.kind') != 'human'
+           AND ts >= ?
+         ORDER BY seq DESC LIMIT 1`,
+      ).get(owner, cutoff) as { found: number } | undefined;
       const callerIsOwner = actor.name === owner && actor.kind !== 'human';
-      const ownerIsLive = lastOwnerEvent && lastOwnerEvent.kind !== 'human' && lastOwnerEvent.ts >= cutoff;
+      const ownerIsLive = Boolean(recentOwnerEvent);
       if (!callerIsOwner && !ownerIsLive) {
         throw new HelmoError(`recovery_owner '${owner}' is not an available agent or orchestrator: it has no non-human Helmo activity in the last ${SILENT_ASSIGNEE_HOURS / 24} days. Leave the question intact until a live owner can receive the work.`);
       }

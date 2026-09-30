@@ -11,7 +11,7 @@ import { installationLine, requestedInstallation, requireInstallation } from './
 import { ESTATE_TOKENS } from './estate-tokens.generated.js';
 import { Store } from './store.js';
 import { ActorKind, Claim, Project, Ranked, RoadmapEvent } from './types.js';
-import { loaded } from './build.js';
+import { loaded, running } from './build.js';
 
 const install = requireInstallation(process.env, undefined, requestedInstallation(process.argv.slice(2)));
 loaded();
@@ -25,6 +25,28 @@ const store = new Store(dbPath, install);
 
 const esc = (s: unknown) =>
   String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
+
+/** Which installation drew this page, and which build of the roadmap drew it
+ *  (H-2492). The startup line already says both, but nobody reading a
+ *  dashboard has the startup line — and the store path alone cannot answer
+ *  either question: two installations point at two stores with one code
+ *  selection between them, and a store path says nothing about the process.
+ *  Read per render, like Helmo's footer, because a view that stays up across a
+ *  rebuild is exactly the process whose answer changes. */
+function buildFooter(): string {
+  const r = running();
+  const commit = 'commit' in r && r.commit ? r.commit.slice(0, 7) : null;
+  const dirty = 'dirty' in r && r.dirty === true;
+  if (r.state === 'verified' && !dirty) return `build ${esc(commit)}`;
+  // The LOADED commit stays on the line in every state that knows one —
+  // including STALE, where it is the only commit describing this process, and
+  // where the artifact's newer sha is the one answer that is certainly wrong.
+  const named = commit ? `build ${esc(commit)}` : 'build';
+  const label = r.state === 'verified'
+    ? `${named} (dirty)`
+    : `${named} ${r.state === 'stale' ? 'STALE' : r.state === 'unstamped' ? 'UNSTAMPED' : 'UNVERIFIABLE'}`;
+  return `<span class="build-warning" title="${esc(r.detail)}">⚠ ${label}</span>`;
+}
 
 function rel(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
@@ -309,7 +331,7 @@ ${rest.length ? rest.map(row).join('') : '<p class="allclear">Empty. Ideas cost 
 ${stable.length ? `<section><h2>Shipped — stable</h2>${stable.map(shelfRow).join('')}</section>` : ''}
 ${archived.length ? `<section><h2>Archived (${archived.length})</h2>${archived.map(shelfRow).join('')}</section>` : ''}
 
-<footer>read-only — the record is written by agents, including your decisions · ${esc(dbPath)} · refreshed <span id="age">just now</span></footer>
+<footer>read-only — the record is written by agents, including your decisions · ${esc(install.label)} · ${esc(dbPath)} · ${buildFooter()} · refreshed <span id="age">just now</span></footer>
 <span id="copy-status" class="sr-only" role="status" aria-live="polite"></span>
 <script>${JS}</script>
 </body></html>`;
@@ -462,6 +484,7 @@ details.more summary { font-size: 12px; color: var(--ink-3); cursor: pointer; }
    context gives it. */
 .mark { width: 1.15em; height: 1.15em; vertical-align: -0.22em; margin-right: 3px; }
 footer { margin-top: 48px; color: var(--ink-3); font-size: 11.5px; border-top: 1px solid var(--hairline); padding-top: 12px; }
+.build-warning { color: var(--serious); font-weight: 600; }
 `;
 
 // Refresh by replacement, preserving scroll and open disclosures.

@@ -7,12 +7,12 @@ import { mkdirSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
 import { AVATAR_MARKS, ESTATE_AVATARS } from './estate-avatars.generated.js';
-import { requireInstallation } from './install.js';
+import { installationLine, requestedInstallation, requireInstallation } from './install.js';
 import { ESTATE_TOKENS } from './estate-tokens.generated.js';
 import { Store } from './store.js';
 import { ActorKind, Claim, Project, Ranked, RoadmapEvent } from './types.js';
 
-const install = requireInstallation();
+const install = requireInstallation(process.env, undefined, requestedInstallation(process.argv.slice(2)));
 const dbPath = install.db;
 // The view may be the first thing to touch a fresh store — don't crash on a
 // missing home directory (caught by launchd on first boot).
@@ -565,4 +565,4 @@ createServer((req, res) => {
     res.writeHead(500, { 'content-type': 'text/plain' });
     res.end(String(e));
   }
-}).listen(port, host, () => console.log(`Roadmap view: http://localhost:${port} — install: ${install.label} — db: ${dbPath}`));
+}).listen(port, host, () => console.log(`Roadmap view: http://localhost:${port} — ${installationLine(install)}`));

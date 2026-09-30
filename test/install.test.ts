@@ -6,7 +6,7 @@ import { homedir, tmpdir, userInfo } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { installation, InstallationError } from '../src/install.js';
+import { installation, InstallationError, requestedInstallation, requireInstallation } from '../src/install.js';
 import { Store } from '../src/store.js';
 import { Actor } from '../src/types.js';
 
@@ -195,5 +195,109 @@ describe('neither entry point opens a store when the environment names two insta
     // an entry point that opened the store first would leave one of these.
     expect(existsSync(db), `${file} created ${db}`).toBe(false);
     expect(existsSync(home), `${file} created ${home}`).toBe(false);
+  });
+});
+
+// ---- H-2474: the target asserted ----
+//
+// The sibling of helmo:test/install.test.ts's H-2474 block. Neither surface
+// here has a flag parser of its own, so the assertion is read off argv, and the
+// thing that has to be true of a refusal is a file that does not appear: an
+// entry point that opened the store first has already migrated it.
+
+describe('the assertion as a service definition passes it (H-2474)', () => {
+  it('takes either spelling, and reads a bare flag as an assertion of nothing', () => {
+    expect(requestedInstallation([])).toBeUndefined();
+    expect(requestedInstallation(['--installation', 'dev.roadmap.gp'])).toBe('dev.roadmap.gp');
+    expect(requestedInstallation(['--installation=dev.roadmap.gp'])).toBe('dev.roadmap.gp');
+    expect(requestedInstallation(['--installation'])).toBe('');
+    expect(requestedInstallation(['--installation', '--other'])).toBe('');
+  });
+});
+
+describe('--installation asserts the target and cannot move it (H-2474)', () => {
+  const home = '/tmp/customer-a/.helmo-roadmap';
+  const resolved = installation(env({ ROADMAP_HOME: home }));
+
+  /** The message the entry point would have printed, or null if it proceeded. */
+  function assertOn(requested?: string): string | null {
+    try {
+      requireInstallation(env({ ROADMAP_HOME: home }), (m) => { throw new InstallationError(m); }, requested);
+      return null;
+    } catch (e) {
+      return (e as Error).message;
+    }
+  }
+
+  it('lets through the three spellings an operator has in front of them', () => {
+    expect(assertOn(undefined)).toBeNull();
+    for (const want of [resolved.label, resolved.home, `${resolved.home}/`, resolved.db]) {
+      expect(assertOn(want), `rejected ${want}`).toBeNull();
+    }
+  });
+
+  it('refuses a value naming another installation, naming both and the knob that moves the target', () => {
+    const m = assertOn('dev.roadmap.somewhere-else');
+    expect(m).toContain("'dev.roadmap.somewhere-else'");
+    expect(m).toContain(resolved.label);
+    expect(m).toContain(resolved.db);
+    expect(m).toContain('cannot move it');
+    expect(m).toContain('ROADMAP_HOME');
+  });
+
+  it('refuses an assertion of nothing', () => {
+    expect(assertOn('')).toContain('given no value');
+  });
+});
+
+describe('neither entry point opens a store when the assertion names another installation (H-2474)', () => {
+  let dir: string;
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), 'roadmap-assert-'));
+  });
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  it.each(ENTRIES)('%s refuses before writing anything', (file) => {
+    const home = join(dir, file.replace(/\W/g, '_'), 'customer-a', '.helmo-roadmap');
+    const r = spawnSync(process.execPath, ['--import', 'tsx', file, '--installation', 'dev.roadmap.somewhere-else'], {
+      cwd: repo,
+      env: spawnEnv({ ROADMAP_HOME: home, ROADMAP_VIEW_PORT: '0' }),
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+
+    expect(r.status, `${file} should have refused; stdout: ${r.stdout}`).not.toBe(0);
+    expect(r.stderr).toContain('dev.roadmap.somewhere-else');
+    expect(existsSync(join(home, 'roadmap.db')), `${file} created a store under ${home}`).toBe(false);
+    expect(existsSync(home), `${file} created ${home}`).toBe(false);
+  });
+
+  it('the view still starts, and says which installation, when the assertion agrees', async () => {
+    const home = join(dir, 'agreeing', '.helmo-roadmap');
+    mkdirSync(home, { recursive: true });
+    const port = await freePort();
+    const label = installation(env({ ROADMAP_HOME: home })).label;
+    const child = spawn(process.execPath, ['--import', 'tsx', 'src/view.ts', `--installation=${label}`], {
+      cwd: repo,
+      env: spawnEnv({ ROADMAP_HOME: home, ROADMAP_VIEW_PORT: String(port), ROADMAP_VIEW_HOST: '127.0.0.1' }),
+      stdio: ['ignore', 'pipe', 'inherit'],
+    });
+    try {
+      const line = await new Promise<string>((res, rej) => {
+        const timer = setTimeout(() => rej(new Error('the view never reported ready')), 15_000);
+        child.once('error', rej);
+        child.once('exit', (code) => rej(new Error(`the view exited before ready (${code})`)));
+        child.stdout!.on('data', (d: Buffer) => {
+          const text = d.toString();
+          if (!text.includes('Roadmap view:')) return;
+          clearTimeout(timer);
+          res(text);
+        });
+      });
+      expect(line).toContain(`install: ${label} (${home})`);
+    } finally {
+      child.kill('SIGKILL');
+    }
   });
 });

@@ -59,6 +59,13 @@ append-only event log, materialized state, `.immediate()` write transactions
   H-2452), then derived from the roadmap's own home, keyed on the password
   database rather than on a `$HOME` the installation itself could have written.
   One installation, one name, whichever of the three products you ask.
+  H-2474 adds the naming discipline on top: each entry point prints
+  `installationLine()` at startup (the MCP server on STDERR — stdout is the
+  protocol channel), and `--installation <name|home|db>` on either entry point's
+  argv ASSERTS that target. It cannot redirect: a value disagreeing with the
+  environment refuses before the store is opened, naming both candidates, and
+  `ROADMAP_HOME`/`ROADMAP_DB` remain the only things that move the target. A
+  bare `--installation` refuses rather than reading as absent.
 - `server.ts` — MCP stdio entry. Store at `~/.helmo-roadmap/roadmap.db`
   (`ROADMAP_HOME` or `ROADMAP_DB` overrides, and setting both to disagree is
   refused); identity from `ROADMAP_ACTOR`, falling back to

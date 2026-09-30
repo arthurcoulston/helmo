@@ -390,6 +390,11 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   resolved home, and a conflict if there is one; `targetLine()` is the line
   each command prints to say which Rev it read or wrote; `requireTarget()` is
   the gate a mutation passes before it writes.
+  When `INSTALLATION_RELEASE` names an `ADOPTED.json`, every CLI/supervisor
+  start verifies all three component commits against that release's
+  `RELEASE.json` and verifies Rev runs from its selected directory. Missing,
+  mixed, or shared-checkout code refuses before the roster is read. Service
+  definitions and spawned Helmo MCP servers carry the selector.
   - **Every command names its target.** `status`, `usage`, `routing`,
     `service status` and the bare-usage footer print it, and so does each
     mutation's own confirmation, because the mutation's output is where an

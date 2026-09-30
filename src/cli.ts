@@ -21,6 +21,9 @@ const [cmd, ...rest] = process.argv.slice(2);
 // than a redirect (H-2473, src/install.ts). Taken out of `rest` here so that
 // no command's own positional arguments have to know it might be there.
 const requestedInstall = takeInstallFlag(rest);
+// Validate a pinned release before even reading the roster. Every command,
+// including read-only surfaces and the supervisor, enters through this file.
+targetLine();
 
 function takeInstallFlag(args: string[]): string | undefined {
   const i = args.indexOf('--installation');

@@ -78,6 +78,7 @@ export function runSession(g: GlobalConfig, l: LoopConfig, iterationPrompt: stri
 export function mcpServers(g: GlobalConfig, l: LoopConfig, model: string, session?: string): Record<string, Record<string, unknown>> {
   const helmEnv: Record<string, string> = { HELMO_ACTOR: JSON.stringify(loopActor(l, model, session)) };
   if (g.helmo_db) helmEnv['HELMO_DB'] = g.helmo_db;
+  if (process.env['INSTALLATION_RELEASE']) helmEnv['INSTALLATION_RELEASE'] = process.env['INSTALLATION_RELEASE'];
   const servers: Record<string, Record<string, unknown>> = {
     helmo: { command: 'node', args: [g.helmo_mcp_server], env: helmEnv },
   };

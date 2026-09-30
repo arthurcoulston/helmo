@@ -115,7 +115,7 @@ const xml = (s: string) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt
 export function launchdPlist(
   node: string,
   cli: string,
-  opts: { label: string; home: string; path: string; logPath: string },
+  opts: { label: string; home: string; path: string; logPath: string; release?: string },
 ): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -141,6 +141,7 @@ export function launchdPlist(
          (H-2452). Every command run from inside the service now resolves the
          same label the job holds. -->
     <key>REV_LABEL</key><string>${xml(opts.label)}</string>
+    ${opts.release ? `<key>INSTALLATION_RELEASE</key><string>${xml(opts.release)}</string>` : ''}
   </dict>
   <key>StandardOutPath</key><string>${xml(opts.logPath)}</string>
   <key>StandardErrorPath</key><string>${xml(opts.logPath)}</string>
@@ -154,7 +155,7 @@ export function launchdPlist(
 `;
 }
 
-export function systemdUnit(node: string, cli: string, opts: { home: string; path: string; label: string }): string {
+export function systemdUnit(node: string, cli: string, opts: { home: string; path: string; label: string; release?: string }): string {
   return `[Unit]
 Description=Rev — keeps agent loops turning
 
@@ -172,6 +173,7 @@ Environment=PATH=${opts.path}
 Environment=REV_HOME=${opts.home}
 # The installed identity, for the reason the plist carries it (H-2452).
 Environment=REV_LABEL=${opts.label}
+${opts.release ? `Environment=INSTALLATION_RELEASE=${opts.release}` : ''}
 
 [Install]
 WantedBy=default.target
@@ -256,17 +258,18 @@ export function serviceInstall(): void {
   const cli = process.argv[1]!;
   const home = revHome();
   const path = process.env['PATH'] ?? '/usr/local/bin:/usr/bin:/bin';
+  const release = process.env['INSTALLATION_RELEASE']?.trim();
   assertOwnService(kind, file, 'install over');
   mkdirSync(join(file, '..'), { recursive: true });
   const label = serviceLabel();
   if (kind === 'launchd') {
     const logPath = join(stateDir('supervisor'), 'launchd.log');
     const domain = `gui/${process.getuid!()}`;
-    installLaunchd(file, launchdPlist(node, cli, { label, home, path, logPath }), domain, label);
+    installLaunchd(file, launchdPlist(node, cli, { label, home, path, logPath, release }), domain, label);
     console.log(`Installed and started: ${file}\nAny running supervisor was stopped and restarted; launchd allows its loop drivers 60 seconds to exit, while detached agent sessions continue to completion.\nThe supervisor now survives reboots. Logs: ${logPath}`);
   } else {
     const unit = systemdUnitName();
-    writeFileSync(file, systemdUnit(node, cli, { home, path, label }));
+    writeFileSync(file, systemdUnit(node, cli, { home, path, label, release }));
     systemctl('daemon-reload');
     systemctl('enable', '--now', unit);
     console.log(`Installed and started: ${file} (systemd user unit '${unit}').`);

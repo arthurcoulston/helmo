@@ -22,8 +22,9 @@
 //
 // Single-install use is untouched: one installation, no flags, and the only
 // difference is a line saying which one.
-import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { revHome } from './config.js';
 import { definedHome, serviceFile, serviceLabel } from './service.js';
 
@@ -34,11 +35,13 @@ export interface Target {
   home: string;
   /** Set when the environment cannot be trusted to name one installation. */
   conflict: string | null;
+  /** Immutable release selected for this installation, when pinned. */
+  release: string | null;
 }
 
 export function target(): Target {
   const home = resolve(revHome());
-  return { label: serviceLabel(), home, conflict: inheritedConflict(home) };
+  return { label: serviceLabel(), home, conflict: inheritedConflict(home), release: selectedRelease('rev') };
 }
 
 /**
@@ -62,7 +65,34 @@ function inheritedConflict(home: string): string | null {
 
 /** The line every command prints to say which installation it is about. */
 export function targetLine(t: Target = target()): string {
-  return t.conflict ? `installation: UNCLEAR — ${t.conflict}` : `installation: ${t.label} (${t.home})`;
+  return t.conflict ? `installation: UNCLEAR — ${t.conflict}` : `installation: ${t.label} (${t.home})${t.release ? ` — release: ${t.release}` : ''}`;
+}
+
+function selectedRelease(product: 'rev' | 'helmo' | 'helmo-roadmap'): string | null {
+  const named = process.env['INSTALLATION_RELEASE']?.trim();
+  if (!named) return null; // Existing unpinned installations keep working until explicitly migrated.
+  const selectionFile = resolve(named);
+  try {
+    const selection = JSON.parse(readFileSync(selectionFile, 'utf8')) as {
+      release?: string; directory?: string; components?: Record<string, { release?: string; commit?: string }>;
+    };
+    if (!selection.release || !selection.directory) throw new Error('selection lacks release or directory');
+    const releaseDir = resolve(dirname(selectionFile), selection.directory);
+    const manifest = JSON.parse(readFileSync(join(releaseDir, 'RELEASE.json'), 'utf8')) as { commits?: Record<string, string> };
+    for (const repo of ['rev', 'helmo', 'helmo-roadmap']) {
+      const component = selection.components?.[repo];
+      if (!component || component.release !== selection.release || component.commit !== manifest.commits?.[repo]) {
+        throw new Error(`${repo} does not match selected release ${selection.release}`);
+      }
+    }
+    const runningRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+    if (realpathSync(runningRoot) !== realpathSync(resolve(releaseDir, product))) {
+      throw new Error(`${product} is running from ${runningRoot}, not ${join(releaseDir, product)}`);
+    }
+    return selection.release;
+  } catch (e) {
+    throw new Error(`incoherent release set: ${product}: ${e instanceof Error ? e.message : String(e)}`);
+  }
 }
 
 /**

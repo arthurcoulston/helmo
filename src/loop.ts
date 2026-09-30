@@ -59,15 +59,22 @@ function tryWakeCheck(g: GlobalConfig, l: LoopConfig, sinceSeq: number): WakeChe
 export function steeringText(streams: WorkstreamInfo[]): string {
   const budgets = streams.filter((w) => w.budget_usd !== null);
   if (budgets.length === 0) return '';
+  const uncapped = budgets.filter((w) => w.budget_usd === 0);
+  const finite = budgets.filter((w) => (w.budget_usd ?? 0) > 0);
+  const uncappedText = uncapped
+    .map((w) => `Spending cap for '${w.name}': none (budget_usd 0 sentinel); $${w.spent_usd.toFixed(2)} measured spend disclosed. Runnable work remains runnable. `)
+    .join('');
   const money = (w: WorkstreamInfo) =>
     `$${w.spent_usd.toFixed(2)} of $${(w.budget_usd ?? 0).toFixed(2)} spent, $${(w.remaining_usd ?? 0).toFixed(2)} remains`;
-  if (budgets.length === 1) {
-    const w = budgets[0]!;
-    return `Budget for '${w.name}': ${money(w)}. The budget is the plan — take the highest-value work first; if it is exhausted, close out honestly with residuals documented rather than starting more. `;
+  if (finite.length === 0) return uncappedText;
+  if (finite.length === 1) {
+    const w = finite[0]!;
+    return uncappedText + `Budget for '${w.name}': ${money(w)}. The budget is the plan — take the highest-value work first; if it is exhausted, close out honestly with residuals documented rather than starting more. `;
   }
   return (
-    `You hold budgeted work in more than one workstream (${budgets.map((w) => `'${w.name}'`).join(', ')}). ` +
-    budgets.map((w) => `Budget for '${w.name}': ${money(w)}. `).join('') +
+    uncappedText +
+    `You hold finite-budget work in more than one workstream (${finite.map((w) => `'${w.name}'`).join(', ')}). ` +
+    finite.map((w) => `Budget for '${w.name}': ${money(w)}. `).join('') +
     `A budget is the plan — take the highest-value work first; where one is exhausted, close out that stream honestly with residuals documented rather than starting more. `
   );
 }

@@ -883,6 +883,22 @@ mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
     expect(out).not.toContain('what done means');
   });
 
+  it('states that zero is uncapped and leaves runnable work runnable (H-267)', () => {
+    const e = setup(`[loops.uncapped-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
+`);
+    const ticket = seedTicket(e, 'Runnable uncapped work');
+    helm(e, ['workstream-set', '--name', 'rev-test', '--budget-usd', '0'], '{"name":"operator","kind":"human"}');
+    helm(e, ['record-spend', '--ticket', ticket, '--cost-usd', '12', '--note', 'metered']);
+    const out = rev(e, ['run', 'uncapped-loop', '--count', '1']);
+    expect(out).toContain("Spending cap for 'rev-test': none (budget_usd 0 sentinel); $12.00 measured spend disclosed. Runnable work remains runnable.");
+    expect(out).not.toContain('budget exhausted');
+    expect(out).not.toContain('$-12.00 remains');
+  });
+
   it('steering names every stream the seat holds work in, not just the one it watches (H-954)', () => {
     // The defect this closes: steering was built from the SEAT's workstream and
     // never the assigned ticket's, so a seat holding work routed in from another
@@ -900,7 +916,7 @@ mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
     helm(e, ['workstream-set', '--name', 'rev-test', '--budget-usd', '50'], '{"name":"operator","kind":"human"}');
     helm(e, ['workstream-set', '--name', 'rev-elsewhere', '--budget-usd', '25'], '{"name":"operator","kind":"human"}');
     const out = rev(e, ['run', 'multi-loop', '--count', '1']);
-    expect(out).toContain("You hold budgeted work in more than one workstream ('rev-test', 'rev-elsewhere')");
+    expect(out).toContain("You hold finite-budget work in more than one workstream ('rev-test', 'rev-elsewhere')");
     expect(out).toContain("Budget for 'rev-test': $0.00 of $50.00 spent");
     expect(out).toContain("Budget for 'rev-elsewhere': $0.00 of $25.00 spent");
     // The sentence that made the old behaviour dangerous rather than merely

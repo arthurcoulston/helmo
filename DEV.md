@@ -16,6 +16,9 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   the workstream's budget when set
   (helm-cli `workstream`: remaining budget, helmo H-55) — disclosure
   before planning, and a steering fetch failure never stops the loop.
+  Zero is Helmo's uncapped sentinel (H-267): the prompt says there is no cap
+  and keeps runnable work runnable; only positive finite budgets carry
+  exhaustion guidance.
   Steering covers EVERY stream the seat has work in, not just the one it
   watches (H-954): `seatStreams` lists the tickets assigned to the seat, and
   the watched stream plus their streams are what `steeringText` speaks for,

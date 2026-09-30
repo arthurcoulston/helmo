@@ -33,7 +33,9 @@ orchestrator meetings and the read-only view. Product intent:
   requirements are returned as separate structured arrays. A racing revocation
   commits first and is observed, or the admission commits first; no queued
   snapshot can authorize the later write. Retry/outcome and invalidation
-  behavior remain later slices.
+  behavior remain later slices. H-433 makes terminal outcomes mutually
+  exclusive and idempotent, and permits only rejected or quarantined attempts
+  to create a new evidence-bound successor which must pass fresh admission.
   Explicitly named installations claim `meta.installation_name` atomically
   with their first event. Every later event under another explicit/inherited
   name refuses; reads remain available and report both names as UNCLEAR.

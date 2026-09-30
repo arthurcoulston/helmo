@@ -231,6 +231,11 @@ CREATE TABLE IF NOT EXISTS workflow_outcomes (
   attempt_id TEXT PRIMARY KEY, outcome TEXT NOT NULL, created_at TEXT NOT NULL,
   FOREIGN KEY (attempt_id) REFERENCES workflow_attempts(id)
 );
+CREATE TABLE IF NOT EXISTS workflow_retries (
+  attempt_id TEXT PRIMARY KEY, predecessor_attempt_id TEXT NOT NULL,
+  diagnosis_manifest_id TEXT NOT NULL, change_manifest_id TEXT NOT NULL, created_at TEXT NOT NULL,
+  FOREIGN KEY (attempt_id) REFERENCES workflow_attempts(id)
+);
 `;
 
 export interface WorkflowStageDefinition { id: string; after?: string[] }
@@ -250,6 +255,7 @@ export interface WorkflowDecision {
   id: string; requirement_id: string; manifest_id: string; verdict: 'pass' | 'fail' | 'selection' | 'revocation';
   source: string; actor: Actor; revokes_decision_id?: string;
 }
+export type WorkflowOutcome = 'advanced' | 'rejected' | 'aborted_quarantined';
 
 function now(): string {
   return new Date().toISOString();
@@ -530,6 +536,44 @@ export class Store {
     if (!input.id?.trim() || input.id.trim() !== input.id || !Number.isInteger(input.ordinal) || input.ordinal < 1) throw new HelmoError('Workflow attempts require an exact id and a positive integer ordinal.');
     try { this.db.prepare("INSERT INTO workflow_attempts (id, run_id, stage_id, ordinal, state, created_at) VALUES (?, ?, ?, ?, 'created', ?)").run(input.id, input.run_id, input.stage_id, input.ordinal, now()); }
     catch (error) { if (String(error).includes('UNIQUE constraint failed')) throw new HelmoError(`Workflow attempt ${input.id} or its run/stage/ordinal already exists.`); throw error; }
+  }
+
+  recordWorkflowOutcome(input: { attempt_id: string; outcome: WorkflowOutcome }): { attempt_id: string; outcome: WorkflowOutcome } {
+    if (!input?.attempt_id?.trim() || !['advanced', 'rejected', 'aborted_quarantined'].includes(input.outcome)) throw new HelmoError('Workflow outcomes require an exact attempt_id and a supported outcome.');
+    return this.db.transaction(() => {
+      const attempt = this.db.prepare('SELECT state FROM workflow_attempts WHERE id = ?').get(input.attempt_id) as { state: string } | undefined;
+      if (!attempt) throw new HelmoError(`Workflow attempt ${input.attempt_id} does not exist.`);
+      const prior = this.db.prepare('SELECT outcome FROM workflow_outcomes WHERE attempt_id = ?').get(input.attempt_id) as { outcome: string } | undefined;
+      if (prior) {
+        const recorded = JSON.parse(prior.outcome) as { outcome: WorkflowOutcome };
+        if (recorded.outcome !== input.outcome) throw new HelmoError(`Workflow attempt ${input.attempt_id} already has mutually exclusive outcome ${recorded.outcome}.`);
+        return { attempt_id: input.attempt_id, outcome: recorded.outcome };
+      }
+      if (input.outcome === 'aborted_quarantined' ? attempt.state !== 'quarantined' : attempt.state !== 'running') throw new HelmoError(`Workflow attempt ${input.attempt_id} cannot record ${input.outcome} from state ${attempt.state}.`);
+      this.db.prepare('INSERT INTO workflow_outcomes (attempt_id, outcome, created_at) VALUES (?, ?, ?)').run(input.attempt_id, JSON.stringify({ outcome: input.outcome }), now());
+      this.db.prepare("UPDATE workflow_attempts SET state = 'complete' WHERE id = ?").run(input.attempt_id);
+      return { attempt_id: input.attempt_id, outcome: input.outcome };
+    }).immediate();
+  }
+
+  retryWorkflowAttempt(input: { id: string; predecessor_attempt_id: string; diagnosis_manifest_id: string; change_manifest_id: string }): void {
+    this.db.transaction(() => {
+      const predecessor = this.db.prepare(`SELECT a.run_id, a.stage_id, a.ordinal, o.outcome FROM workflow_attempts a LEFT JOIN workflow_outcomes o ON o.attempt_id = a.id WHERE a.id = ?`).get(input.predecessor_attempt_id) as { run_id: string; stage_id: string; ordinal: number; outcome: string | null } | undefined;
+      if (!predecessor?.outcome) throw new HelmoError('A retry requires a predecessor with a terminal outcome.');
+      const outcome = (JSON.parse(predecessor.outcome) as { outcome: WorkflowOutcome }).outcome;
+      if (!['rejected', 'aborted_quarantined'].includes(outcome)) throw new HelmoError(`Outcome ${outcome} cannot be retried.`);
+      for (const [kind, id] of [['diagnosis', input.diagnosis_manifest_id], ['change', input.change_manifest_id]] as const) {
+        const manifest = this.db.prepare('SELECT attempt_id, kind FROM workflow_manifests WHERE id = ?').get(id) as { attempt_id: string; kind: string } | undefined;
+        if (!manifest || manifest.attempt_id !== input.predecessor_attempt_id || manifest.kind !== kind) throw new HelmoError(`Retry ${kind} evidence must be a ${kind} manifest on the predecessor attempt.`);
+      }
+      const existing = this.db.prepare('SELECT predecessor_attempt_id, diagnosis_manifest_id, change_manifest_id FROM workflow_retries WHERE attempt_id = ?').get(input.id) as Record<string, string> | undefined;
+      if (existing) {
+        if (existing.predecessor_attempt_id === input.predecessor_attempt_id && existing.diagnosis_manifest_id === input.diagnosis_manifest_id && existing.change_manifest_id === input.change_manifest_id) return;
+        throw new HelmoError(`Workflow retry ${input.id} already exists with different evidence.`);
+      }
+      this.addWorkflowAttempt({ id: input.id, run_id: predecessor.run_id, stage_id: predecessor.stage_id, ordinal: predecessor.ordinal + 1 });
+      this.db.prepare('INSERT INTO workflow_retries (attempt_id, predecessor_attempt_id, diagnosis_manifest_id, change_manifest_id, created_at) VALUES (?, ?, ?, ?, ?)').run(input.id, input.predecessor_attempt_id, input.diagnosis_manifest_id, input.change_manifest_id, now());
+    }).immediate();
   }
 
   addWorkflowManifest(manifest: WorkflowManifest): void {

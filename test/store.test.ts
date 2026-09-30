@@ -309,6 +309,46 @@ describe('workflow invalidation and quarantine (H-432)', () => {
   });
 });
 
+describe('workflow outcomes and retry recovery (H-433)', () => {
+  function subject() {
+    const s = new Store(':memory:', undefined, reviewer);
+    s.addWorkflowDefinition({ workflow_id: 'release', revision: 'v1', stages: [{ id: 'build' }] });
+    s.addWorkflowRun({ id: 'run-1', workflow_id: 'release', definition_revision: 'v1' });
+    s.addWorkflowAttempt({ id: 'attempt-1', run_id: 'run-1', stage_id: 'build', ordinal: 1 });
+    const ticket = create(s, { workflow_attempt_id: 'attempt-1' }); triage(s, ticket.id);
+    s.updateTicket(builder, { ticket_id: ticket.id, note: 'start', status: 'in_progress' });
+    return s;
+  }
+
+  it('makes terminal outcomes mutually exclusive and idempotent across rebuild', () => {
+    const s = subject();
+    expect(s.recordWorkflowOutcome({ attempt_id: 'attempt-1', outcome: 'rejected' }).outcome).toBe('rejected');
+    expect(s.recordWorkflowOutcome({ attempt_id: 'attempt-1', outcome: 'rejected' }).outcome).toBe('rejected');
+    expect(() => s.recordWorkflowOutcome({ attempt_id: 'attempt-1', outcome: 'advanced' })).toThrow(/mutually exclusive/);
+    s.rebuild();
+    expect(s.recordWorkflowOutcome({ attempt_id: 'attempt-1', outcome: 'rejected' }).outcome).toBe('rejected');
+  });
+
+  it('creates an evidence-bound idempotent retry which needs fresh admission', () => {
+    const s = subject();
+    s.recordWorkflowOutcome({ attempt_id: 'attempt-1', outcome: 'rejected' });
+    s.addWorkflowManifest({ id: 'diagnosis', attempt_id: 'attempt-1', kind: 'diagnosis', subjects: ['failure:known'], creators: [builder] });
+    s.addWorkflowManifest({ id: 'change', attempt_id: 'attempt-1', kind: 'change', subjects: ['repo@fixed'], creators: [builder] });
+    const retry = { id: 'attempt-2', predecessor_attempt_id: 'attempt-1', diagnosis_manifest_id: 'diagnosis', change_manifest_id: 'change' };
+    s.retryWorkflowAttempt(retry); s.retryWorkflowAttempt(retry);
+    const ticket = create(s, { workflow_attempt_id: 'attempt-2' }); triage(s, ticket.id);
+    expect(s.updateTicket(builder, { ticket_id: ticket.id, note: 'fresh admission', status: 'in_progress' }).ticket.status).toBe('in_progress');
+  });
+
+  it('refuses advancing retries while preserving ordinary tickets', () => {
+    const s = subject();
+    s.recordWorkflowOutcome({ attempt_id: 'attempt-1', outcome: 'advanced' });
+    expect(() => s.retryWorkflowAttempt({ id: 'attempt-2', predecessor_attempt_id: 'attempt-1', diagnosis_manifest_id: 'missing', change_manifest_id: 'missing' })).toThrow(/cannot be retried/);
+    const ordinary = create(s); triage(s, ordinary.id);
+    expect(s.updateTicket(builder, { ticket_id: ordinary.id, note: 'ordinary', status: 'in_progress' }).ticket.status).toBe('in_progress');
+  });
+});
+
 describe('actor validation', () => {
   it('rejects writes without an actor', () => {
     const s = freshStore();

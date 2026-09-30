@@ -19,7 +19,7 @@ const dbPath = install.db;
 mkdirSync(install.home, { recursive: true });
 const port = Number(process.env['ROADMAP_VIEW_PORT'] ?? 4410);
 const host = process.env['ROADMAP_VIEW_HOST'] ?? '127.0.0.1';
-const store = new Store(dbPath);
+const store = new Store(dbPath, install);
 
 const esc = (s: unknown) =>
   String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
@@ -565,4 +565,4 @@ createServer((req, res) => {
     res.writeHead(500, { 'content-type': 'text/plain' });
     res.end(String(e));
   }
-}).listen(port, host, () => console.log(`Roadmap view: http://localhost:${port} — ${installationLine(install)}`));
+}).listen(port, host, () => console.log(`Roadmap view: http://localhost:${port} — ${installationLine(install, store.installationIdentity())}`));

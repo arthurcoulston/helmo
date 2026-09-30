@@ -18,6 +18,11 @@ append-only event log, materialized state, `.immediate()` write transactions
   citations, objectives, bets, all materialized from an append-only event
   log (`rebuild()` is the invariant, tests enforce it — every side effect
   of a write lives in an apply* function, or replay silently diverges).
+  Explicitly named installations claim `meta.installation_name` atomically
+  with their first event. Every later event under another explicit/inherited
+  name refuses; reads remain available and report both names as UNCLEAR.
+  Derived-only stores do not claim a durable name, preserving single-install
+  use.
   Derived rank: facts set the tier (ship_next · ready · shaping · blocked ·
   parked), judgments order within it (best cited objective rank, latest
   value claim, effort), every rank carries a one-line explanation; shipped

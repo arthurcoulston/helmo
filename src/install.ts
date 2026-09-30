@@ -147,8 +147,9 @@ export function requestedInstallation(argv: readonly string[]): string | undefin
 }
 
 /** The phrase a prose surface prints to say which installation it served. */
-export function installationLine(i: Installation): string {
-  return `install: ${i.label} (${i.home}) — db: ${i.db}${i.release ? ` — release: ${i.release}` : ''}`;
+export function installationLine(i: Installation, identity?: { stored: string | null; clear: boolean }): string {
+  const target = identity && !identity.clear ? ` — target UNCLEAR: process ${i.label}, store ${identity.stored}` : '';
+  return `install: ${i.label} (${i.home}) — db: ${i.db}${i.release ? ` — release: ${i.release}` : ''}${target}`;
 }
 
 function selectedRelease(product: 'rev' | 'helmo' | 'helmo-roadmap', env: NodeJS.ProcessEnv): string | null {

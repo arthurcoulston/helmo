@@ -202,3 +202,118 @@ version = "0.4"
     expect(result.stderr).toContain('constitution missing or empty');
   });
 });
+
+// H-2473: every command says which installation it is about, and a mutation
+// refuses rather than redirects when the target it was given disagrees with
+// the one the environment resolves. These build an environment rather than a
+// command line, because the environment is where the target has always come
+// from. The two-install proof that watches the OTHER installation's files stay
+// byte-identical is H-2475's, against crew:tools/installs.
+describe('installation target (H-2473)', () => {
+  function install(label = 'dev.rev.a'): { home: string; account: string; label: string } {
+    const account = mkdtempSync(join(tmpdir(), 'rev-install-'));
+    const home = join(account, '.rev');
+    mkdirSync(home);
+    writeFileSync(join(home, 'roster.toml'), `[global]
+helmo_cli = "/tmp/helmo-cli.js"
+helmo_mcp_server = "/tmp/helmo-server.js"
+
+[loops.alpha]
+workstream = "test"
+cwd = "/tmp"
+runtime = "mock"
+`);
+    return { home, account, label };
+  }
+
+  // $HOME is where the service definition file lives, so it is redirected;
+  // nothing is inherited from the fleet running this suite.
+  function run(i: { home: string; account: string; label?: string }, args: string[]) {
+    const env = { ...process.env, HOME: i.account, REV_HOME: i.home, REV_LABEL: i.label };
+    if (!i.label) delete env.REV_LABEL;
+    return spawnSync(process.execPath, ['--import', 'tsx/esm', REV_CLI, ...args], { cwd: ROOT, encoding: 'utf8', env });
+  }
+
+  /** A definition on disk for `label`, installed for some OTHER Rev home. */
+  function foreignService(i: { account: string; label: string }, owner: string): void {
+    const dir = join(i.account, 'Library', 'LaunchAgents');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `${i.label}.plist`), `<key>REV_HOME</key><string>${owner}</string>`);
+  }
+
+  const stopped = (i: { home: string }) => existsSync(join(i.home, 'state', 'alpha', 'STOP'));
+
+  it('names the installation a read surface read, with no flag and nothing set', () => {
+    const i = install();
+    const result = run({ ...i, label: undefined }, ['status']);
+
+    expect(result.status, result.stderr).toBe(0);
+    // Derived, because a home outside the account's own home is not covered by
+    // the suffixed-home convention: readable part plus a digest of the path.
+    expect(result.stdout.split('\n')[0]).toMatch(/^installation: dev\.rev\..+\.[0-9a-f]{8} \(/);
+    expect(result.stdout).toContain(i.home);
+  });
+
+  it.each(['label', 'home'])('accepts --installation naming this installation by %s, and writes', (spelling) => {
+    const i = install();
+    const result = run(i, ['stop', 'alpha', '--installation', spelling === 'label' ? i.label : i.home]);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain(`installation: dev.rev.a (${i.home})`);
+    expect(stopped(i)).toBe(true);
+  });
+
+  it('refuses a mutation aimed at another installation, before writing, naming both', () => {
+    const i = install();
+    const result = run(i, ['stop', 'alpha', '--installation', 'dev.rev.b']);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('dev.rev.b');
+    expect(result.stderr).toContain('dev.rev.a');
+    expect(result.stderr).toContain(i.home);
+    expect(stopped(i)).toBe(false);
+  });
+
+  it('refuses --installation with no value rather than guessing', () => {
+    const i = install();
+    const result = run(i, ['stop', 'alpha', '--installation']);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('--installation was given no value');
+    expect(stopped(i)).toBe(false);
+  });
+
+  // The inherited case, which needs no flag to go wrong: every session Rev
+  // spawns carries the supervisor's REV_LABEL, so a command run with another
+  // REV_HOME is named by one installation and aimed at another.
+  it('refuses a mutation whose inherited label belongs to another installation', () => {
+    const i = install();
+    foreignService(i, '/tmp/other/.rev');
+    const result = run(i, ['stop', 'alpha']);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('/tmp/other/.rev');
+    expect(result.stderr).toContain(i.home);
+    expect(stopped(i)).toBe(false);
+  });
+
+  // Reads stay safe from any context (the watch officer uses them): a read
+  // under that conflict still reads, and says the name cannot be trusted.
+  it('lets a read through under the same conflict, saying the target is unclear', () => {
+    const i = install();
+    foreignService(i, '/tmp/other/.rev');
+    const result = run(i, ['status']);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('installation: UNCLEAR');
+    expect(result.stdout).toContain('/tmp/other/.rev');
+  });
+
+  it('leaves a command’s own positional arguments alone wherever the flag sits', () => {
+    const i = install();
+    const result = run(i, ['pace', 'alpha', '--installation', 'dev.rev.a', '0.5']);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(readFileSync(join(i.home, 'state', 'alpha', 'PACE'), 'utf8')).toContain('0.5');
+  });
+});

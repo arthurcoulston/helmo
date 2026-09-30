@@ -9,12 +9,25 @@ import { pollUsage, readCodexUsage, readUsage, refreshCodexUsage, usageLine, usa
 import { selectRun } from './routing.js';
 import { runLoop } from './loop.js';
 import { serviceFile, serviceInstall, serviceStart, serviceStatusLine, serviceUninstall } from './service.js';
+import { requireTarget, targetLine } from './install.js';
 import { readRedeploy, requestRedeploy, watchRedeploy } from './redeploy.js';
 import { logEvent, pidAlive, processObservation, sClear, sGet, sHas, sPendingPid, sSetOwned, sValue, streakReset } from './sentinels.js';
 import { runFleet } from './supervisor.js';
 import { teamResume, teamStop } from './team-control.js';
 
 const [cmd, ...rest] = process.argv.slice(2);
+// `--installation <name|home>` may follow any command: it asserts which
+// installation the command is about, and a disagreement is a refusal rather
+// than a redirect (H-2473, src/install.ts). Taken out of `rest` here so that
+// no command's own positional arguments have to know it might be there.
+const requestedInstall = takeInstallFlag(rest);
+
+function takeInstallFlag(args: string[]): string | undefined {
+  const i = args.indexOf('--installation');
+  // A flag given last has no value; the refusal says so rather than guessing.
+  return i === -1 ? undefined : args.splice(i, 2)[1] ?? '';
+}
+
 const commandName = process.env['REV_COMMAND_NAME']?.trim() || 'rev';
 const rosterSource = commandName === 'rev' ? '~/.rev/roster.toml (REV_HOME to override)' : '~/.rev-gp/roster.toml (fixed by gp-rev)';
 
@@ -115,6 +128,7 @@ switch (cmd) {
       process.exit(1);
     }
     const names = target === 'all' ? Object.keys(loops) : [knownLoop(target)];
+    console.log(targetLine(requireTarget(`${commandName} team ${verb}`, requestedInstall)));
     if (verb === 'stop') {
       const result = teamStop(names);
       for (const name of result.stopped) logEvent(name, 'prime-stop', 'provenance=prime');
@@ -139,11 +153,13 @@ switch (cmd) {
     if (!name) {
       // The general start (the operator starts the machine, not a named
       // worker): supervise every roster loop.
+      console.log(targetLine(requireTarget('start the machine', requestedInstall)));
       const code = await runFleet(g, loops);
       if (code) process.exit(code);
       break;
     }
     const l = loops[knownLoop(name)]!;
+    console.log(targetLine(requireTarget(`run '${name}'`, requestedInstall)));
     const count = flag('count') ? Number(flag('count')) : undefined;
     await runLoop(g, l, { count });
     break;
@@ -153,6 +169,7 @@ switch (cmd) {
   // the supervisor drains at its next poll, so the session that shipped the fix
   // finishes its close-out instead of being restarted out from under itself.
   case 'redeploy': {
+    console.log(targetLine(requireTarget('request a redeploy', requestedInstall)));
     const sup = pidAlive('supervisor');
     if (!sup) {
       console.error(`No supervisor running — nothing to redeploy. The next \`${commandName} run\` starts on the current build anyway.`);
@@ -188,6 +205,7 @@ switch (cmd) {
     break;
   }
   case 'status': {
+    console.log(targetLine());
     const supervisor = processObservation('supervisor');
     const sup = supervisor.pid;
     console.log(`supervisor: ${supervisor.state === 'unknown' ? `unobservable (recorded pid ${sup}; process inspection unavailable)` : sup ? `running (pid ${sup})` : `down — start the machine with: ${commandName} run`}`);
@@ -220,11 +238,13 @@ switch (cmd) {
         console.error(`No supervisor running. Stop a single loop with: ${commandName} stop <loop>`);
         process.exit(1);
       }
+      console.log(targetLine(requireTarget('drain the machine', requestedInstall)));
       process.kill(sup, 'SIGTERM');
       console.log(`Drain requested (SIGTERM to supervisor pid ${sup}) — in-flight iterations finish, then the machine stops. Watch: ${commandName} status`);
       break;
     }
     knownLoop(name);
+    console.log(targetLine(requireTarget(`stop '${name}'`, requestedInstall)));
     const actor = cliActor();
     sSetOwned(name, 'STOP', { value: '', by: actor.human ? 'human' : actor.label, at: new Date().toISOString(), pid: process.pid, reason: `${commandName} stop`, expires_at: 'never' });
     logEvent(name, actor.label, 'STOP set');
@@ -237,6 +257,7 @@ switch (cmd) {
   }
   case 'resume': {
     const name = loopArg();
+    console.log(targetLine(requireTarget(`resume '${name}'`, requestedInstall)));
     sClear(name, 'STOP', 'HOLD', 'BLOCKED');
     // A resume is a statement the cause was looked at: the loop gets its full
     // retry budget back. Carrying the streak over made resume a single retry
@@ -263,14 +284,18 @@ switch (cmd) {
         process.exit(1);
       }
     };
-    if (verb === 'install') refusable(serviceInstall);
-    else if (verb === 'uninstall') refusable(serviceUninstall);
-    else if (verb === 'start') refusable(serviceStart);
-    else if (verb === 'status') console.log(serviceStatusLine());
-    else {
+    if (verb === 'status') {
+      console.log(targetLine());
+      console.log(serviceStatusLine());
+      break;
+    }
+    const act = { install: serviceInstall, uninstall: serviceUninstall, start: serviceStart }[verb ?? ''];
+    if (!act) {
       console.error(`usage: ${commandName} service <install|uninstall|start|status>  (stop the machine with: ${commandName} stop)`);
       process.exit(1);
     }
+    console.log(targetLine(requireTarget(`${commandName} service ${verb}`, requestedInstall)));
+    refusable(act);
     break;
   }
   case 'pace': {
@@ -280,6 +305,7 @@ switch (cmd) {
       console.error(`usage: ${commandName} pace <loop> <fraction (0,1] | park | clear>`);
       process.exit(1);
     }
+    console.log(targetLine(requireTarget(`set the pace of '${name}'`, requestedInstall)));
     const actor = cliActor();
     if (v === 'clear') sClear(name, 'PACE');
     else sSetOwned(name, 'PACE', { value: v, by: actor.human ? 'human' : actor.label, at: new Date().toISOString(), pid: process.pid, reason: `${commandName} pace`, expires_at: actor.human ? 'never' : new Date(Date.now() + 60 * 60 * 1000).toISOString() });
@@ -291,6 +317,7 @@ switch (cmd) {
     // Claude bars are polled (H-278; --poll forces a fresh read); codex bars
     // are written by each codex run from its own rollout, so they are as fresh
     // as the last iteration and need no credential.
+    console.log(targetLine());
     const snap = rest.includes('--poll') ? await pollUsage() : readUsage();
     if (rest.includes('--poll')) refreshCodexUsage();
     for (const [label, s] of [['Claude', snap], ['Codex', readCodexUsage()]] as const) {
@@ -307,6 +334,7 @@ switch (cmd) {
   }
   case 'routing': {
     const usage = { claude: readUsage(), codex: readCodexUsage() };
+    console.log(targetLine());
     console.log('Working-model preview from current usage; does not start or resume a loop.');
     for (const loop of Object.values(loops)) {
       const selected = selectRun(loop, usage, 1, g.limit_exhausted_percent);
@@ -402,6 +430,9 @@ switch (cmd) {
   redeploy [--ticket <id>] [--reason "<why>"]
                            activate a committed fix: drain after in-flight iterations, come back on the new code
   tail <loop>              print the path of the loop's event trace
+Any command also takes --installation <name|home>: it asserts which installation the command is
+about, and a mutation refuses rather than redirects if that disagrees with the environment.
+${targetLine()}
 Roster: ${Object.keys(loops).join(', ') || '(none)'} — from ${rosterSource}.`);
     process.exit(cmd ? 1 : 0);
 }

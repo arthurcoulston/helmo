@@ -1,0 +1,94 @@
+// Which installation is this command about? (H-2473)
+//
+// H-2452 gave an installation an identity — `serviceLabel()`, bound to the
+// resolved Rev home and exported as REV_LABEL into the service environment —
+// and H-2472 taught Helmo and the roadmap to read that same name. What was
+// still missing is the discipline of naming it: every command's target came
+// from whatever REV_HOME/REV_LABEL happened to be in the ambient environment,
+// and nothing printed it back. That is the H-2431 shape at one remove — the
+// act was right, and the target was assumed.
+//
+// Two behaviours, both required by the Target selection row of
+// crew:projects/estate/specs/h2435-independent-installs.md:
+//
+//   Say it.    A command's output names the installation it read or wrote.
+//   Refuse it. A mutation stops BEFORE writing when the target it was given
+//              disagrees with the one the environment resolves, naming both.
+//
+// The refusal is never a precedence rule. `--installation` cannot redirect a
+// command to another installation: it ASSERTS which one this is, and a
+// disagreement is an error rather than a winner, because an inherited value
+// quietly beating an explicit one is the case that must be impossible.
+//
+// Single-install use is untouched: one installation, no flags, and the only
+// difference is a line saying which one.
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { revHome } from './config.js';
+import { definedHome, serviceFile, serviceLabel } from './service.js';
+
+export interface Target {
+  /** The installation's name — what a surface prints to say which Rev it is. */
+  label: string;
+  /** Resolved Rev home: where this installation's roster and state live. */
+  home: string;
+  /** Set when the environment cannot be trusted to name one installation. */
+  conflict: string | null;
+}
+
+export function target(): Target {
+  const home = resolve(revHome());
+  return { label: serviceLabel(), home, conflict: inheritedConflict(home) };
+}
+
+/**
+ * The label alone cannot say which installation it belongs to: REV_LABEL is a
+ * string any process can set, and every session Rev spawns inherits the
+ * supervisor's copy of it. The service definition installed under that label
+ * can say, because it carries the REV_HOME it was installed for (H-2452). A
+ * label whose definition names another home is one this command inherited from
+ * an installation it is not operating — `assertOwnService`'s question, asked
+ * for every mutation rather than only for the `service` verbs.
+ */
+function inheritedConflict(home: string): string | null {
+  const { kind, file } = serviceFile();
+  if (!existsSync(file)) return null;
+  const owner = definedHome(kind, readFileSync(file, 'utf8'));
+  if (!owner || resolve(owner) === home) return null;
+  return `the environment names installation '${serviceLabel()}', whose service definition ${file} belongs to ${resolve(owner)}, `
+    + `but this command resolves ${home}. Unset REV_LABEL to take the name this home derives, `
+    + `or set REV_HOME to the installation you meant`;
+}
+
+/** The line every command prints to say which installation it is about. */
+export function targetLine(t: Target = target()): string {
+  return t.conflict ? `installation: UNCLEAR — ${t.conflict}` : `installation: ${t.label} (${t.home})`;
+}
+
+/**
+ * The gate a mutating command passes before it writes anything. Prints the
+ * refusal and exits 1, so nothing downstream has to remember to check.
+ */
+export function requireTarget(action: string, requested?: string): Target {
+  const t = target();
+  const problem = t.conflict ?? mismatch(t, requested);
+  if (problem) {
+    console.error(`refusing to ${action}: ${problem}.`);
+    process.exit(1);
+  }
+  return t;
+}
+
+/**
+ * `--installation` takes either spelling of an installation, because those are
+ * the two an operator has in front of them: the label a status line printed,
+ * or the home path a roster or plist points at.
+ */
+function mismatch(t: Target, requested?: string): string | null {
+  if (requested === undefined) return null;
+  const want = requested.trim();
+  if (!want) return '--installation was given no value (name the installation, or drop the flag)';
+  if (want === t.label || resolve(want) === t.home) return null;
+  return `--installation named '${want}', but this command resolves installation '${t.label}' (${t.home}) `
+    + 'from the environment. Nothing was written. Point REV_HOME at the installation you meant';
+}

@@ -384,6 +384,39 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   therefore a hard stop after the largest available 60s window; the detached
   session process group is what lets an agent finish and close its work. Use
   `rev stop` when the whole machine must drain gracefully before service work.
+- `install.ts` — **which installation is this command about?** (H-2473). The
+  identity above answers what an installation is called; this answers the
+  question every command was assuming. `target()` returns the label, the
+  resolved home, and a conflict if there is one; `targetLine()` is the line
+  each command prints to say which Rev it read or wrote; `requireTarget()` is
+  the gate a mutation passes before it writes.
+  - **Every command names its target.** `status`, `usage`, `routing`,
+    `service status` and the bare-usage footer print it, and so does each
+    mutation's own confirmation, because the mutation's output is where an
+    operator looks to see what they just did. The two exceptions are `tail` and
+    `session-spec`, whose stdout is a machine value a caller substitutes — a
+    prose line there would break the caller, and both already carry the home
+    (a state path, a roster-composed spec).
+  - **`--installation <name|home>` asserts; it never redirects.** It takes
+    either spelling because those are the two an operator has in front of them
+    — a label a status line printed, a home path a roster or plist names — and
+    a disagreement is a refusal, not a precedence rule. An inherited value
+    quietly beating an explicit one is the case that must be impossible, so
+    there is deliberately no flag that *changes* the target: `REV_HOME` does
+    that, and the flag is how you say you meant it.
+  - **The inherited conflict needs no flag to go wrong.** `cleanEnv()` copies
+    the supervisor's environment into every session, `REV_LABEL` included, so a
+    command run with another `REV_HOME` is named by one installation and aimed
+    at another. The label cannot detect this — any process can set it — but the
+    definition installed under it can, because it carries the `REV_HOME` it was
+    installed for. `inheritedConflict()` is `assertOwnService()`'s question
+    asked for every mutation rather than only the `service` verbs.
+  - Reads still read under a conflict — they are safe from any context and the
+    watch officer depends on that — but they print `installation: UNCLEAR` and
+    name both homes rather than claiming a name they cannot stand behind.
+  - `bin/gp-rev.js` deletes an inherited `REV_LABEL`: it fixes the home, so the
+    name must come from the home. Without that, a crew session running `gp-rev`
+    would be refused every mutation it asked for, correctly.
 - `sentinels.ts` / `config.ts` — sentinel files + roster loading. A loop's
   optional `skills = [...]` (paths) are appended whole to its constitution at
   spawn — how a Drive-touching loop carries crew `skills/file-stewardship.md`

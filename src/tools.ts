@@ -181,6 +181,29 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
   );
 
   server.registerTool(
+    'roadmap_record_readiness_verdict',
+    {
+      description:
+        `Record an independent review of a project's commitment-readiness. Read the project first and pass its readiness revision: verdicts on identical state form one append-only set, each reviewer's latest verdict is their own correction, and any FAIL governs. A mixed set is contested. A passing set moves the project to ready; a failed or contested set leaves it shaping. Any non-verdict project change makes the old revision stale, and a refused write stores nothing. The description's last shaper cannot review their own work.`,
+      inputSchema: {
+        project_id: z.string(),
+        reviewed_revision: z.number().int().positive().describe('The readiness_revision from roadmap_get_project'),
+        verdict: z.enum(['pass', 'fail']),
+        note: z.string().describe('Why it is ready, or the concrete issue that remains'),
+        actor: actorSchema,
+      },
+    },
+    async ({ actor, ...input }) => {
+      try {
+        const { project, readiness } = store.recordReadinessVerdict(resolveActor(actor as Actor | undefined), input);
+        return ok({ project: compact(project), readiness });
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
+
+  server.registerTool(
     'roadmap_cite',
     {
       description:

@@ -84,6 +84,57 @@ describe('the ready gate', () => {
   });
 });
 
+describe('readiness verdicts', () => {
+  it('preserves every reviewer verdict and the strictest verdict governs', () => {
+    const p = store.createProject(mason, { title: 'T', body: 'complete plan', status: 'shaping' });
+    const revision = store.readinessRevision(p.id);
+    store.recordReadinessVerdict(bosun, { project_id: p.id, reviewed_revision: revision, verdict: 'pass', note: 'enough is known' });
+    expect(store.getProject(p.id).status).toBe('ready');
+    store.recordReadinessVerdict({ name: 'proof', kind: 'agent', model: 'claude-fable-5', version: 'test' }, {
+      project_id: p.id, reviewed_revision: revision, verdict: 'fail', note: 'the rollback is missing',
+    });
+    const review = store.readinessReview(p.id)!;
+    expect(review.state).toBe('contested');
+    expect(review.verdicts.map((v) => v.verdict)).toEqual(['pass', 'fail']);
+    expect(store.getProject(p.id).status).toBe('shaping');
+  });
+
+  it('lets a reviewer correct only their own verdict', () => {
+    const p = store.createProject(mason, { title: 'T', body: 'complete plan', status: 'shaping' });
+    const revision = store.readinessRevision(p.id);
+    store.recordReadinessVerdict(bosun, { project_id: p.id, reviewed_revision: revision, verdict: 'fail', note: 'missing proof' });
+    store.recordReadinessVerdict(bosun, { project_id: p.id, reviewed_revision: revision, verdict: 'pass', note: 'proof supplied' });
+    expect(store.readinessReview(p.id)?.state).toBe('ready');
+    expect(store.readinessReview(p.id)?.verdicts).toHaveLength(1);
+    expect(store.getEvents(p.id).filter((e) => e.event_type === 'readiness_verdict_recorded')).toHaveLength(2);
+  });
+
+  it('refuses a stale reviewed revision without changing state or history', () => {
+    const p = store.createProject(mason, { title: 'T', body: 'first plan', status: 'shaping' });
+    const revision = store.readinessRevision(p.id);
+    store.updateProject(mason, { project_id: p.id, note: 'changed scope', body: 'second plan' });
+    const before = JSON.stringify(store.dumpState());
+    const events = store.getEvents(p.id).length;
+    expect(() => store.recordReadinessVerdict(bosun, {
+      project_id: p.id, reviewed_revision: revision, verdict: 'pass', note: 'old plan looked ready',
+    })).toThrow(/stale/);
+    expect(store.getEvents(p.id)).toHaveLength(events);
+    expect(JSON.stringify(store.dumpState())).toBe(before);
+  });
+
+  it('rebuild preserves the governing set and projected status', () => {
+    const p = store.createProject(mason, { title: 'T', body: 'complete plan', status: 'shaping' });
+    const revision = store.readinessRevision(p.id);
+    store.recordReadinessVerdict(bosun, { project_id: p.id, reviewed_revision: revision, verdict: 'pass', note: 'ready' });
+    store.updateProject(bosun, { project_id: p.id, note: 'clearer title', title: 'T, clarified' });
+    const before = JSON.stringify(store.dumpState());
+    store.rebuild();
+    expect(JSON.stringify(store.dumpState())).toBe(before);
+    expect(store.readinessReview(p.id)).toBeNull();
+    expect(store.getProject(p.id).status).toBe('shaping');
+  });
+});
+
 describe('ship next — the work phase', () => {
   function readyProject(title: string): string {
     const p = store.createProject(mason, { title, status: 'shaping' });

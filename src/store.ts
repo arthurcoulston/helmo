@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import {
   ACTOR_KINDS, Actor, ActorKind, Bet, Citation, Claim, Dep, DepType, EFFORT_SIZES, Horizon, Objective,
-  Project, ProjectSnapshot, Ranked, RoadmapError, RoadmapEvent, SHIPPED, Status, TERMINAL, VALUE_LEVELS,
+  Project, ProjectSnapshot, Ranked, ReadinessReview, ReadinessVerdict, RoadmapError, RoadmapEvent, SHIPPED, Status, TERMINAL, VALUE_LEVELS,
 } from './types.js';
 
 export interface CreateInput {
@@ -199,12 +199,43 @@ export class Store {
     return this.db.transaction(() => ({
       project: this.getProject(id),
       revision: this.revisionOf(id),
+      readiness_revision: this.readinessRevision(id),
       blocked_by: this.blockedBy(id),
       deps: this.getDeps(id),
       claims: this.getClaims(id),
       citations: this.getCitations(id),
       events: this.getEvents(id),
+      readiness: this.readinessReview(id),
     }))();
+  }
+
+  readinessRevision(id: string, throughSeq?: number): number {
+    this.getProject(id);
+    const row = this.db.prepare(
+      `SELECT COALESCE(MAX(seq), 0) AS rev FROM events
+       WHERE subject_id = ? AND event_type != 'readiness_verdict_recorded' AND (? IS NULL OR seq <= ?)`,
+    ).get(id, throughSeq ?? null, throughSeq ?? null) as { rev: number };
+    return row.rev;
+  }
+
+  readinessReview(id: string, throughSeq?: number): ReadinessReview | null {
+    const reviewed_revision = this.readinessRevision(id, throughSeq);
+    const rows = this.db.prepare(
+      `SELECT ts, actor, payload FROM events
+       WHERE subject_id = ? AND event_type = 'readiness_verdict_recorded'
+         AND json_extract(payload, '$.reviewed_revision') = ? AND (? IS NULL OR seq <= ?) ORDER BY seq`,
+    ).all(id, reviewed_revision, throughSeq ?? null, throughSeq ?? null) as { ts: string; actor: string; payload: string }[];
+    if (!rows.length) return null;
+    const latest = new Map<string, ReadinessVerdict>();
+    for (const row of rows) {
+      const actor = JSON.parse(row.actor) as Actor;
+      const payload = JSON.parse(row.payload) as { verdict: 'pass' | 'fail'; note: string; reviewed_revision: number };
+      latest.set(actor.name, { ...payload, reviewer: actor.name, ts: row.ts });
+    }
+    const verdicts = [...latest.values()];
+    const fails = verdicts.filter((v) => v.verdict === 'fail').length;
+    const passes = verdicts.filter((v) => v.verdict === 'pass').length;
+    return { reviewed_revision, state: fails ? (passes ? 'contested' : 'failed') : 'ready', verdicts };
   }
 
   getEvents(subjectId: string): RoadmapEvent[] {
@@ -437,6 +468,14 @@ export class Store {
       }
     }
 
+    // A recorded verdict governs exactly the state it reviewed. Any later
+    // project write starts a new round; keeping `ready` would leave a stale
+    // judgment projected as current. An explicit ready write remains the
+    // compatibility path for callers that still make the judgment directly.
+    if (p.status === 'ready' && input.status !== 'ready' && this.readinessReview(p.id)) {
+      diffs['status'] = { from: 'ready', to: 'shaping' };
+    }
+
     return this.db.transaction(() => {
       // The read above, every rule checked against it, and the diffs computed
       // from it all happened BEFORE the write lock was taken. So the
@@ -448,6 +487,38 @@ export class Store {
       this.append(ts, p.id, 'updated', actor, payload);
       this.applyUpdated(ts, p.id, payload);
       return { project: this.getProject(p.id), revision: this.revisionOf(p.id), warnings };
+    }).immediate();
+  }
+
+  recordReadinessVerdict(
+    actor: Actor,
+    input: { project_id: string; reviewed_revision: number; verdict: 'pass' | 'fail'; note: string },
+  ): { project: Project; readiness: ReadinessReview } {
+    validateActor(actor);
+    if (!input.note?.trim()) throw new RoadmapError('note is required: say what made the project ready or what remains unresolved.');
+    if (!(Number.isInteger(input.reviewed_revision) && input.reviewed_revision >= 1)) {
+      throw new RoadmapError('reviewed_revision must be the readiness revision returned by roadmap_get_project.');
+    }
+    rejectSwallowedMarkup({ note: input.note });
+    const p = this.getProject(input.project_id);
+    if (TERMINAL.includes(p.status) || SHIPPED.includes(p.status) || p.status === 'ship_next') {
+      throw new RoadmapError(`${p.id} is ${p.status} — readiness is judged before the human declares work, not after it ships.`);
+    }
+    if (actor.kind === 'agent' && this.lastShaper(p.id) === actor.name) {
+      throw new RoadmapError(`${p.id} was last shaped by you — its readiness verdict needs a reviewer other than the description's shaper.`);
+    }
+    return this.db.transaction(() => {
+      const current = this.readinessRevision(p.id);
+      if (current !== input.reviewed_revision) {
+        throw new RoadmapError(`${p.id} changed after the reviewed snapshot: revision ${input.reviewed_revision} is stale; the current readiness revision is ${current}. Nothing was written.`);
+      }
+      const ts = now();
+      this.append(ts, p.id, 'readiness_verdict_recorded', actor, {
+        verdict: input.verdict, note: input.note, reviewed_revision: input.reviewed_revision,
+      });
+      const readiness = this.readinessReview(p.id)!;
+      this.applyReadinessVerdict(ts, p.id, readiness.state === 'ready' ? 'ready' : 'shaping');
+      return { project: this.getProject(p.id), readiness };
     }).immediate();
   }
 
@@ -677,6 +748,11 @@ export class Store {
           case 'actual_recorded': this.applyActual(ev.subject_id, ev.payload); break;
           case 'objective_set': this.applyCharterItem(ev.ts, 'objective', ev.payload); break;
           case 'bet_set': this.applyCharterItem(ev.ts, 'bet', ev.payload); break;
+          case 'readiness_verdict_recorded': {
+            const readiness = this.readinessReview(ev.subject_id, ev.seq);
+            if (readiness) this.applyReadinessVerdict(ev.ts, ev.subject_id, readiness.state === 'ready' ? 'ready' : 'shaping');
+            break;
+          }
         }
       }
     }).immediate();
@@ -737,6 +813,10 @@ export class Store {
     }
     params.push(id);
     this.db.prepare(`UPDATE projects SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+  }
+
+  private applyReadinessVerdict(ts: string, id: string, status: 'ready' | 'shaping'): void {
+    this.db.prepare('UPDATE projects SET status = ?, updated_at = ? WHERE id = ?').run(status, ts, id);
   }
 
   private applyClaim(ts: string, id: string, actor: Actor, p: Record<string, unknown>): void {

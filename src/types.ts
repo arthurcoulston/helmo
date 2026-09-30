@@ -116,17 +116,33 @@ export interface Ranked {
 export interface ProjectSnapshot {
   project: Project;
   revision: number; // the project's own record as of this read; see Store.projectSnapshot
+  readiness_revision: number; // latest non-verdict event; stable across reviewers of identical state
   blocked_by: string[];
   deps: { outgoing: Dep[]; incoming: Dep[] };
   claims: Claim[];
   citations: Citation[];
   events: RoadmapEvent[];
+  readiness: ReadinessReview | null;
+}
+
+export interface ReadinessVerdict {
+  verdict: 'pass' | 'fail';
+  note: string;
+  reviewer: string;
+  reviewed_revision: number;
+  ts: string;
+}
+
+export interface ReadinessReview {
+  reviewed_revision: number;
+  state: 'ready' | 'failed' | 'contested';
+  verdicts: ReadinessVerdict[];
 }
 
 export type EventType =
   | 'created' | 'updated' | 'claim_recorded' | 'cited' | 'uncited'
   | 'linked' | 'unlinked' | 'ship_next_set' | 'actual_recorded'
-  | 'objective_set' | 'bet_set';
+  | 'objective_set' | 'bet_set' | 'readiness_verdict_recorded';
 
 export interface RoadmapEvent {
   seq: number;

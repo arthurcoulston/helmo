@@ -115,6 +115,7 @@ function timeline(events: RoadmapEvent[]): string {
       e.event_type === 'created' ? 'filed' :
       e.event_type === 'ship_next_set' ? `SHIP NEXT — decided by ${esc(e.payload['decided_by'])}` :
       e.event_type === 'claim_recorded' ? `${e.payload['kind']} claim` :
+      e.event_type === 'readiness_verdict_recorded' ? `readiness ${esc(e.payload['verdict'])}` :
       e.event_type === 'cited' ? `cited ${esc(e.payload['objective_id'])}` :
       e.event_type === 'actual_recorded' ? `metered $${e.payload['actual_usd']}` :
       e.event_type === 'updated' ? statusMove(e) : '';

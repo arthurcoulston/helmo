@@ -63,8 +63,10 @@ orchestrator meetings and the read-only view. Product intent:
   blocker: answering it is how the operator clears the block, so it stays where
   he can act on it.
   `needs_human` is that sitting's one line, not a flag (H-1761): it takes the
-  string saying what the operator does and roughly what it costs him, stored as
-  `sitting` and rendered as the card's ask; `false` clears both. A bare `true`
+  string saying what the sitting is for and roughly what it costs him, stored as
+  `sitting` and rendered as the card's ask; `false` clears both, and
+  `sitting_with` alongside it names the agent to sit with (R-42 I13) and clears
+  with them. A bare `true`
   is refused, the way `return_to_human` refuses a return with no question — a
   marker with nothing to say drew a row that read like backlog, and five
   sittings went unnoticed. The line is a field and never the body's first
@@ -72,6 +74,32 @@ orchestrator meetings and the read-only view. Product intent:
   "why this exists" background, so scraping it prints the wrong thing
   confidently. A sitting renders as `.scard`, a question card in every
   dimension but hue.
+  Three kinds of request (R-42 I13, H-2521): the harness can ask the operator
+  to DECIDE something, to DO something, or to sit down with an agent. It could
+  not tell them apart, and the confusion was in the field as well as the prose
+  — `parseSitting` asked for "what the human does", which is an action's line,
+  while the desk-claim guard below reads the same flag as "the human is
+  present", so H-2164 carries a sitting line saying no sitting is needed.
+  An action sits on the `awaiting_human` axis, because a pending request with
+  the claim released is what that status means. The one stored request column
+  carries `kind`; a request without one reads as the decision it was, so no
+  existing row is rewritten or reinterpreted. `Ticket` splits that column into
+  `question` — the pending decision, unchanged in type and meaning, so
+  `answer.ts`, `view.ts` and every external `get_ticket` consumer are
+  untouched — and `action`. That split is what stops a reader knowing only
+  about questions from offering Ratify on an action. `questionFingerprint`
+  names its fields rather than serialising the request, so `kind` did not move
+  the hash a dashboard built before kinds already drew.
+  `requestAction` requires `why_human`: an asker who cannot say why their own
+  hands will not serve owes a decision instead. `reportAction` takes what the
+  operator did and nothing else — no resolution, no chosen option — so by shape
+  it resumes the work to the workstream seat but can never close a ticket,
+  grant anything, or stand in for an agent's later verification. The two paths
+  refuse each other rather than discarding the pending request: answering was
+  once the only route and would have set `question = NULL` over the action.
+  As of H-2521 no tool or CLI door reaches either method, so no action request
+  exists in any store; the dashboard's cards must land before the doors, or a
+  pending action would draw an empty card.
   Desk claim guard (H-1056): an agent actor with no `session` may file and
   update work but cannot claim an unmarked ticket, including by creating it
   `in_progress`; if it needs a ticket, the build belongs to a loop. Marking an

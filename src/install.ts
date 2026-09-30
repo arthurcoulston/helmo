@@ -28,8 +28,10 @@
 // The single-install experience is unchanged: no variables set at all still
 // means ~/.helmo/helmo.db, now under the name `dev.helmo`, and no flag to pass.
 import { createHash } from 'node:crypto';
+import { readFileSync, realpathSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import { basename, dirname, join, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { HelmoError } from './types.js';
 
 /** Refused before any store is opened. */
@@ -46,6 +48,7 @@ export interface Installation {
   db: string;
   /** Where `label` came from, so a surface can say so rather than implying a registry. */
   source: IdentitySource;
+  release: string | null;
 }
 
 const LABEL_VARS: readonly IdentitySource[] = ['HELMO_LABEL', 'REV_LABEL'];
@@ -85,6 +88,7 @@ export function installation(env: NodeJS.ProcessEnv = process.env): Installation
     home,
     db,
     source: named ?? 'derived',
+    release: selectedRelease('helmo', env),
   };
 }
 
@@ -148,12 +152,33 @@ export function requestedInstallation(argv: readonly string[]): string | undefin
 
 /** The phrase a prose surface prints to say which installation it served. */
 export function installationLine(i: Installation): string {
-  return `install: ${i.label} (${i.home}) — db: ${i.db}`;
+  return `install: ${i.label} (${i.home}) — db: ${i.db}${i.release ? ` — release: ${i.release}` : ''}`;
 }
 
 /** The same answer as a field, for a surface whose output is parsed. */
-export function installationRef(i: Installation): Pick<Installation, 'label' | 'home' | 'db' | 'source'> {
-  return { label: i.label, home: i.home, db: i.db, source: i.source };
+export function installationRef(i: Installation): Pick<Installation, 'label' | 'home' | 'db' | 'source'> & { release?: string } {
+  return { label: i.label, home: i.home, db: i.db, source: i.source, ...(i.release ? { release: i.release } : {}) };
+}
+
+function selectedRelease(product: 'rev' | 'helmo' | 'helmo-roadmap', env: NodeJS.ProcessEnv): string | null {
+  const named = env['INSTALLATION_RELEASE']?.trim();
+  if (!named) return null;
+  const selectionFile = resolve(named);
+  try {
+    const selection = JSON.parse(readFileSync(selectionFile, 'utf8')) as { release?: string; directory?: string; components?: Record<string, { release?: string; commit?: string }> };
+    if (!selection.release || !selection.directory) throw new Error('selection lacks release or directory');
+    const releaseDir = resolve(dirname(selectionFile), selection.directory);
+    const manifest = JSON.parse(readFileSync(join(releaseDir, 'RELEASE.json'), 'utf8')) as { commits?: Record<string, string> };
+    for (const repo of ['rev', 'helmo', 'helmo-roadmap']) {
+      const component = selection.components?.[repo];
+      if (!component || component.release !== selection.release || component.commit !== manifest.commits?.[repo]) throw new Error(`${repo} does not match selected release ${selection.release}`);
+    }
+    const runningRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+    if (realpathSync(runningRoot) !== realpathSync(resolve(releaseDir, product))) throw new Error(`${product} is running from ${runningRoot}, not ${join(releaseDir, product)}`);
+    return selection.release;
+  } catch (e) {
+    throw new InstallationError(`incoherent release set: ${product}: ${e instanceof Error ? e.message : String(e)}`);
+  }
 }
 
 function plainExit(message: string): never {

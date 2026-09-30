@@ -410,6 +410,10 @@ orchestrator meetings and the read-only view. Product intent:
   the installation itself could have written. `requireInstallation(env, report, requested)`
   takes the reporter because the CLI's contract is that every failure it prints
   is one JSON object.
+  A pinned installation sets `INSTALLATION_RELEASE` to its `ADOPTED.json`.
+  Resolution verifies the Rev/Helmo/Roadmap commit set against `RELEASE.json`
+  and that this process runs from the selected Helmo directory; a mixed set or
+  shared-checkout fallback refuses before the store is opened.
   H-2474 adds the naming discipline on top. Every entry point says which
   installation it is about: the CLI puts `installation` IN each result object
   and in each `{error}` refusal (a caller reading the fields it asked for is

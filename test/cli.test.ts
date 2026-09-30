@@ -155,6 +155,19 @@ version = "0.4"
     expect(JSON.parse(spec.mcp_servers.helmo.env.HELMO_ACTOR).session).toBe('meeting:t7');
   });
 
+  // Same spelling gap as `--installation`, on the flags a command reads for
+  // itself: `--tier=high` used to leave `--tier` unseen, so the command ran on
+  // a default it was explicitly told not to take (H-2526).
+  it('reads --<flag>=<value> as well as the space-separated spelling', () => {
+    const { home } = seatRoster();
+    const result = rev(home, ['session-spec', 'alpha', '--tier=high', '--session=meeting:t7']);
+
+    expect(result.status, result.stderr).toBe(0);
+    const spec = JSON.parse(result.stdout);
+    expect(spec.model).toBe('claude-fable-5-1');
+    expect(JSON.parse(spec.mcp_servers.helmo.env.HELMO_ACTOR).session).toBe('meeting:t7');
+  });
+
   // Defaulting the stamp would let a consumer sign as `rev:<seat>` by
   // omission, and its Helm writes would read as the loop's own hold (H-558).
   it('refuses without --session rather than defaulting to the loop seat stamp', () => {
@@ -307,6 +320,43 @@ runtime = "mock"
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain('installation: UNCLEAR');
     expect(result.stdout).toContain('/tmp/other/.rev');
+  });
+
+  // H-2526. The assertion used to be an argument only the writing surfaces
+  // passed, so every one of these took a wrong name and exited 0 — the exact
+  // surface a consumer scripts the check ON. `usage` and `routing` were not in
+  // the original report; they had the same hole, which is why the gate is now
+  // at the door rather than per handler.
+  it.each([['status'], ['service', 'status'], ['release', 'status'], ['usage'], ['routing']])(
+    'refuses a read aimed at another installation: %s',
+    (...command) => {
+      const i = install();
+      const result = run(i, [...command, '--installation', 'dev.rev.b']);
+
+      expect(result.status, result.stdout).toBe(1);
+      expect(result.stderr).toContain('dev.rev.b');
+      expect(result.stderr).toContain('dev.rev.a');
+      expect(result.stderr).toContain(i.home);
+      // Not the normal output with a refusal bolted on: the read never ran.
+      expect(result.stdout).toBe('');
+    },
+  );
+
+  // The joined spelling, which Helmo and the roadmap both take. Rev matched
+  // only `--installation`, so `--installation=x` fell through as a positional
+  // and `stop` — which reads rest[0] and ignores the rest — wrote anyway. A
+  // silently discarded assertion is worse than a rejected one (H-2526).
+  it('takes --installation=<value>, and still refuses the wrong one', () => {
+    const i = install();
+    const refused = run(i, ['stop', 'alpha', '--installation=dev.rev.b']);
+
+    expect(refused.status).toBe(1);
+    expect(refused.stderr).toContain('--installation named \'dev.rev.b\'');
+    expect(stopped(i)).toBe(false);
+
+    const accepted = run(i, ['stop', 'alpha', '--installation=dev.rev.a']);
+    expect(accepted.status, accepted.stderr).toBe(0);
+    expect(stopped(i)).toBe(true);
   });
 
   it('leaves a command’s own positional arguments alone wherever the flag sits', () => {

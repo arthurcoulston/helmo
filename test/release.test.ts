@@ -308,6 +308,19 @@ describe('the release commands (H-2493)', () => {
     expect(shown.status, shown.stderr).toBe(0);
     expect(shown.stdout).toContain('UNREADABLE');
 
+    // The escape still has to answer for the name it is given (H-2526), and
+    // still has to work: identity is not selection coherence, so the assertion
+    // at the door reads the target unchecked. Gating it on `verify` instead
+    // would put this way out behind the fault it is the way out of.
+    const named = rev(home, ['release', 'status', '--installation', home], { INSTALLATION_RELEASE: file });
+    expect(named.status, named.stderr).toBe(0);
+    expect(named.stdout).toContain('UNREADABLE');
+
+    const misnamed = rev(home, ['release', 'status', '--installation', 'dev.rev.elsewhere'], { INSTALLATION_RELEASE: file });
+    expect(misnamed.status).toBe(1);
+    expect(misnamed.stderr).toContain('--installation named');
+    expect(misnamed.stderr).not.toContain('incoherent release set');
+
     // The other escape. Only the plan is run here — it is the act that proves
     // the command got past the gate, and it writes nothing, so the rest of this
     // case still has an installation to repair.

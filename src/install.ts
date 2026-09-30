@@ -12,8 +12,10 @@
 // crew:projects/estate/specs/h2435-independent-installs.md:
 //
 //   Say it.    A command's output names the installation it read or wrote.
-//   Refuse it. A mutation stops BEFORE writing when the target it was given
-//              disagrees with the one the environment resolves, naming both.
+//   Refuse it. A command stops BEFORE doing anything when the target it was
+//              given disagrees with the one the environment resolves, naming
+//              both. Every command, not only the ones that write: a read is
+//              where a script puts the assertion (H-2526).
 //
 // The refusal is never a precedence rule. `--installation` cannot redirect a
 // command to another installation: it ASSERTS which one this is, and a
@@ -108,14 +110,41 @@ function selectedRelease(product: 'rev' | 'helmo' | 'helmo-roadmap'): string | n
 }
 
 /**
- * The gate a mutating command passes before it writes anything. Prints the
- * refusal and exits 1, so nothing downstream has to remember to check.
+ * The `--installation` assertion, made once at the door for EVERY command —
+ * reads included (H-2526).
+ *
+ * It used to be a parameter of `requireTarget`, which only mutations call, so
+ * `rev status --installation <wrong>` exited 0 and printed its normal output.
+ * That is the surface a consumer scripts an assertion ON: a check of which
+ * installation this is, made before doing something else. Silence there is the
+ * worst of the three possible answers, and it made "the three products behave
+ * the same" false in the one direction that misleads — Helmo and the roadmap
+ * refuse on every entry point.
+ *
+ * Asserting identity is not the same as verifying the release selection, so
+ * this reads the target `unchecked` and the two exempt families (`release`,
+ * `install`) stay reachable on a broken selection while still being held to
+ * the name they were given.
  */
-export function requireTarget(action: string, requested?: string, release: 'verify' | 'unchecked' = 'verify'): Target {
-  const t = target(release);
-  const problem = t.conflict ?? mismatch(t, requested);
+export function assertInstallation(command: string, requested?: string): void {
+  const problem = mismatch(target('unchecked'), requested);
   if (problem) {
-    console.error(`refusing to ${action}: ${problem}.`);
+    console.error(`refusing to run '${command}': ${problem}.`);
+    process.exit(1);
+  }
+}
+
+/**
+ * The gate a mutating command passes before it writes anything. Prints the
+ * refusal and exits 1, so nothing downstream has to remember to check. The
+ * `--installation` disagreement is already gone by here (`assertInstallation`,
+ * at the door); what remains is the inherited-label conflict, which reads are
+ * deliberately allowed through with an UNCLEAR line rather than refused.
+ */
+export function requireTarget(action: string, release: 'verify' | 'unchecked' = 'verify'): Target {
+  const t = target(release);
+  if (t.conflict) {
+    console.error(`refusing to ${action}: ${t.conflict}.`);
     process.exit(1);
   }
   return t;
@@ -124,7 +153,9 @@ export function requireTarget(action: string, requested?: string, release: 'veri
 /**
  * `--installation` takes either spelling of an installation, because those are
  * the two an operator has in front of them: the label a status line printed,
- * or the home path a roster or plist points at.
+ * or the home path a roster or plist points at. Both are given as
+ * `--installation <value>` or `--installation=<value>`; the CLI accepts either,
+ * as Helmo and the roadmap do.
  */
 function mismatch(t: Target, requested?: string): string | null {
   if (requested === undefined) return null;

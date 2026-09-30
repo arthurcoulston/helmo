@@ -10,7 +10,7 @@ import { pollUsage, readCodexUsage, readUsage, refreshCodexUsage, usageLine, usa
 import { selectRun } from './routing.js';
 import { runLoop } from './loop.js';
 import { serviceFile, serviceInstall, serviceStart, serviceStatusLine, serviceUninstall, stalePinnedService } from './service.js';
-import { requireTarget, target, targetLine } from './install.js';
+import { assertInstallation, requireTarget, target, targetLine } from './install.js';
 import { planLines, removalPlan, removeInstallation } from './remove.js';
 import { ReleaseError, describe as describeRelease, migrationLine, rollback, selectionFile, upgrade } from './release.js';
 import { readRedeploy, requestRedeploy, watchRedeploy } from './redeploy.js';
@@ -25,6 +25,16 @@ const [cmd, ...rest] = process.argv.slice(2);
 // no command's own positional arguments have to know it might be there.
 const requestedInstall = takeInstallFlag(rest);
 const commandName = process.env['REV_COMMAND_NAME']?.trim() || 'rev';
+// Assert the name here, at the door, and nowhere else. It used to be an
+// argument each handler passed to `requireTarget`, which meant it held only on
+// the surfaces that write: the read surfaces — exactly where a script puts an
+// assertion — took the flag and exited 0 (H-2526). One check before the switch
+// is the same discipline as the exempt list below: a surface added later
+// cannot forget it, because it never had the chance to remember.
+//
+// Before the pinned-release check, so that a wrong name is answered as a wrong
+// name rather than masked by an unrelated incoherent-release error.
+if (requestedInstall !== undefined) assertInstallation([commandName, cmd, rest[0]].filter(Boolean).join(' '), requestedInstall);
 // Validate a pinned release before even reading the roster. Every command,
 // including read-only surfaces and the supervisor, enters through this file.
 //
@@ -63,10 +73,26 @@ function supervisorRunningLine(observation: ReturnType<typeof processObservation
   return runningLine('the supervisor', compare(parseMarker(sGet('supervisor', 'RUNNING')), snapshot()));
 }
 
+// Both spellings, because Helmo and the roadmap take both and a consumer
+// writing `--installation=x` to Rev used to have it fall through as a
+// positional — absorbed in silence by any command that ignores extra
+// arguments, so the assertion was never made at all (H-2526).
 function takeInstallFlag(args: string[]): string | undefined {
-  const i = args.indexOf('--installation');
+  return takeFlag(args, 'installation');
+}
+
+/**
+ * Removes `--<name> <value>` or `--<name>=<value>` from `args` and returns the
+ * value, so no command's own positional arguments have to know it might be
+ * there. `undefined` means absent; `''` means present with nothing after it,
+ * which callers refuse rather than guess at.
+ */
+function takeFlag(args: string[], name: string): string | undefined {
+  const i = args.findIndex((a) => a === `--${name}` || a.startsWith(`--${name}=`));
+  if (i === -1) return undefined;
+  const joined = args[i]!.startsWith(`--${name}=`);
   // A flag given last has no value; the refusal says so rather than guessing.
-  return i === -1 ? undefined : args.splice(i, 2)[1] ?? '';
+  return joined ? args.splice(i, 1)[0]!.slice(name.length + 3) : args.splice(i, 2)[1] ?? '';
 }
 
 const rosterSource = commandName === 'rev' ? '~/.rev/roster.toml (REV_HOME to override)' : '~/.rev-gp/roster.toml (fixed by gp-rev)';
@@ -122,9 +148,14 @@ function loopArg(): string {
   return knownLoop(name);
 }
 
+// Same two spellings as `--installation`, for the same reason: a consumer who
+// writes `--ticket=H-1` should not have it read as a loop name (H-2526). This
+// one reads without consuming, because these flags sit among arguments their
+// own command already knows how to skip.
 function flag(name: string): string | undefined {
-  const i = rest.indexOf(`--${name}`);
-  return i === -1 ? undefined : rest[i + 1];
+  const i = rest.findIndex((a) => a === `--${name}` || a.startsWith(`--${name}=`));
+  if (i === -1) return undefined;
+  return rest[i]!.startsWith(`--${name}=`) ? rest[i]!.slice(name.length + 3) : rest[i + 1];
 }
 
 const { global: g, loops, providers } = loadRoster();
@@ -170,7 +201,7 @@ switch (cmd) {
       process.exit(1);
     }
     const names = target === 'all' ? Object.keys(loops) : [knownLoop(target)];
-    console.log(targetLine(requireTarget(`${commandName} team ${verb}`, requestedInstall)));
+    console.log(targetLine(requireTarget(`${commandName} team ${verb}`)));
     if (verb === 'stop') {
       const result = teamStop(names);
       for (const name of result.stopped) logEvent(name, 'prime-stop', 'provenance=prime');
@@ -195,13 +226,13 @@ switch (cmd) {
     if (!name) {
       // The general start (the operator starts the machine, not a named
       // worker): supervise every roster loop.
-      console.log(targetLine(requireTarget('start the machine', requestedInstall)));
+      console.log(targetLine(requireTarget('start the machine')));
       const code = await runFleet(g, loops);
       if (code) process.exit(code);
       break;
     }
     const l = loops[knownLoop(name)]!;
-    console.log(targetLine(requireTarget(`run '${name}'`, requestedInstall)));
+    console.log(targetLine(requireTarget(`run '${name}'`)));
     const count = flag('count') ? Number(flag('count')) : undefined;
     await runLoop(g, l, { count });
     break;
@@ -211,7 +242,7 @@ switch (cmd) {
   // the supervisor drains at its next poll, so the session that shipped the fix
   // finishes its close-out instead of being restarted out from under itself.
   case 'redeploy': {
-    console.log(targetLine(requireTarget('request a redeploy', requestedInstall)));
+    console.log(targetLine(requireTarget('request a redeploy')));
     const sup = pidAlive('supervisor');
     if (!sup) {
       console.error(`No supervisor running — nothing to redeploy. The next \`${commandName} run\` starts on the current build anyway.`);
@@ -286,13 +317,13 @@ switch (cmd) {
         console.error(`No supervisor running. Stop a single loop with: ${commandName} stop <loop>`);
         process.exit(1);
       }
-      console.log(targetLine(requireTarget('drain the machine', requestedInstall)));
+      console.log(targetLine(requireTarget('drain the machine')));
       process.kill(sup, 'SIGTERM');
       console.log(`Drain requested (SIGTERM to supervisor pid ${sup}) — in-flight iterations finish, then the machine stops. Watch: ${commandName} status`);
       break;
     }
     knownLoop(name);
-    console.log(targetLine(requireTarget(`stop '${name}'`, requestedInstall)));
+    console.log(targetLine(requireTarget(`stop '${name}'`)));
     const actor = cliActor();
     sSetOwned(name, 'STOP', { value: '', by: actor.human ? 'human' : actor.label, at: new Date().toISOString(), pid: process.pid, reason: `${commandName} stop`, expires_at: 'never' });
     logEvent(name, actor.label, 'STOP set');
@@ -305,7 +336,7 @@ switch (cmd) {
   }
   case 'resume': {
     const name = loopArg();
-    console.log(targetLine(requireTarget(`resume '${name}'`, requestedInstall)));
+    console.log(targetLine(requireTarget(`resume '${name}'`)));
     sClear(name, 'STOP', 'HOLD', 'BLOCKED');
     // A resume is a statement the cause was looked at: the loop gets its full
     // retry budget back. Carrying the streak over made resume a single retry
@@ -344,7 +375,7 @@ switch (cmd) {
       console.error(`usage: ${commandName} service <install|uninstall|start|status>  (stop the machine with: ${commandName} stop)`);
       process.exit(1);
     }
-    console.log(targetLine(requireTarget(`${commandName} service ${verb}`, requestedInstall)));
+    console.log(targetLine(requireTarget(`${commandName} service ${verb}`)));
     refusable(act);
     break;
   }
@@ -362,7 +393,7 @@ switch (cmd) {
     // would leave an installation that cannot run and cannot be removed either.
     // This argument is only half of it — `UNPINNED` at the top of this file is
     // what lets the command reach it at all (H-2522).
-    const t = requireTarget(`${commandName} install remove`, requestedInstall, 'unchecked');
+    const t = requireTarget(`${commandName} install remove`, 'unchecked');
     console.log(targetLine(t));
     const plan = removalPlan(t.label, g);
     for (const line of planLines(plan)) console.log(line);
@@ -406,7 +437,7 @@ switch (cmd) {
       );
       process.exit(1);
     }
-    console.log(targetLine(requireTarget(`${commandName} release ${verb}`, requestedInstall, 'unchecked')));
+    console.log(targetLine(requireTarget(`${commandName} release ${verb}`, 'unchecked')));
     try {
       const change = verb === 'upgrade' ? upgrade(file, rest[1]!) : rollback(file);
       if (change.unchanged) {
@@ -448,7 +479,7 @@ switch (cmd) {
       console.error(`usage: ${commandName} pace <loop> <fraction (0,1] | park | clear>`);
       process.exit(1);
     }
-    console.log(targetLine(requireTarget(`set the pace of '${name}'`, requestedInstall)));
+    console.log(targetLine(requireTarget(`set the pace of '${name}'`)));
     const actor = cliActor();
     if (v === 'clear') sClear(name, 'PACE');
     else sSetOwned(name, 'PACE', { value: v, by: actor.human ? 'human' : actor.label, at: new Date().toISOString(), pid: process.pid, reason: `${commandName} pace`, expires_at: actor.human ? 'never' : new Date(Date.now() + 60 * 60 * 1000).toISOString() });
@@ -575,8 +606,9 @@ switch (cmd) {
   redeploy [--ticket <id>] [--reason "<why>"]
                            activate a committed fix: drain after in-flight iterations, come back on the new code
   tail <loop>              print the path of the loop's event trace
-Any command also takes --installation <name|home>: it asserts which installation the command is
-about, and a mutation refuses rather than redirects if that disagrees with the environment.
+Any command also takes --installation <name|home> (or --installation=<name|home>): it asserts which
+installation the command is about, and ANY command — reads included — refuses rather than redirects
+if that disagrees with the environment.
 ${targetLine()}
 Roster: ${Object.keys(loops).join(', ') || '(none)'} — from ${rosterSource}.`);
     process.exit(cmd ? 1 : 0);

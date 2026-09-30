@@ -262,24 +262,24 @@ so a disagreement is a refusal naming both candidates, not a silent switch:
 {"error":"--installation named 'alpha', but this process resolves installation 'dev.helmo.alpha.f8c31d6c' (home /tmp/installs/alpha/.helmo, store /tmp/installs/alpha/.helmo/helmo.db) from the environment. Nothing was opened or written. --installation asserts the target and cannot move it: point HELMO_HOME or HELMO_DB at the installation you meant."}
 ```
 
-Two differences between the products matter if you are scripting this, because
-in both cases the wrong expectation fails *quietly*:
+All three products assert on **every** entry point, reads included, and exit
+non-zero when the name disagrees. That is what makes the flag usable as a guard:
+a read is where you want the assertion, before the script does anything else.
+Rev's refusal names the command it stopped:
 
-- **Helmo and the roadmap assert on every entry point, reads included** — the
-  refusal above came from a `list`, and exits non-zero. **Rev asserts on
-  commands that write** (`run`, `stop`, `resume`, `redeploy`, `pace`,
-  `service install|uninstall|start|stop`, `release upgrade|rollback`,
-  `install remove`). On Rev's read surfaces — `status`, `service status`,
-  `release status` — the flag is accepted and *not* checked, so a wrong value
-  there passes with exit 0. Read the `installation:` line those commands print;
-  do not use the flag as a guard on a Rev read.
-- **Rev takes `--installation <value>` only.** Helmo and the roadmap accept
-  `--installation=<value>` as well. Written with an `=` to Rev, it is not
-  recognised as the flag at all and is consumed as a positional argument.
+```
+refusing to run 'rev status': --installation named 'alpha', but this command resolves installation 'dev.rev.beta.9c2f10a4' (/tmp/installs/beta/.rev) from the environment. Nothing was written. Point REV_HOME at the installation you meant.
+```
 
-Given that, the portable assertion in a script is the space-separated form on a
-command that writes, plus an explicit check of the printed `installation:` line
-anywhere else.
+Both spellings work everywhere — `--installation <value>` and
+`--installation=<value>`. Two details are worth knowing:
+
+- **Rev takes a name or a home; Helmo and the roadmap also take a store path.**
+  Rev has no store of its own to name.
+- **`release status` and `install remove` still run while the release selection
+  is broken**, and still assert the name. Identity and selection coherence are
+  separate checks, so the two ways out of a broken selection are not put behind
+  the fault.
 
 ### Referring to one installation's records from another
 

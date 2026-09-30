@@ -98,7 +98,9 @@ line printed, or a home path a roster or service definition names. A
 disagreement with the environment is a refusal, not a precedence rule — there is
 deliberately no flag that *changes* the target. `REV_HOME` does that, and the
 flag is how you say you meant it. (Helmo and the roadmap take a third spelling,
-a store path, for the same reason.)
+a store path, for the same reason.) Write it with a space or an `=`; all three
+products take both, and all three assert on every command, reads included, so
+the flag is usable as a guard in a script.
 
 ## Installing a selected release
 

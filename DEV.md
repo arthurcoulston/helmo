@@ -444,11 +444,21 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
     (a state path, a roster-composed spec).
   - **`--installation <name|home>` asserts; it never redirects.** It takes
     either spelling because those are the two an operator has in front of them
-    — a label a status line printed, a home path a roster or plist names — and
-    a disagreement is a refusal, not a precedence rule. An inherited value
-    quietly beating an explicit one is the case that must be impossible, so
-    there is deliberately no flag that *changes* the target: `REV_HOME` does
-    that, and the flag is how you say you meant it.
+    — a label a status line printed, a home path a roster or plist names,
+    joined by a space or an `=` — and a disagreement is a refusal, not a
+    precedence rule. An inherited value quietly beating an explicit one is the
+    case that must be impossible, so there is deliberately no flag that
+    *changes* the target: `REV_HOME` does that, and the flag is how you say you
+    meant it.
+  - **The assertion is made at the door, for every command including reads**
+    (`assertInstallation()`, called in `cli.ts` before the switch). It was a
+    parameter of `requireTarget()` until H-2526, which meant it held only where
+    a handler remembered to pass it — and the read surfaces, which are exactly
+    where a script puts an assertion, returned before reaching it and exited 0.
+    One check before the switch is the same discipline as the `UNPINNED` list:
+    a surface added later cannot forget it. It reads the target `unchecked`, so
+    the two escapes from a broken selection stay reachable while still being
+    held to the name they were given.
   - **The inherited conflict needs no flag to go wrong.** `cleanEnv()` copies
     the supervisor's environment into every session, `REV_LABEL` included, so a
     command run with another `REV_HOME` is named by one installation and aimed

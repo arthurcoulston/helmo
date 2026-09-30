@@ -1162,11 +1162,13 @@ describe('recurring templates (lazy materialization)', () => {
   });
   it('an explicit template assignee routes its instances (H-1034)', () => {
     const s = freshStore();
-    s.createTicket(builder, {
+    const template = s.createTicket(builder, {
       title: 'Daily listen', body: 'standing', workstream: 'helmo-dev', type: 'ops', schedule: 'every 1d', assignee: 'reviewer-loop',
     });
+    expect(s.listTickets({ assignee: 'reviewer-loop' }).map((ticket) => ticket.id)).not.toContain(template.id);
     const [inst] = s.materializeDue(new Date(Date.now() + 25 * 60 * 60_000));
     expect(s.getTicket(inst!).assignee).toBe('reviewer-loop');
+    expect(s.listTickets({ assignee: 'reviewer-loop' }).map((ticket) => ticket.id)).toEqual([inst]);
   });
   it('after downtime only the latest missed slot spawns, and cancelling the template retires it', () => {
     const s = freshStore();

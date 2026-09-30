@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import Database from 'better-sqlite3';
 import { actionFingerprint, questionFingerprint } from '../src/presentation.js';
 import { Store } from '../src/store.js';
 import { Actor, ActorKind, HelmoError } from '../src/types.js';
@@ -55,13 +56,16 @@ describe('durable workflow model (H-429)', () => {
   it('rejects missing stages, unknown prerequisites, and cycles', () => {
     const s = freshStore();
     expect(() => s.addWorkflowDefinition({ workflow_id: 'x', revision: '1', stages: [] })).toThrow(/at least one/);
+    expect(() => s.addWorkflowDefinition({ workflow_id: 'x', revision: '1', stages: [{ id: 'a', after: { bad: true } }] } as never)).toThrow(HelmoError);
+    expect(() => s.addWorkflowDefinition({ workflow_id: 'x', revision: '1', stages: [{ id: 'a', after: { bad: true } }] } as never)).toThrow(/after to be an array/);
     expect(() => s.addWorkflowDefinition({ workflow_id: 'x', revision: '1', stages: [{ id: 'a', after: ['missing'] }] })).toThrow(/unknown/);
     expect(() => s.addWorkflowDefinition({ workflow_id: 'x', revision: '1', stages: [{ id: 'a', after: ['b'] }, { id: 'b', after: ['a'] }] })).toThrow(/cycle/);
   });
 
-  it('migrates an existing file store and preserves definitions across reopen', () => {
+  it('migrates an existing file store and preserves definitions through backup and restore', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'helmo-workflow-'));
     const path = join(dir, 'helmo.db');
+    const backupPath = join(dir, 'helmo.backup.db');
     try {
       const before = new Store(path);
       create(before);
@@ -69,7 +73,10 @@ describe('durable workflow model (H-429)', () => {
       const migrated = new Store(path);
       migrated.addWorkflowDefinition({ workflow_id: 'release', revision: 'v1', stages: [{ id: 'review' }] });
       migrated.close();
-      const restored = new Store(path);
+      const source = new Database(path, { readonly: true });
+      await source.backup(backupPath);
+      source.close();
+      const restored = new Store(backupPath);
       expect(restored.getWorkflowDefinition('release', 'v1')?.stages).toEqual([{ id: 'review' }]);
       expect(restored.getTicket('H-1').title).toBe('Build the importer');
       restored.close();

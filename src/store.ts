@@ -438,15 +438,21 @@ export class Store {
   }
 
   addWorkflowDefinition(definition: WorkflowDefinition): void {
-    const workflowId = definition.workflow_id?.trim();
-    const revision = definition.revision?.trim();
-    if (!workflowId || !revision || !Array.isArray(definition.stages) || definition.stages.length === 0) {
+    const workflowId = typeof definition?.workflow_id === 'string' ? definition.workflow_id.trim() : '';
+    const revision = typeof definition?.revision === 'string' ? definition.revision.trim() : '';
+    if (!workflowId || !revision || !Array.isArray(definition?.stages) || definition.stages.length === 0) {
       throw new HelmoError('A workflow definition requires workflow_id, revision, and at least one stage.');
     }
-    const ids = definition.stages.map((stage) => stage.id?.trim());
+    if (definition.stages.some((stage) => !stage || typeof stage !== 'object' || typeof stage.id !== 'string')) {
+      throw new HelmoError('Every workflow stage requires a string id.');
+    }
+    const ids = definition.stages.map((stage) => stage.id.trim());
     if (ids.some((id) => !id) || new Set(ids).size !== ids.length) throw new HelmoError('Workflow stage ids must be non-empty and unique.');
     const known = new Set(ids);
     for (const stage of definition.stages) {
+      if (stage.after !== undefined && (!Array.isArray(stage.after) || stage.after.some((id) => typeof id !== 'string' || !id.trim()))) {
+        throw new HelmoError(`Workflow stage "${stage.id}" requires after to be an array of non-empty stage ids.`);
+      }
       for (const prerequisite of stage.after ?? []) {
         if (!known.has(prerequisite)) throw new HelmoError(`Workflow stage "${stage.id}" names unknown prerequisite "${prerequisite}".`);
       }

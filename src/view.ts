@@ -80,6 +80,28 @@ function ref(id: string, cls: 'pid' | 'oid'): string {
   return `<span class="${cls}">${esc(id)}<button type="button" class="copy" data-copy="${esc(id)}" aria-label="Copy ${esc(id)}" title="Copy ${esc(id)}">⧉</button></span>`;
 }
 
+/** A title, drawn so a long one scans like a short one — the same rule helmo's
+ *  view applies to ticket titles, and for the same reason (H-2476).
+ *
+ *  Roadmap titles are shorter than Helmo's but follow the shape even more
+ *  strongly: "Release 1A: …", "Estate CI: every repo's tests run on push, red
+ *  files a ticket". The lead is the handle the writer already chose; drawing
+ *  it at the title's weight and the remainder quieter is presentation only.
+ *  No stored field, no title rewritten — that was I4's open question and the
+ *  measurement answered it no.
+ *
+ *  What renders is byte-identical to what is stored: the separator is kept and
+ *  nothing is clipped, so selection, find-in-page and a screen reader still get
+ *  the whole title. Both spans are inert, and they sit inside the existing
+ *  `.rtoggle` button, so this adds nothing interactive. */
+const TITLE_BREAK = /^(.{4,48}?)(: | — | – )(.{12,})$/;
+
+function title(text: string, cls: string): string {
+  const m = TITLE_BREAK.exec(text);
+  if (!m) return `<span class="${cls}">${esc(text)}</span>`;
+  return `<span class="${cls}">${esc(m[1])}<span class="tdetail">${esc(m[2] + m[3])}</span></span>`;
+}
+
 function actor(name: string, known?: ActorKind): string {
   const kind = known ?? actorKinds.get(name);
   // `person` is the fallback for a human with no role mark; an agent with no
@@ -155,7 +177,7 @@ function shipNextCard(r: Ranked): string {
   // attribution on the page falls back to the store-wide map and finds nothing,
   // because Arthur never writes here himself; an orchestrator relays his call.
   return `<article class="hero-card" id="${esc(r.project.id)}">
-    <header>${ref(r.project.id, 'pid')} <span class="htitle">${esc(r.project.title)}</span>
+    <header>${ref(r.project.id, 'pid')} ${title(r.project.title, 'htitle')}
       <span class="meta">${money(r.project, r.effort)} · ${esc(rel(r.project.updated_at))}</span></header>
     ${decision ? `<p class="decision"><span class="dmark">ship next</span> decided by <b>${actor(String(decision.payload['decided_by'] ?? ''), 'human')}</b>, ${esc(rel(decision.ts))} — ${esc(decision.payload['reason'])}</p>` : ''}
     ${r.project.body ? `<div class="body">${esc(r.project.body)}</div>` : ''}
@@ -184,7 +206,7 @@ function row(r: Ranked): string {
       <span class="rank">${r.rank}</span>
       ${ref(p.id, 'pid')}
       <button type="button" class="rtoggle" aria-expanded="false" aria-controls="${panel}">
-        <span class="rtitle">${esc(p.title)}</span>
+        ${title(p.title, 'rtitle')}
         <span class="badge quiet">${esc(STATUS_LABEL[p.status] ?? p.status)}</span>
         ${r.blocked_by.length ? `<span class="badge serious">⛔ waits on ${esc(r.blocked_by.join(', '))}</span>` : ''}
         ${noCite ? '<span class="badge quiet">∅ advances nothing stated</span>' : ''}
@@ -209,7 +231,7 @@ function shelfRow(p: Project): string {
   return `<div class="prow" id="${esc(p.id)}">
     <div class="rhead">${ref(p.id, 'pid')}
       <button type="button" class="rtoggle" aria-expanded="false" aria-controls="${panel}">
-        <span class="rtitle">${esc(p.title)}</span>
+        ${title(p.title, 'rtitle')}
         <span class="badge quiet">${esc(STATUS_LABEL[p.status] ?? p.status)}</span>
         <span class="rmeta">${p.actual_usd ? `$${p.actual_usd.toFixed(2)} metered · ` : ''}${esc(rel(p.closed_at ?? p.updated_at))}</span>
       </button>
@@ -402,6 +424,9 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; color: 
 .rhead:hover { background: var(--accent); }
 .rank { font-variant-numeric: tabular-nums; color: var(--ink-3); font-size: 12px; min-width: 20px; text-align: right; }
 .rtitle { font-weight: 500; }
+/* The quieter half of a split title (H-2476). Weight and colour only; the text
+   is the stored title's own remainder. */
+.tdetail { font-weight: 400; color: var(--ink-2); }
 .rmeta { margin-left: auto; text-align: right; }
 .explain { flex-basis: 100%; color: var(--ink-3); font-size: 12px; padding-left: 30px; }
 

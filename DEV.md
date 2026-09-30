@@ -109,6 +109,30 @@ button can, so the refresh now skips while `document.activeElement` is not the
 body — the same guard Helmo already had. Anything focusable added here depends
 on it.
 
+## Reading a title (R-42 I4, H-2476)
+
+Project and objective titles are drawn through `title(text, cls)`, which splits
+a title at the handle its writer already wrote — the first `: ` or dash — and
+renders the lead at the title's weight with the remainder in `.tdetail`. This
+page's 46 live titles follow that shape strongly ("Release 1A: …", "Estate CI:
+every repo's tests run on push, red files a ticket").
+
+It is presentation and nothing else. I4 asked whether comprehensible titles
+need a stored human-summary field; measured across Helmo's 400 ticket titles
+and this page's 46, the answer was no — the handle is already in the title. So
+there is no new field and no title is rewritten, and **what renders is
+byte-identical to what is stored**: the separator is kept and nothing is
+clipped, so selection, find-in-page and a screen reader still get the whole
+title. `test/view-title.test.ts` holds that invariant against the real rendered
+page, which is why it spawns the view rather than reading the source as the
+other view tests here do.
+
+Same rule, same constants, as `helmo/src/view.ts`; `helmo/DEV.md` ("Reading a
+title") carries the measurement behind the 48-character lead cap and the choice
+of separators. Change it here, change it there, and run `npm run viewport` in
+helmo — the spans are inert and sit inside the existing `.rtoggle` button, and
+that is what keeps `nested-interactive` (H-2447) from coming back.
+
 ## The estate design tokens (R-11 H-714)
 
 `src/estate-tokens.generated.ts` is a **vendored copy** of the estate shell's

@@ -111,7 +111,9 @@ describe('Awaiting-you section route', () => {
     expect(html).toContain('Two clicks in the Cloudflare dashboard: add an Email Routing rule.');
     // The sitting speaks for itself in the card; the body stays behind the
     // disclosure, where a "why this exists" paragraph belongs.
-    expect(html).toContain('<span class="decision-label sits">🪑 You do</span>Two clicks');
+    expect(html).toContain('<span class="decision-label sits">You do, together</span>Two clicks');
+    // The kind is named on the card, which is what tells it from a decision.
+    expect(html).toContain('<span class="kind sits">🪑 Needs a sitting</span>');
     expect(html).not.toContain('Review the parked work');
     expect(html).not.toContain('<header class="top">');
     expect(html).not.toContain('Needs grooming');

@@ -30,6 +30,29 @@ export interface AnswerResult {
   body: Record<string, unknown>;
 }
 
+export const fail = (code: number, error: string): AnswerResult => ({ code, body: { error } });
+
+/** The gate every write route on this page shares, in one place so a second
+ *  route cannot be written with a weaker copy of it (R-42 I13 added one).
+ *  Returns the refusal, or null when the caller may proceed.
+ *
+ *  Browser CSRF gate (H-145). A cross-origin page can send a "simple" POST
+ *  without preflight; a custom header and a JSON content-type both force a
+ *  preflight, which this server never answers — so the browser never sends
+ *  it. Origin is checked when present as belt-and-braces. */
+export function refuseUnlessOperatorSameOrigin(
+  headers: Record<string, string | string[] | undefined>,
+  ctx: AnswerContext,
+): AnswerResult | null {
+  if (!ctx.operator) return fail(403, 'No operator configured: set HELMO_OPERATOR to enable answering from the dashboard.');
+  const h = (k: string) => (Array.isArray(headers[k]) ? headers[k]![0] : headers[k]) ?? '';
+  if (!h('content-type').toLowerCase().startsWith('application/json')) return fail(403, 'answers must be application/json');
+  if (h('origin') && !ctx.sameOrigin.has(h('origin'))) return fail(403, 'cross-origin answer refused');
+  if (h('sec-fetch-site') && h('sec-fetch-site') !== 'same-origin' && h('sec-fetch-site') !== 'none') return fail(403, 'cross-site answer refused');
+  if (h(ANSWER_HEADER) !== ctx.nonce) return fail(403, 'missing or stale answer token — reload the dashboard');
+  return null;
+}
+
 /** Decide what POST /answer does with one request. Pure apart from the store
  *  write, so the refusals can be tested without a socket. */
 export function answerRequest(
@@ -37,17 +60,8 @@ export function answerRequest(
   body: string,
   ctx: AnswerContext,
 ): AnswerResult {
-  const fail = (code: number, error: string): AnswerResult => ({ code, body: { error } });
-  if (!ctx.operator) return fail(403, 'No operator configured: set HELMO_OPERATOR to enable answering from the dashboard.');
-  // Browser CSRF gate (H-145). A cross-origin page can send a "simple" POST
-  // without preflight; a custom header and a JSON content-type both force a
-  // preflight, which this server never answers — so the browser never sends
-  // it. Origin is checked when present as belt-and-braces.
-  const h = (k: string) => (Array.isArray(headers[k]) ? headers[k]![0] : headers[k]) ?? '';
-  if (!h('content-type').toLowerCase().startsWith('application/json')) return fail(403, 'answers must be application/json');
-  if (h('origin') && !ctx.sameOrigin.has(h('origin'))) return fail(403, 'cross-origin answer refused');
-  if (h('sec-fetch-site') && h('sec-fetch-site') !== 'same-origin' && h('sec-fetch-site') !== 'none') return fail(403, 'cross-site answer refused');
-  if (h(ANSWER_HEADER) !== ctx.nonce) return fail(403, 'missing or stale answer token — reload the dashboard');
+  const refused = refuseUnlessOperatorSameOrigin(headers, ctx);
+  if (refused) return refused;
   let p: { ticket_id?: unknown; ratify?: unknown; choice?: unknown; question_fingerprint?: unknown };
   try {
     p = JSON.parse(body) as typeof p;
@@ -80,7 +94,9 @@ export function answerRequest(
     }
     const selected = choosing ? presented?.options?.find((option) => option.letter === p.choice) : undefined;
     if (choosing && !selected) return fail(400, `the pending question does not offer choice ${JSON.stringify(p.choice)}.`);
-    const actor: Actor = { name: ctx.operator, kind: 'human', session: 'dashboard' };
+    // Non-null by the gate above, which refuses every request when no
+    // operator is configured.
+    const actor: Actor = { name: ctx.operator!, kind: 'human', session: 'dashboard' };
     const t = ctx.store.answerTicket(
       actor,
       p.ticket_id,

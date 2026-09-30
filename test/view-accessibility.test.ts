@@ -42,9 +42,33 @@ describe('view accessibility', () => {
   it('keeps the one-click answer control touch-sized', () => {
     expect(view).toMatch(/\.ratify\s*\{[^}]*min-height:\s*44px/);
     expect(view).toMatch(/\.option\.choice\s*\{[^}]*min-height:\s*44px/);
+    expect(view).toMatch(/\.acted\s*\{[^}]*min-height:\s*44px/);
     expect(bodyOf('questionCard')).toContain('Ratify recommendation');
     expect(bodyOf('questionCard')).toContain('class="option choice"');
     expect(bodyOf('questionCard')).toContain('data-choice="${esc(o.letter)}"');
+    expect(bodyOf('actionCard')).toContain('class="acted"');
+  });
+
+  it('gives each hero card a kind that is stated in words, not only in hue', () => {
+    // Colour never carries a meaning alone on this page (H-713), and three
+    // kinds is precisely where a reader starts guessing from the border.
+    // Matched across a line break: the sitting's chip interpolates the agent
+    // to sit with, so its call is wrapped.
+    expect(bodyOf('questionCard')).toMatch(/kindChip\(\s*'decides'/);
+    expect(bodyOf('actionCard')).toMatch(/kindChip\(\s*'acts'/);
+    expect(bodyOf('sittingCard')).toMatch(/kindChip\(\s*'sits'/);
+    expect(bodyOf('unreadableCard')).toMatch(/kindChip\(\s*'unreadable'/);
+    // Named from the field and never scraped out of the prose line.
+    expect(bodyOf('sittingCard')).toContain('t.sitting_with ?');
+    expect(bodyOf('sittingCard')).toContain('actor(t.sitting_with)');
+    for (const [cls, hue] of [['decides', 'warning'], ['acts', 'serious'], ['sits', 'link'], ['unreadable', 'critical']]) {
+      expect(view, `the ${cls} chip has no hue of its own`).toContain(`.kind.${cls} { color: var(--${hue}); }`);
+    }
+  });
+
+  it('offers no response control on a sitting, because the response is the sitting', () => {
+    expect(bodyOf('sittingCard')).not.toContain('<button');
+    expect(bodyOf('unreadableCard')).not.toContain('<button');
   });
 
   it('puts the issue and its answer before the folded context', () => {
@@ -64,12 +88,33 @@ describe('view accessibility', () => {
     expect(situation).toBeGreaterThan(context);
   });
 
+  it('puts the action and its report before the folded context', () => {
+    const card = bodyOf('actionCard');
+    const action = card.indexOf('>You do</span>');
+    const why = card.indexOf('>Your hands because</span>');
+    const report = card.indexOf('done it</button>');
+    const context = card.indexOf('<summary>Context</summary>');
+    const situation = card.indexOf('esc(r.situation)');
+
+    expect(action).toBeGreaterThan(-1);
+    // why_human is the field that separates this card from a decision, so it
+    // sits on the face of the card and above the disclosure, never inside it.
+    expect(why).toBeGreaterThan(action);
+    expect(report).toBeGreaterThan(why);
+    expect(context).toBeGreaterThan(report);
+    expect(situation).toBeGreaterThan(context);
+  });
+
   it('uses Helmo letters and a proxy-safe relative answer target', () => {
     const card = bodyOf('questionCard');
     expect(card).toContain('const a = ask(q)');
     expect(card).toContain('esc(o.letter)');
-    expect(view).toContain("fetch('answer', {");
-    expect(view).not.toContain("fetch('/answer', {");
+    // Both write routes are relative: the estate shell serves this page
+    // through a proxy, and an absolute path leaves the mount behind.
+    expect(view).toContain("fetch(acting ? 'acted' : 'answer', {");
+    expect(view).not.toContain("fetch('/answer'");
+    expect(view).not.toContain("fetch('/acted'");
+    expect(view).not.toContain("fetch(acting ? '/acted'");
   });
 
   it('draws every reference through the one renderer that can copy it', () => {
@@ -78,7 +123,7 @@ describe('view accessibility', () => {
     // an ID in it is how that quietly stops being true.
     expect(view).toContain('function ref(id: string, href?: string)');
     expect(bodyOf('ref')).toContain('data-copy="${esc(id)}"');
-    for (const site of ['row', 'questionCard', 'sittingCard', 'motionCard', 'details', 'groomStrip']) {
+    for (const site of ['row', 'questionCard', 'actionCard', 'unreadableCard', 'sittingCard', 'motionCard', 'details', 'groomStrip']) {
       expect(bodyOf(site), `${site} draws a reference by hand instead of through ref()`).toContain('ref(');
     }
     // The one `.tid` that is not an ID is the hygiene strip's workstream name.
@@ -120,6 +165,8 @@ describe('view accessibility', () => {
     expect(bodyOf('progressLine')).toContain('last recorded update');
     expect(bodyOf('progressLine')).toContain('progress.actor.name');
     expect(bodyOf('questionCard')).toContain('progressLine(t)');
+    expect(bodyOf('actionCard')).toContain('progressLine(t)');
+    expect(bodyOf('unreadableCard')).toContain('progressLine(t)');
     expect(bodyOf('motionCard')).toContain('progressLine(t)');
     expect(bodyOf('row')).toContain('progressLine(t)');
   });

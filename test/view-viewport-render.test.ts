@@ -411,6 +411,62 @@ describe('a reference can be carried into a conversation in one gesture', () => 
   }, 120_000);
 });
 
+/* The action card's own control, through the same three gestures. It is a
+ * separate block from the decision's because the whole point of R-42 I13 is
+ * that these two responses are not the same act: a wrong route here would send
+ * "I did it" to the route that records permission, which is the exact
+ * confusion the ticket exists to end. Asserting the route and the payload is
+ * how that stays proven rather than assumed. */
+describe('a completed action can be reported from the card', () => {
+  for (const gesture of ['mouse', 'keyboard', 'touch'] as const) {
+    it(`reports the action by ${gesture}, to the report route and not the answer route`, async () => {
+      const context = await browser!.newContext({ viewport: { width: 390, height: 900 }, hasTouch: gesture === 'touch' });
+      const page = await context.newPage();
+      let sent: Record<string, unknown> | null = null;
+      let answered = 0;
+      await page.route('**/acted', async (route) => {
+        sent = route.request().postDataJSON() as Record<string, unknown>;
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+      });
+      await page.route('**/answer', async (route) => {
+        answered += 1;
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+      });
+      try {
+        await page.goto(`${origin}${AT_EVERY_WIDTH}`, { waitUntil: 'load' });
+        const report = page.locator('.acard .acted');
+        const fingerprint = await page.locator('.acard').first().getAttribute('data-act');
+        expect(fingerprint).toBeTruthy();
+        if (gesture === 'mouse') await report.click();
+        else if (gesture === 'keyboard') {
+          await report.focus();
+          await page.keyboard.press('Enter');
+        } else {
+          // Scrolled into view first, unlike the decision card's tap: a tap
+          // takes VIEWPORT coordinates, and the action card sits below the
+          // decision card, so on a 390x900 phone its control starts off the
+          // fold. Without this the tap lands on empty space and the test
+          // fails for the harness's reason rather than the page's.
+          await report.scrollIntoViewIfNeeded();
+          const box = await report.boundingBox();
+          expect(box).not.toBeNull();
+          expect(box!.y, 'the control is still off the fold, so the tap would miss it').toBeLessThan(900);
+          await page.touchscreen.tap(box!.x + box!.width / 2, box!.y + box!.height / 2);
+        }
+        await expect.poll(() => sent).not.toBeNull();
+        expect(sent).toMatchObject({ done: true, action_fingerprint: fingerprint });
+        // Nothing that could be read as permission, and nothing sent to the
+        // route that grants it.
+        expect(sent).not.toHaveProperty('ratify');
+        expect(sent).not.toHaveProperty('choice');
+        expect(answered).toBe(0);
+      } finally {
+        await context.close();
+      }
+    }, 120_000);
+  }
+});
+
 describe('every offered decision can be answered from the card', () => {
   for (const gesture of ['mouse', 'keyboard', 'touch'] as const) {
     it(`sends the stored option letter by ${gesture}`, async () => {

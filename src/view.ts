@@ -9,11 +9,12 @@
 import { randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
+import { actedRequest } from './acted.js';
 import { ANSWER_HEADER, answerRequest } from './answer.js';
 import { ESTATE_AVATARS } from './estate-avatars.generated.js';
 import { loaded, running } from './build.js';
 import { installationLine, requestedInstallation, requireInstallation } from './install.js';
-import { ask, CLOSED_TAIL, markFor, recordTickets } from './presentation.js';
+import { actionFingerprint, ask, CLOSED_TAIL, markFor, recordTickets } from './presentation.js';
 import { ESTATE_TOKENS } from './estate-tokens.generated.js';
 import { Store } from './store.js';
 import { HygieneFinding } from './store.js';
@@ -356,6 +357,34 @@ function details(t: Ticket): string {
 
 // ---------- the three display shapes ----------
 
+/** Each hero card names its own kind, in the same place, in words.
+ *
+ *  Hue alone cannot carry this: the three kinds differ in what Arthur DOES —
+ *  say a word, do a thing himself, sit with an agent — and nothing about a
+ *  colour says which. Colour rides with a text label on this page and never
+ *  alone (H-713), and the label is what a reader who has not learned the
+ *  palette actually reads. The glyph is the third copy of the same fact, for
+ *  the scan down the column. */
+const kindChip = (cls: string, label: string) => `<span class="kind ${cls}">${label}</span>`;
+
+/** A row awaiting the human with no readable request at all.
+ *
+ *  `returnToHuman` and `requestAction` both write a request, so nothing legal
+ *  produces this — but an imported row carries its status straight into the
+ *  tickets table with no request column, and `questionCard` used to answer a
+ *  null question with ''. That ticket was counted in "awaits you" and drawn
+ *  NOWHERE: the one failure mode the operator can neither see nor recover
+ *  from. A card saying what is missing is the only honest reading of it. */
+function unreadableCard(t: Ticket): string {
+  return `<article class="qcard" id="${esc(t.id)}" data-ticket="${esc(t.id)}">
+    <header>${ref(t.id)} ${title(t.title, 'qtitle')} ${kindChip('unreadable', '⚠ Request unreadable')}
+      <span class="meta">${esc(t.workstream)} · marked ${esc(rel(t.updated_at))} ${blastBadge(t)}</span></header>
+    <p class="question"><span class="decision-label">Nothing recorded</span><span class="missing">awaiting you, but carrying neither a decision nor an action — the timeline below is where what it asked for survives</span></p>
+    ${progressLine(t)}
+    <details class="more" id="d-${esc(t.id)}"><summary>ticket detail</summary>${details(t)}</details>
+  </article>`;
+}
+
 // The hero: a question awaiting the human. The decision comes first; its
 // supporting situation stays one disclosure below it (H-974). With an operator
 // configured, every offered choice is an answer surface and ratifying the
@@ -366,7 +395,7 @@ function details(t: Ticket): string {
 // page. One function letters both, so "b" means one option wherever it is said.
 function questionCard(t: Ticket): string {
   const q = t.question;
-  if (!q) return '';
+  if (!q) return unreadableCard(t);
   const a = ask(q);
   const opt = (o: { letter: string; label: string; consequence: string }) => {
     const inner = `<span class="opt-label"><span class="opt-letter">${esc(o.letter)}</span>${esc(o.label)}</span><span class="opt-consequence">${esc(o.consequence)}</span>`;
@@ -375,7 +404,7 @@ function questionCard(t: Ticket): string {
       : `<div class="option">${inner}</div>`;
   };
   return `<article class="qcard" id="${esc(t.id)}" data-ticket="${esc(t.id)}" data-ask="${esc(a.fingerprint)}">
-    <header>${ref(t.id)} ${title(t.title, 'qtitle')}
+    <header>${ref(t.id)} ${title(t.title, 'qtitle')} ${kindChip('decides', '❓ Decision needed')}
       <span class="meta">${esc(t.workstream)} · asked ${esc(rel(t.updated_at))} ${blastBadge(t)} ${acceptanceBadge(t)}</span></header>
     <p class="question"><span class="decision-label">Issue</span>${esc(q.question)}</p>
     ${a.options ? `<div class="options">${a.options.map(opt).join('')}</div>` : ''}
@@ -384,6 +413,35 @@ function questionCard(t: Ticket): string {
     ${q.if_unanswered ? `<p class="silence">⏱ If unanswered: ${esc(q.if_unanswered)}</p>` : ''}
     ${progressLine(t)}
     <details class="context"><summary>Context</summary><p class="situation">${esc(q.situation)}</p></details>
+    <details class="more" id="d-${esc(t.id)}"><summary>ticket detail</summary>${details(t)}</details>
+  </article>`;
+}
+
+// An action awaiting the human (R-42 I13). It sits on the same axis as a
+// decision — awaiting_human, claim released, nobody working it — because a
+// pending request is a pending request. What differs is the RESPONSE, and the
+// response is the whole complaint this answers: a decision comes back as
+// permission, an action comes back as a report that something in the world has
+// changed. So the control says "I've done it" and never "Approve", and it is
+// drawn as an outline rather than the filled Ratify button, because two
+// controls that look alike are how the two meanings got confused.
+//
+// `why_human` is on the face of the card, not behind the disclosure. It is the
+// field that stops this being a decision wearing different paint, so a reader
+// who doubts which kind they are looking at can settle it without opening
+// anything.
+function actionCard(t: Ticket): string {
+  const r = t.action;
+  if (!r) return unreadableCard(t);
+  return `<article class="acard" id="${esc(t.id)}" data-ticket="${esc(t.id)}" data-act="${esc(actionFingerprint(r))}">
+    <header>${ref(t.id)} ${title(t.title, 'qtitle')} ${kindChip('acts', '🛠 Action for you')}
+      <span class="meta">${esc(t.workstream)}${t.project ? ` · ${esc(t.project)}` : ''} · asked ${esc(rel(t.updated_at))} ${blastBadge(t)} ${acceptanceBadge(t)}</span></header>
+    <p class="question"><span class="decision-label acts">You do</span>${esc(r.action)}</p>
+    <p class="rec"><span class="decision-label why">Your hands because</span>${esc(r.why_human)}</p>
+    ${operator ? `<button type="button" class="acted">I’ve done it</button><span class="ratify-status" role="status"></span>` : ''}
+    ${r.if_unanswered ? `<p class="silence">⏱ If unanswered: ${esc(r.if_unanswered)}</p>` : ''}
+    ${progressLine(t)}
+    <details class="context"><summary>Context</summary><p class="situation">${esc(r.situation)}</p></details>
     <details class="more" id="d-${esc(t.id)}"><summary>ticket detail</summary>${details(t)}</details>
   </article>`;
 }
@@ -397,14 +455,26 @@ function questionCard(t: Ticket): string {
 // body's first paragraph was the tempting alternative and it is wrong: in all
 // five it was "why this exists" background, and a heuristic that scrapes it
 // prints the wrong thing confidently.
+//
+// The agent to sit with is named from `sitting_with` and nowhere else, for the
+// same reason: it is a field now (R-42 I13), added precisely because "with
+// [agent]" cannot be scraped out of a prose line either. A sitting recorded
+// before the field existed names nobody, which is what it knew.
+//
+// This card carries NO control. The response to a sitting happens in the
+// sitting, and a button here would be a way to report one without having had
+// it.
 function sittingCard(t: Ticket): string {
   const waits = blockedBy(t);
   return `<article class="scard" id="${esc(t.id)}" data-ticket="${esc(t.id)}">
-    <header>${ref(t.id)} ${title(t.title, 'qtitle')}
+    <header>${ref(t.id)} ${title(t.title, 'qtitle')} ${kindChip(
+      'sits',
+      `🪑 Needs a sitting${t.sitting_with ? ` — with ${actor(t.sitting_with)}` : ''}`,
+    )}
       ${prioBadge(t)} ${waits.length ? `<span class="badge serious">⛔ waits on ${esc(waits.join(', '))}</span>` : ''} ${blastBadge(t)}
       <span class="meta">${esc(t.workstream)}${t.project ? ` · ${esc(t.project)}` : ''} · marked ${esc(rel(t.updated_at))}</span></header>
-    <p class="question"><span class="decision-label sits">🪑 You do</span>${
-      t.sitting ? esc(t.sitting) : '<span class="nositting">no line recorded — open the ticket to see what this sitting needs</span>'
+    <p class="question"><span class="decision-label sits">You do, together</span>${
+      t.sitting ? esc(t.sitting) : '<span class="missing">no line recorded — open the ticket to see what this sitting needs</span>'
     }</p>
     ${progressLine(t)}
     <details class="more" id="d-${esc(t.id)}"><summary>ticket detail</summary>${details(t)}</details>
@@ -516,11 +586,16 @@ function groomStrip(findings: HygieneFinding[], drawn: Set<string>): string {
   </section>`;
 }
 
-function awaitingSection(awaiting: Ticket[], withHuman: Ticket[]): string {
-  const count = awaiting.length + withHuman.length;
+/** The hero, in ascending cost to the operator: say a word, do a thing
+ *  yourself, sit with an agent. Three lists rather than one, because a
+ *  pending decision and a pending action share a status and nothing else —
+ *  and the cards have to be told apart by the renderer before they can be
+ *  told apart by the reader. */
+function awaitingSection(decisions: Ticket[], actions: Ticket[], withHuman: Ticket[]): string {
+  const count = decisions.length + actions.length + withHuman.length;
   return `<section class="hero" data-helmo-section="awaiting" data-count="${count}">
   <h2>Awaiting you</h2>
-  ${count ? `${awaiting.map(questionCard).join('')}${withHuman.map(sittingCard).join('')}` : '<p class="allclear">✓ Queue is empty. Nothing needs you.</p>'}
+  ${count ? `${decisions.map(questionCard).join('')}${actions.map(actionCard).join('')}${withHuman.map(sittingCard).join('')}` : '<p class="allclear">✓ Queue is empty. Nothing needs you.</p>'}
 </section>`;
 }
 
@@ -535,6 +610,14 @@ function page(wholeRecord = false, section: 'awaiting' | null = null): string {
   latestProgress = store.latestProgress(all.filter((t) => t.status !== 'done' && t.status !== 'cancelled').map((t) => t.id));
   const by = (s: string) => all.filter((t) => t.status === s);
   const awaiting = by('awaiting_human');
+  // Split by what the request column actually holds, never by what the status
+  // implies: an action-pending ticket leaves `question` null on purpose, so a
+  // renderer that assumes a question draws nothing at all for it. `decisions`
+  // takes everything that is not an action — including a row with no readable
+  // request — so the split is exhaustive and no awaiting ticket can fall out
+  // of the page while still being counted on it.
+  const actions = awaiting.filter((t) => t.action);
+  const decisions = awaiting.filter((t) => !t.action);
   const motion = by('in_progress');
   const standing = by('open').filter((t) => t.schedule); // recurring templates (H-22)
   const live = by('open').filter((t) => !t.schedule);
@@ -558,7 +641,7 @@ function page(wholeRecord = false, section: 'awaiting' | null = null): string {
   const done = by('done');
   const cancelled = by('cancelled');
   const spend = all.reduce((s, t) => s + (t.cost_usd_total || 0), 0);
-  const awaitingHtml = awaitingSection(awaiting, withHuman);
+  const awaitingHtml = awaitingSection(decisions, actions, withHuman);
 
   // The estate landing embeds this reading rather than drawing a second kind
   // of ticket. It is still a complete document so Helmo's CSS, answer nonce,
@@ -771,15 +854,35 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; color: 
   .top { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; }
   .tagline { display: inline; margin: 0 0 0 10px; }
   .stats { display: flex; gap: 12px 22px; width: auto; flex-wrap: wrap; }
-  .qcard, .scard { padding: 18px 22px; }
+  .qcard, .acard, .scard { padding: 18px 22px; }
 }
+/* The kind chip. Three hues is inside the measured categorical limit, but the
+   limit is not the argument: each chip states its kind in words and carries a
+   glyph, so the hue is the third copy of the fact rather than the only one. */
+.kind { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 650; white-space: nowrap; }
+.kind.decides { color: var(--warning); }
+.kind.acts { color: var(--serious); }
+.kind.sits { color: var(--link); }
+.kind.unreadable { color: var(--critical); }
+/* Named on the chip, so it reads at the same size as the rest of the chip
+   rather than at the 14px an actor gets in card meta. */
+.kind .actor { font-size: inherit; font-weight: inherit; }
+
+/* An action card is a question card in every dimension but hue: same surface,
+   same padding, same 19px ask. Amber asks for a word; rust asks for his own
+   hands, which is the distinction the whole ticket exists to draw. */
+.acard { background: var(--surface); border: 1px solid var(--hairline); border-left: 3px solid var(--serious);
+  border-radius: var(--radius-card); padding: 16px 14px; margin: 12px 0; }
+.acard header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.decision-label.acts { color: var(--serious); }
+
 /* A sitting card is a question card in every dimension but hue: same surface,
    same padding, same 19px ask. Amber asks for a word, blue asks for an act. */
 .scard { background: var(--surface); border: 1px solid var(--hairline); border-left: 3px solid var(--link);
   border-radius: var(--radius-card); padding: 16px 14px; margin: 12px 0; }
 .scard header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .decision-label.sits { color: var(--link); }
-.nositting { color: var(--ink-3); font-weight: 400; font-size: 15px; }
+.nositting, .missing { color: var(--ink-3); font-weight: 400; font-size: 15px; }
 .opt-label { font-weight: 600; font-size: 13px; }
 /* The letter is what Arthur says out loud, so it leads the label and holds its
    own column width — ragged letters read as a list of labels that happen to
@@ -799,6 +902,14 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; color: 
 .ratify:disabled { opacity: 0.5; cursor: default; }
 .ratify-status { margin-left: 8px; color: var(--ink-3); font-size: 12.5px; }
 .ratify-status.err { color: var(--critical); }
+/* The same 44px target and the same disabled behaviour as Ratify, and
+   deliberately NOT the same fill. Reporting an action is not ratifying
+   anything, and a control identical to the approval button is exactly how the
+   two came to read as one thing (R-42 I13). */
+.acted { min-height: 44px; padding: 5px 14px; border: 1px solid var(--serious); border-radius: var(--radius-control);
+  background: none; color: var(--serious); font: inherit; font-weight: 600; cursor: pointer; }
+.acted:hover, .acted:focus-visible { border-color: var(--serious); background: var(--status-serious-wash); }
+.acted:disabled { opacity: 0.5; cursor: default; }
 
 /* ---- in-motion cards ---- */
 .mcard { background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius-card); padding: 13px 18px; margin: 10px 0; }
@@ -1025,27 +1136,38 @@ document.addEventListener('click', async (e) => {
     return;
   }
 
-  const send = e.target.closest('.ratify, .choice');
+  // Answering a decision and reporting an action share this handler and
+  // nothing else: two routes, two payload shapes, two fingerprints. They are
+  // together because the disable-send-reload choreography is identical and a
+  // second copy of it drifts; they stay distinguishable because the acting
+  // flag decides the route, and a card that offers one control never offers
+  // the other.
+  const send = e.target.closest('.ratify, .choice, .acted');
   if (send) {
-    const card = send.closest('.qcard');
+    const card = send.closest('.qcard, .acard');
     const status = card.querySelector('.ratify-status');
-    const controls = card.querySelectorAll('.ratify, .choice');
+    const controls = card.querySelectorAll('.ratify, .choice, .acted');
+    const acting = send.classList.contains('acted');
     for (const control of controls) control.disabled = true;
     status.classList.remove('err');
-    status.textContent = 'recording…';
+    // An answer is being recorded; an action already happened somewhere else
+    // and this only writes it down. The words say which.
+    status.textContent = acting ? 'noting it…' : 'recording…';
     try {
-      const r = await fetch('answer', {
+      const r = await fetch(acting ? 'acted' : 'answer', {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-helmo-answer': document.documentElement.dataset.answer },
-        body: JSON.stringify({
-          ticket_id: card.dataset.ticket,
-          ...(send.classList.contains('choice') ? { choice: send.dataset.choice } : { ratify: true }),
-          question_fingerprint: card.dataset.ask,
-        }),
+        body: JSON.stringify(acting
+          ? { ticket_id: card.dataset.ticket, done: true, action_fingerprint: card.dataset.act }
+          : {
+              ticket_id: card.dataset.ticket,
+              ...(send.classList.contains('choice') ? { choice: send.dataset.choice } : { ratify: true }),
+              question_fingerprint: card.dataset.ask,
+            }),
       });
       const out = await r.json();
-      if (!r.ok) throw new Error(out.error || 'answer failed');
-      status.textContent = 'recorded ✓';
+      if (!r.ok) throw new Error(out.error || (acting ? 'report failed' : 'answer failed'));
+      status.textContent = acting ? 'noted ✓' : 'recorded ✓';
       setTimeout(() => location.reload(), 400);
     } catch (err) {
       status.classList.add('err');
@@ -1057,11 +1179,16 @@ document.addEventListener('click', async (e) => {
 `;
 
 const server = createServer((req, res) => {
-  if (req.method === 'POST' && req.url === '/answer') {
+  // Two write routes now, and they stay two. A decision is answered; an
+  // action is reported done. Collapsing them into one endpoint that branches
+  // on its payload would put the free-text capability Ward removed (H-1053)
+  // back within reach of whichever branch was written less carefully.
+  if (req.method === 'POST' && (req.url === '/answer' || req.url === '/acted')) {
+    const route = req.url === '/acted' ? actedRequest : answerRequest;
     let body = '';
     req.on('data', (c) => (body += c));
     req.on('end', () => {
-      const out = answerRequest(req.headers, body, { operator, nonce: answerNonce, sameOrigin, store });
+      const out = route(req.headers, body, { operator, nonce: answerNonce, sameOrigin, store });
       res.writeHead(out.code, { 'content-type': 'application/json' });
       res.end(JSON.stringify(out.body));
     });

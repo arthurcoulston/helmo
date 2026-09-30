@@ -502,6 +502,12 @@ describe('the served document can be read and operated without looking at it', (
         expect(wash, `the badge ink on its wash is ${wash.toFixed(2)}:1`).toBeGreaterThanOrEqual(AA);
         const fill = contrast(token('--link-ink').rgb, token('--link').rgb);
         expect(fill, `the button label on its fill is ${fill.toFixed(2)}:1`).toBeGreaterThanOrEqual(AA);
+        // The third such pair, introduced with the action card (R-42 I13): the
+        // report control's own ink over the wash its hover and focus states
+        // put behind it. A ratio measured on the surface says nothing about
+        // the state a reader is actually looking at while they press it.
+        const acted = contrast(token('--serious').rgb, over(token('--status-serious-wash'), surface));
+        expect(acted, `the report control on its hover wash is ${acted.toFixed(2)}:1`).toBeGreaterThanOrEqual(AA);
       });
     }
   });

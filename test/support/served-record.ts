@@ -143,6 +143,22 @@ export function seedCapacityRecord(db: string): { rows: number; storedTextBytes:
     deps: [{ to: prereq.id, type: 'blocks' as const }],
   });
   make('A sitting he can reach now', { needs_human: 'Two clicks in the Cloudflare dashboard.' });
+  // A sitting that names the agent to sit with, which is the only way that
+  // half of the card is drawn at all (R-42 I13).
+  make('A sitting that names who to sit with', {
+    needs_human: 'Twenty minutes going through the release gates with the seat that built them.',
+    sitting_with: 'mason',
+  });
+  // A pending ACTION, the third hero shape. Without one in the fixture the
+  // floor and viewport checks measure a page that never draws the card, which
+  // is the same gap that let a 343px option loose in a 390px viewport.
+  const act = make('Add the routing rule the Worker needs');
+  seed.requestAction(agent, act.id, {
+    situation: 'Everything else is deployed and the Worker answers, but mail to the new address bounces.',
+    action: 'Two clicks in the provider dashboard: add an Email Routing rule for the new address.',
+    why_human: 'The dashboard is the only place the rule can be added and no agent holds that account.',
+    if_unanswered: 'The address keeps bouncing and the intake form has nowhere to send its replies.',
+  });
   const question = make('Which provider account should this use');
   seed.returnToHuman(agent, question.id, {
     situation: 'The Worker needs an account and both would work.',
@@ -154,7 +170,7 @@ export function seedCapacityRecord(db: string): { rows: number; storedTextBytes:
     ],
   });
   seed.close();
-  return { rows: CAPACITY.rows + 4, storedTextBytes };
+  return { rows: CAPACITY.rows + 6, storedTextBytes };
 }
 
 /** Starts the view over one store and resolves its origin. The operator is

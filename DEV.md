@@ -72,8 +72,18 @@ orchestrator meetings and the read-only view. Product intent:
   sittings went unnoticed. The line is a field and never the body's first
   paragraph: across every ticket that carried the marker, that paragraph was
   "why this exists" background, so scraping it prints the wrong thing
-  confidently. A sitting renders as `.scard`, a question card in every
-  dimension but hue.
+  confidently. Each of the three renders as its own hero card, and each NAMES
+  its kind in words beside a glyph and a hue, because colour alone cannot carry
+  three meanings to a reader who has not learned the palette (H-713): a
+  decision is `.qcard` in amber with Ratify and its offered choices, an action
+  is `.acard` in rust with "I've done it" and nothing that could read as
+  approval, a sitting is `.scard` in blue naming `sitting_with` and carrying no
+  control at all — the response to a sitting happens in the sitting. They are
+  drawn in ascending cost to the operator: a word, his hands, his diary. The
+  section splits `awaiting_human` on whether `action` is set rather than on the
+  status, and everything that is not an action takes the decision path, so a
+  row awaiting him with no readable request draws a card saying so instead of
+  being counted in "awaits you" and drawn nowhere.
   Three kinds of request (R-42 I13, H-2521): the harness can ask the operator
   to DECIDE something, to DO something, or to sit down with an agent. It could
   not tell them apart, and the confusion was in the field as well as the prose
@@ -102,9 +112,10 @@ orchestrator meetings and the read-only view. Product intent:
   grant anything, or stand in for an agent's later verification. The two paths
   refuse each other rather than discarding the pending request: answering was
   once the only route and would have set `question = NULL` over the action.
-  As of H-2521 no tool or CLI door reaches either method, so no action request
-  exists in any store; the dashboard's cards must land before the doors, or a
-  pending action would draw an empty card.
+  The dashboard's cards landed first, deliberately (H-2530): no tool or CLI
+  door reaches either method yet, so no action request exists in any store —
+  and had a door landed first, a pending action would have reached a renderer
+  that drew nothing for it. Adding the doors is what remains.
   Desk claim guard (H-1056): an agent actor with no `session` may file and
   update work but cannot claim an unmarked ticket, including by creating it
   `in_progress`; if it needs a ticket, the build belongs to a loop. Marking an
@@ -289,9 +300,18 @@ orchestrator meetings and the read-only view. Product intent:
 - `view.ts` — the dashboard at :4400 (H-2). The constitutional line, restated
   with Arthur in H-90: the page carries no record DATA-ENTRY (agents write
   the record), but answering an awaiting_human question is operator steering
-  — the ONE mutation the page may perform, via POST /answer through
+  — via POST /answer through
   store.answerTicket with a human actor named by HELMO_OPERATOR (unset =
-  fully read-only; the env var is the deliberate switch). The route is gated
+  fully read-only; the env var is the deliberate switch). Since H-2530 there is
+  a second, and only a second: POST /acted (`acted.ts`, `test/acted.test.ts`)
+  records that a pending ACTION was carried out. It stays a separate endpoint
+  rather than a branch of the first, because collapsing them would put the
+  free-text capability H-1053 removed back within reach of whichever branch was
+  written less carefully. Its whole payload is `{ticket_id, done: true,
+  action_fingerprint}` — it cannot carry an answer, a resolution, a chosen
+  option or any words, so the `did` it stores is written by the route: it says
+  the report came from the dashboard with no words added and quotes the request
+  as asked, which is the most a click can honestly claim. Both routes are gated
   against browser CSRF (H-145): JSON content-type + a custom header force a
   preflight the server never answers, Origin/Sec-Fetch-Site are checked when
   present, and a per-boot nonce the page carries must be echoed — friction

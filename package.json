@@ -9,7 +9,8 @@
     "view": "tsx src/view.ts",
     "vendor:tokens": "node scripts/vendor-estate-tokens.mjs",
     "vendor:avatars": "node scripts/vendor-estate-avatars.mjs",
-    "vendor:reach": "node scripts/vendor-estate-reach.mjs"
+    "vendor:reach": "node scripts/vendor-estate-reach.mjs",
+    "postbuild": "node scripts/stamp-build.mjs"
   },
   "publish": {
     "cold": {

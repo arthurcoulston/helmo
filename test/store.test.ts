@@ -58,6 +58,7 @@ describe('durable workflow model (H-429)', () => {
     expect(() => s.addWorkflowDefinition({ workflow_id: 'x', revision: '1', stages: [] })).toThrow(/at least one/);
     expect(() => s.addWorkflowDefinition({ workflow_id: 'x', revision: '1', stages: [{ id: 'a', after: { bad: true } }] } as never)).toThrow(HelmoError);
     expect(() => s.addWorkflowDefinition({ workflow_id: 'x', revision: '1', stages: [{ id: 'a', after: { bad: true } }] } as never)).toThrow(/after to be an array/);
+    expect(() => s.addWorkflowDefinition({ workflow_id: 'x', revision: '1', stages: [{ id: ' a ' }] })).toThrow(HelmoError);
     expect(() => s.addWorkflowDefinition({ workflow_id: 'x', revision: '1', stages: [{ id: 'a', after: ['missing'] }] })).toThrow(/unknown/);
     expect(() => s.addWorkflowDefinition({ workflow_id: 'x', revision: '1', stages: [{ id: 'a', after: ['b'] }, { id: 'b', after: ['a'] }] })).toThrow(/cycle/);
   });

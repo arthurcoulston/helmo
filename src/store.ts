@@ -447,6 +447,7 @@ export class Store {
       throw new HelmoError('Every workflow stage requires a string id.');
     }
     const ids = definition.stages.map((stage) => stage.id.trim());
+    if (definition.stages.some((stage) => stage.id !== stage.id.trim())) throw new HelmoError('Workflow stage ids cannot have surrounding whitespace.');
     if (ids.some((id) => !id) || new Set(ids).size !== ids.length) throw new HelmoError('Workflow stage ids must be non-empty and unique.');
     const known = new Set(ids);
     for (const stage of definition.stages) {

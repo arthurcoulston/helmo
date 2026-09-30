@@ -1,11 +1,13 @@
 // The single-loop driver: wake on the Helm cursor, spawn one session, classify
 // the outcome through the ladder, idle or halt. v0 runs one loop in the
 // foreground; the multi-loop supervisor is the next milestone.
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { stateDir } from './config.js';
 import { WakeCheck, WorkstreamInfo, actorActivity, actorSelfSpend, actorTickets, escalateBlocked, escalateSilentDeclines, openEscalation, readyTicketIds, recordSpend, scopeLabel, seatHolds, seatId, seatStreams, wakeCheck, workstreamInfo } from './helm.js';
-import { burnWindow, markBurnFloor } from './burn.js';
+import { burnWindow, markBurnFloor, recentCosts } from './burn.js';
 import { exhaustedLimit, pollUsage, readCodexUsage, readUsage, refreshCodexUsage, refreshFor, usageForModel } from './usage.js';
-import { capacityDecide } from './capacity.js';
+import { anomalyDecide, capacityDecide, planPointsConsumed } from './capacity.js';
 import { choiceExhausted, selectRun } from './routing.js';
 import { raiseWedgeAlarm, wedgeDecide } from './health.js';
 import { breakerDecide, declineDecide, ladderDecide, limitDecide, probeDecide, rollingMean, seatDecide, velocityToPause, wakeDecide } from './ladder.js';
@@ -15,6 +17,13 @@ import { runSession } from './shim.js';
 import { GlobalConfig, LoopConfig, RunChoice } from './types.js';
 
 const sleep = (s: number) => new Promise((r) => setTimeout(r, s * 1000));
+
+function writeBlockedDetail(
+  dir: string,
+  detail: { kind: 'anomaly' | 'capacity'; reason: string; observed: unknown; measured_against: unknown; at: string; investigation_ticket: string | null },
+): void {
+  writeFileSync(join(dir, 'BLOCKED.json'), `${JSON.stringify(detail, null, 2)}\n`);
+}
 
 /** Helm is reachable across a subprocess boundary, so a poll can fail for
  *  reasons that have nothing to do with the work: a locked store, a moment's
@@ -244,7 +253,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     const started = Date.now();
     // Include desk meetings in Codex's shared allowance, without a model call.
     if ([...l.choices, ...l.fallbacks, ...(g.probe ? [g.probe] : [])].some((c) => c.runtime === 'codex')) refreshCodexUsage();
-    const providerUsage = () => ({ claude: readUsage(), codex: readCodexUsage() });
+    const providerUsage = () => ({ claude: readUsage(), codex: readCodexUsage(), mock: null });
     const exhaustedChoice = (c: RunChoice) =>
       choiceExhausted(c, providerUsage(), g.limit_exhausted_percent);
     const sel = selectRun(l, providerUsage(), i, g.limit_exhausted_percent);
@@ -316,14 +325,28 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
         console.log(`rev: '${l.name}' has no plan capacity — scheduled to resume at ${capacity.resumeAt}.`);
         return;
       } else if (capacity.act === 'blocked') {
-        sSet(l.name, 'BLOCKED', `kind=capacity\nreason=${capacity.reason}\nat=${new Date().toISOString()}\n`);
+        const at = new Date().toISOString();
+        sSet(l.name, 'BLOCKED', `kind=capacity\nreason=${capacity.reason}\nat=${at}\n`);
         logEvent(l.name, 'blocked', `kind=capacity reason=${capacity.reason}`);
+        let investigationTicket: string | null = null;
         try {
-          const id = escalateBlocked(g, l, capacity.reason, '', dir);
-          console.log(`rev: '${l.name}' BLOCKED — escalated as Helm ticket ${id}.`);
+          investigationTicket = escalateBlocked(g, l, capacity.reason, '', dir);
+          console.log(`rev: '${l.name}' BLOCKED — escalated as Helm ticket ${investigationTicket}.`);
         } catch (e) {
           console.error(`rev: '${l.name}' BLOCKED — escalation failed (${String(e).slice(0, 200)}).`);
         }
+        writeBlockedDetail(dir, {
+          kind: 'capacity', reason: capacity.reason,
+          observed: capacities.map(({ choice: c, snapshot }) => ({
+            provider: c.provider, model: c.model,
+            limits: snapshot?.limits.map(({ label, percent, resets_at }) => ({ label, percent, resets_at })) ?? null,
+          })),
+          measured_against: {
+            exhausted_percent: g.limit_exhausted_percent - g.shared_reserve_percent,
+            exhaustion_ceiling_seconds: g.exhaustion_ceiling_seconds,
+          },
+          at, investigation_ticket: investigationTicket,
+        });
         return;
       }
     }
@@ -409,6 +432,10 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     if (l.workstream !== '*') {
       try { readyBefore = readyTicketIds(g, l); } catch (e) { logEvent(l.name, 'decline-check-failed', `before ${String(e).slice(0, 160)}`); }
     }
+    const costBaseline = recentCosts(l.name);
+    const usageBefore = (run.billing ?? 'metered') === 'subscription'
+      ? usageForModel(providerUsage()[run.runtime], model)
+      : null;
     const res = runSession(g, l, prompt, model, run);
 
     const durSec = Math.round((Date.now() - started) / 1000);
@@ -496,6 +523,49 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
         }
       } catch (e) {
         logEvent(l.name, 'spend-failed', `iter=${i} ${String(e).slice(0, 200)}`);
+      }
+    }
+
+    // A flat-plan account is bounded by its plan bars, not cumulative notional
+    // dollars, but a sudden change in either slope is still a real containment
+    // signal. Compare against the baseline captured before this run, so the
+    // iteration under judgment never dilutes its own rolling mean.
+    if (res.cls === 'ok' && (run.billing ?? 'metered') === 'subscription') {
+      const usageAfter = usageForModel(await refreshFor(run.runtime), model);
+      const meanUsd = costBaseline.length
+        ? costBaseline.reduce((sum, cost) => sum + cost, 0) / costBaseline.length
+        : 0;
+      const planPointsUsed = planPointsConsumed(usageBefore, usageAfter);
+      const anomaly = anomalyDecide({
+        observedUsd: res.cost_usd,
+        meanUsd,
+        windowSize: costBaseline.length,
+        planPointsUsed,
+        thresholds: {
+          rateMultiple: g.anomaly_rate_multiple,
+          minUsd: g.anomaly_min_usd,
+          absPercent: g.anomaly_abs_percent,
+        },
+      });
+      if (anomaly.act === 'trip') {
+        const at = new Date().toISOString();
+        logEvent(l.name, 'anomaly', anomaly.reason.replace(/^anomaly:\s*/, ''));
+        sSet(l.name, 'BLOCKED', `kind=anomaly\nreason=${anomaly.reason}\nat=${at}\n`);
+        let investigationTicket: string | null = null;
+        try {
+          investigationTicket = escalateBlocked(g, l, anomaly.reason, res.outputTail, dir);
+          logEvent(l.name, 'escalated', `ticket=${investigationTicket}`);
+        } catch (e) {
+          logEvent(l.name, 'escalate-failed', String(e).slice(0, 200));
+        }
+        writeBlockedDetail(dir, {
+          kind: 'anomaly', reason: anomaly.reason,
+          observed: { cost_usd: res.cost_usd ?? null, plan_points: planPointsUsed ?? null },
+          measured_against: { mean_cost_usd: meanUsd, window: costBaseline.length, rate_multiple: g.anomaly_rate_multiple, absolute_plan_points: g.anomaly_abs_percent },
+          at, investigation_ticket: investigationTicket,
+        });
+        console.log(`rev: ${anomaly.reason} — halting '${l.name}'.`);
+        return;
       }
     }
 

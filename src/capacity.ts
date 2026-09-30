@@ -285,6 +285,24 @@ export function anomalyDecide(o: {
   return { act: 'ok' };
 }
 
+/** Largest movement of one unchanged plan window. A reset is a new window,
+ *  not negative consumption, and unmatched bars are unknown rather than zero. */
+export function planPointsConsumed(
+  before: UsageSnapshot | null,
+  after: UsageSnapshot | null,
+): number | undefined {
+  if (!before || !after || before.stale || after.stale) return undefined;
+  const movements = after.limits.flatMap((next) => {
+    const prior = before.limits.find((old) =>
+      old.kind === next.kind && old.label === next.label && old.resets_at === next.resets_at,
+    );
+    if (!prior) return [];
+    const movement = next.percent - prior.percent;
+    return Number.isFinite(movement) && movement >= 0 ? [movement] : [];
+  });
+  return movements.length ? Math.max(...movements) : undefined;
+}
+
 /** Whether the dollar gate applies at all. A subscription account's token-log
  *  dollars are notional — for codex they come from roster prices x tokens, and
  *  for claude from the CLI's API-equivalent estimate on a flat plan. Neither is

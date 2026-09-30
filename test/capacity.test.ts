@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { anomalyDecide, capacityDecide, dollarGateApplies, effectiveExhaustedPercent, snapshotStale } from '../src/capacity.js';
+import { anomalyDecide, capacityDecide, dollarGateApplies, effectiveExhaustedPercent, planPointsConsumed, snapshotStale } from '../src/capacity.js';
 import { RunChoice } from '../src/types.js';
 import { UsageSnapshot } from '../src/usage.js';
 
@@ -267,5 +267,14 @@ describe('anomalyDecide — a runaway is a slope, not a total (matrix 3)', () =>
 
   it('holds its peace before there is a mean to compare against', () => {
     expect(anomalyDecide({ observedUsd: 40, meanUsd: 0, windowSize: 0, thresholds: anomaly }).act).toBe('ok');
+  });
+});
+
+describe('planPointsConsumed', () => {
+  it('compares only the same plan window and reports its largest movement', () => {
+    const before = snap([20], [10]);
+    const after = snap([32], [10]);
+    expect(planPointsConsumed(before, after)).toBe(12);
+    expect(planPointsConsumed(before, snap([2], [11]))).toBeUndefined();
   });
 });

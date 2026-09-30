@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { burnWindow, markBurnFloor, meteredProviders } from '../src/burn.js';
+import { burnWindow, markBurnFloor, meteredProviders, recentCosts } from '../src/burn.js';
 
 const NOW = Date.parse('2026-08-25T16:00:00.000Z');
 const at = (iso: string, loop: string, cost: string) =>
@@ -64,6 +64,16 @@ describe('burnWindow', () => {
   it('skips malformed lines rather than halting a loop over a bad log line', () => {
     writeFileSync(log, ['garbage', at('2026-08-25T15:30:00.000Z', 'ward', 'NaN'), at('2026-08-25T15:31:00.000Z', 'ward', '2.00'), ''].join('\n'));
     expect(burnWindow('ward', NOW, log)).toEqual({ hourUsd: 2, dayUsd: 2 });
+  });
+
+  it('keeps the last five parseable costs without turning unknowns into zero', () => {
+    writeFileSync(log, [
+      at('2026-08-25T10:00:00.000Z', 'ward', '1'),
+      at('2026-08-25T11:00:00.000Z', 'ward', '?'),
+      ...[2, 3, 4, 5, 6].map((cost, i) => at(`2026-08-25T1${i + 1}:30:00.000Z`, 'ward', String(cost))),
+      at('2026-08-25T15:59:00.000Z', 'bosun', '99'),
+    ].join('\n') + '\n');
+    expect(recentCosts('ward', 5, log)).toEqual([2, 3, 4, 5, 6]);
   });
 
   it('is zero when there is no log at all', () => {

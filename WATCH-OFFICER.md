@@ -40,9 +40,10 @@ Your instruments, all under the Rev home (`~/.rev` unless `REV_HOME` overrides):
 
 - Derive state from the files and `rev status`, never from memory or from what a session
   claimed. A dead PID with a RUNNING marker is CRASHED, not running.
-- When a loop is BLOCKED, read the BLOCKED file and the last events.log lines, then check the
-  Helm awaiting-you queue for the escalation ticket — the operator may prefer to answer it in
-  a meeting rather than here.
+- When a loop is BLOCKED, read `BLOCKED.json` first when present: it names the
+  reason, observed values, baseline and escalation ticket. Then read the plain
+  BLOCKED sentinel and the last events.log lines, and check the named Helm
+  ticket. Older failure/apparatus blocks have only the plain sentinel.
 - LIMIT is not an anomaly: it is the loop correctly waiting out an external condition (API
   window, network). Report it as waiting, with the attempt count.
 - BACKOFF means the loop process died and the supervisor is retrying on a rising timer — read

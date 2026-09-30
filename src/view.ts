@@ -90,6 +90,21 @@ function state(name: string): string {
   return 'halted';
 }
 
+function blockedDetail(name: string): { reason?: string; investigation_ticket?: string | null } | null {
+  try {
+    return JSON.parse(readFileSync(join(stateDir(name), 'BLOCKED.json'), 'utf8')) as { reason?: string; investigation_ticket?: string | null };
+  } catch {
+    return null;
+  }
+}
+
+function blockedSummary(name: string): string | undefined {
+  const detail = blockedDetail(name);
+  if (detail?.reason) return `${detail.reason}${detail.investigation_ticket ? ` — ${detail.investigation_ticket}` : ''}`;
+  return sGet(name, 'BLOCKED')?.split('\n').find((line) => line.startsWith('reason='))?.slice('reason='.length)
+    ?? sGet(name, 'BLOCKED')?.split('\n')[0];
+}
+
 function lastEvents(name: string, n: number): string[] {
   const p = join(stateDir(name), 'events.log');
   if (!existsSync(p)) return [];
@@ -128,7 +143,8 @@ createServer((req, res) => {
         const reason = st === 'IDLE'
           ? sGet(l.name, 'IDLE')?.split('\n')[1]
           : st === 'SEAT_HELD' ? sGet(l.name, 'SEAT_HELD')?.split('\n')[0]
-          : st === 'BLOCKED' || st === 'WEDGED' ? sGet(l.name, st)?.split('\n')[0] : undefined;
+          : st === 'BLOCKED' ? blockedSummary(l.name)
+          : st === 'WEDGED' ? sGet(l.name, st)?.split('\n')[0] : undefined;
         return { name: l.name, state: st, workstream: l.workstream, ...(reason ? { reason } : {}) };
       }),
       usage: { claude: readUsage(), codex: readCodexUsage() },
@@ -140,7 +156,7 @@ createServer((req, res) => {
     .map((l) => {
       const st = state(l.name);
       const sp = spend(l.name);
-      const blocked = st === 'BLOCKED' ? `<div class="blockreason">${esc(sGet(l.name, 'BLOCKED')?.split('\n')[0])} — see the Helm awaiting-you queue</div>` : '';
+      const blocked = st === 'BLOCKED' ? `<div class="blockreason">${esc(blockedSummary(l.name))} — see the Helm queue</div>` : '';
       // A wedged loop cannot file a ticket about being wedged — Helm is what it
       // cannot reach — so this row is the record (H-448).
       const wedged = st === 'WEDGED' ? `<div class="blockreason">${esc(sGet(l.name, 'WEDGED')?.split('\n')[0])}</div>` : '';

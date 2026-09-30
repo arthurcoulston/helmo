@@ -159,8 +159,12 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   the exhaustion ceiling still blocks for a human because the telemetry is
   wrong rather than the plan.
   `anomalyDecide` measures a rate against the loop's own rolling mean, never a
-  cumulative total. **No percent is ever converted to tokens or dollars**, in
-  either direction.
+  cumulative total. After a subscription run the loop compares its notional
+  cost with the preceding five parseable iterations and refreshes the same plan
+  window to measure percentage-point movement. A trip writes both the halt
+  sentinel and `BLOCKED.json` with the observed values, baseline, time and
+  escalation ticket, which `/health.json` and the dashboard surface. **No
+  percent is ever converted to tokens or dollars**, in either direction.
 - `shim.ts` — the runtime adapter (claude / codex / mock). Owns non-interactive
   flags, constitution injection (fail-closed), `cleanEnv()` (strips parent
   CLAUDE/ANTHROPIC/CODEX env — the auth-leak fix; don't weaken it) and

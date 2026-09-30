@@ -90,6 +90,15 @@ and do something can no longer come back as permission to act.
 
 ### Three kinds of request
 
+- Recurring templates no longer appear as assigned work (H-440). They remain
+  visible through template-specific reads, but an assignee query now returns
+  only concrete tickets an agent can actually work.
+
+- Workflow decisions are admitted through a trusted, scoped record (H-430).
+  The writer identity comes from the Helmo runtime rather than caller input,
+  and each decision is bound to one requirement and one subject manifest;
+  revocation names the exact decision it replaces.
+
 - A completed action can no longer read as permission (H-2521). An agent asking
   the human to DO something and an agent asking permission to act itself both
   arrived as a question and both came back through Ratify. An action now has its
@@ -382,6 +391,7 @@ conventions:
   `a70f560`, `53d5a3e`, `883c671`, `e7082bb`
 - `ef42dd2`, `697e89b`, `656a04c`, `71ae82d`, `305ab03`, `7113b0b`,
   `864c62c`, `7d887ed`, `d1e7c0a`, `246460f`
+- `3f9c61c`, `f8b5a1b`, `792f51a`
 
 The three merge commits carry no changes of their own: `f73727a` brought in
 `09929fa`, `5e449a8` brought in `6ca2373`, and `1211665` brought in `4f86ba4`.

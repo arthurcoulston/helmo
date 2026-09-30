@@ -89,7 +89,7 @@ function answerInvestigate(e: Env, ticketId: string): void {
 
 function startFleet(e: Env): { proc: ChildProcess; out: () => string } {
   let buf = '';
-  const proc = spawn('npx', ['tsx', REV_CLI, 'run'], { env: e.env, cwd: join(import.meta.dirname, '..') });
+  const proc = spawn(process.execPath, ['--import', 'tsx', REV_CLI, 'run'], { env: e.env, cwd: join(import.meta.dirname, '..') });
   proc.stdout!.on('data', (d: Buffer) => (buf += d.toString()));
   proc.stderr!.on('data', (d: Buffer) => (buf += d.toString()));
   return { proc, out: () => buf };
@@ -397,7 +397,9 @@ cwd = "/tmp"
 runtime = "mock"
 mock_cmd = "true"
 `);
-    const { proc } = startFleet(e);
+    // This case deliberately needs a disposable wrapper above the supervisor:
+    // killing that ancestor is the behavior under test.
+    const proc = spawn('npx', ['tsx', REV_CLI, 'run'], { env: e.env, cwd: join(import.meta.dirname, '..') });
     try {
       await waitFor(() => loopPid(e, 'stray') !== null, 'loop up');
       expect(loopPid(e, 'supervisor')).not.toBeNull();

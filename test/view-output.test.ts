@@ -86,7 +86,7 @@ model = "mock"
 
   const port = await freePort();
   origin = `http://127.0.0.1:${port}`;
-  child = spawn('npx', ['tsx', VIEW], {
+  child = spawn(process.execPath, ['--import', 'tsx', VIEW], {
     cwd: join(import.meta.dirname, '..'),
     env: { ...process.env, REV_HOME: home, REV_VIEW_PORT: String(port) },
     stdio: 'ignore',

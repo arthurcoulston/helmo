@@ -173,7 +173,7 @@ mock_cmd = "true"
       const deadline = Date.now() + 30_000;
       while (!re.test(events()) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 250));
     };
-    const child = spawn('npx', ['tsx', REV_CLI, 'run', 'seat-loop'], { env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore' });
+    const child = spawn(process.execPath, ['--import', 'tsx', REV_CLI, 'run', 'seat-loop'], { env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore' });
     try {
       await until(/seat-held/);
       expect(events()).toMatch(/seat-held.*another live session \('desk'\)/);
@@ -217,7 +217,7 @@ fi
     // two checks; reaching the fourth proves Rev consumed the third check and
     // completed the gate decision this regression protects.
     const eventsPath = join(dir, 'events.log');
-    const child = spawn('npx', ['tsx', REV_CLI, 'run', 'note-loop', '--count', '2'], {
+    const child = spawn(process.execPath, ['--import', 'tsx', REV_CLI, 'run', 'note-loop', '--count', '2'], {
       env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore',
     });
     try {
@@ -288,7 +288,7 @@ fi
     // Second process starts idle with the ticket still ready, no motion, and a
     // fresh one-hour floor. Restart pickup bypasses that old process's floor.
     const marker = readFileSync(join(dir, 'events.log'), 'utf8').length;
-    const child = spawn('npx', ['tsx', REV_CLI, 'run', 'note-loop', '--count', '1'], {
+    const child = spawn(process.execPath, ['--import', 'tsx', REV_CLI, 'run', 'note-loop', '--count', '1'], {
       env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore',
     });
     try {
@@ -324,7 +324,7 @@ mock_cmd = "true"
     ]) as { id: string }).id;
 
     const dir = join(e.home, 'state', 'handoff-loop');
-    const child = spawn('npx', ['tsx', REV_CLI, 'run', 'handoff-loop', '--count', '2'], {
+    const child = spawn(process.execPath, ['--import', 'tsx', REV_CLI, 'run', 'handoff-loop', '--count', '2'], {
       env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore',
     });
     try {
@@ -371,7 +371,7 @@ mock_cmd = "true"
 
     const dir = join(e.home, 'state', 'quiet-loop');
     const polled = instrumentSuccessfulWakeChecks(e);
-    const child = spawn('npx', ['tsx', REV_CLI, 'run', 'quiet-loop', '--count', '2'], {
+    const child = spawn(process.execPath, ['--import', 'tsx', REV_CLI, 'run', 'quiet-loop', '--count', '2'], {
       env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore',
     });
     try {
@@ -420,7 +420,7 @@ mock_cmd = "true"
     seedTicket(e, 'Standing ready work the seat left behind');
 
     const dir = join(e.home, 'state', 'resync-loop');
-    const child = spawn('npx', ['tsx', REV_CLI, 'run', 'resync-loop', '--count', '2'], {
+    const child = spawn(process.execPath, ['--import', 'tsx', REV_CLI, 'run', 'resync-loop', '--count', '2'], {
       env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore',
     });
     try {
@@ -484,7 +484,7 @@ fi
         await new Promise((r) => setTimeout(r, 25));
       }
     };
-    const child = spawn('npx', ['tsx', REV_CLI, 'run', 'drain-loop'], {
+    const child = spawn(process.execPath, ['--import', 'tsx', REV_CLI, 'run', 'drain-loop'], {
       env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore',
     });
     try {
@@ -656,7 +656,7 @@ mock_cmd = "true"
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'IDLE'), '0');
 
-    const child = spawn('npx', ['tsx', REV_CLI, 'run', 'wedge-loop'], {
+    const child = spawn(process.execPath, ['--import', 'tsx', REV_CLI, 'run', 'wedge-loop'], {
       env: e.env,
       cwd: join(import.meta.dirname, '..'),
       stdio: 'ignore',
@@ -1053,7 +1053,7 @@ mock_cmd = 'echo "PROMPT:$REV_PROMPT"'
     expect(existsSync(join(e.home, 'state', 'judge', 'IDLE'))).toBe(true);
     const eventsBefore = readFileSync(join(e.home, 'state', 'judge', 'events.log'), 'utf8');
     const polled = instrumentSuccessfulWakeChecks(e);
-    const child = spawn('npx', ['tsx', REV_CLI, 'run', 'judge', '--count', '1'], {
+    const child = spawn(process.execPath, ['--import', 'tsx', REV_CLI, 'run', 'judge', '--count', '1'], {
       env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore',
     });
     try {
@@ -1113,7 +1113,7 @@ fi
 
     // Put the owner on its real scoped wake path while the filing is withheld.
     rev(e, ['run', 'builder', '--count', '1']);
-    const owner = spawn('npx', ['tsx', REV_CLI, 'run', 'builder', '--count', '2'], {
+    const owner = spawn(process.execPath, ['--import', 'tsx', REV_CLI, 'run', 'builder', '--count', '2'], {
       env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore',
     });
     try {

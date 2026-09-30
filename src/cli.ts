@@ -115,7 +115,7 @@ const install = requireInstallation(process.env, (error) => {
   console.error(JSON.stringify({ error }));
   process.exit(1);
 }, flagBeforeStore('installation'));
-const store = new Store(install.db);
+const store = new Store(install.db, install);
 
 /** `flag`, but a malformed flag reports in the CLI's JSON shape rather than
  *  reaching the try/catch that has not started yet. */
@@ -147,7 +147,7 @@ function actor(): Actor {
 // it prints parses, and a caller reading fields it asked for is unaffected by
 // one more.
 function out(data: unknown): void {
-  console.log(JSON.stringify({ installation: installationRef(install), ...(data as object) }, null, 1));
+  console.log(JSON.stringify({ installation: installationRef(install, store.installationIdentity()), ...(data as object) }, null, 1));
 }
 
 try {
@@ -406,7 +406,7 @@ before the store is opened when the environment resolves a different one, and it
 } catch (e) {
   console.error(JSON.stringify({
     error: e instanceof HelmoError ? e.message : String(e),
-    installation: installationRef(install),
+    installation: installationRef(install, store.installationIdentity()),
   }));
   process.exit(1);
 } finally {

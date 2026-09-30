@@ -10,6 +10,11 @@ orchestrator meetings and the read-only view. Product intent:
 - `store.ts` — the heart: SQLite store (better-sqlite3), append-only event log
   with a global `seq` cursor (Rev's wake signal rides on it), ticket
   materialization, blocking/ready computation, actor validation. Stop
+  Explicitly named installations claim `meta.installation_name` atomically
+  with their first event. Every later event under another explicit/inherited
+  name refuses; reads remain available and report both names as UNCLEAR.
+  Derived-only stores do not claim a durable name, preserving single-install
+  use.
   discipline (H-55): workstream steering (budget_usd + seat, human/orchestrator
   writes only, evented as `workstream_set` under `ws:<name>`; numbers and
   names only — the prose `goal` was retired in H-1186, see the roadmap seam

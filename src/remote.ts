@@ -24,7 +24,7 @@ if (!token || token.length < 24) {
 
 const install = requireInstallation(process.env, undefined, requestedInstallation(process.argv.slice(2)));
 mkdirSync(install.home, { recursive: true });
-const store = new Store(install.db);
+const store = new Store(install.db, install);
 
 const port = Number(process.env['HELMO_REMOTE_PORT'] ?? 4401);
 
@@ -65,5 +65,5 @@ createServer((req: IncomingMessage, res: ServerResponse) => {
     }
   });
 }).listen(port, '127.0.0.1', () =>
-  console.log(`Helmo remote MCP: http://127.0.0.1:${port} (Streamable HTTP, bearer-gated) — ${installationLine(install)}`),
+  console.log(`Helmo remote MCP: http://127.0.0.1:${port} (Streamable HTTP, bearer-gated) — ${installationLine(install, store.installationIdentity())}`),
 );

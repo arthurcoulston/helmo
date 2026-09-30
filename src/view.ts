@@ -30,7 +30,7 @@ const operator = process.env['HELMO_OPERATOR']?.trim() || null;
 // injection defences catch. Friction, not a gate; keep the comment honest.
 const answerNonce = randomBytes(16).toString('hex');
 const sameOrigin = new Set<string>();
-const store = new Store(dbPath);
+const store = new Store(dbPath, install);
 
 const esc = (s: unknown) =>
   String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
@@ -1063,5 +1063,5 @@ server.listen(port, host, () => {
   sameOrigin.add(`http://127.0.0.1:${boundPort}`);
   sameOrigin.add(`http://localhost:${boundPort}`);
   process.send?.({ type: 'helmo-view-ready', port: boundPort });
-  console.log(`Helmo view: http://localhost:${boundPort} — ${installationLine(install)}${operator ? ` — answers enabled for ${operator}` : ' (read-only; set HELMO_OPERATOR to answer)'}`);
+  console.log(`Helmo view: http://localhost:${boundPort} — ${installationLine(install, store.installationIdentity())}${operator ? ` — answers enabled for ${operator}` : ' (read-only; set HELMO_OPERATOR to answer)'}`);
 });

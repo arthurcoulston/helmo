@@ -427,3 +427,30 @@ describe('no entry point opens a store when the assertion names another installa
     expect(existsSync(home), `${file} created ${home}`).toBe(false);
   });
 });
+
+describe('the store owns its explicitly named installation (H-2487)', () => {
+  it('claims atomically on the first mutation and refuses another inherited name without changing records', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'helmo-store-identity-'));
+    const path = join(dir, 'helmo.db');
+    const first = new Store(path, { label: 'dev.rev.personal', source: 'REV_LABEL' });
+    expect(first.installationIdentity()).toEqual({ process: 'dev.rev.personal', stored: null, clear: true });
+    const ticket = first.createTicket(orch, { title: 'Named store', body: 'The first mutation owns the name.', workstream: 'rev-dev', type: 'build' });
+    expect(first.installationIdentity()).toEqual({ process: 'dev.rev.personal', stored: 'dev.rev.personal', clear: true });
+    first.close();
+
+    const wrong = new Store(path, { label: 'dev.rev.gp', source: 'REV_LABEL' });
+    expect(wrong.getTicket(ticket.id).title).toBe('Named store');
+    expect(wrong.installationIdentity()).toEqual({ process: 'dev.rev.gp', stored: 'dev.rev.personal', clear: false });
+    expect(() => wrong.updateTicket(orch, { ticket_id: ticket.id, note: 'must not land' })).toThrow(/UNCLEAR.*dev\.rev\.gp.*dev\.rev\.personal/);
+    expect(wrong.getTicket(ticket.id).updated_at).toBe(ticket.updated_at);
+    wrong.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('does not give a derived-only store a durable name', () => {
+    const store = new Store(':memory:', { label: 'dev.helmo', source: 'derived' });
+    store.createTicket(orch, { title: 'Old single install', body: 'Derived use stays unnamed.', workstream: 'rev-dev', type: 'build' });
+    expect(store.installationIdentity()).toEqual({ process: 'dev.helmo', stored: null, clear: true });
+    store.close();
+  });
+});

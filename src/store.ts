@@ -288,8 +288,10 @@ function normalizeRefs(input: string[] | undefined): string[] {
 
 export class Store {
   private db: Database.Database;
+  private installation?: { label: string; source: string };
 
-  constructor(path: string) {
+  constructor(path: string, installation?: { label: string; source: string }) {
+    this.installation = installation;
     this.db = new Database(path);
     this.db.pragma('journal_mode = WAL');
     // WAL lets readers run alongside the one writer, but a second WRITER gets
@@ -363,6 +365,14 @@ export class Store {
 
   close(): void {
     this.db.close();
+  }
+
+  /** Durable name claimed by the first explicitly named writer. A derived-only
+   *  installation deliberately leaves old single-store use unchanged. */
+  installationIdentity(): { process: string | null; stored: string | null; clear: boolean } {
+    const row = this.db.prepare("SELECT value FROM meta WHERE key = 'installation_name'").get() as { value: string } | undefined;
+    const processName = this.installation?.label ?? null;
+    return { process: processName, stored: row?.value ?? null, clear: !processName || !row || row.value === processName };
   }
 
   // ---------- reads ----------
@@ -2156,9 +2166,21 @@ export class Store {
   }
 
   private append(ts: string, ticketId: string, type: string, actor: Actor, payload: Record<string, unknown>): void {
+    this.assertInstallationForWrite();
     this.db
       .prepare('INSERT INTO events (ts, ticket_id, event_type, actor, payload) VALUES (?, ?, ?, ?, ?)')
       .run(ts, ticketId, type, JSON.stringify(actor), JSON.stringify(payload));
+  }
+
+  private assertInstallationForWrite(): void {
+    if (!this.installation || this.installation.source === 'derived') return;
+    const row = this.db.prepare("SELECT value FROM meta WHERE key = 'installation_name'").get() as { value: string } | undefined;
+    if (row && row.value !== this.installation.label) {
+      throw new HelmoError(
+        `Installation target UNCLEAR: process names '${this.installation.label}', but this store belongs to '${row.value}'. Nothing was written. Point HELMO_HOME or HELMO_DB at the intended installation.`,
+      );
+    }
+    if (!row) this.db.prepare("INSERT INTO meta (key, value) VALUES ('installation_name', ?)").run(this.installation.label);
   }
 
   private workstreamSeat(name: string): string | null {

@@ -9,9 +9,9 @@ import { buildServer } from './tools.js';
 // Started by a service definition, so the assertion arrives on argv (H-2474),
 // and the target is named on STDERR: stdout is the MCP protocol channel.
 const install = requireInstallation(process.env, undefined, requestedInstallation(process.argv.slice(2)));
-console.error(`Helmo MCP (stdio) — ${installationLine(install)}`);
 mkdirSync(install.home, { recursive: true });
-const store = new Store(install.db);
+const store = new Store(install.db, install);
+console.error(`Helmo MCP (stdio) — ${installationLine(install, store.installationIdentity())}`);
 
 const envActor: Actor | null = process.env['HELMO_ACTOR'] ? (JSON.parse(process.env['HELMO_ACTOR']) as Actor) : null;
 

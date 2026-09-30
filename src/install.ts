@@ -151,13 +151,15 @@ export function requestedInstallation(argv: readonly string[]): string | undefin
 }
 
 /** The phrase a prose surface prints to say which installation it served. */
-export function installationLine(i: Installation): string {
-  return `install: ${i.label} (${i.home}) — db: ${i.db}${i.release ? ` — release: ${i.release}` : ''}`;
+export function installationLine(i: Installation, identity?: { stored: string | null; clear: boolean }): string {
+  const target = identity && !identity.clear ? ` — target UNCLEAR: process ${i.label}, store ${identity.stored}` : '';
+  return `install: ${i.label} (${i.home}) — db: ${i.db}${i.release ? ` — release: ${i.release}` : ''}${target}`;
 }
 
 /** The same answer as a field, for a surface whose output is parsed. */
-export function installationRef(i: Installation): Pick<Installation, 'label' | 'home' | 'db' | 'source'> & { release?: string } {
-  return { label: i.label, home: i.home, db: i.db, source: i.source, ...(i.release ? { release: i.release } : {}) };
+export function installationRef(i: Installation, identity?: { stored: string | null; clear: boolean }): Pick<Installation, 'label' | 'home' | 'db' | 'source'> & { release?: string; target?: string; stored_name?: string } {
+  return { label: i.label, home: i.home, db: i.db, source: i.source, ...(i.release ? { release: i.release } : {}),
+    ...(identity && !identity.clear ? { target: 'UNCLEAR', stored_name: identity.stored ?? undefined } : {}) };
 }
 
 function selectedRelease(product: 'rev' | 'helmo' | 'helmo-roadmap', env: NodeJS.ProcessEnv): string | null {

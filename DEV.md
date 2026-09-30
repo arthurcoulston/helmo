@@ -151,7 +151,9 @@ orchestrator meetings and the read-only view. Product intent:
   seat at creation. Clearing a named receiver, resuming a human-returned ticket,
   or moving unassigned work into a seated stream applies the same default; the
   recorded assignment makes replay exact. An explicit assignee on a recurring
-  template is deliberate instance routing and wins over the stream default. The reason is the loop
+  template is deliberate instance routing and wins over the stream default;
+  assignee-list reads omit the template itself and return its spawned instances,
+  because the route is not a reservation of the standing work. The reason is the loop
   side: a rev loop draws only from
   its bound workstream's pool plus tickets in its name, so a pool in a stream
   nobody is bound to was ready to no one (fourteen clean tickets sat for days,

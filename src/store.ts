@@ -671,7 +671,15 @@ export class Store {
     const routedReady = filter.ready && filter.caller && filter.workstream;
     if (filter.workstream && !routedReady) { clauses.push('workstream = ?'); params.push(filter.workstream); }
     if (filter.project) { clauses.push('project = ?'); params.push(filter.project); }
-    if (filter.assignee) { clauses.push('assignee = ?'); params.push(filter.assignee); }
+    if (filter.assignee) {
+      clauses.push('assignee = ?');
+      params.push(filter.assignee);
+      // A template's assignee routes the instances it spawns; it is not a
+      // reservation of the standing template itself. The loop's first queue
+      // read is an assignee query, so returning templates here offers work that
+      // the claim path correctly refuses (H-440).
+      clauses.push('schedule IS NULL');
+    }
     if (filter.type) { clauses.push('type = ?'); params.push(filter.type); }
     if (filter.priority_max !== undefined) { clauses.push('priority <= ?'); params.push(filter.priority_max); }
     if (filter.ready) {

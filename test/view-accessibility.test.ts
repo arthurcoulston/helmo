@@ -49,6 +49,38 @@ describe('view accessibility', () => {
     expect(view).not.toContain("fetch('/answer', {");
   });
 
+  it('draws every reference through the one renderer that can copy it', () => {
+    // The guarantee is "every visible ID is copyable", and the only way to
+    // hold it is that no renderer draws one by hand. A new `.tid` span with
+    // an ID in it is how that quietly stops being true.
+    expect(view).toContain('function ref(id: string, href?: string)');
+    expect(bodyOf('ref')).toContain('data-copy="${esc(id)}"');
+    for (const site of ['row', 'questionCard', 'sittingCard', 'motionCard', 'details', 'groomStrip']) {
+      expect(bodyOf(site), `${site} draws a reference by hand instead of through ref()`).toContain('ref(');
+    }
+    // The one `.tid` that is not an ID is the hygiene strip's workstream name.
+    const byHand = [...view.matchAll(/<span class="tid">\$\{esc\(([^)]*)\)\}<\/span>/g)].map((m) => m[1]);
+    expect(byHand).toEqual(["f.workstream ?? ''"]);
+  });
+
+  it('keeps the copy control finger-sized and announced', () => {
+    // Small glyph, 44px target: the overlay is what reconciles the two, so it
+    // is the part worth holding — losing it leaves a 18px tap target.
+    expect(view).toMatch(/\.copy \{[^}]*width: 18px; height: 18px/);
+    expect(view).toMatch(/\.copy::after \{[^}]*inset: -13px/);
+    expect(view).toContain('id="copy-status"');
+    expect(view).toContain("aria-live=\"polite\"");
+    expect(bodyOf('ref')).toContain('aria-label="Copy ${esc(id)}"');
+  });
+
+  it('copies without the Clipboard API, which plain http does not have', () => {
+    expect(view).toContain('function copyWithoutTheApi(text)');
+    expect(view).toContain("document.execCommand('copy')");
+    // Copying an ID inside a <summary> must not also toggle its disclosure.
+    const handler = view.slice(view.indexOf("const copy = e.target.closest('.copy')"));
+    expect(handler.slice(0, handler.indexOf('const text'))).toContain('e.preventDefault()');
+  });
+
   it('does not replace the page while a reader has keyboard focus', () => {
     expect(view).toContain('document.activeElement !== document.body');
     expect(view.indexOf('document.activeElement !== document.body')).toBeLessThan(view.indexOf('document.body.replaceWith(doc.body)'));

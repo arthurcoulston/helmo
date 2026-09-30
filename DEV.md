@@ -644,6 +644,33 @@ card's holder, the timeline's actor, and the agent chain on done rows. The
 quiet rows keep their assignee as plain text. Arthur's rail on the set was "be
 measured, it could go too far".
 
+## Copying a reference (R-42 I12, H-2428)
+
+Arthur carries records into agent conversations by their id, so every visible
+id on the page has a copy control beside it. One renderer draws them all —
+`ref(id, href?)` in `view.ts` — and that is the whole mechanism: there is no
+second way to draw a `.tid`, which is what makes "any reference on screen can
+be copied" a property of the code. `test/view-accessibility.test.ts` holds it
+there by asserting no renderer builds one by hand.
+
+What goes on the clipboard comes off `data-copy`, never off the rendered text,
+so a badge, an ellipsis or a future prefix drawn beside an id cannot reach the
+paste. The control is 18px of glyph with a transparent `::after` overlay taking
+it to a 44px target; a finger-sized icon beside 12px monospace would dominate
+every row. Two things that look optional are not: `e.preventDefault()`, because
+most of these sit inside a `<summary>` and engines differ on whether a button
+inside one still toggles the disclosure; and the `document.execCommand`
+fallback, because `navigator.clipboard` is secure-context only and this page is
+plain http — a phone reading the estate over the LAN takes that path every
+time, and a copy button that silently does nothing there is invisible from a
+localhost browser.
+
+`test/view-viewport-render.test.ts` proves it end to end in Chromium with a
+real clipboard, including the no-API path, so `npm run viewport` is where this
+is actually demonstrated. The roadmap ships the same control, spelled the same
+way (`helmo-roadmap/src/view.ts`); it has no browser in its toolchain, so it
+asserts the shape and leans on this repo for the behaviour.
+
 ## Neighbors
 
 Rev (formerly Capstan), a sibling project, supervises the bash loops that draw

@@ -36,6 +36,26 @@ const esc = (s: unknown) =>
 
 // ---------- small renderers ----------
 
+/** A reference the operator might carry into a conversation, drawn with the
+ *  one control that copies it. Arthur asked for copy icons "across the
+ *  harness beside things he might take into an agent conversation" (H-2364),
+ *  and the reference IS how he carries a record there — so every visible ID
+ *  on this page comes from here, which is what makes "it can always be
+ *  copied" a property of the code rather than a habit.
+ *
+ *  What lands on the clipboard is `id` and nothing else: it comes off
+ *  `data-copy`, never off the rendered text, so an ellipsis, a badge or a
+ *  future prefix beside it cannot end up in what he pastes.
+ *
+ *  `href` is for the few references that are also links. The control is the
+ *  link's SIBLING, never inside it — nesting a button in an anchor makes one
+ *  gesture ambiguous between navigating and copying. */
+function ref(id: string, href?: string): string {
+  const shown = href === undefined ? esc(id) : `<a href="${esc(href)}">${esc(id)}</a>`;
+  return `<span class="tid">${shown}<button type="button" class="copy" data-copy="${esc(id)}" aria-label="Copy ${esc(id)}" title="Copy ${esc(id)}">⧉</button></span>`;
+}
+
+
 function rel(iso: string): string {
   // A timestamp this cannot parse is a corrupt record, not a reason to take
   // the dashboard down. H-446 carried a Unix epoch float where every other row
@@ -223,7 +243,7 @@ function progressLine(t: Ticket): string {
 function details(t: Ticket): string {
   const deps = store.getDeps(t.id);
   const depLine = (label: string, ids: string[]) =>
-    ids.length ? `<div class="dep"><span class="dep-label">${label}</span> ${ids.map((i) => `<span class="tid">${esc(i)}</span>`).join(' ')}</div>` : '';
+    ids.length ? `<div class="dep"><span class="dep-label">${label}</span> ${ids.map((i) => ref(i)).join(' ')}</div>` : '';
   return `<div class="body">${esc(t.body)}</div>
   ${t.uncertainty_note ? `<div class="uncertain">✱ Where the doubt is: ${esc(t.uncertainty_note)}</div>` : ''}
   ${depLine('waits on', deps.outgoing.filter((d) => d.type === 'blocks').map((d) => d.to_id))}
@@ -251,7 +271,7 @@ function questionCard(t: Ticket): string {
     return `<div class="option">${inner}</div>`;
   };
   return `<article class="qcard" id="${esc(t.id)}" data-ticket="${esc(t.id)}" data-ask="${esc(a.fingerprint)}">
-    <header><span class="tid">${esc(t.id)}</span> <span class="qtitle">${esc(t.title)}</span>
+    <header>${ref(t.id)} <span class="qtitle">${esc(t.title)}</span>
       <span class="meta">${esc(t.workstream)} · asked ${esc(rel(t.updated_at))} ${blastBadge(t)} ${acceptanceBadge(t)}</span></header>
     <p class="question"><span class="decision-label">Issue</span>${esc(q.question)}</p>
     ${a.options ? `<div class="options">${a.options.map(opt).join('')}</div>` : ''}
@@ -276,7 +296,7 @@ function questionCard(t: Ticket): string {
 function sittingCard(t: Ticket): string {
   const waits = blockedBy(t);
   return `<article class="scard" id="${esc(t.id)}" data-ticket="${esc(t.id)}">
-    <header><span class="tid">${esc(t.id)}</span> <span class="qtitle">${esc(t.title)}</span>
+    <header>${ref(t.id)} <span class="qtitle">${esc(t.title)}</span>
       ${prioBadge(t)} ${waits.length ? `<span class="badge serious">⛔ waits on ${esc(waits.join(', '))}</span>` : ''} ${blastBadge(t)}
       <span class="meta">${esc(t.workstream)}${t.project ? ` · ${esc(t.project)}` : ''} · marked ${esc(rel(t.updated_at))}</span></header>
     <p class="question"><span class="decision-label sits">🪑 You do</span>${
@@ -290,7 +310,7 @@ function sittingCard(t: Ticket): string {
 // In motion: who holds it, what they last said, how far it reaches.
 function motionCard(t: Ticket): string {
   return `<article class="mcard" id="${esc(t.id)}">
-    <header><span class="tid">${esc(t.id)}</span> <span class="mtitle">${esc(t.title)}</span>
+    <header>${ref(t.id)} <span class="mtitle">${esc(t.title)}</span>
       ${prioBadge(t)} ${blastBadge(t)} ${acceptanceBadge(t)} ${money(t)}
       <span class="meta">${esc(t.workstream)} · <b class="holder">${t.assignee ? actor(t.assignee) : '?'}</b> · ${esc(rel(t.updated_at))}</span></header>
     ${progressLine(t)}
@@ -317,7 +337,7 @@ function row(t: Ticket, opts: { showDone?: boolean } = {}): string {
   const noEv = t.status === 'done' && t.evidence.length === 0;
   return `<details class="trow" id="${esc(t.id)}">
     <summary>
-      <span class="tid">${esc(t.id)}</span>
+      ${ref(t.id)}
       <span class="rtitle">${esc(t.title)}</span>
       ${prioBadge(t)}
       ${waits.length ? `<span class="badge serious">⛔ waits on ${esc(waits.join(', '))}</span>` : ''}
@@ -370,7 +390,7 @@ function groomStrip(findings: HygieneFinding[], drawn: Set<string>): string {
     ${findings
       .map(
         (f) => `<p class="gitem"><span class="badge quiet">${GROOM_LABEL[f.check]}</span>
-          ${f.ticket_id ? `<a href="${drawn.has(f.ticket_id) ? '' : '?whole=1'}#${esc(f.ticket_id)}" class="tid">${esc(f.ticket_id)}</a>` : `<span class="tid">${esc(f.workstream ?? '')}</span>`} <span class="gdetail">${esc(f.detail)}</span></p>`,
+          ${f.ticket_id ? ref(f.ticket_id, `${drawn.has(f.ticket_id) ? '' : '?whole=1'}#${f.ticket_id}`) : `<span class="tid">${esc(f.workstream ?? '')}</span>`} <span class="gdetail">${esc(f.detail)}</span></p>`,
       )
       .join('')}
   </section>`;
@@ -383,6 +403,8 @@ function awaitingSection(awaiting: Ticket[], withHuman: Ticket[]): string {
   ${count ? `${awaiting.map(questionCard).join('')}${withHuman.map(sittingCard).join('')}` : '<p class="allclear">✓ Queue is empty. Nothing needs you.</p>'}
 </section>`;
 }
+
+const COPY_STATUS = '<span id="copy-status" class="sr-only" role="status" aria-live="polite"></span>';
 
 function page(wholeRecord = false, section: 'awaiting' | null = null): string {
   // One query per render, not one per actor drawn: the map is store-wide and
@@ -430,6 +452,7 @@ function page(wholeRecord = false, section: 'awaiting' | null = null): string {
 <body class="section-reading" data-helmo-section="awaiting" data-count="${count}">
 ${ESTATE_AVATARS}
 ${awaitingHtml}
+${COPY_STATUS}
 <script>${JS}</script>
 </body></html>`;
   }
@@ -474,6 +497,7 @@ ${cancelled.length ? `<section><h2>Cancelled (${cancelled.length})</h2>${cancell
 <footer>${operator ? `answers write as ${esc(operator)} (human) · everything else read-only` : 'read-only · set HELMO_OPERATOR to answer from here'} · ${esc(dbPath)} · refreshed <span id="age">just now</span>
   <span id="refresh-warning" class="refresh-warning" role="status" hidden>⚠ refresh failed · showing last good reading from <time id="last-good"></time></span>
 </footer>
+${COPY_STATUS}
 <script>${JS}</script>
 </body></html>`;
 }
@@ -551,6 +575,23 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em; color: 
 .groom .gitem { margin: 3px 0; font-size: 12.5px; color: var(--ink-2); }
 .groom .gdetail { color: var(--ink-3); }
 .tid { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--ink-3); white-space: nowrap; }
+/* The copy control (H-2428, I12). It is deliberately small beside a 12px
+   monospace ID and takes its 44px touch target from a transparent overlay
+   instead of from bulk: a control sized to a finger would stand three times
+   the height of the reference it belongs to, on every row of the page.
+   An inset of -13px around an 18px box is exactly 44. */
+.tid a { color: inherit; }
+.copy { position: relative; min-height: 18px; margin-left: 4px; padding: 0; width: 18px; height: 18px; line-height: 1;
+  border: 0; border-radius: var(--radius-control); background: none; color: var(--ink-3);
+  font: inherit; cursor: pointer; vertical-align: -0.12em; }
+.copy::after { content: ''; position: absolute; inset: -13px; }
+.copy:hover { color: var(--link); }
+.copy[data-copied='yes'] { color: var(--good-text); }
+.copy[data-copied='no'] { color: var(--critical); }
+/* Nothing on screen, everything to a screen reader: the copy result has no
+   visual home of its own — the glyph swap is the sighted feedback — so it is
+   announced through a live region rather than succeeding silently. */
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .spend { font-variant-numeric: tabular-nums; color: var(--ink-3); font-size: 12px; white-space: nowrap; }
 .badge { display: inline-block; max-width: 100%; font-size: 11px; line-height: 1.35; padding: 2px 7px; border-radius: 999px;
   border: 1px solid var(--hairline); white-space: normal; vertical-align: middle; }
@@ -748,7 +789,57 @@ setInterval(() => {
   if (el) el.textContent = Math.round((Date.now() - lastGood) / 1000) + 's ago';
 }, 5000);
 
+// Put text on the clipboard where navigator.clipboard is not there to do it.
+// This is not a legacy nicety: the Clipboard API is secure-context only and
+// these pages are served over plain http, so a phone reading the estate over
+// the LAN takes THIS path every time. Focus is borrowed and handed straight
+// back, or the reader loses their place to an invisible textarea.
+function copyWithoutTheApi(text) {
+  const held = document.activeElement;
+  const field = document.createElement('textarea');
+  field.value = text;
+  field.setAttribute('readonly', '');
+  field.style.cssText = 'position:fixed;top:-1000px;opacity:0';
+  document.body.appendChild(field);
+  field.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch { ok = false; }
+  field.remove();
+  if (held && held.focus) held.focus();
+  return ok;
+}
+
 document.addEventListener('click', async (e) => {
+  const copy = e.target.closest('.copy');
+  if (copy) {
+    // Most of these controls sit inside a <summary>, whose activation
+    // behaviour is to toggle its disclosure. Engines differ on whether an
+    // interactive descendant is exempted from that, so the exemption is
+    // stated here rather than assumed: one gesture, one effect.
+    e.preventDefault();
+    const text = copy.dataset.copy;
+    let ok = false;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+        ok = true;
+      } else {
+        ok = copyWithoutTheApi(text);
+      }
+    } catch {
+      ok = copyWithoutTheApi(text);
+    }
+    copy.dataset.copied = ok ? 'yes' : 'no';
+    copy.textContent = ok ? '✓' : '✗';
+    const announce = document.getElementById('copy-status');
+    if (announce) announce.textContent = ok ? text + ' copied' : 'could not copy ' + text;
+    setTimeout(() => {
+      delete copy.dataset.copied;
+      copy.textContent = '⧉';
+    }, 1500);
+    return;
+  }
+
   const send = e.target.closest('.ratify');
   if (send) {
     const card = send.closest('.qcard');

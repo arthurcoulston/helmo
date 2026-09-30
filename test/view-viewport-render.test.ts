@@ -214,3 +214,124 @@ describe('the page holds still in a browser at every width it supports', () => {
     }
   }, 120_000);
 });
+
+/* The copy control, exercised rather than described (H-2428, I12).
+ *
+ * `view-accessibility.test.ts` holds the shape of the rendered markup. What
+ * it cannot see is the only thing Arthur will judge this by: whether the
+ * thing he taps puts the reference on his clipboard and nothing else. That
+ * needs a browser with a clipboard, so it lives here. */
+describe('a reference can be carried into a conversation in one gesture', () => {
+  /** A page whose clipboard the test is allowed to read back. */
+  async function withClipboard(): Promise<Page> {
+    const context = await browser!.newContext({ viewport: { width: 390, height: 900 } });
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin });
+    const page = await context.newPage();
+    await page.goto(`${origin}${AT_EVERY_WIDTH}`, { waitUntil: 'load' });
+    return page;
+  }
+
+  it('puts the exact reference on the clipboard, and nothing beside it', async () => {
+    const page = await withClipboard();
+    try {
+      const row = page.locator('details.trow').first();
+      const id = (await row.getAttribute('id'))!;
+      expect(id).toMatch(/^H-\d+$/);
+      await row.locator('.copy').first().click();
+      expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(id);
+      // The control sits inside the row's <summary>. One gesture, one effect:
+      // if copying also toggled the disclosure, every tap would dump a ticket
+      // body onto the screen. Chromium spares a real <button> from a summary's
+      // activation behaviour, so what this measures is that the control stays
+      // a real button — `e.preventDefault()` in the handler is the belt for
+      // the engines that do not, and only the source test can see it.
+      expect(await row.evaluate((el: HTMLDetailsElement) => el.open)).toBe(false);
+      expect(await page.locator('#copy-status').textContent()).toBe(`${id} copied`);
+    } finally {
+      await page.context().close();
+    }
+  }, 120_000);
+
+  it('copies from the keyboard as well as the pointer', async () => {
+    const page = await withClipboard();
+    try {
+      const button = page.locator('details.trow').first().locator('.copy').first();
+      await button.focus();
+      await page.keyboard.press('Enter');
+      const id = (await page.locator('details.trow').first().getAttribute('id'))!;
+      expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(id);
+    } finally {
+      await page.context().close();
+    }
+  }, 120_000);
+
+  it('gives the control a finger-sized target without a finger-sized icon', async () => {
+    const page = await withClipboard();
+    try {
+      const box = await page.locator('.copy').first().evaluate((el) => {
+        const after = getComputedStyle(el, '::after');
+        const own = el.getBoundingClientRect();
+        const grow = (v: string) => Math.abs(parseFloat(v) || 0);
+        return {
+          icon: Math.round(own.width),
+          target: Math.round(own.width + grow(after.left) + grow(after.right)),
+          tall: Math.round(own.height + grow(after.top) + grow(after.bottom)),
+        };
+      });
+      expect(box.target, 'the copy target is narrower than a fingertip').toBeGreaterThanOrEqual(44);
+      expect(box.tall, 'the copy target is shorter than a fingertip').toBeGreaterThanOrEqual(44);
+      // And the icon itself stays beside 12px monospace rather than dwarfing it.
+      expect(box.icon).toBeLessThanOrEqual(20);
+    } finally {
+      await page.context().close();
+    }
+  }, 120_000);
+
+  it('still copies where the page has no Clipboard API', async () => {
+    // These pages are served over plain http, so a phone reading the estate
+    // over the LAN has no navigator.clipboard at all. The fallback is that
+    // reader's ONLY path; a copy button that silently does nothing there is
+    // the defect, and it is invisible from a localhost browser.
+    const context = await browser!.newContext({ viewport: { width: 390, height: 900 } });
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
+      const handed: string[] = [];
+      (window as unknown as { __handed: string[] }).__handed = handed;
+      document.execCommand = (command: string) => {
+        // The effect the fallback is responsible for is the SELECTION it hands
+        // the copy command; whether headless Chromium's execCommand then
+        // reaches a real clipboard is the browser's business, not ours.
+        if (command === 'copy') handed.push(String(getSelection() ?? ''));
+        return true;
+      };
+    });
+    const page = await context.newPage();
+    try {
+      await page.goto(`${origin}${AT_EVERY_WIDTH}`, { waitUntil: 'load' });
+      const row = page.locator('details.trow').first();
+      const id = (await row.getAttribute('id'))!;
+      await row.locator('.copy').first().click();
+      expect(await page.evaluate(() => (window as unknown as { __handed: string[] }).__handed)).toEqual([id]);
+      expect(await page.locator('#copy-status').textContent()).toBe(`${id} copied`);
+      // Focus was borrowed for a hidden textarea; the reader gets it back.
+      expect(await page.evaluate(() => document.activeElement?.className)).toContain('copy');
+    } finally {
+      await context.close();
+    }
+  }, 120_000);
+
+  it('offers a copy control beside every reference it draws', async () => {
+    const page = await withClipboard();
+    try {
+      const bare = await page.evaluate(() =>
+        Array.from(document.querySelectorAll('.tid'))
+          .map((el) => ({ text: (el.textContent ?? '').replace('⧉', '').trim(), copy: el.querySelector('.copy')?.getAttribute('data-copy') }))
+          .filter((r) => /^[A-Z]+-\d+$/.test(r.text) && r.copy !== r.text)
+          .slice(0, 8),
+      );
+      expect(bare, 'a reference is drawn with no copy control, or one that copies something else').toEqual([]);
+    } finally {
+      await page.context().close();
+    }
+  }, 120_000);
+});

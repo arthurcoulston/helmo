@@ -16,6 +16,10 @@ Helmo Roadmap — install it and set it up."* and point it at
 [AGENT-INSTALL.md](AGENT-INSTALL.md). It runs the install end to end and
 returns your view link and getting-started instructions.
 
+For an immutable multi-product installation, set `INSTALLATION_RELEASE` to
+its `ADOPTED.json`. Both Roadmap entry points verify the selected
+Rev/Helmo/Roadmap commit set and refuse code from another checkout.
+
 To run it yourself: requires Node.js and npm. No Helmo server, Crew
 checkout, or Estate checkout is needed to run this product. The SQLite
 dependency may need a native build toolchain when a prebuilt binary is

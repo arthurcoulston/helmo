@@ -58,6 +58,7 @@ function compact(t: Ticket) {
     ...(t.project ? { project: t.project } : {}),
     ...(t.schedule ? { schedule: t.schedule } : {}),
     ...(t.not_before ? { not_before: t.not_before } : {}),
+    ...(t.workflow_attempt_id ? { workflow_attempt_id: t.workflow_attempt_id } : {}),
     ...(t.needs_human ? { needs_human: t.sitting ?? true } : {}),
     ...(t.capacity_hold ? { capacity_hold: t.capacity_hold } : {}),
   };
@@ -107,6 +108,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
         schedule: z.string().optional().describe(
           "Makes this a RECURRING TEMPLATE: 'every <N><m|h|d>' or 5-field cron (UTC). The template itself is standing work — never ready, never claimed. Due instances spawn automatically on queue reads, linked to the template via a parent dep, and a new instance is skipped while a previous one is still open. Retire the template by cancelling it.",
         ),
+        workflow_attempt_id: z.string().optional().describe('Bind this ticket immutably to an existing workflow attempt. Starting, claiming, handing off, or resuming it then requires an atomic admission from that attempt\'s exact current requirements.'),
         actor: actorSchema,
       }),
     },

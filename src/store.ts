@@ -56,6 +56,7 @@ export interface CreateInput {
   sitting_with?: string; // the agent to sit with
   spawned_from?: string; // internal: set by materializeDue on instances
   due?: string; // internal: the slot this instance was spawned for
+  workflow_attempt_id?: string; // immutable binding; gated starts require an atomic admission
 }
 
 export interface UpdateInput {
@@ -148,6 +149,7 @@ CREATE TABLE IF NOT EXISTS tickets (
   sitting        TEXT,
   sitting_with   TEXT,
   capacity_hold  TEXT,
+  workflow_attempt_id TEXT,
   created_at     TEXT NOT NULL,
   updated_at     TEXT NOT NULL,
   closed_at      TEXT
@@ -446,6 +448,12 @@ export class Store {
     } catch {
       /* column already exists */
     }
+    try {
+      this.db.exec('ALTER TABLE tickets ADD COLUMN workflow_attempt_id TEXT');
+    } catch {
+      /* column already exists */
+    }
+    this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_tickets_workflow_attempt ON tickets(workflow_attempt_id) WHERE workflow_attempt_id IS NOT NULL');
   }
 
   close(): void {
@@ -565,6 +573,71 @@ export class Store {
     try { this.db.prepare('INSERT INTO workflow_decisions (id, requirement_id, manifest_id, decision, created_at) VALUES (?, ?, ?, ?, ?)').run(decision.id, decision.requirement_id, decision.manifest_id, JSON.stringify(stored), now()); }
     catch (error) { if (String(error).includes('UNIQUE constraint failed')) throw new HelmoError(`Workflow decision ${decision.id} already exists and is immutable.`); throw error; }
     return stored;
+  }
+
+  /** Check and record the permission that opens execution of one bound
+   * attempt. The caller must already be inside the ticket mutation's IMMEDIATE
+   * transaction: the decisions read here, the admission, and the status/event
+   * write are one SQLite commit rather than a queued snapshot. */
+  private admitWorkflow(ticketId: string, attemptId: string, operation: string): void {
+    const attempt = this.db.prepare(`SELECT a.stage_id, a.state, r.id AS run_id, r.workflow_id, r.definition_revision
+      FROM workflow_attempts a JOIN workflow_runs r ON r.id = a.run_id WHERE a.id = ?`).get(attemptId) as
+      { stage_id: string; state: string; run_id: string; workflow_id: string; definition_revision: string } | undefined;
+    if (!attempt) {
+      throw new HelmoError(`workflow_admission_denied ${JSON.stringify({ attempt_id: attemptId, missing: ['attempt'], stale: [], failed: [] })}`);
+    }
+    const definition = this.getWorkflowDefinition(attempt.workflow_id, attempt.definition_revision);
+    if (!definition) {
+      throw new HelmoError(`workflow_admission_denied ${JSON.stringify({ attempt_id: attemptId, missing: [], stale: ['definition'], failed: [] })}`);
+    }
+    const stage = definition.stages.find((candidate) => candidate.id === attempt.stage_id);
+    if (!stage) {
+      throw new HelmoError(`workflow_admission_denied ${JSON.stringify({ attempt_id: attemptId, missing: [], stale: ['stage'], failed: [] })}`);
+    }
+
+    const missing: string[] = [];
+    const stale: string[] = [];
+    const failed: string[] = [];
+    for (const prerequisite of stage.after ?? []) {
+      const prior = this.db.prepare(`SELECT o.outcome FROM workflow_attempts a
+        LEFT JOIN workflow_outcomes o ON o.attempt_id = a.id
+        WHERE a.run_id = ? AND a.stage_id = ? ORDER BY a.ordinal DESC LIMIT 1`).get(attempt.run_id, prerequisite) as { outcome: string | null } | undefined;
+      if (!prior?.outcome || (JSON.parse(prior.outcome) as { outcome?: string }).outcome !== 'advanced') missing.push(`stage:${prerequisite}`);
+    }
+
+    const requirements = this.db.prepare('SELECT id, requirement FROM workflow_requirements WHERE workflow_id = ? AND definition_revision = ? ORDER BY id')
+      .all(attempt.workflow_id, attempt.definition_revision) as { id: string; requirement: string }[];
+    const admitted: { requirement_id: string; manifest_id: string; decision_id: string; verdict: string }[] = [];
+    for (const row of requirements) {
+      const requirement = JSON.parse(row.requirement) as WorkflowRequirement;
+      const decisions = this.db.prepare('SELECT decision FROM workflow_decisions WHERE requirement_id = ? AND manifest_id = ? ORDER BY rowid')
+        .all(requirement.id, requirement.subject_manifest_id).map((r) => JSON.parse((r as { decision: string }).decision) as WorkflowDecision);
+      const revoked = new Set(decisions.filter((d) => d.verdict === 'revocation').map((d) => d.revokes_decision_id));
+      const standing = decisions.filter((d) => d.verdict !== 'revocation' && !revoked.has(d.id)).at(-1);
+      if (!standing) {
+        (decisions.length ? stale : missing).push(`requirement:${requirement.id}`);
+      } else if (standing.verdict === 'fail') {
+        failed.push(`requirement:${requirement.id}`);
+      } else {
+        admitted.push({ requirement_id: requirement.id, manifest_id: requirement.subject_manifest_id, decision_id: standing.id, verdict: standing.verdict });
+      }
+    }
+    if (missing.length || stale.length || failed.length) {
+      throw new HelmoError(`workflow_admission_denied ${JSON.stringify({ attempt_id: attemptId, missing, stale, failed })}`);
+    }
+    const seq = (this.db.prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM events').get() as { seq: number }).seq;
+    const admission = {
+      id: `admission:${attemptId}:${operation}:${seq}`,
+      ticket_id: ticketId,
+      attempt_id: attemptId,
+      operation,
+      workflow_id: attempt.workflow_id,
+      definition_revision: attempt.definition_revision,
+      requirements: admitted,
+    };
+    this.db.prepare('INSERT INTO workflow_admissions (id, attempt_id, admission, created_at) VALUES (?, ?, ?, ?)')
+      .run(admission.id, attemptId, JSON.stringify(admission), now());
+    this.db.prepare("UPDATE workflow_attempts SET state = 'running' WHERE id = ?").run(attemptId);
   }
 
   /** Durable name claimed by the first explicitly named writer. A derived-only
@@ -1774,6 +1847,9 @@ export class Store {
       if (input.status === 'in_progress') throw new HelmoError('A recurring template is standing work — it cannot be in_progress; its instances are.');
     }
     if (input.not_before) input = { ...input, not_before: parseNotBefore(input.not_before) };
+    if (input.workflow_attempt_id !== undefined && (!input.workflow_attempt_id.trim() || input.workflow_attempt_id.trim() !== input.workflow_attempt_id)) {
+      throw new HelmoError('workflow_attempt_id must be a non-empty exact id without surrounding whitespace.');
+    }
     const sitting = parseSitting(input.needs_human, input.sitting_with);
     const status = input.status ?? 'open';
     if (status === 'in_progress') refuseUnmarkedDeskClaim(actor, Boolean(sitting?.needs_human));
@@ -1790,6 +1866,9 @@ export class Store {
     for (const d of input.deps ?? []) this.getTicket(d.to); // existence check before mint
 
     return this.db.transaction(() => {
+      if (input.workflow_attempt_id && !this.db.prepare('SELECT 1 FROM workflow_attempts WHERE id = ?').get(input.workflow_attempt_id)) {
+        throw new HelmoError(`Workflow attempt ${input.workflow_attempt_id} does not exist; the ticket was not created.`);
+      }
       const id = this.mintId();
       const ts = now();
       const payload: Record<string, unknown> = {
@@ -1808,6 +1887,7 @@ export class Store {
       if (input.not_before) payload['not_before'] = input.not_before;
       if (sitting?.needs_human) { payload['needs_human'] = true; payload['sitting'] = sitting.sitting; payload['sitting_with'] = sitting.sitting_with; }
       if (input.spawned_from) { payload['spawned_from'] = input.spawned_from; payload['due'] = input.due; }
+      if (input.workflow_attempt_id) payload['workflow_attempt_id'] = input.workflow_attempt_id;
       this.append(ts, id, 'created', actor, payload);
       this.applyCreated(ts, payload);
       for (const d of input.deps ?? []) {
@@ -1815,6 +1895,7 @@ export class Store {
         this.append(ts, id, 'linked', actor, { to: d.to, type: d.type });
         this.applyLinked(id, d.to, d.type, true);
       }
+      if (status === 'in_progress' && input.workflow_attempt_id) this.admitWorkflow(id, input.workflow_attempt_id, 'create_in_progress');
       return this.getTicket(id);
     }).immediate();
   }
@@ -2050,6 +2131,9 @@ export class Store {
 
     return this.db.transaction(() => {
       const ts = now();
+      if (t.workflow_attempt_id && (input.status === 'in_progress' || input.handoff_to !== undefined)) {
+        this.admitWorkflow(t.id, t.workflow_attempt_id, input.handoff_to !== undefined ? 'handoff' : 'claim');
+      }
       const payload: Record<string, unknown> = { diffs, note: input.note };
       if (input.tokens) payload['tokens'] = input.tokens;
       if (input.cost_usd) payload['cost_usd'] = input.cost_usd;
@@ -2241,6 +2325,7 @@ export class Store {
         }
       }
       const assignee = resolution === 'resume' ? this.workstreamSeat(t.workstream) : null;
+      if (resolution === 'resume' && t.workflow_attempt_id) this.admitWorkflow(t.id, t.workflow_attempt_id, 'answer_resume');
       this.append(ts, t.id, 'answered', actor, { ...a, resolution, assignee } as unknown as Record<string, unknown>);
       if (resolution === 'resume') {
         this.db.prepare("UPDATE tickets SET status = 'open', assignee = ?, question = NULL, updated_at = ? WHERE id = ?").run(assignee, ts, t.id);
@@ -2336,6 +2421,7 @@ export class Store {
         }
       }
       const assignee = this.workstreamSeat(t.workstream);
+      if (t.workflow_attempt_id) this.admitWorkflow(t.id, t.workflow_attempt_id, 'action_resume');
       this.append(ts, t.id, 'acted', actor, { did: report.did, assignee } as unknown as Record<string, unknown>);
       this.db.prepare("UPDATE tickets SET status = 'open', assignee = ?, question = NULL, updated_at = ? WHERE id = ?").run(assignee, ts, t.id);
       return this.getTicket(t.id);
@@ -2550,13 +2636,14 @@ export class Store {
   private applyCreated(ts: string, p: Record<string, unknown>): void {
     this.db
       .prepare(
-        `INSERT INTO tickets (id, title, body, workstream, project, type, labels, status, priority, assignee, schedule, not_before, needs_human, sitting, sitting_with, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO tickets (id, title, body, workstream, project, type, labels, status, priority, assignee, schedule, not_before, needs_human, sitting, sitting_with, workflow_attempt_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         p['id'], p['title'], p['body'], p['workstream'], p['project'] ?? null, p['type'],
         JSON.stringify(p['labels'] ?? []), p['status'] ?? 'open', p['priority'] ?? 2, p['assignee'] ?? null,
-        p['schedule'] ?? null, p['not_before'] ?? null, p['needs_human'] ? 1 : 0, p['sitting'] ?? null, p['sitting_with'] ?? null, ts, ts,
+        p['schedule'] ?? null, p['not_before'] ?? null, p['needs_human'] ? 1 : 0, p['sitting'] ?? null, p['sitting_with'] ?? null,
+        p['workflow_attempt_id'] ?? null, ts, ts,
       );
   }
 

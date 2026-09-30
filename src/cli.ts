@@ -39,7 +39,7 @@ const COMMAND_FLAGS: Record<string, readonly string[]> = {
   'product-complete': ['ticket', 'artifacts', 'note'],
   'acceptance-verdict': ['ticket', 'refs', 'verdict', 'note'],
   'acceptance-check': ['ticket', 'refs'],
-  create: ['title', 'body', 'workstream', 'type', 'priority', 'status', 'assignee', 'dep', 'dep-type', 'schedule', 'not-before', 'needs-human', 'sitting-with'],
+  create: ['title', 'body', 'workstream', 'type', 'priority', 'status', 'assignee', 'dep', 'dep-type', 'schedule', 'not-before', 'needs-human', 'sitting-with', 'workflow-attempt'],
   update: ['ticket', 'note', 'status', 'evidence-kind', 'evidence-ref', 'confidence', 'uncertainty-note', 'blast-radius', 'tokens', 'cost-usd', 'handoff-to', 'not-before', 'needs-human', 'sitting-with', 'no-needs-human', 'takeover', 'body-append', 'body-old', 'body-new'],
   return: ['ticket', 'situation', 'question', 'options', 'recommendation', 'if-unanswered'],
   action: ['ticket', 'situation', 'action', 'why-human', 'if-unanswered'],
@@ -335,6 +335,7 @@ try {
         not_before: flag('not-before'),
         needs_human: flag('needs-human'),
         sitting_with: flag('sitting-with'),
+        workflow_attempt_id: flag('workflow-attempt'),
       });
       out({ id: t.id });
       break;
@@ -417,7 +418,7 @@ try {
   workstream     --name W                                      (budget, seat, spend-to-date; read-only)
   rename-workstream --from X --to Y --note N   (relabel every ticket incl. closed; one evented rename)
   workstream-set --name W [--budget-usd X] [--seat A | --seat '']   (operator steering; actor kind human/orchestrator only; seat = agent unassigned filings are reserved to)
-  create         --title T --body B --workstream W --type TY [--priority P] [--status S] [--assignee A] [--dep H-n --dep-type TY] [--schedule 'every 30m' | '0 0 * * *'] [--not-before 2026-09-10]
+  create         --title T --body B --workstream W --type TY [--priority P] [--status S] [--assignee A] [--workflow-attempt ID] [--dep H-n --dep-type TY] [--schedule 'every 30m' | '0 0 * * *'] [--not-before 2026-09-10]
   update         --ticket H-n --note N [--status S] [--evidence-kind K --evidence-ref R] [--body-append T | --body-old OLD --body-new NEW] [--confidence C] [--blast-radius B] [--tokens N] [--cost-usd X] [--handoff-to A] [--not-before 2026-09-10 | ''] [--takeover]
   return         --ticket H-n --situation S --question Q --recommendation R [--options '[{"label":..,"consequence":..}]' (2-3, only for a real choice)] [--if-unanswered U]
 Writes read identity from HELMO_ACTOR env or --actor JSON. Installation from HELMO_HOME (default ~/.helmo) or HELMO_DB naming the store

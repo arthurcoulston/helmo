@@ -137,6 +137,51 @@ describe('trusted scoped workflow decisions (H-430)', () => {
   });
 });
 
+describe('atomic workflow admission (H-431)', () => {
+  function admissionStore() {
+    const s = new Store(':memory:', undefined, reviewer);
+    s.addWorkflowDefinition({ workflow_id: 'release', revision: 'v1', stages: [{ id: 'build' }] });
+    s.addWorkflowRun({ id: 'run-1', workflow_id: 'release', definition_revision: 'v1' });
+    s.addWorkflowAttempt({ id: 'attempt-1', run_id: 'run-1', stage_id: 'build', ordinal: 1 });
+    s.addWorkflowManifest({ id: 'manifest-a', attempt_id: 'attempt-1', kind: 'input', subjects: ['repo@0123456789012345678901234567890123456789'], creators: [{ name: builder.name, kind: builder.kind }] });
+    s.addWorkflowRequirement({
+      id: 'technical', workflow_id: 'release', definition_revision: 'v1', scope: 'technical', subject_manifest_id: 'manifest-a',
+      allowed_verdicts: ['pass'], authorities: [{ name: reviewer.name, kind: reviewer.kind }], independence: 'different_from_manifest_creators',
+    });
+    return s;
+  }
+
+  it('rolls back create-in-progress and reports structured missing requirements', () => {
+    const s = admissionStore();
+    expect(() => create(s, { status: 'in_progress', workflow_attempt_id: 'attempt-1' })).toThrow(
+      /workflow_admission_denied .*"missing":\["requirement:technical"\]/,
+    );
+    expect(create(s).id).toBe('H-1');
+  });
+
+  it('uses one gate for claim, handoff, and human-answer resume while ordinary tickets remain compatible', () => {
+    const s = admissionStore();
+    const gated = create(s, { workflow_attempt_id: 'attempt-1' });
+    triage(s, gated.id);
+    expect(() => s.updateTicket(builder, { ticket_id: gated.id, note: 'claiming', status: 'in_progress' })).toThrow(/requirement:technical/);
+    expect(s.getTicket(gated.id)).toMatchObject({ status: 'open', workflow_attempt_id: 'attempt-1' });
+
+    s.recordWorkflowDecision({ id: 'pass-1', requirement_id: 'technical', manifest_id: 'manifest-a', verdict: 'pass', source: 'review:event-1' });
+    expect(s.updateTicket(builder, { ticket_id: gated.id, note: 'claiming after review', status: 'in_progress' }).ticket.status).toBe('in_progress');
+    s.recordWorkflowDecision({ id: 'revoke-1', requirement_id: 'technical', manifest_id: 'manifest-a', verdict: 'revocation', source: 'review:event-2', revokes_decision_id: 'pass-1' });
+    expect(() => s.updateTicket(builder, { ticket_id: gated.id, note: 'handoff after revocation', handoff_to: reviewer.name })).toThrow(/"stale":\["requirement:technical"\]/);
+    expect(s.getTicket(gated.id)).toMatchObject({ status: 'in_progress', assignee: builder.name });
+
+    s.returnToHuman(builder, gated.id, { situation: 'Review was revoked.', question: 'Resume?', recommendation: 'yes' });
+    expect(() => s.answerTicket({ name: 'Arthur', kind: 'human' }, gated.id, { answer: 'Resume.', resolution: 'resume' })).toThrow(/workflow_admission_denied/);
+    expect(s.getTicket(gated.id).status).toBe('awaiting_human');
+
+    const ordinary = create(s);
+    triage(s, ordinary.id);
+    expect(s.updateTicket(builder, { ticket_id: ordinary.id, note: 'ordinary claim', status: 'in_progress' }).ticket.status).toBe('in_progress');
+  });
+});
+
 describe('actor validation', () => {
   it('rejects writes without an actor', () => {
     const s = freshStore();
@@ -1698,6 +1743,35 @@ function heldLock(holder: ChildProcess): Promise<number> {
 }
 
 describe('write contention', () => {
+  it('waits for a racing revocation and denies the claim in the same transaction', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'helmo-admission-race-'));
+    const dbPath = join(dir, 'helmo.db');
+    const s = new Store(dbPath, undefined, reviewer);
+    s.addWorkflowDefinition({ workflow_id: 'release', revision: 'v1', stages: [{ id: 'build' }] });
+    s.addWorkflowRun({ id: 'run-race', workflow_id: 'release', definition_revision: 'v1' });
+    s.addWorkflowAttempt({ id: 'attempt-race', run_id: 'run-race', stage_id: 'build', ordinal: 1 });
+    s.addWorkflowManifest({ id: 'manifest-race', attempt_id: 'attempt-race', kind: 'input', subjects: ['repo@0123456789012345678901234567890123456789'], creators: [{ name: builder.name, kind: builder.kind }] });
+    s.addWorkflowRequirement({ id: 'race-check', workflow_id: 'release', definition_revision: 'v1', scope: 'technical', subject_manifest_id: 'manifest-race', allowed_verdicts: ['pass'], authorities: [{ name: reviewer.name, kind: reviewer.kind }], independence: 'different_from_manifest_creators' });
+    s.recordWorkflowDecision({ id: 'pass-race', requirement_id: 'race-check', manifest_id: 'manifest-race', verdict: 'pass', source: 'review:pass' });
+    const t = create(s, { workflow_attempt_id: 'attempt-race' });
+    triage(s, t.id);
+
+    const holder = spawn(process.execPath, ['-e',
+      `const D=require('better-sqlite3');const db=new D(process.argv[1]);db.pragma('journal_mode = WAL');db.prepare('BEGIN IMMEDIATE').run();` +
+      `const d={id:'revoke-race',requirement_id:'race-check',manifest_id:'manifest-race',verdict:'revocation',source:'review:race',actor:${JSON.stringify(reviewer)},revokes_decision_id:'pass-race'};` +
+      `db.prepare('INSERT INTO workflow_decisions (id,requirement_id,manifest_id,decision,created_at) VALUES (?,?,?,?,?)').run(d.id,d.requirement_id,d.manifest_id,JSON.stringify(d),new Date().toISOString());` +
+      `console.log('HELD');setTimeout(()=>{db.prepare('COMMIT').run();db.close();},${HOLD_MS});`, dbPath,
+    ], { cwd: new URL('..', import.meta.url).pathname });
+    const heldAt = await heldLock(holder);
+    const started = Date.now();
+    expect(() => s.updateTicket(builder, { ticket_id: t.id, note: 'claim racing revocation', status: 'in_progress' })).toThrow(/"stale":\["requirement:race-check"\]/);
+    expect(started - heldAt).toBeLessThan(HOLD_MS);
+    expect(s.getTicket(t.id).status).toBe('open');
+    holder.kill();
+    s.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it('skip-if-open holds against a twin being committed by another process (H-169)', async () => {
     // The H-169 shape: another process has already spawned this slot's instance
     // but not yet committed when we run our check. The check must wait for the

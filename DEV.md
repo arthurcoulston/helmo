@@ -23,8 +23,17 @@ orchestrator meetings and the read-only view. Product intent:
   repeated revocations refuse. Decision identity is bound when the service
   opens the store from its trusted runtime actor; the decision call and MCP
   schema accept no caller-supplied identity, and an unbound/remote service
-  refuses the write. Admission and ticket-mutation enforcement remain
-  later slices.
+  refuses the write. H-431 binds a ticket immutably to an optional
+  `workflow_attempt_id`. Ordinary tickets remain unchanged; a bound ticket can
+  enter execution only through one store-side admission transaction.
+  Create-in-progress, claim, handoff, decision-answer resume and action-report
+  resume all read the exact definition, stage prerequisites and current scoped
+  decisions, record the admission, mark the attempt running and commit the
+  ticket event under the same IMMEDIATE lock. Missing, revoked/stale and failed
+  requirements are returned as separate structured arrays. A racing revocation
+  commits first and is observed, or the admission commits first; no queued
+  snapshot can authorize the later write. Retry/outcome and invalidation
+  behavior remain later slices.
   Explicitly named installations claim `meta.installation_name` atomically
   with their first event. Every later event under another explicit/inherited
   name refuses; reads remain available and report both names as UNCLEAR.

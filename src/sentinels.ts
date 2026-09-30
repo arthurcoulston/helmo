@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync, rmSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { markerLines } from './build.js';
 import { stateDir } from './config.js';
 import { rotateIfOversized } from './logretention.js';
 import { Sentinel } from './types.js';
@@ -13,7 +14,7 @@ import { Sentinel } from './types.js';
 //   LIMIT    rev: parked on a transient external condition, retrying
 //   IDLE     rev: waiting on the wake cursor (contents = Helm event seq)
 //   IDLE_AT  rev: epoch-ms the loop went idle; wakes held until idle_floor_s elapses (H-336)
-//   RUNNING  rev: pid + start stamp of the live loop process
+//   RUNNING  rev: pid, start stamp and loaded build of the live loop process
 //   PACE     operator/agent: velocity command ("park" or fraction (0,1])
 //   PARKED   loop: acknowledgment that it has actually parked (command != state)
 //   SEAT_HELD loop: standing down for another live session in the same seat
@@ -153,8 +154,12 @@ export function logEvent(loop: string, event: string, fields = ''): void {
 // running" (57 times, with nothing running at all) and the machine could never
 // converge on its own (H-154). So RUNNING records the command that owns it,
 // and liveness means: that pid exists AND is still running that command.
+// It also records the build this process LOADED, because the marker's lifetime
+// is exactly the lifetime of those bytes: a rebuild replaces dist under a live
+// supervisor, and the stamp beside the new code then describes something nobody
+// is executing (H-2489). Written once, at startup, and never refreshed.
 export function runningStamp(): string {
-  return `${process.pid}\nstarted ${new Date().toISOString()}\ncmd ${ownCommand()}\n`;
+  return `${process.pid}\nstarted ${new Date().toISOString()}\ncmd ${ownCommand()}\n${markerLines()}`;
 }
 
 // Our own driver invocation, minus the node binary — 'dist/cli.js run ward'.

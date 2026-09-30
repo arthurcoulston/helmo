@@ -8,11 +8,40 @@ import { LOCAL_HOSTNAMES, REACH_SCRIPT, reachLink } from './reach.js';
 import { readCodexUsage, readUsage, usageLine, worstSeverity } from './usage.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { buildReport, compare, loaded, parseMarker, snapshot } from './build.js';
 import { revHome, loadRoster, stateDir, tokenLogPath } from './config.js';
+import { target } from './install.js';
 import { pidAlive, processObservation, sGet, sHas, sValue } from './sentinels.js';
 
 const port = Number(process.env['REV_VIEW_PORT'] ?? 4500);
 const host = process.env['REV_VIEW_HOST'] ?? '127.0.0.1';
+
+// Read before the first request, never per request (H-2489). The view outlives
+// rebuilds — H-2432's dashboard was restarted by hand at 23:43 for exactly this
+// reason — so what it loaded is only knowable at startup. Asking later would
+// read whatever replaced it and call that "running".
+const VIEW_LOADED = loaded();
+
+// Which installation is this dashboard about? A command refuses to run when a
+// pinned release set no longer resolves (H-2454); the dashboard's job is the
+// opposite — to be the surface that SAYS so — so a failure becomes the detail
+// it reports rather than a page that will not load.
+const INSTALL = (() => {
+  try {
+    const t = target();
+    return { label: t.conflict ? 'UNCLEAR' : t.label, home: t.home, release: t.release, detail: t.conflict };
+  } catch (e) {
+    return { label: 'UNCLEAR', home: revHome(), release: null, detail: e instanceof Error ? e.message : String(e) };
+  }
+})();
+
+/** What a long-lived process loaded, against the code directory as it is now. */
+function running(who: 'view' | 'supervisor') {
+  if (who === 'view') return { ...compare(VIEW_LOADED, snapshot()), pid: process.pid };
+  const observation = processObservation('supervisor');
+  if (observation.state === 'dead') return null;
+  return { ...compare(parseMarker(sGet('supervisor', 'RUNNING')), snapshot()), pid: observation.pid };
+}
 const esc = (s: unknown) =>
   String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
 
@@ -28,7 +57,7 @@ setInterval(async function () {
     const response = await fetch(location.pathname, { cache: 'no-store' });
     if (!response.ok) return;
     const next = new DOMParser().parseFromString(await response.text(), 'text/html');
-    for (const key of ['title', 'claude', 'codex', 'loops']) {
+    for (const key of ['title', 'build', 'claude', 'codex', 'loops']) {
       const current = document.querySelector('[data-refresh="' + key + '"]');
       const replacement = next.querySelector('[data-refresh="' + key + '"]');
       if (!current || !replacement) continue;
@@ -127,6 +156,30 @@ function spend(name: string): { tokens: number; cost: number } {
   return { tokens, cost };
 }
 
+/** The dashboard's one line of provenance: the build on disk, then what the two
+ *  live processes loaded. Stale is amber and carries its own words, because a
+ *  colour alone may never be the signal (H-713). */
+function provenanceLine(): string {
+  const artifact = snapshot();
+  const parts = [
+    artifact.stamp
+      ? `build ${artifact.stamp.commit.slice(0, 7)}${artifact.stamp.dirty ? ' (dirty)' : ''} of ${artifact.stamp.built_at}`
+      : `build unstamped (${artifact.dir})`,
+  ];
+  for (const who of ['view', 'supervisor'] as const) {
+    const r = running(who);
+    if (!r) { parts.push(`${who}: not running`); continue; }
+    parts.push(r.state === 'verified'
+      ? `${who} running ${r.commit?.slice(0, 7)}${r.dirty ? ' (dirty)' : ''}`
+      : `${who} ${r.state.toUpperCase()}: ${r.detail}`);
+  }
+  return parts.join(' · ');
+}
+
+function provenanceSeverity(): string {
+  return (['view', 'supervisor'] as const).some((w) => running(w)?.state === 'stale') ? 'warning' : '';
+}
+
 createServer((req, res) => {
   // Machine-readable snapshot for aggregators (the estate health page, H-627).
   // Rev owns loop-state truth — sentinel precedence and pid identity (H-154)
@@ -138,6 +191,13 @@ createServer((req, res) => {
     res.end(JSON.stringify({
       supervisor: supervisor.pid,
       supervisor_state: supervisor.state,
+      // Existing keys are untouched; these are additive (H-2489). `build`
+      // describes the artifact on disk, `running` what each live process
+      // loaded — an aggregator that conflates them reports a version nobody
+      // is executing.
+      installation: INSTALL,
+      build: buildReport(snapshot()),
+      running: { view: running('view'), supervisor: running('supervisor') },
       loops: Object.values(loops).map((l) => {
         const st = state(l.name);
         const reason = st === 'IDLE'
@@ -245,7 +305,8 @@ ${ESTATE_TOKENS}
     h1 .title-line { min-width: 0; overflow-wrap: anywhere; color: var(--ink-3); font-weight: normal; font-size: 15px; }
   </style></head><body>
   ${ESTATE_AVATARS}
-  <h1 data-refresh="title">Rev <span class="title-line">the machine, read-only · supervisor ${processObservation('supervisor').state === 'unknown' ? `unobservable (recorded pid ${processObservation('supervisor').pid})` : pidAlive('supervisor') ? `running (pid ${pidAlive('supervisor')})` : 'down'} · home ${esc(revHome())} · work lives in ${reachLink('helmo-view', 'Helm')}</span></h1>
+  <h1 data-refresh="title">Rev <span class="title-line">the machine, read-only · supervisor ${processObservation('supervisor').state === 'unknown' ? `unobservable (recorded pid ${processObservation('supervisor').pid})` : pidAlive('supervisor') ? `running (pid ${pidAlive('supervisor')})` : 'down'} · installation ${esc(INSTALL.label)} · home ${esc(revHome())} · work lives in ${reachLink('helmo-view', 'Helm')}</span></h1>
+  <p class="usage ${provenanceSeverity()}" data-refresh="build">${esc(provenanceLine())}</p>
   <p class="usage ${worstSeverity(readUsage())}" data-refresh="claude">${esc(usageLine(readUsage(), 'Claude'))}</p>
   <p class="usage ${worstSeverity(readCodexUsage())}" data-refresh="codex">${esc(usageLine(readCodexUsage(), 'Codex'))}</p>
   <div class="tablewrap" tabindex="0" role="region" aria-label="Loop status" data-refresh="loops"><table><tr><th>Loop</th><th>State</th><th>Workstream</th><th>Runtime</th><th>Pace</th><th>Spend</th><th>Recent trace</th></tr>

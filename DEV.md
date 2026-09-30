@@ -384,6 +384,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   therefore a hard stop after the largest available 60s window; the detached
   session process group is what lets an agent finish and close its work. Use
   `rev stop` when the whole machine must drain gracefully before service work.
+- `build.ts` — **what did this process load?** (H-2489). `snapshot()` reads a
+  code directory as it is now; `loaded()` holds what the running process read
+  at startup; `compare()` says whether they are still the same bytes. See "What
+  built `dist`, and what is RUNNING it" below — the two are never one claim.
 - `install.ts` — **which installation is this command about?** (H-2473). The
   identity above answers what an installation is called; this answers the
   question every command was assuming. `target()` returns the label, the
@@ -669,7 +673,9 @@ does it for the shell's own nav with `--host-resolver-rules=MAP estate.test
 verbatim against a stubbed origin, because a browser harness is not a
 dependency this repo should grow for one link.
 
-## What built `dist` (H-2442, R-39 Q8)
+## What built `dist`, and what is RUNNING it (H-2442, H-2489)
+
+### The artifact (H-2442, R-39 Q8)
 
 `dist/` is gitignored and `rev redeploy` restarts the fleet WITHOUT building,
 so the supervisor has always loaded an artifact with no provenance. On
@@ -695,6 +701,41 @@ stamp and reports `dirty` as a failure there.
 Because building and restarting are separate acts here, a build alone does not
 change what the fleet runs: the supervisor keeps executing what it read at
 spawn until `rev redeploy`.
+
+### The running process (H-2489)
+
+Which is why the stamp can never be the answer to "what is the fleet running".
+The two come apart at every rebuild, and reading the stamp beside the code was
+going to report the NEW commit as the running one — the single answer that is
+certainly wrong. So `src/build.ts` reports them as two different questions, and
+`status`, `service status`, `/health.json` and the dashboard print both:
+
+- `build:` the artifact in the directory the reading process ran from, now.
+- `running:` what the live process recorded when IT loaded, or `STALE` /
+  `UNVERIFIABLE`. It never falls back to the artifact's sha: on divergence that
+  sha appears only as the thing nobody is executing.
+
+**The record rides in the `RUNNING` marker.** A long-lived process writes that
+marker at startup and clears it on exit, which is exactly the lifetime of the
+bytes it loaded — so `runningStamp()` adds `loaded <digest> <dir>` and
+`build <commit> clean|dirty <built_at>`, and no new file gets a new lifecycle to
+get wrong. A marker from before this simply lacks the lines, and a reader calls
+that UNVERIFIABLE rather than guessing: a supervisor started before the change
+reports UNVERIFIABLE until its next `rev redeploy`.
+
+**What is compared is bytes, not the sha** — `digestOf()` over the `.js` in the
+directory, because a dirty tree's sha did not produce the artifact and two
+rebuilds of one commit differ. `.d.ts` files and `BUILD.json` are excluded:
+they move on a rebuild without changing a byte any process executes, so
+counting them would report divergence where there is none.
+
+`loaded()` holds ONE reading, taken at startup, and `view.ts` calls it before
+it serves. A process that asked later would read whatever replaced its code and
+call that running — which is the whole defect, restated.
+
+Limit, stated plainly: the digest is the bytes on disk when the snapshot was
+taken, which for a statically imported ESM graph is load time. It does not
+follow a module imported dynamically much later.
 
 ## Invariants that bite
 

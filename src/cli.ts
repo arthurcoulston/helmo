@@ -2,6 +2,7 @@
 // rev — run and control loops. Control verbs are sentinel writes; anything
 // that reads state is safe from any context (the watch officer uses these).
 import { existsSync, statSync } from 'node:fs';
+import { buildLine, compare, parseMarker, runningLine, snapshot } from './build.js';
 import { loadRoster, resolveRef, stateDir } from './config.js';
 import { sessionSpec } from './shim.js';
 import { LoopConfig } from './types.js';
@@ -24,6 +25,17 @@ const requestedInstall = takeInstallFlag(rest);
 // Validate a pinned release before even reading the roster. Every command,
 // including read-only surfaces and the supervisor, enters through this file.
 targetLine();
+
+/**
+ * What the supervisor loaded, read from the RUNNING marker it wrote at startup.
+ * A dead observation means the marker, if present, is a crashed process's — so
+ * there is nothing running to describe, and the artifact line above is the only
+ * honest statement about code (H-2489).
+ */
+function supervisorRunningLine(observation: ReturnType<typeof processObservation>): string {
+  if (observation.state === 'dead') return runningLine('the supervisor', null);
+  return runningLine('the supervisor', compare(parseMarker(sGet('supervisor', 'RUNNING')), snapshot()));
+}
 
 function takeInstallFlag(args: string[]): string | undefined {
   const i = args.indexOf('--installation');
@@ -211,6 +223,12 @@ switch (cmd) {
     console.log(targetLine());
     const supervisor = processObservation('supervisor');
     const sup = supervisor.pid;
+    // Provenance of the artifact, then of the process — never the same claim
+    // (H-2489). A rebuild under a live supervisor makes the first current and
+    // the second stale, and reading only the first is how H-2432 reported a
+    // commit nobody was executing.
+    console.log(buildLine());
+    console.log(supervisorRunningLine(supervisor));
     console.log(`supervisor: ${supervisor.state === 'unknown' ? `unobservable (recorded pid ${sup}; process inspection unavailable)` : sup ? `running (pid ${sup})` : `down — start the machine with: ${commandName} run`}`);
     console.log(usageLine(readUsage(), 'Claude'));
     console.log(`${usageLine(readCodexUsage(), 'Codex')}\n`);
@@ -289,6 +307,8 @@ switch (cmd) {
     };
     if (verb === 'status') {
       console.log(targetLine());
+      console.log(buildLine());
+      console.log(supervisorRunningLine(processObservation('supervisor')));
       console.log(serviceStatusLine());
       break;
     }

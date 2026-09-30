@@ -1,8 +1,9 @@
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, it, expect } from 'vitest';
-import { definedHome, installLaunchd, launchdPlist, legacyServiceLabel, retireLegacyService, serviceLabel, systemdUnit, systemdUnitName } from '../src/service.js';
+import { afterEach, beforeEach, describe, it, expect } from 'vitest';
+import { definedHome, definedProgram, installLaunchd, launchdPlist, launcherPath, legacyServiceLabel, retireLegacyService, serviceLabel, stalePinnedService, systemdUnit, systemdUnitName, writeLauncher } from '../src/service.js';
 
 describe('service unit generation', () => {
   it('launchd: restarts on crash only — a graceful drain (exit 0) stays down', () => {
@@ -282,5 +283,155 @@ describe('the migration retires this installation\'s previous definition, and on
     expect(retireLegacyService('systemd', unitFile(serviceLabel()), { system: (...args) => calls.push(args) })).toBe(legacy);
     expect(existsSync(legacy)).toBe(false);
     expect(calls).toEqual([['disable', '--now', 'rev']]);
+  });
+});
+
+// H-2511. A definition is frozen at install time, so a definition that names a
+// cli.js inside a release directory names whichever release happened to be
+// selected that day. `rev release upgrade` promises the installation "takes
+// this release when it next starts"; these are the cases that make that true.
+describe('a pinned installation starts through its own launcher', () => {
+  const saved = { ...process.env };
+  let root: string;
+
+  /** A release directory whose rev prints back the argv and cwd it was given,
+   *  plus the selection file pointing at it — the smallest thing the launcher
+   *  has to resolve and hand over to. */
+  const release = (id: string, cli = 'console.log(JSON.stringify({ argv: process.argv, release: process.env.INSTALLATION_RELEASE }));') => {
+    const dir = join(root, 'release', id);
+    mkdirSync(join(dir, 'rev', 'dist'), { recursive: true });
+    writeFileSync(join(dir, 'rev', 'dist', 'cli.js'), cli);
+    return dir;
+  };
+  const select = (contents: unknown) => {
+    const file = join(root, 'ADOPTED.json');
+    writeFileSync(file, typeof contents === 'string' ? contents : JSON.stringify(contents));
+    return file;
+  };
+  /** Run the launcher the way a service manager would: its own file, under the
+   *  environment a definition carries and nothing else. */
+  const start = (args: string[] = ['status'], env: Record<string, string> = {}) =>
+    spawnSync(process.execPath, [writeLauncher(), ...args], {
+      encoding: 'utf8',
+      env: { PATH: process.env['PATH'] ?? '', REV_HOME: process.env['REV_HOME'] ?? '', REV_LABEL: 'dev.rev.pinned', ...env },
+    });
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'rev-launcher-'));
+    process.env['REV_HOME'] = join(root, '.rev');
+    delete process.env['REV_LABEL'];
+    delete process.env['INSTALLATION_RELEASE'];
+  });
+  afterEach(() => {
+    for (const k of ['HOME', 'REV_HOME', 'REV_LABEL', 'INSTALLATION_RELEASE']) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  });
+
+  it('lives in the installation home, outside every release', () => {
+    expect(launcherPath()).toBe(join(root, '.rev', 'service', 'launch.mjs'));
+    expect(launcherPath().startsWith(join(root, 'release'))).toBe(false);
+  });
+
+  it('hands over to the release the selection names, and to a different one after a change', () => {
+    release('current');
+    release('next');
+    const file = select({ release: 'current', directory: join(root, 'release', 'current') });
+
+    const first = start(['status'], { INSTALLATION_RELEASE: file });
+    expect(first.status).toBe(0);
+    const before = JSON.parse(first.stdout);
+    expect(before.argv[1]).toBe(join(root, 'release', 'current', 'rev', 'dist', 'cli.js'));
+    // The verb the definition carries reaches the product untouched: everything
+    // downstream reads argv.slice(2), so the launcher must not sit in it.
+    expect(before.argv.slice(2)).toEqual(['status']);
+
+    // The release change is one file, and nothing reinstalls the service.
+    select({ release: 'next', directory: join(root, 'release', 'next') });
+    const after = JSON.parse(start(['status'], { INSTALLATION_RELEASE: file }).stdout);
+    expect(after.argv[1]).toBe(join(root, 'release', 'next', 'rev', 'dist', 'cli.js'));
+  });
+
+  // argv[1] is what the supervisor spawns loop drivers with, what the shim
+  // exports as REV_CLI, and what the sentinels record as a command line. It has
+  // to be the resolved cli.js, so that a fleet started through the launcher is
+  // indistinguishable from one the manager started directly.
+  it('presents the resolved cli.js as argv[1], not itself', () => {
+    release('current');
+    const file = select({ release: 'current', directory: join(root, 'release', 'current') });
+    const out = JSON.parse(start(['status'], { INSTALLATION_RELEASE: file }).stdout);
+    expect(out.argv[1]).not.toBe(launcherPath());
+    expect(out.release).toBe(file);
+  });
+
+  // A selection nobody can read is a real fault and still refuses — but as one
+  // line naming the installation and the repair, not as the uncaught throw a
+  // frozen definition produced.
+  it.each([
+    ['unreadable', () => { release('current'); return select('{ not json'); }, /release selection .* is unreadable/],
+    ['naming no release', () => { release('current'); return select({}); }, /names no release/],
+    ['naming a release that holds no rev', () => select({ release: 'gone', directory: join(root, 'release', 'gone') }), /release gone holds no rev to start/],
+  ])('refuses legibly when the selection is %s', (_what, setup, expected) => {
+    const file = (setup as () => string)();
+    const refused = start(['status'], { INSTALLATION_RELEASE: file });
+    expect(refused.status).not.toBe(0);
+    expect(refused.stderr).toMatch(expected as RegExp);
+    expect(refused.stderr).toContain('dev.rev.pinned');
+    expect(refused.stderr).not.toMatch(/^\s+at /m);
+    expect(refused.stderr.trim().split('\n')).toHaveLength(1);
+  });
+
+  it('refuses when the definition carries no selection at all', () => {
+    const refused = spawnSync(process.execPath, [writeLauncher(), 'status'], {
+      encoding: 'utf8',
+      env: { PATH: process.env['PATH'] ?? '', REV_HOME: process.env['REV_HOME']! },
+    });
+    expect(refused.status).not.toBe(0);
+    expect(refused.stderr).toMatch(/INSTALLATION_RELEASE is unset/);
+    expect(refused.stderr).toMatch(/rev service install/);
+  });
+
+  // The migration: an installation pinned today whose definition was written
+  // before this change still names a release directory, and a release command
+  // is where that has to be said.
+  describe('a definition still naming a release directory is reported', () => {
+    const stand = (program: string, home = process.env['REV_HOME']!) => {
+      const fakeHome = mkdtempSync(join(tmpdir(), 'rev-stale-'));
+      mkdirSync(join(fakeHome, 'Library', 'LaunchAgents'), { recursive: true });
+      process.env['HOME'] = fakeHome;
+      writeFileSync(
+        join(fakeHome, 'Library', 'LaunchAgents', `${serviceLabel()}.plist`),
+        launchdPlist('/node', program, { label: serviceLabel(), home, path: '/p', logPath: '/l' }),
+      );
+    };
+
+    it('a frozen program is named, with the release directory it points into', () => {
+      process.env['INSTALLATION_RELEASE'] = join(root, 'ADOPTED.json');
+      const frozen = join(root, 'release', 'current', 'rev', 'dist', 'cli.js');
+      stand(frozen);
+      expect(stalePinnedService()?.program).toBe(frozen);
+    });
+
+    it('a definition already naming the launcher is not stale, and neither is an unpinned one', () => {
+      process.env['INSTALLATION_RELEASE'] = join(root, 'ADOPTED.json');
+      stand(launcherPath());
+      expect(stalePinnedService()).toBe(null);
+      delete process.env['INSTALLATION_RELEASE'];
+      stand(join(root, 'release', 'current', 'rev', 'dist', 'cli.js'));
+      expect(stalePinnedService()).toBe(null);
+    });
+
+    it('another installation\'s definition is never this one\'s to report', () => {
+      process.env['INSTALLATION_RELEASE'] = join(root, 'ADOPTED.json');
+      stand(join(root, 'release', 'current', 'rev', 'dist', 'cli.js'), '/tmp/somebody-else/.rev');
+      expect(stalePinnedService()).toBe(null);
+    });
+  });
+
+  it('reads back the program a definition names, on both managers', () => {
+    expect(definedProgram('launchd', launchdPlist('/node', '/a&b/cli.js', { label: 'dev.rev', home: '/h', path: '/p', logPath: '/l' }))).toBe('/a&b/cli.js');
+    expect(definedProgram('systemd', systemdUnit('/node', '/opt/launch.mjs', { home: '/h', path: '/p', label: 'dev.rev' }))).toBe('/opt/launch.mjs');
+    expect(definedProgram('launchd', '<plist></plist>')).toBe(null);
   });
 });

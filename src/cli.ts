@@ -9,7 +9,7 @@ import { LoopConfig } from './types.js';
 import { pollUsage, readCodexUsage, readUsage, refreshCodexUsage, usageLine, usagePath } from './usage.js';
 import { selectRun } from './routing.js';
 import { runLoop } from './loop.js';
-import { serviceFile, serviceInstall, serviceStart, serviceStatusLine, serviceUninstall } from './service.js';
+import { serviceFile, serviceInstall, serviceStart, serviceStatusLine, serviceUninstall, stalePinnedService } from './service.js';
 import { requireTarget, target, targetLine } from './install.js';
 import { ReleaseError, describe as describeRelease, migrationLine, rollback, selectionFile, upgrade } from './release.js';
 import { readRedeploy, requestRedeploy, watchRedeploy } from './redeploy.js';
@@ -362,6 +362,18 @@ switch (cmd) {
         'Nothing was restarted: a running process keeps the code it loaded, and takes this release when it next starts '
         + `(${commandName} redeploy, or ${commandName} service start). Check with: ${commandName} status`,
       );
+      // ...which is only true if the service definition resolves the selection
+      // at start. One installed before H-2511 names a cli.js frozen inside the
+      // release just left, so its next start would refuse. Say so here, where
+      // the promise is made, rather than leaving it for launchd.log.
+      const stale = stalePinnedService();
+      if (stale) {
+        console.log(
+          `WARNING: the installed service definition ${stale.file} names ${stale.program}, which is inside a release directory, `
+          + `so a restart would bring back the release this installation has just left and refuse to run. `
+          + `Run '${commandName} service install' once to make restarts follow the selection.`,
+        );
+      }
     } catch (e) {
       // A release refusal is the ordinary answer, not a crash — the same shape
       // the `service` verbs use when one installation declines another's work.

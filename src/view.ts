@@ -11,8 +11,10 @@ import { installationLine, requestedInstallation, requireInstallation } from './
 import { ESTATE_TOKENS } from './estate-tokens.generated.js';
 import { Store } from './store.js';
 import { ActorKind, Claim, Project, Ranked, RoadmapEvent } from './types.js';
+import { loaded } from './build.js';
 
 const install = requireInstallation(process.env, undefined, requestedInstallation(process.argv.slice(2)));
+loaded();
 const dbPath = install.db;
 // The view may be the first thing to touch a fresh store — don't crash on a
 // missing home directory (caught by launchd on first boot).

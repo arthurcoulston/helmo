@@ -5,6 +5,7 @@
   "scripts": {
     "test": "vitest run",
     "build": "tsc",
+    "postbuild": "node scripts/stamp-build.mjs",
     "view": "tsx src/view.ts",
     "mcp": "tsx src/server.ts",
     "vendor:tokens": "node scripts/vendor-estate-tokens.mjs",

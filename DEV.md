@@ -74,6 +74,12 @@ append-only event log, materialized state, `.immediate()` write transactions
   environment refuses before the store is opened, naming both candidates, and
   `ROADMAP_HOME`/`ROADMAP_DB` remain the only things that move the target. A
   bare `--installation` refuses rather than reading as absent.
+- `build.ts` — the build this process actually loaded (H-2491). Long-lived
+  surfaces snapshot their own compiled directory before serving and compare it
+  afresh on every report. A rebuild beneath them is `stale`; source runs and
+  unreadable code are `unverifiable`; the named commit is always the loaded
+  one. `postbuild` writes `dist/BUILD.json`, and every MCP result carries the
+  installation, build state, and installation-qualified reference scope.
 - `server.ts` — MCP stdio entry. Store at `~/.helmo-roadmap/roadmap.db`
   (`ROADMAP_HOME` or `ROADMAP_DB` overrides, and setting both to disagree is
   refused); identity from `ROADMAP_ACTOR`, falling back to

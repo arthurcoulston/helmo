@@ -2,6 +2,8 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { Store } from './store.js';
 import { Actor, ACTOR_KINDS, DEP_TYPES, EFFORT_SIZES, HORIZONS, Project, RoadmapError, STATUSES, VALUE_LEVELS } from './types.js';
+import { running } from './build.js';
+import { Installation } from './install.js';
 
 // Single source of truth for the MCP tool surface, Helmo-style: tool
 // descriptions are guidance-as-deployed. Edit them here and only here.
@@ -17,7 +19,7 @@ const actorSchema = z
   .optional()
   .describe('Who is writing. Omit only when ROADMAP_ACTOR (or HELMO_ACTOR) in the server environment already names you exactly. Interactive sessions: pass your true identity on every write — {name, kind: "agent", model: your exact model ID, version: your harness version}. Writes without a truthful complete identity are rejected.');
 
-function ok(data: unknown, warnings: string[] = []): { content: { type: 'text'; text: string }[] } {
+function result(data: unknown, warnings: string[] = []): { content: { type: 'text'; text: string }[] } {
   const body: Record<string, unknown> = { result: data };
   if (warnings.length) body['warnings'] = warnings;
   return { content: [{ type: 'text', text: JSON.stringify(body, null, 1) }] };
@@ -32,8 +34,15 @@ function compact(p: Project) {
   return { id: p.id, title: p.title, status: p.status, actual_usd: p.actual_usd, updated_at: p.updated_at };
 }
 
-export function buildServer(store: Store, envActor: Actor | null): McpServer {
+export function buildServer(store: Store, envActor: Actor | null, install?: Installation): McpServer {
   const resolveActor = (override?: Actor): Actor => override ?? envActor ?? ({} as Actor);
+  const identity = store.installationIdentity();
+  const label = install?.label ?? identity.process ?? identity.stored ?? 'unknown';
+  const ok = (data: unknown, warnings: string[] = []) => result({
+    installation: { name: label, clear: identity.clear, ...(identity.stored ? { stored: identity.stored } : {}), build: running() },
+    reference_scope: `${label}:`,
+    ...data as object,
+  }, warnings);
 
   const server = new McpServer({ name: 'helmo-roadmap', version: '0.1.0' });
 

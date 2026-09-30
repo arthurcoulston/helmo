@@ -245,6 +245,10 @@ orchestrator meetings and the read-only view. Product intent:
   fails if any tool is left off the rule. It is the same rule `cli.ts` enforces
   over its flags; a strict schema also publishes `additionalProperties: false`
   in `listTools`, which is what an agent reads before it guesses at a field.
+  `helmo_withdraw_human_return` is the non-consent recovery path for a mistaken
+  escalation: it revision-checks the exact pending request, appends a distinct
+  event, preserves prior answers and holds, and requires an explicit recovery
+  owner before reopening preparation.
 - `server.ts` — MCP stdio entry (local agents; thin wrapper over tools.ts).
 - `remote.ts` — MCP Streamable HTTP entry (H-116): same tools, for remote
   agents reaching Helmo through the crew-mcp worker (OAuth front door) over

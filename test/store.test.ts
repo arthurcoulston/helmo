@@ -877,6 +877,44 @@ describe('return to human / answer', () => {
     expect(s.returnToHuman(builder, create(s).id, q).status).toBe('awaiting_human');
   });
 
+  it('withdraws only the inspected ask to an explicit recovery owner without inventing consent (H-391)', () => {
+    const s = freshStore();
+    const t = create(s, { assignee: 'tester' });
+    const asked = s.returnToHuman(builder, t.id, q);
+    const fingerprint = questionFingerprint(asked.question!);
+    const recovered = s.withdrawHumanReturn(orch, t.id, fingerprint, 'orchestrator', 'The team can finish the preparation before asking Arthur.');
+    expect(recovered.status).toBe('open');
+    expect(recovered.assignee).toBe('orchestrator');
+    expect(recovered.question).toBeNull();
+    expect(s.lastAnswer(t.id)).toBeNull();
+    const event = s.getEvents(t.id).find((e) => e.event_type === 'return_withdrawn')!;
+    expect(event.payload).toMatchObject({ recovery_owner: 'orchestrator', outcome_owner: 'tester', question_fingerprint: fingerprint });
+    s.rebuild();
+    expect(s.getTicket(t.id)).toMatchObject({ status: 'open', assignee: 'orchestrator', question: null });
+  });
+
+  it('lets a concurrent real answer win and refuses ownerless or stale withdrawal (H-391)', () => {
+    const s = freshStore();
+    const t = create(s);
+    const asked = s.returnToHuman(builder, t.id, q);
+    const fingerprint = questionFingerprint(asked.question!);
+    expect(() => s.withdrawHumanReturn(orch, t.id, fingerprint, '', 'Team-solvable.')).toThrow(/recovery_owner/);
+    s.answerTicket({ name: 'arthur', kind: 'human' }, t.id, { answer: 'Pay it.', resolution: 'resume' }, fingerprint);
+    expect(() => s.withdrawHumanReturn(orch, t.id, fingerprint, 'orchestrator', 'Team-solvable.')).toThrow(/no longer asking/);
+    expect(s.lastAnswer(t.id)?.answer).toBe('Pay it.');
+    expect(s.getEvents(t.id).some((e) => e.event_type === 'return_withdrawn')).toBe(false);
+  });
+
+  it('preserves independent holds while removing only the mistaken question (H-391)', () => {
+    const s = freshStore();
+    const t = create(s);
+    s.updateTicket(builder, { ticket_id: t.id, note: 'hold', capacity_hold: { reason: 'budget', provenance: 'H-1', reconsider_when: 'budget changes' } });
+    const asked = s.returnToHuman(builder, t.id, q);
+    const recovered = s.withdrawHumanReturn(orch, t.id, questionFingerprint(asked.question!), 'orchestrator', 'Preparation remains team-owned.');
+    expect(recovered.capacity_hold).toMatchObject({ reason: 'budget', provenance: 'H-1' });
+    expect(s.listTickets({ ready: true, caller: 'orchestrator' }).map((x) => x.id)).not.toContain(t.id);
+  });
+
   it('answersSince replays answers from a cursor and can narrow to one session (H-936)', () => {
     const s = freshStore();
     const dash: Actor = { name: 'arthur', kind: 'human', session: 'dashboard' };

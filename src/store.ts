@@ -2511,11 +2511,35 @@ export class Store {
         );
       }
       const ts = now();
-      this.append(ts, t.id, 'returned', actor, stored as unknown as Record<string, unknown>);
+      this.append(ts, t.id, 'returned', actor, { ...stored, outcome_owner: t.assignee } as unknown as Record<string, unknown>);
       this.db
         .prepare("UPDATE tickets SET status = 'awaiting_human', assignee = NULL, question = ?, updated_at = ? WHERE id = ?")
         .run(JSON.stringify(stored), ts, t.id);
       return this.getTicket(t.id);
+    }).immediate();
+  }
+
+  withdrawHumanReturn(actor: Actor, ticketId: string, expectQuestion: string, recoveryOwner: string, reason: string): Ticket {
+    validateActor(actor);
+    if (actor.kind === 'human') throw new HelmoError('A human decision is recorded with helmo_answer_ticket, not as an agent withdrawal.');
+    if (!expectQuestion?.trim()) throw new HelmoError('question_fingerprint is required so a stale withdrawal cannot replace a newer ask.');
+    if (!recoveryOwner?.trim()) throw new HelmoError('recovery_owner is required: do not withdraw work unless a live coordinator can receive it.');
+    if (!reason?.trim()) throw new HelmoError('reason is required: record why the ask was mistaken and what preparation resumes.');
+    rejectSwallowedMarkup({ recovery_owner: recoveryOwner, reason });
+    return this.db.transaction(() => {
+      const cur = this.getTicket(ticketId);
+      if (cur.status !== 'awaiting_human' || !cur.question || questionFingerprint(cur.question) !== expectQuestion) {
+        throw new HelmoError(`${cur.id} is no longer asking the expected question — reload before withdrawing it; a real answer or replacement ask wins.`);
+      }
+      const returned = this.db.prepare("SELECT payload FROM events WHERE ticket_id = ? AND event_type = 'returned' ORDER BY seq DESC LIMIT 1").get(cur.id) as { payload: string } | undefined;
+      const outcomeOwner = returned ? (JSON.parse(returned.payload)['outcome_owner'] as string | null | undefined) ?? null : null;
+      const ts = now();
+      this.append(ts, cur.id, 'return_withdrawn', actor, {
+        question_fingerprint: expectQuestion, reason, recovery_owner: recoveryOwner, outcome_owner: outcomeOwner,
+      });
+      this.db.prepare("UPDATE tickets SET status = 'open', assignee = ?, question = NULL, updated_at = ? WHERE id = ?")
+        .run(recoveryOwner.trim(), ts, cur.id);
+      return this.getTicket(cur.id);
     }).immediate();
   }
 
@@ -2749,6 +2773,10 @@ export class Store {
           case 'acted':
             this.db.prepare("UPDATE tickets SET status = 'open', assignee = ?, question = NULL, updated_at = ? WHERE id = ?")
               .run(ev.payload['assignee'] ?? null, ev.ts, ev.ticket_id);
+            break;
+          case 'return_withdrawn':
+            this.db.prepare("UPDATE tickets SET status = 'open', assignee = ?, question = NULL, updated_at = ? WHERE id = ?")
+              .run(ev.payload['recovery_owner'], ev.ts, ev.ticket_id);
             break;
           case 'spend':
             this.applySpend(ev.ticket_id, ev.payload);

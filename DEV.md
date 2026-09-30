@@ -489,7 +489,15 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
     cannot be recovered and how to recover from a backup). A release that has
     not declared it cannot be selected — after the upgrade is too late to ask.
     It is copied INTO the selection when selected, so a rollback can be refused
-    in the limit's own words with the release directory long gone.
+    in the limit's own words with the release directory long gone. **This repo
+    ships the declaration for the release it is tagged as**, at `MIGRATION.json`
+    in the root: the consumer builds the three `dist` directories and assembles
+    the release directory, so upstream's claim about consequences has to travel
+    inside the source rather than be left for them to invent. It carries no
+    `release` field on purpose — the id is the directory's basename, which is
+    theirs to choose, and a declaration naming an id is refused in a directory
+    named anything else. `test/release.test.ts` selects a set built from the
+    shipped file, so an edit that makes it unselectable reddens.
   - **The replacement is atomic and durable**: temp file in the same directory,
     `fsync`, `rename`, then `fsync` on the directory — without the last one the
     bytes are durable and the name pointing at them is not. The selection it

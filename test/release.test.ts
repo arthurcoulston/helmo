@@ -358,3 +358,23 @@ describe('the release commands (H-2493)', () => {
     expect(readdirSync(dir)).not.toContain('ADOPTED.json');
   });
 });
+
+// The declaration this repo ships is a data file no compiler checks, and it is
+// copied into a release directory whose name the consumer chooses (H-2459).
+describe("the declaration this release ships (H-2459)", () => {
+  const shipped = () => JSON.parse(readFileSync(join(ROOT, 'MIGRATION.json'), 'utf8')) as Migration;
+
+  it('is a declaration a release directory built from it can be selected with', () => {
+    const dir = root();
+    expect(releaseProblems(makeRelease(dir, '2026.09-1', { migration: shipped() }))).toEqual([]);
+  });
+
+  it('names no release, because the id is the directory name the consumer picks', () => {
+    const dir = root();
+    const named = { ...shipped(), release: 'v0.1.0' };
+    expect(releaseProblems(makeRelease(dir, '2026.09-1', { migration: named }))).toEqual([
+      expect.stringContaining("declares release 'v0.1.0' but sits in '2026.09-1'"),
+    ]);
+    expect('release' in shipped()).toBe(false);
+  });
+});

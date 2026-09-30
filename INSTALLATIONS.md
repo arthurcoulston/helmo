@@ -118,7 +118,8 @@ files that describe the set:
 ```
 releases/2026.09-1/
   RELEASE.json        commits: { rev, helmo, helmo-roadmap } — which build this set is
-  MIGRATION.json      data_compatibility + rollback — what this release does to your data
+  MIGRATION.json      data_compatibility + rollback — what this release does to your data,
+                      copied in from the rev checkout you built (see below)
   rev/dist/           built, with its BUILD.json stamp
   helmo/dist/
   helmo-roadmap/dist/
@@ -215,20 +216,22 @@ to find out. This is a property you can test rather than a promise: break one
 component's stamp, and the mismatch is named in the output of `rev release
 status` and of every command in the installation.
 
-**This release's set.** The release id and the two Helmo-family commits are
-fixed when the version is cut; the table below is what a consumer checks their
-`RELEASE.json` against.
+**This release's set.** The two Helmo-family commits are fixed when the version
+is cut; the table below is what a consumer checks their `RELEASE.json` against.
 
 | component      | version | commit                                      |
 | -------------- | ------- | ------------------------------------------- |
 | `rev`          | 0.1.0   | the commit tagged `v0.1.0` here — `git rev-parse v0.1.0` |
-| `helmo`        | 0.4.0   | *filled at the cut*                         |
-| `helmo-roadmap`| 0.1.0   | *filled at the cut*                         |
+| `helmo`        | 0.5.0   | `792f51a31243b1ed20934fec0977c9846e6d8164`  |
+| `helmo-roadmap`| 0.1.0   | `1799eb31aa3815c5fe7a8e95350aa7a1f6740ea4`  |
 
-Release id: *filled at the cut*. If the two Helmo-family rows still read
-"filled at the cut", you are reading the development branch rather than a
-published release — take the values from the release directory's own
-`RELEASE.json`.
+**There is no upstream release id to check against**, and that is not an
+omission. A release's id is its directory's name, you assemble that directory
+from builds you make, so nothing published here can fix it — name it whatever
+your installations should report being on (`2026.09-1` is the shape these
+examples use). What identifies the set is the three commits above, and the
+release directory's own `RELEASE.json` is the authority every entry point
+reads: if yours names other commits, you have assembled a different set.
 
 `rev`'s row names its tag rather than a sha, and that is not evasion. This
 document ships inside `rev`, and a set is built from the commit the tag names,
@@ -278,10 +281,17 @@ code that cannot read it. Recover from a pre-upgrade backup as above, then
 select the older release.
 ```
 
-**This release's migrations** are declared in the release directory's own
-`MIGRATION.json`, written when the version is cut. Read it before you upgrade —
-`rev release status` reads it back to you afterwards on the `data compatibility`
-line — and treat `one_way` as meaning the backup below is your only way back.
+**This release's declaration ships inside `rev`.** `MIGRATION.json` at the root
+of the `rev` checkout you built from is this release's own, authored at the cut;
+copy it into the release directory beside `RELEASE.json`. It is upstream's claim
+about consequences and not yours to write, and it deliberately carries no
+`release` field — a declaration that names an id is refused in any directory with
+a different name (`MIGRATION.json declares release 'v0.1.0' but sits in
+'2026.09-1' — it describes some other release's migration`), and the name is
+yours. Read it before you upgrade — `rev release status` reads the
+`data compatibility` line back to you afterwards, though not `notes`, which is
+for a reader of the file — and treat `one_way` as meaning the backup below is
+your only way back.
 
 **Opening a Helmo-family store migrates it.** Helmo and the roadmap migrate
 their store on open, so the *first command of the new release aimed at an

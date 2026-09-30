@@ -1,0 +1,5 @@
+{
+  "data_compatibility": "compatible",
+  "rollback": { "supported": true },
+  "notes": "This release's own declaration, shipped inside rev at the tag the set is built from: copy it into the release directory beside RELEASE.json. It omits the optional `release` field on purpose — a release's id is its directory's name, and that name is yours to choose. Compatible because every store change in this set is additive: Helmo migrates with ALTER TABLE ... ADD COLUMN (the one NOT NULL column carries a default) and CREATE TABLE IF NOT EXISTS, the roadmap only creates tables, and no existing row is rewritten, so older Helmo-family code reads and writes a migrated store unchanged. Two things this does not promise. A release selected directly retains no previous selection, so `rev release rollback` refuses with 'retains no previous release' until this installation has upgraded out of this set. And opening a Helmo-family store migrates it, so take the backup before the first command of this release is aimed at an installation, not merely before `rev release upgrade`."
+}

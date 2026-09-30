@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { mkdirSync } from 'node:fs';
-import { requireInstallation } from './install.js';
+import { installationLine, requestedInstallation, requireInstallation } from './install.js';
 import { Store } from './store.js';
 import { Actor } from './types.js';
 import { buildServer } from './tools.js';
 
-const install = requireInstallation();
+// Started by a service definition, so the assertion arrives on argv (H-2474),
+// and the target is named on STDERR: stdout is the MCP protocol channel.
+const install = requireInstallation(process.env, undefined, requestedInstallation(process.argv.slice(2)));
+console.error(`Helmo MCP (stdio) — ${installationLine(install)}`);
 mkdirSync(install.home, { recursive: true });
 const store = new Store(install.db);
 

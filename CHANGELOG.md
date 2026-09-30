@@ -4,6 +4,18 @@
 
 ### Added
 
+- An installation has a name, and every entry point says which one it is about
+  (H-2472, H-2474). `HELMO_HOME` names the installation and `HELMO_DB` names its
+  store — either alone determines the other, so nothing already deployed has
+  anything new to set, and both set to disagree is refused before the store is
+  opened. The name comes from `HELMO_LABEL`, or the supervisor's `REV_LABEL`, or
+  is derived from the home. `helmo-cli` carries `installation` in every result
+  and every refusal; the view, the remote surface and the MCP server print it at
+  startup. `--installation <name|home|db>` ASSERTS that target on any command or
+  entry point: it refuses before opening the store when the environment resolves
+  a different one, and it cannot redirect — `HELMO_HOME`/`HELMO_DB` move the
+  target, the flag says you meant it.
+
 - `helmo-cli verdicts --since-seq N [--actor A] [--workstream W]` — a read-only
   replay of acceptance verdicts from a cursor, returning `max_seq` from the same
   read (H-1830). It is `answers` for the other write that lets work through

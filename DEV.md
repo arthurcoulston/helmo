@@ -407,9 +407,23 @@ orchestrator meetings and the read-only view. Product intent:
   H-2452), so everything Rev spawns agrees for free; `HELMO_LABEL` overrides it
   for a Helmo standing without Rev; failing both it is derived from Helmo's own
   home by the same rule, keyed on the password database rather than on a `$HOME`
-  the installation itself could have written. `requireInstallation(env, report)`
+  the installation itself could have written. `requireInstallation(env, report, requested)`
   takes the reporter because the CLI's contract is that every failure it prints
   is one JSON object.
+  H-2474 adds the naming discipline on top. Every entry point says which
+  installation it is about: the CLI puts `installation` IN each result object
+  and in each `{error}` refusal (a caller reading the fields it asked for is
+  unaffected by one more), the view and remote surface print
+  `installationLine()` in their startup line, and the MCP server prints it on
+  STDERR because stdout is the protocol channel. `--installation
+  <name|home|db>` ASSERTS that target — on any CLI command, and on argv for the
+  three surfaces a service definition starts. It cannot redirect: a value
+  disagreeing with the environment refuses before the store is opened (opening
+  one migrates it, H-134), naming both candidates, and `HELMO_HOME`/`HELMO_DB`
+  remain the only things that move the target. The check lives inside
+  `requireInstallation` so no entry point can resolve a target and forget to
+  verify it; a bare `--installation` refuses rather than reading as absent
+  (H-1782).
 - `schedule.ts` — recurring-ticket schedules (H-22): 'every N<m|h|d>' or 5-field
   cron, UTC. A ticket with `schedule` set is a TEMPLATE — standing work, never
   ready itself. Instances spawn lazily on ticket-list reads (the read path is

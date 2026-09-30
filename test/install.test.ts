@@ -7,7 +7,7 @@ import { homedir, tmpdir, userInfo } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { installation, InstallationError } from '../src/install.js';
+import { installation, InstallationError, requestedInstallation, requireInstallation } from '../src/install.js';
 import { Store } from '../src/store.js';
 import { Actor } from '../src/types.js';
 
@@ -269,6 +269,160 @@ describe('no entry point opens a store when the environment names two installati
     // The refusal is the point only if nothing was created on the way to it:
     // an entry point that opened the store first would leave one of these.
     expect(existsSync(db), `${file} created ${db}`).toBe(false);
+    expect(existsSync(join(home, 'helmo.db')), `${file} created a store under ${home}`).toBe(false);
+    expect(existsSync(home), `${file} created ${home}`).toBe(false);
+  });
+});
+
+// ---- H-2474: the target named, and asserted ----
+//
+// H-2472 gave the installation a name; what was still missing is the discipline
+// of saying it and of checking an operator's assertion against it. The three
+// things that have to be true: the name is in what a surface prints, an
+// agreeing assertion changes nothing, and a disagreeing one stops the command
+// BEFORE the store is opened — which is a claim about a file that must not
+// appear, not about an exit code.
+
+describe('the assertion as a service definition passes it (H-2474)', () => {
+  it('takes either spelling, and reads a bare flag as an assertion of nothing', () => {
+    expect(requestedInstallation([])).toBeUndefined();
+    expect(requestedInstallation(['--installation', 'dev.helmo.gp'])).toBe('dev.helmo.gp');
+    expect(requestedInstallation(['--installation=dev.helmo.gp'])).toBe('dev.helmo.gp');
+    // Not undefined: a flag written with no value must refuse rather than read
+    // as never passed (H-1782). The refusal itself is the next block's.
+    expect(requestedInstallation(['--installation'])).toBe('');
+    expect(requestedInstallation(['--installation', '--other'])).toBe('');
+  });
+});
+
+describe('--installation asserts the target and cannot move it (H-2474)', () => {
+  const home = '/tmp/customer-a/.helmo';
+  const resolved = installation(env({ HELMO_HOME: home }));
+
+  /** The message the entry point would have printed, or null if it proceeded. */
+  function assertOn(requested?: string): string | null {
+    try {
+      requireInstallation(env({ HELMO_HOME: home }), (m) => { throw new InstallationError(m); }, requested);
+      return null;
+    } catch (e) {
+      return (e as Error).message;
+    }
+  }
+
+  it('lets through the three spellings an operator has in front of them', () => {
+    expect(assertOn(undefined)).toBeNull();
+    for (const want of [resolved.label, resolved.home, `${resolved.home}/`, resolved.db]) {
+      expect(assertOn(want), `rejected ${want}`).toBeNull();
+    }
+  });
+
+  it('refuses a value naming another installation, naming both and the knob that moves the target', () => {
+    const m = assertOn('dev.helmo.somewhere-else');
+    expect(m).toContain("'dev.helmo.somewhere-else'");
+    expect(m).toContain(resolved.label);
+    expect(m).toContain(resolved.db);
+    expect(m).toContain('cannot move it');
+    expect(m).toContain('HELMO_HOME');
+  });
+
+  it('refuses an assertion of nothing', () => {
+    expect(assertOn('')).toContain('given no value');
+  });
+});
+
+describe('the CLI names the installation it used, in a result and in a refusal (H-2474)', () => {
+  let dir: string;
+  let home: string;
+  let ticket: string;
+  const title = 'Name the installation this result came from';
+
+  const cli = (args: string[], vars: Record<string, string>) =>
+    spawnSync(process.execPath, ['--import', 'tsx', 'src/cli.ts', ...args], {
+      cwd: repo,
+      env: spawnEnv(vars),
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), 'helmo-target-'));
+    home = join(dir, 'customer-a', '.helmo');
+    mkdirSync(home, { recursive: true });
+    const s = new Store(join(home, 'helmo.db'));
+    ticket = s.createTicket(orch, {
+      title,
+      body: 'Goal: be read back with its installation named. Current state: seeded.',
+      workstream: 'rev-dev',
+      type: 'build',
+    }).id;
+    s.close();
+  });
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('carries the installation in the result without disturbing the payload', () => {
+    const r = cli(['get', ticket], { HELMO_HOME: home });
+    expect(r.status, r.stderr).toBe(0);
+    const out = JSON.parse(r.stdout) as { title: string; installation: { label: string; home: string; db: string } };
+    expect(out.title).toBe(title);
+    expect(out.installation.label).toBe(installation(env({ HELMO_HOME: home })).label);
+    expect(out.installation.home).toBe(home);
+    expect(out.installation.db).toBe(join(home, 'helmo.db'));
+  });
+
+  it('carries it in a refusal, where a caller most needs to know which store said no', () => {
+    const r = cli(['get', 'H-999999'], { HELMO_HOME: home });
+    expect(r.status).not.toBe(0);
+    const err = JSON.parse(r.stderr) as { error: string; installation: { home: string } };
+    expect(err.error).toBeTruthy();
+    expect(err.installation.home).toBe(home);
+  });
+
+  it('proceeds unchanged when the assertion agrees — including on a write', () => {
+    const label = installation(env({ HELMO_HOME: home })).label;
+    const r = cli([
+      'update', '--ticket', ticket, '--note', 'The assertion agreed, so nothing changed about the write.',
+      '--installation', label, '--actor', JSON.stringify(orch),
+    ], { HELMO_HOME: home });
+    expect(r.status, r.stderr).toBe(0);
+    expect((JSON.parse(r.stdout) as { id: string }).id).toBe(ticket);
+  });
+
+  it('refuses a write whose assertion disagrees, before the store is opened', () => {
+    const fresh = join(dir, 'customer-b', '.helmo');
+    mkdirSync(fresh, { recursive: true });
+    const r = cli([
+      'create', '--title=A write that must never land', '--body=If this store exists, the check ran too late.',
+      '--workstream', 'rev-dev', '--type', 'build',
+      '--installation', 'dev.helmo.somewhere-else', '--actor', JSON.stringify(orch),
+    ], { HELMO_HOME: fresh });
+    expect(r.status, `should have refused; stdout: ${r.stdout}`).not.toBe(0);
+    const err = JSON.parse(r.stderr) as { error: string };
+    expect(err.error).toContain('dev.helmo.somewhere-else');
+    expect(err.error).toContain(installation(env({ HELMO_HOME: fresh })).label);
+    // The store the command would have written to was never even created.
+    expect(existsSync(join(fresh, 'helmo.db')), 'the store was opened before the target was checked').toBe(false);
+  });
+});
+
+describe('no entry point opens a store when the assertion names another installation (H-2474)', () => {
+  let dir: string;
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), 'helmo-assert-'));
+  });
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  it.each(ENTRIES)('%s refuses before writing anything', (file) => {
+    const home = join(dir, file.replace(/\W/g, '_'), 'customer-a', '.helmo');
+    const r = spawnSync(process.execPath, ['--import', 'tsx', file, 'get', 'H-1', '--installation', 'dev.helmo.somewhere-else'], {
+      cwd: repo,
+      env: spawnEnv({ HELMO_HOME: home, HELMO_VIEW_PORT: '0', HELMO_REMOTE_PORT: '0' }),
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+
+    expect(r.status, `${file} should have refused; stdout: ${r.stdout}`).not.toBe(0);
+    expect(r.stderr).toContain('dev.helmo.somewhere-else');
     expect(existsSync(join(home, 'helmo.db')), `${file} created a store under ${home}`).toBe(false);
     expect(existsSync(home), `${file} created ${home}`).toBe(false);
   });

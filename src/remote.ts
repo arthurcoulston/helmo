@@ -12,7 +12,7 @@
 import { createServer, IncomingMessage, ServerResponse } from 'node:http';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { mkdirSync } from 'node:fs';
-import { requireInstallation } from './install.js';
+import { installationLine, requestedInstallation, requireInstallation } from './install.js';
 import { Store } from './store.js';
 import { buildServer } from './tools.js';
 
@@ -22,7 +22,7 @@ if (!token || token.length < 24) {
   process.exit(1);
 }
 
-const install = requireInstallation();
+const install = requireInstallation(process.env, undefined, requestedInstallation(process.argv.slice(2)));
 mkdirSync(install.home, { recursive: true });
 const store = new Store(install.db);
 
@@ -65,5 +65,5 @@ createServer((req: IncomingMessage, res: ServerResponse) => {
     }
   });
 }).listen(port, '127.0.0.1', () =>
-  console.log(`Helmo remote MCP: http://127.0.0.1:${port} (Streamable HTTP, bearer-gated) — install: ${install.label} — db: ${install.db}`),
+  console.log(`Helmo remote MCP: http://127.0.0.1:${port} (Streamable HTTP, bearer-gated) — ${installationLine(install)}`),
 );

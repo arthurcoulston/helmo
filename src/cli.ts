@@ -3,7 +3,7 @@
 // harnesses (Rev), scripts, and script-runner agents. Same actor rules as
 // the MCP server: writes require an identity (HELMO_ACTOR env or --actor JSON).
 // The binary is `helmo-cli`, matching its siblings `helmo-mcp` and `helmo-view`.
-import { requireInstallation } from './install.js';
+import { installationRef, requireInstallation } from './install.js';
 import { Store } from './store.js';
 import { Actor, DepType, HelmoError, writingActor } from './types.js';
 
@@ -43,8 +43,11 @@ const COMMAND_FLAGS: Record<string, readonly string[]> = {
   return: ['ticket', 'situation', 'question', 'options', 'recommendation', 'if-unanswered'],
 };
 
+// `--actor` says who is writing; `--installation` says which Helmo this command
+// is about (H-2474). Both are understood everywhere, so neither table entry has
+// to repeat them.
 function allowedFlags(command: string): string[] {
-  return [...(COMMAND_FLAGS[command] ?? []), 'actor'];
+  return [...(COMMAND_FLAGS[command] ?? []), 'actor', 'installation'];
 }
 
 /** Refuse an argv flag the command has no field for, before anything is
@@ -103,11 +106,27 @@ function has(name: string): boolean {
   return args.includes(`--${name}`);
 }
 
+// The target is resolved and ASSERTED before the store is opened, because
+// opening one migrates it (H-134) — a command aimed at the wrong installation
+// has already written by the time it runs. `flag` is safe to call here: an
+// undeclared flag is refused below, and `--installation` is declared for every
+// command.
 const install = requireInstallation(process.env, (error) => {
   console.error(JSON.stringify({ error }));
   process.exit(1);
-});
+}, flagBeforeStore('installation'));
 const store = new Store(install.db);
+
+/** `flag`, but a malformed flag reports in the CLI's JSON shape rather than
+ *  reaching the try/catch that has not started yet. */
+function flagBeforeStore(name: string): string | undefined {
+  try {
+    return flag(name);
+  } catch (e) {
+    console.error(JSON.stringify({ error: e instanceof HelmoError ? e.message : String(e) }));
+    process.exit(1);
+  }
+}
 
 function actor(): Actor {
   const override = flag('actor');
@@ -123,8 +142,12 @@ function actor(): Actor {
   );
 }
 
+// Every result names the installation it read or wrote (H-2474). It goes IN the
+// object rather than on a line above it: the CLI's contract is that everything
+// it prints parses, and a caller reading fields it asked for is unaffected by
+// one more.
 function out(data: unknown): void {
-  console.log(JSON.stringify(data, null, 1));
+  console.log(JSON.stringify({ installation: installationRef(install), ...(data as object) }, null, 1));
 }
 
 try {
@@ -375,11 +398,16 @@ try {
   update         --ticket H-n --note N [--status S] [--evidence-kind K --evidence-ref R] [--body-append T | --body-old OLD --body-new NEW] [--confidence C] [--blast-radius B] [--tokens N] [--cost-usd X] [--handoff-to A] [--not-before 2026-09-10 | ''] [--takeover]
   return         --ticket H-n --situation S --question Q --recommendation R [--options '[{"label":..,"consequence":..}]' (2-3, only for a real choice)] [--if-unanswered U]
 Writes read identity from HELMO_ACTOR env or --actor JSON. Installation from HELMO_HOME (default ~/.helmo) or HELMO_DB naming the store
-directly; set both only if they agree. Its name is REV_LABEL when Rev started this process, or HELMO_LABEL, else derived from the home.`);
+directly; set both only if they agree. Its name is REV_LABEL when Rev started this process, or HELMO_LABEL, else derived from the home.
+Every command names the installation it used in its JSON. --installation <name|home|db> asserts that target on any command: it refuses
+before the store is opened when the environment resolves a different one, and it cannot redirect — move the target with HELMO_HOME/HELMO_DB.`);
       process.exit(cmd ? 1 : 0);
   }
 } catch (e) {
-  console.error(JSON.stringify({ error: e instanceof HelmoError ? e.message : String(e) }));
+  console.error(JSON.stringify({
+    error: e instanceof HelmoError ? e.message : String(e),
+    installation: installationRef(install),
+  }));
   process.exit(1);
 } finally {
   store.close();

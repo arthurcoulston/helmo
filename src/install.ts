@@ -15,8 +15,18 @@
 // overrides it for a Helmo installed without Rev; failing both, the identity
 // is derived from Helmo's own home by the same rule Rev uses for its own.
 //
+// H-2474 adds the discipline of naming it. Every entry point says which
+// installation it is about — in the CLI's case inside the JSON, because its
+// contract is that a caller can parse anything it prints — and
+// `--installation <name|home|db>` ASSERTS that target rather than choosing it.
+// A disagreement with the environment is refused before the store is opened
+// (opening it migrates, H-134), naming both candidates: a flag that silently
+// redirected, and an inherited value that silently beat an explicit one, are
+// the same defect from two sides. `HELMO_HOME`/`HELMO_DB` move the target; the
+// flag says you meant it.
+//
 // The single-install experience is unchanged: no variables set at all still
-// means ~/.helmo/helmo.db, now under the name `dev.helmo`.
+// means ~/.helmo/helmo.db, now under the name `dev.helmo`, and no flag to pass.
 import { createHash } from 'node:crypto';
 import { homedir, userInfo } from 'node:os';
 import { basename, dirname, join, resolve, sep } from 'node:path';
@@ -79,20 +89,71 @@ export function installation(env: NodeJS.ProcessEnv = process.env): Installation
 }
 
 /**
- * For entry points: resolve, or report and exit before opening anything.
+ * For entry points: resolve and check the assertion, or report and exit before
+ * opening anything.
  *
  * `report` exists because the CLI's contract is that every failure it prints is
- * one JSON object; the long-running surfaces print a line of prose.
+ * one JSON object; the long-running surfaces print a line of prose. `requested`
+ * is the `--installation` assertion, checked here rather than by each caller so
+ * that no entry point can resolve a target and forget to verify it.
  */
 export function requireInstallation(
   env: NodeJS.ProcessEnv = process.env,
   report: (message: string) => never = plainExit,
+  requested?: string,
 ): Installation {
   try {
-    return installation(env);
+    const resolved = installation(env);
+    const problem = mismatch(resolved, requested);
+    if (problem) throw new InstallationError(problem);
+    return resolved;
   } catch (e) {
     return report(e instanceof Error ? e.message : String(e));
   }
+}
+
+/**
+ * `--installation` takes any of the three spellings an operator has in front of
+ * them: the label a status line printed, the installation home, or the store
+ * path a Rev roster points at. It asserts and cannot redirect — a value that
+ * disagrees with the environment refuses the command rather than winning it.
+ */
+function mismatch(i: Installation, requested?: string): string | null {
+  if (requested === undefined) return null;
+  const want = requested.trim();
+  if (!want) return '--installation was given no value (name the installation, or drop the flag).';
+  if (want === i.label || resolve(want) === i.home || resolve(want) === i.db) return null;
+  return `--installation named '${want}', but this process resolves installation '${i.label}' (home ${i.home}, store ${i.db}) `
+    + 'from the environment. Nothing was opened or written. --installation asserts the target and cannot move it: '
+    + 'point HELMO_HOME or HELMO_DB at the installation you meant.';
+}
+
+/**
+ * The assertion as it arrives on an entry point's argv. The CLI reads it
+ * through its own flag parser (which refuses an unknown flag before any write);
+ * the long-running surfaces are started by a service definition and have no
+ * parser, so they read it here.
+ *
+ * A bare `--installation` returns '' rather than undefined: a flag written with
+ * no value must refuse, not read as never passed (H-1782).
+ */
+export function requestedInstallation(argv: readonly string[]): string | undefined {
+  const i = argv.findIndex((a) => a === '--installation' || a.startsWith('--installation='));
+  if (i === -1) return undefined;
+  const arg = argv[i] as string;
+  if (arg.startsWith('--installation=')) return arg.slice('--installation='.length);
+  const next = argv[i + 1];
+  return next === undefined || next.startsWith('--') ? '' : next;
+}
+
+/** The phrase a prose surface prints to say which installation it served. */
+export function installationLine(i: Installation): string {
+  return `install: ${i.label} (${i.home}) — db: ${i.db}`;
+}
+
+/** The same answer as a field, for a surface whose output is parsed. */
+export function installationRef(i: Installation): Pick<Installation, 'label' | 'home' | 'db' | 'source'> {
+  return { label: i.label, home: i.home, db: i.db, source: i.source };
 }
 
 function plainExit(message: string): never {

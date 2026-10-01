@@ -23,6 +23,7 @@ function source(sourceHome: string, installation: string): Database.Database {
 
 function freshDir(outputRoot: string, outputDir: string): string {
   if (!isAbsolute(outputRoot) || !isAbsolute(outputDir)) throw new Error('output root and directory must be absolute');
+  const statedRoot = lstatSync(outputRoot); if (statedRoot.isSymbolicLink()) throw new Error('output root must not be a symlink');
   const root = realpathSync(outputRoot); const rs = statSync(root);
   if (!rs.isDirectory() || rs.uid !== effectiveUid() || (rs.mode & 0o777) !== 0o700) throw new Error('output root must be an owner-owned 0700 directory');
   const stated = resolve(outputDir); const parent = realpathSync(dirname(stated));
@@ -56,6 +57,7 @@ export async function backup(sourceHome: string, installation: string, outputRoo
 
 export function validate(backupFile: string, installation: string, outputRoot: string, outputDir: string): RecoveryReport {
   const start = performance.now(); if (!isAbsolute(backupFile) || !installation.trim()) throw new Error('backup file must be absolute and installation nonempty');
+  if (lstatSync(backupFile).isSymbolicLink()) throw new Error('backup file must not be a symlink');
   const original = inspect(realpathSync(backupFile), installation, start); const copy = join(freshDir(outputRoot, outputDir), 'roadmap-restore-check.db'); process.umask(0o077);
   const fd = openSync(copy, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600); closeSync(fd); copyFileSync(backupFile, copy);
   const restored = inspect(copy, installation, start);

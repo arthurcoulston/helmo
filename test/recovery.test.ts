@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { mkdtempSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -25,5 +25,11 @@ describe('operator recovery CLI', () => {
   it('refuses existing destinations and corrupt backups', async () => {
     const f = fixture(); mkdirSync(join(f.output, 'existing'), { mode: 0o700 }); await expect(backup(f.home, 'gp', f.output, join(f.output, 'existing'))).rejects.toThrow();
     const corrupt = join(f.root, 'corrupt.db'); writeFileSync(corrupt, 'not sqlite', { mode: 0o600 }); expect(() => validate(corrupt, 'gp', f.output, join(f.output, 'bad'))).toThrow();
+  });
+  it('refuses unsafe and symlinked output roots before creating a run directory', async () => {
+    const f = fixture(); const unsafe = join(f.root, 'unsafe'); mkdirSync(unsafe, { mode: 0o700 }); chmodSync(unsafe, 0o777);
+    await expect(backup(f.home, 'gp', unsafe, join(unsafe, 'run'))).rejects.toThrow('0700');
+    const linked = join(f.root, 'linked-output'); symlinkSync(f.output, linked);
+    await expect(backup(f.home, 'gp', linked, join(linked, 'run'))).rejects.toThrow('symlink');
   });
 });

@@ -6,6 +6,7 @@ import { loadRoster } from './config.js';
 import { notifyOperator } from './health.js';
 import { processObservation, sHas } from './sentinels.js';
 import { GlobalConfig, LoopConfig } from './types.js';
+import type { LaunchReceipt } from './launch-journal.js';
 
 export interface WakeCheck {
   max_seq: number;
@@ -117,6 +118,8 @@ export interface LaunchAdmission {
   how: 'admitted' | 'nothing_gated' | 'denied' | 'unsupported' | 'unavailable';
   reason: string;
   ticketId: string | null;
+  workflowAttemptId?: string;
+  admissionId?: string;
 }
 
 interface LaunchCandidate {
@@ -147,7 +150,10 @@ function deniedReason(body: Record<string, unknown>, ticketId: string | null): s
   return `Helmo refused this launch${ticketId ? ` for ${ticketId}` : ''}: ${detail}`;
 }
 
-export function launchAdmit(g: GlobalConfig, l: LoopConfig, id: string): LaunchAdmission {
+export function launchAdmit(
+  g: GlobalConfig, l: LoopConfig, id: string,
+  onWorkflowIntent?: (candidate: { ticketId: string; workflowAttemptId: string }) => void,
+): LaunchAdmission {
   // This is the same ordered query Helmo performs inside launch-admit. It does
   // not grant permission; it tells Rev whether a broken/old gate affects the
   // candidate, so ordinary work can retain its pre-gate behaviour while a
@@ -159,6 +165,7 @@ export function launchAdmit(g: GlobalConfig, l: LoopConfig, id: string): LaunchA
     return { act: 'deny', how: 'unavailable', reason: `launch candidate could not be identified: ${cliError(e).split('\n')[0]!.slice(0, 160)}`, ticketId: null };
   }
   try {
+    if (candidate?.workflowAttemptId) onWorkflowIntent?.({ ticketId: candidate.id, workflowAttemptId: candidate.workflowAttemptId });
     // The echoed launch_id is deliberately not compared with the one sent: the
     // answer is Helmo's record of a decision, not a token Rev validates.
     const res = run(g, ['launch-admit', '--workstream', l.workstream, '--assignee', l.name, '--launch-id', id], revActor(), true) as
@@ -175,7 +182,12 @@ export function launchAdmit(g: GlobalConfig, l: LoopConfig, id: string): LaunchA
     }
     if (res.admitted !== true) return { act: 'launch', how: 'nothing_gated', reason: 'nothing ready to admit', ticketId };
     const attempt = res.workflow_attempt_id ? ` for attempt ${res.workflow_attempt_id}` : '';
-    return { act: 'launch', how: 'admitted', ticketId, reason: `admitted${res.admission_id ? ` as ${res.admission_id}` : ''}${attempt}` };
+    return {
+      act: 'launch', how: 'admitted', ticketId,
+      workflowAttemptId: res.workflow_attempt_id ?? undefined,
+      admissionId: res.admission_id ?? undefined,
+      reason: `admitted${res.admission_id ? ` as ${res.admission_id}` : ''}${attempt}`,
+    };
   } catch (e) {
     const raw = String((e as { stderr?: string | Buffer }).stderr ?? '').trim();
     if (raw.includes('workflow_admission_denied')) {
@@ -195,6 +207,10 @@ export function launchAdmit(g: GlobalConfig, l: LoopConfig, id: string): LaunchA
       ? { act: affected ? 'deny' : 'launch', how: 'unsupported', reason: `this store has no launch-admit command: ${detail}`, ticketId: candidate?.id ?? null }
       : { act: affected ? 'deny' : 'launch', how: 'unavailable', reason: `launch admission could not be asked: ${detail}`, ticketId: candidate?.id ?? null };
   }
+}
+
+export function launchReceipt(g: GlobalConfig, admissionId: string, launchId: string): LaunchReceipt {
+  return run(g, ['launch-receipt', '--admission-id', admissionId, '--launch-id', launchId], revActor(), true) as LaunchReceipt;
 }
 
 /** A ticket's current status. A read, so no actor is needed. */

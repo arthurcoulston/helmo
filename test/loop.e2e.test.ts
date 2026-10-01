@@ -4,7 +4,7 @@
 // repeated failure. No agent CLI, no tokens.
 import { describe, it, expect, beforeEach } from 'vitest';
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync, chmodSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync, chmodSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { HELMO_CLI as HELM_CLI, HELMO_SERVER, HELMO_STORE } from './helmo.js';
@@ -62,6 +62,15 @@ if (args[0] === 'launch-admit') {
   appendFileSync(${JSON.stringify(calls)}, JSON.stringify(args.slice(1)) + '\\n');
   ${denied ? `process.stderr.write(JSON.stringify(${JSON.stringify(response)})); process.exit(1);` : `process.stdout.write(JSON.stringify(${JSON.stringify(response)})); process.exit(0);`}
 }
+${!denied && classifiedAttempt ? `if (args[0] === 'launch-receipt') {
+  const flag = (name) => args[args.indexOf(name) + 1];
+  process.stdout.write(JSON.stringify({
+    id: flag('--admission-id'), ticket_id: ${JSON.stringify((response as { ticket_id?: string }).ticket_id)},
+    attempt_id: ${JSON.stringify(classifiedAttempt)}, launch_id: flag('--launch-id'), definition_revision: 'v1',
+    evidence: [{ requirement: { id: 'technical' }, manifest: { id: 'candidate' }, decision: { id: 'pass' } }],
+  }));
+  process.exit(0);
+}` : ''}
 ${classifiedAttempt ? `if (args[0] === 'list' && args.includes('--ready')) {
   const result = spawnSync(process.execPath, [${JSON.stringify(HELM_CLI)}, ...args], { env: process.env, encoding: 'utf8' });
   if (result.status !== 0) { process.stderr.write(result.stderr); process.exit(result.status ?? 1); }
@@ -218,6 +227,12 @@ mock_cmd = "echo launched >> $REV_HOME/sessions"
 
     expect(readFileSync(join(e.home, 'sessions'), 'utf8').trim().split('\n')).toEqual(['launched']);
     expect(readFileSync(calls, 'utf8').trim().split('\n')).toHaveLength(1);
+    const launches = join(e.home, 'state', 'admitted-loop', 'launches');
+    const journal = JSON.parse(readFileSync(join(launches, readdirSync(launches).find((name) => name.endsWith('.json'))!), 'utf8'));
+    expect(journal).toMatchObject({
+      phase: 'dispatching', ticket_id: id, workflow_attempt_id: 'attempt-1', admission_id: 'launch-admission-1',
+      definition_revision: 'v1', requirement_refs: [{ requirement_id: 'technical', manifest_id: 'candidate', decision_id: 'pass' }],
+    });
   });
 
   it('denies when the ready candidate changes between classification and admission', () => {

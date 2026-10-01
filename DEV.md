@@ -653,6 +653,15 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   loudly. Instance data
   lives in `~/.rev/` (roster.toml, mcp/, state/<loop>/, token-log), NEVER
   in this repo — publishability is structural.
+- `launch-journal.ts` — the durable, per-loop record between workflow
+  admission and model dispatch. Rev writes an intent, expands Helmo's immutable
+  launch receipt into the exact ticket, workflow attempt, admission, definition
+  revision and requirement/manifest/decision refs, then fsyncs an exclusive
+  dispatch claim before starting the model process. The claim is at-most-once:
+  replaying one launch id cannot start a second model process, including after
+  a crash in the pre-dispatch gap. Entries live under
+  `state/<loop>/launches/`; recovery and revalidation build on them rather than
+  reconstructing authority from current workflow state.
 - `view.ts` — read-only machine dashboard at :4500; `/health.json` is the
   machine-readable snapshot (loop states, usage) for aggregators like the
   estate health page (crew tools/health, H-627) — consumers read it rather

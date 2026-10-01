@@ -4,7 +4,7 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { stateDir } from './config.js';
-import { WakeCheck, WorkstreamInfo, actorActivity, actorSelfSpend, actorTickets, escalateBlocked, escalateSilentDeclines, launchAdmit, launchId, openEscalation, readyTicketIds, recordSpend, scopeLabel, seatHolds, seatId, seatStreams, wakeCheck, workstreamInfo } from './helm.js';
+import { LaunchAdmission, WakeCheck, WorkstreamInfo, actorActivity, actorSelfSpend, actorTickets, escalateBlocked, escalateSilentDeclines, launchAdmit, launchId, launchReceipt, openEscalation, readyTicketIds, recordSpend, scopeLabel, seatHolds, seatId, seatStreams, wakeCheck, workstreamInfo } from './helm.js';
 import { burnWindow, markBurnFloor, recentCosts } from './burn.js';
 import { exhaustedLimit, pollUsage, readCodexUsage, readUsage, refreshCodexUsage, refreshFor, usageForModel } from './usage.js';
 import { anomalyDecide, capacityDecide, planPointsConsumed } from './capacity.js';
@@ -15,6 +15,7 @@ import { logEvent, occupiedPid, paceAutoRelease, pidAlive, runningStamp, sClear,
 import { ancestryBroken, ancestryStamp } from './ancestry.js';
 import { runSession } from './shim.js';
 import { GlobalConfig, LoopConfig, RunChoice } from './types.js';
+import { recordLaunchAdmission, recordLaunchDispatch, recordLaunchIntent } from './launch-journal.js';
 
 const sleep = (s: number) => new Promise((r) => setTimeout(r, s * 1000));
 
@@ -288,7 +289,18 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     // resync, and a fresh process asks again on its restart pickup rather than
     // walking through a denial it never saw. Even an old store is asked every
     // pass so an ordinary candidate cannot confer a later workflow bypass.
-    const admission = launchAdmit(g, l, launchId(l, i + 1));
+    const thisLaunchId = launchId(l, i + 1);
+    let journaledLaunchId: string | null = null;
+    let admission: LaunchAdmission;
+    try {
+      admission = launchAdmit(g, l, thisLaunchId, (candidate) => recordLaunchIntent(l.name, thisLaunchId, candidate));
+      if (admission.how === 'admitted' && admission.admissionId && admission.workflowAttemptId) {
+        recordLaunchAdmission(l.name, launchReceipt(g, admission.admissionId, thisLaunchId));
+        journaledLaunchId = thisLaunchId;
+      }
+    } catch (e) {
+      admission = { act: 'deny' as const, how: 'unavailable' as const, ticketId: null, reason: `launch identity could not be persisted: ${String(e).split('\n')[0]!.slice(0, 160)}` };
+    }
     if (admission?.act === 'deny') {
       i += 1;
       firstPoll = false;
@@ -497,6 +509,11 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     const usageBefore = (run.billing ?? 'metered') === 'subscription'
       ? usageForModel(providerUsage()[run.runtime], model)
       : null;
+    if (journaledLaunchId && !recordLaunchDispatch(l.name, journaledLaunchId)) {
+      logEvent(l.name, 'launch-replay', `${journaledLaunchId} already reached dispatch`);
+      console.error(`rev: suppressed replay of launch '${journaledLaunchId}' before model dispatch.`);
+      continue;
+    }
     const res = runSession(g, l, prompt, model, run);
 
     const durSec = Math.round((Date.now() - started) / 1000);

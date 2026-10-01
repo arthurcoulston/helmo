@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, renameSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -31,5 +31,25 @@ describe('operator recovery CLI', () => {
     await expect(backup(f.home, 'gp', unsafe, join(unsafe, 'run'))).rejects.toThrow('0700');
     const linked = join(f.root, 'linked-output'); symlinkSync(f.output, linked);
     await expect(backup(f.home, 'gp', linked, join(linked, 'run'))).rejects.toThrow('symlink');
+  });
+  it('does not overwrite a leaf installed before backup publication', async () => {
+    const f = fixture(); const victim = join(f.root, 'victim'); writeFileSync(victim, 'keep', { mode: 0o600 });
+    await expect(backup(f.home, 'gp', f.output, join(f.output, 'backup'), { beforeBackupPublish: (_run, file) => symlinkSync(victim, file) })).rejects.toThrow();
+    expect(readFileSync(victim, 'utf8')).toBe('keep');
+  });
+  it('refuses a replaced backup run directory before publishing', async () => {
+    const f = fixture(); const destination = join(f.output, 'backup'); const moved = join(f.output, 'moved');
+    await expect(backup(f.home, 'gp', f.output, destination, { beforeBackupPublish: run => { renameSync(run, moved); mkdirSync(run, { mode: 0o700 }); } })).rejects.toThrow('replaced');
+    expect(() => statSync(join(destination, 'roadmap-backup.db'))).toThrow();
+  });
+  it('copies through the exclusive descriptor and rejects a replaced validation leaf', async () => {
+    const f = fixture(); const backed = await backup(f.home, 'gp', f.output, join(f.output, 'backup')); const victim = join(f.root, 'victim'); writeFileSync(victim, 'keep', { mode: 0o600 });
+    expect(() => validate(backed.file, 'gp', f.output, join(f.output, 'restore'), { afterValidateOpen: (_run, file) => { unlinkSync(file); symlinkSync(victim, file); } })).toThrow('replaced');
+    expect(readFileSync(victim, 'utf8')).toBe('keep');
+  });
+  it('refuses a replaced validation run directory before copying', async () => {
+    const f = fixture(); const backed = await backup(f.home, 'gp', f.output, join(f.output, 'backup')); const destination = join(f.output, 'restore'); const moved = join(f.output, 'moved');
+    expect(() => validate(backed.file, 'gp', f.output, destination, { afterValidateOpen: run => { renameSync(run, moved); mkdirSync(run, { mode: 0o700 }); } })).toThrow('replaced');
+    expect(() => statSync(join(destination, 'roadmap-restore-check.db'))).toThrow();
   });
 });

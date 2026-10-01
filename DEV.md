@@ -117,7 +117,10 @@ append-only event log, materialized state, `.immediate()` write transactions
   with an absolute `--backup`. Both create only a fresh 0700 run directory and
   0600 database below a canonical owner-owned root, verify identity, exact
   application schema, integrity and counts, retain failures, and never restore
-  live. Permissions isolate OS users, not hostile processes under one login.
+  live. Backup publishes its completed private staging database through an
+  atomic no-clobber link; validation streams through the exclusively created
+  destination descriptor, and both refuse a replaced run directory. Permissions
+  isolate OS users, not hostile processes under one login.
 - `types.ts` — the vocabulary. Gates and stances are named in PRODUCT.md
   but deliberately absent from v1 behavior; leave the room, don't fill it.
 

@@ -1,5 +1,9 @@
 # DEV — coding context for helmo-roadmap
 
+Shared installation and qualified-reference mechanics live in `packages/core`.
+Every Helmo-family surface accepts `ROADMAP_LABEL`, `HELMO_LABEL`, then
+`REV_LABEL`; multiple set keys must carry the same value or startup refuses.
+
 **Stage: MVP** (recorded in the R-11/R-5 completion pass, H-916). Publication
 readiness is a separate obligation: the privacy/history, disclosure and cold
 setup gates apply before release even while this remains MVP. No 1.0 or Scale

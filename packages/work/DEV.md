@@ -7,6 +7,10 @@ orchestrator meetings and the read-only view. Product intent:
 
 ## Architecture (src/, ~1.5k lines, zero-dependency philosophy)
 
+Shared installation and qualified-reference mechanics live in `packages/core`.
+Every Helmo-family surface accepts `ROADMAP_LABEL`, `HELMO_LABEL`, then
+`REV_LABEL`; multiple set keys must carry the same value or startup refuses.
+
 - `store.ts` — the heart: SQLite store (better-sqlite3), append-only event log
   with a global `seq` cursor (Rev's wake signal rides on it), ticket
   materialization, blocking/ready computation, actor validation. Stop

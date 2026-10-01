@@ -1,0 +1,1 @@
+{"name":"@helmo/core","version":"0.0.0-c1-candidate","private":true,"type":"module","main":"dist/index.js","types":"dist/index.d.ts","exports":"./dist/index.js","scripts":{"build":"tsc","test":"vitest run"},"devDependencies":{"@types/node":"^26.1.2","typescript":"^7.0.2","vitest":"^4.1.10"}}

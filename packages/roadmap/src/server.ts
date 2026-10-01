@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { mkdirSync } from 'node:fs';
+import { prepareServer } from '@helmo/core';
 import { installationLine, requestedInstallation, requireInstallation } from './install.js';
 import { Store } from './store.js';
 import { Actor } from './types.js';
@@ -11,8 +11,7 @@ import { loaded } from './build.js';
 // and the target is named on STDERR: stdout is the MCP protocol channel.
 const install = requireInstallation(process.env, undefined, requestedInstallation(process.argv.slice(2)));
 loaded();
-mkdirSync(install.home, { recursive: true });
-const store = new Store(install.db, install);
+const store = prepareServer(install, () => new Store(install.db, install));
 console.error(`Roadmap MCP (stdio) — ${installationLine(install, store.installationIdentity())}`);
 
 // Falls back to HELMO_ACTOR so an estate that already provisions per-agent

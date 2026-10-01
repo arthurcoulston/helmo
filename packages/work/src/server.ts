@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { mkdirSync } from 'node:fs';
+import { prepareServer } from '@helmo/core';
 import { loaded } from './build.js';
 import { installationLine, requestedInstallation, requireInstallation } from './install.js';
 import { Store } from './store.js';
@@ -14,9 +14,8 @@ const install = requireInstallation(process.env, undefined, requestedInstallatio
 // a long-lived server asked later would report whatever replaced its code
 // (H-2490).
 loaded();
-mkdirSync(install.home, { recursive: true });
 const envActor: Actor | null = process.env['HELMO_ACTOR'] ? (JSON.parse(process.env['HELMO_ACTOR']) as Actor) : null;
-const store = new Store(install.db, install, envActor);
+const store = prepareServer(install, () => new Store(install.db, install, envActor));
 console.error(`Helmo MCP (stdio) — ${installationLine(install, store.installationIdentity())}`);
 
 const server = buildServer(store, envActor);

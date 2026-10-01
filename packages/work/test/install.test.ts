@@ -78,9 +78,10 @@ describe('resolving the installation (H-2472)', () => {
     expect(supervised.label).toBe('dev.rev.gp');
     expect(supervised.source).toBe('REV_LABEL');
 
-    const overridden = installation(env({ HELMO_LABEL: 'helmo-b', REV_LABEL: 'dev.rev.gp' }));
-    expect(overridden.label).toBe('helmo-b');
-    expect(overridden.source).toBe('HELMO_LABEL');
+    const overridden = installation(env({ ROADMAP_LABEL: 'estate', HELMO_LABEL: 'estate', REV_LABEL: 'estate' }));
+    expect(overridden.label).toBe('estate');
+    expect(overridden.source).toBe('ROADMAP_LABEL');
+    expect(() => installation(env({ HELMO_LABEL: 'helmo-b', REV_LABEL: 'dev.rev.gp' }))).toThrow(/identity keys disagree/);
   });
 
   it('keeps the readable name for the conventional homes', () => {

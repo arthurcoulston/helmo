@@ -38,6 +38,7 @@
   },
   "type": "module",
   "dependencies": {
+    "@helmo/core": "0.0.0-c1-candidate",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "better-sqlite3": "^13.0.2",
     "zod": "^4.4.3"

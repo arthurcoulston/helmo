@@ -64,8 +64,9 @@ describe('resolving the installation (H-2472)', () => {
     // for the reason it honours HELMO_ACTOR, and REV_LABEL is the identity the
     // supervisor derives and writes into the service environment (H-2452).
     expect(installation(env({ REV_LABEL: 'dev.rev.gp' })).label).toBe('dev.rev.gp');
-    expect(installation(env({ HELMO_LABEL: 'gp', REV_LABEL: 'dev.rev.gp' })).label).toBe('gp');
-    expect(installation(env({ ROADMAP_LABEL: 'roadmap-b', HELMO_LABEL: 'gp' })).source).toBe('ROADMAP_LABEL');
+    expect(installation(env({ HELMO_LABEL: 'gp', REV_LABEL: 'gp' })).label).toBe('gp');
+    expect(installation(env({ ROADMAP_LABEL: 'gp', HELMO_LABEL: 'gp' })).source).toBe('ROADMAP_LABEL');
+    expect(() => installation(env({ ROADMAP_LABEL: 'roadmap-b', HELMO_LABEL: 'gp' }))).toThrow(/identity keys disagree/);
     expect(installation(env({ ROADMAP_DB: '', HELMO_LABEL: '  ' })).source).toBe('derived');
   });
 

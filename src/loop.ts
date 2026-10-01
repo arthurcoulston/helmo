@@ -293,10 +293,10 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     let journaledLaunchId: string | null = null;
     let admission: LaunchAdmission;
     try {
-      admission = launchAdmit(g, l, thisLaunchId, (candidate) => recordLaunchIntent(l.name, thisLaunchId, candidate));
-      if (admission.how === 'admitted' && admission.admissionId && admission.workflowAttemptId) {
-        recordLaunchAdmission(l.name, launchReceipt(g, admission.admissionId, thisLaunchId));
-        journaledLaunchId = thisLaunchId;
+      admission = launchAdmit(g, l, thisLaunchId, (candidate, stableLaunchId) => recordLaunchIntent(l.name, stableLaunchId, candidate));
+      if (admission.how === 'admitted' && admission.admissionId && admission.workflowAttemptId && admission.launchId) {
+        recordLaunchAdmission(l.name, launchReceipt(g, admission.admissionId, admission.launchId));
+        journaledLaunchId = admission.launchId;
       }
     } catch (e) {
       admission = { act: 'deny' as const, how: 'unavailable' as const, ticketId: null, reason: `launch identity could not be persisted: ${String(e).split('\n')[0]!.slice(0, 160)}` };
@@ -512,6 +512,10 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     if (journaledLaunchId && !recordLaunchDispatch(l.name, journaledLaunchId)) {
       logEvent(l.name, 'launch-replay', `${journaledLaunchId} already reached dispatch`);
       console.error(`rev: suppressed replay of launch '${journaledLaunchId}' before model dispatch.`);
+      sSet(l.name, 'IDLE', `${before.max_seq}\nworkflow launch ${journaledLaunchId} already reached dispatch\n`);
+      sSet(l.name, 'IDLE_AT', String(Date.now()));
+      if (countReached()) return;
+      await sleep(g.poll_seconds);
       continue;
     }
     const res = runSession(g, l, prompt, model, run);

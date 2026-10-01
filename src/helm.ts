@@ -2,6 +2,7 @@
 // Deliberately a subprocess, not a library import — the CLI is Helm's public
 // programmatic surface, and consuming it keeps that contract honest.
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { loadRoster } from './config.js';
 import { notifyOperator } from './health.js';
 import { processObservation, sHas } from './sentinels.js';
@@ -120,6 +121,7 @@ export interface LaunchAdmission {
   ticketId: string | null;
   workflowAttemptId?: string;
   admissionId?: string;
+  launchId?: string;
 }
 
 interface LaunchCandidate {
@@ -141,6 +143,12 @@ export function launchId(l: LoopConfig, attempt: number): string {
   return `${seatId(l)}:${process.pid}:${attempt}:${Date.now()}`;
 }
 
+/** One workflow attempt has one launch identity across process restarts. */
+export function workflowLaunchId(l: LoopConfig, candidate: { id: string; workflowAttemptId: string }): string {
+  const identity = `${seatId(l)}\n${candidate.id}\n${candidate.workflowAttemptId}`;
+  return `${seatId(l)}:workflow:${createHash('sha256').update(identity).digest('hex')}`;
+}
+
 function deniedReason(body: Record<string, unknown>, ticketId: string | null): string {
   const named = (['missing', 'stale', 'failed'] as const)
     .map((key) => [key, Array.isArray(body[key]) ? (body[key] as unknown[]).map(String) : []] as const)
@@ -152,7 +160,7 @@ function deniedReason(body: Record<string, unknown>, ticketId: string | null): s
 
 export function launchAdmit(
   g: GlobalConfig, l: LoopConfig, id: string,
-  onWorkflowIntent?: (candidate: { ticketId: string; workflowAttemptId: string }) => void,
+  onWorkflowIntent?: (candidate: { ticketId: string; workflowAttemptId: string }, launchId: string) => void,
 ): LaunchAdmission {
   // This is the same ordered query Helmo performs inside launch-admit. It does
   // not grant permission; it tells Rev whether a broken/old gate affects the
@@ -164,11 +172,16 @@ export function launchAdmit(
   } catch (e) {
     return { act: 'deny', how: 'unavailable', reason: `launch candidate could not be identified: ${cliError(e).split('\n')[0]!.slice(0, 160)}`, ticketId: null };
   }
+  const admittedLaunchId = candidate?.workflowAttemptId
+    ? workflowLaunchId(l, { id: candidate.id, workflowAttemptId: candidate.workflowAttemptId })
+    : id;
   try {
-    if (candidate?.workflowAttemptId) onWorkflowIntent?.({ ticketId: candidate.id, workflowAttemptId: candidate.workflowAttemptId });
+    if (candidate?.workflowAttemptId) onWorkflowIntent?.(
+      { ticketId: candidate.id, workflowAttemptId: candidate.workflowAttemptId }, admittedLaunchId,
+    );
     // The echoed launch_id is deliberately not compared with the one sent: the
     // answer is Helmo's record of a decision, not a token Rev validates.
-    const res = run(g, ['launch-admit', '--workstream', l.workstream, '--assignee', l.name, '--launch-id', id], revActor(), true) as
+    const res = run(g, ['launch-admit', '--workstream', l.workstream, '--assignee', l.name, '--launch-id', admittedLaunchId], revActor(), true) as
       { admitted?: boolean; ticket_id?: string; workflow_attempt_id?: string | null; admission_id?: string | null };
     const ticketId = res.ticket_id ?? null;
     const exactCandidate = candidate
@@ -184,6 +197,7 @@ export function launchAdmit(
     const attempt = res.workflow_attempt_id ? ` for attempt ${res.workflow_attempt_id}` : '';
     return {
       act: 'launch', how: 'admitted', ticketId,
+      launchId: admittedLaunchId,
       workflowAttemptId: res.workflow_attempt_id ?? undefined,
       admissionId: res.admission_id ?? undefined,
       reason: `admitted${res.admission_id ? ` as ${res.admission_id}` : ''}${attempt}`,

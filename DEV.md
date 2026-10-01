@@ -97,14 +97,19 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   of calling it a running iteration, and the marker clears with the hold.
   **Workflow launch admission** is the last gate before a session is spent
   (H-2561, helmo H-471): `launchAdmit` asks helm-cli `launch-admit --workstream
-  W --assignee A --launch-id rev:<seat>:<pid>:<iter>:<ms>`, and Helmo picks the
+  W --assignee A --launch-id <identity>`, and Helmo picks the
   seat's ready candidate, checks it, and records the admission in one
   transaction — so the verdict cannot drift between the check and the launch.
   Rev asks rather than deciding and keeps no verdict: the question is put again
   every pass, and a fresh process asks again on its restart pickup rather than
   walking through a denial it never saw. Helmo's echoed `launch_id` is
   deliberately not compared with the one sent; it is there so Helmo can admit a
-  retry of the same launch without recording a second admission.
+  retry of the same launch without recording a second admission. For
+  workflow-bound work that identity is a digest of the seat, ticket and
+  workflow-attempt id, so a process restart asks with the same name and the
+  durable pre-dispatch claim suppresses a second model session. Ordinary and
+  probe launches retain their process-local unique identity because they have
+  no workflow attempt to recover.
   Rev also requires the atomic answer to identify the same candidate as its
   immediately preceding compatibility read; a queue substitution fails closed
   instead of borrowing the earlier candidate's workflow classification.

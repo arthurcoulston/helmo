@@ -272,6 +272,29 @@ mock_cmd = "touch $REV_HOME/session-launched"
     expect(readFileSync(calls, 'utf8').trim().split('\n')).toHaveLength(2);
   });
 
+  it('suppresses a second model session when workflow work is replayed after restart', () => {
+    const e = setup(`[loops.replay-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = "echo launched >> $REV_HOME/sessions"
+`);
+    seedTicket(e, 'Workflow work replayed after restart');
+    const calls = workflowAdmissionProxy(e, {
+      admitted: true, ticket_id: 'H-1', workflow_attempt_id: 'attempt-replay', admission_id: 'admission-replay',
+    }, false, 'attempt-replay');
+
+    rev(e, ['run', 'replay-loop', '--count', '1']);
+    rev(e, ['run', 'replay-loop', '--count', '1']);
+
+    expect(readFileSync(join(e.home, 'sessions'), 'utf8').trim().split('\n')).toEqual(['launched']);
+    const admissions = readFileSync(calls, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as string[]);
+    expect(admissions).toHaveLength(2);
+    expect(admissions[0]![admissions[0]!.indexOf('--launch-id') + 1]).toBe(admissions[1]![admissions[1]!.indexOf('--launch-id') + 1]);
+    const events = readFileSync(join(e.home, 'state', 'replay-loop', 'events.log'), 'utf8');
+    expect(events).toMatch(/launch-replay.*already reached dispatch/);
+  });
+
   // The gate must be inert against an installation that has no launch-admit
   // command — reading its usage text as a refusal would stop ordinary work.
   // It still asks on every pass so a later workflow candidate cannot inherit

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { localRecordRef, qualifiedRecordRef } from './reference.js';
 import { Store } from './store.js';
 import { Actor, ACTOR_KINDS, BLAST_RADII, CONFIDENCES, DEP_TYPES, HelmoError, STATUSES, Ticket, writingActor } from './types.js';
+import { HELMO_VERSION } from '@helmo/core';
 
 // Single source of truth for the MCP tool surface (H-116). Both entry points —
 // server.ts (stdio, local agents) and remote.ts (Streamable HTTP, remote
@@ -78,7 +79,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
    *  dropped, one naming another refuses (H-2502). */
   const local = (ref: string): string => localRecordRef(ref, install);
 
-  const server = new McpServer({ name: 'helmo', version: '0.1.0' });
+  const server = new McpServer({ name: 'helmo', version: HELMO_VERSION });
 
   server.registerTool(
     'helmo_create_ticket',

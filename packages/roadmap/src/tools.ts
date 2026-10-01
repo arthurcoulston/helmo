@@ -5,6 +5,7 @@ import { Actor, ACTOR_KINDS, DEP_TYPES, EFFORT_SIZES, HORIZONS, Project, Roadmap
 import { running } from './build.js';
 import { Installation } from './install.js';
 import { localRecordRef, qualifiedRecordRef } from './reference.js';
+import { HELMO_VERSION } from '@helmo/core';
 
 // Single source of truth for the MCP tool surface, Helmo-style: tool
 // descriptions are guidance-as-deployed. Edit them here and only here.
@@ -75,7 +76,7 @@ export function buildServer(store: Store, envActor: Actor | null, install?: Inst
    *  one naming another refuses (H-2506). */
   const local = (ref: string): string => localRecordRef(ref, target);
 
-  const server = new McpServer({ name: 'helmo-roadmap', version: '0.1.0' });
+  const server = new McpServer({ name: 'helmo-roadmap', version: HELMO_VERSION });
 
   server.registerTool(
     'roadmap_add_project',

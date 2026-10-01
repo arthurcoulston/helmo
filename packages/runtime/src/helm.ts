@@ -8,6 +8,7 @@ import { notifyOperator } from './health.js';
 import { processObservation, sHas } from './sentinels.js';
 import { GlobalConfig, LoopConfig } from './types.js';
 import type { LaunchReceipt } from './launch-journal.js';
+import { HELMO_VERSION } from '@helmo/core';
 
 export interface WakeCheck {
   max_seq: number;
@@ -80,7 +81,7 @@ export function seatHolds(g: GlobalConfig, l: LoopConfig): SeatHold[] {
 }
 
 export function revActor(): object {
-  return { name: 'rev', kind: 'agent', model: 'rev-harness', version: '0.2.0' };
+  return { name: 'rev', kind: 'agent', model: 'rev-harness', version: HELMO_VERSION };
 }
 
 /** One visible Builder assignment for an owned intake-preparation attempt. */

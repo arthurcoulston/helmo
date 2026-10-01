@@ -414,13 +414,19 @@ export function describe(file: string | null): string[] {
     ];
   }
   let selection: Selection | null;
+  let selectionProblem: string | null = null;
   try {
     selection = readSelection(file);
   } catch (e) {
-    return [`release: UNREADABLE — ${e instanceof Error ? e.message : String(e)}`, `  selection file: ${file}`];
+    selection = null;
+    selectionProblem = e instanceof Error ? e.message : String(e);
   }
   if (!selection) {
-    return [`release: none selected yet (${file} does not exist).`, '  Select one with: rev release upgrade <release directory>'];
+    const lines = selectionProblem
+      ? [`release: UNREADABLE — ${selectionProblem}`, `  selection file: ${file}`]
+      : [`release: none selected yet (${file} does not exist).`, '  Select one with: rev release upgrade <release directory>'];
+    lines.push(...describeDeployment(deploymentFile(file), null));
+    return lines;
   }
 
   const lines = [`release: ${selection.release} (${selection.directory}), selected ${selection.selected_at}`];

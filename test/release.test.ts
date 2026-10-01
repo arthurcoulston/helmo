@@ -261,7 +261,10 @@ describe('describing a selection (H-2493)', () => {
       format: 1, installation: 'dev.rev', phase: 'running', release: 'current', directory: current,
       components: Object.fromEntries(REPOS.map((repo) => [repo, sha(`current:${repo}`)])),
       updated_at: '2026-10-01T00:00:00.000Z', recovery: 'Restart the down service, then repeat its live probe.',
-      processes: [{ process: 'supervisor', pid: 42, installation: 'dev.rev', release: 'current', components: {}, observed_at: '2026-10-01T00:00:00.000Z' }],
+      required_processes: ['supervisor'],
+      processes: [{ process: 'supervisor', pid: 42, command: 'rev service', installation: 'dev.rev', release: 'current',
+        components: Object.fromEntries(REPOS.map((repo) => [repo, sha(`current:${repo}`)])),
+        observed_at: '2026-10-01T00:00:00.000Z', identity_verified_at: '2026-10-01T00:00:00.000Z' }],
     });
     upgrade(file, makeRelease(dir, 'next'));
     // Simulate interruption after selection but before activation: the durable
@@ -272,7 +275,8 @@ describe('describing a selection (H-2493)', () => {
       updated_at: '2026-10-01T00:00:00.000Z', recovery: 'Restart the down service, then repeat its live probe.',
     });
     const shown = describeRelease(file).join('\n');
-    expect(shown).toContain('deployment: STALE running');
+    expect(shown).toContain('deployment: UNVERIFIED — record says running');
+    expect(shown).toContain('the record describes another selection');
     expect(shown).toContain('selected now: next');
     expect(shown).toContain('Restart the down service');
   });
@@ -286,6 +290,51 @@ describe('describing a selection (H-2493)', () => {
     expect(shown).toContain('release: next');
     expect(shown).toContain('deployment: UNREADABLE');
     expect(shown).toContain('do not infer running state');
+  });
+
+  it('does not call a saved running phase live when coverage, identity, refs, or the process disagree', () => {
+    const dir = root();
+    const file = selectionAt(dir);
+    const release = makeRelease(dir, 'next');
+    upgrade(file, release);
+    const selected = readSelection(file)!;
+    selected.install = 'dev.rev';
+    writeSelection(file, selected);
+    writeDeployment(deploymentFile(file), {
+      format: 1, installation: 'dev.rev', phase: 'running', release: 'next', directory: release,
+      components: Object.fromEntries(REPOS.map((repo) => [repo, sha(`next:${repo}`)])),
+      updated_at: new Date().toISOString(), recovery: 'Restart and repeat every probe.',
+      required_processes: ['supervisor', 'health'],
+      processes: [{ process: 'supervisor', pid: 2147483647, command: 'rev service', installation: 'dev.helmo', release: 'old',
+        components: { rev: sha('wrong') }, observed_at: '2000-01-01T00:00:00.000Z', identity_verified_at: '2000-01-01T00:00:00.000Z' }],
+    });
+    const shown = describeRelease(file).join('\n');
+    expect(shown).toContain('deployment: UNVERIFIED — record says running');
+    expect(shown).toContain('required process health has no evidence');
+    expect(shown).toContain('reports installation dev.helmo');
+    expect(shown).toContain('reports release old');
+    expect(shown).toContain('pid 2147483647 is not live');
+  });
+
+  it('keeps malformed evidence diagnostic and keeps recovery visible when selection is broken', () => {
+    const dir = root();
+    const file = selectionAt(dir);
+    upgrade(file, makeRelease(dir, 'next'));
+    writeFileSync(deploymentFile(file), JSON.stringify({
+      format: 1, installation: 'dev.rev', phase: 'failed', release: 'next', directory: '/release/next', components: {},
+      updated_at: new Date().toISOString(), recovery: 'Restore the previous selection and restart the failed service.', processes: { length: 1 },
+    }));
+    expect(describeRelease(file).join('\n')).toContain('deployment: UNREADABLE');
+
+    writeDeployment(deploymentFile(file), {
+      format: 1, installation: 'dev.rev', phase: 'failed', release: 'next', directory: '/release/next', components: {},
+      updated_at: new Date().toISOString(), recovery: 'Restore the previous selection and restart the failed service.',
+    });
+    writeFileSync(file, '{broken');
+    const shown = describeRelease(file).join('\n');
+    expect(shown).toContain('release: UNREADABLE');
+    expect(shown).toContain('deployment: failed');
+    expect(shown).toContain('Restore the previous selection');
   });
 });
 

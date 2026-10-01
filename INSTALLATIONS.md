@@ -156,7 +156,13 @@ component refs observed from the processes that loaded them. Every state keeps
 an explicit recovery instruction. `rev release status` reads both files and
 calls a record stale when it describes a different selection, partial when its
 required fields are absent, and unrecorded when activation has supplied no
-evidence. It never promotes `selected` or a `BUILD.json` stamp to “running.”
+evidence. A running record also declares the complete required-process set;
+each observation carries its exact command, loaded refs, installation identity,
+and the time an identity write/readback passed. Status probes each recorded PID
+and command afresh and prints `UNVERIFIED` if coverage, identity, refs, selection,
+or liveness disagree. It never promotes `selected`, saved phase, or a
+`BUILD.json` stamp to “running,” and a broken selection cannot hide the
+independently readable recovery instruction in the activation record.
 
 From then on **every entry point verifies the set before it does anything** —
 every Rev CLI invocation and the supervisor, and the Helmo MCP servers Rev

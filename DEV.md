@@ -563,8 +563,11 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   carries exact component refs, effective installation identity and an owned
   recovery instruction. `rev release status` combines it with the selection
   and reports missing, partial, or stale evidence rather than treating selected
-  artifacts as live processes. Activation code writes running only after its
-  process probes supply their loaded refs and identities.
+  artifacts as live processes. A running record declares its required process
+  set; status checks coverage, exact commands, loaded refs, installation
+  identity and PID liveness, and keeps activation recovery visible even when
+  the selection is unreadable. Activation code writes running only after its
+  process probes supply their loaded refs, identities and identity write/readback.
 - `remove.ts` — **the one command that deletes an installation's records**
   (H-2512). `rev install remove [--confirm]`. Every other removal rev has keeps
   the data: `rev service uninstall` takes the definition and leaves the store,

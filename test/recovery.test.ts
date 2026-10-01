@@ -1,9 +1,10 @@
 import Database from 'better-sqlite3';
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, renameSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { backup, validate } from '../src/recovery-lib.js';
+import { backup, identity, validate } from '../src/recovery-lib.js';
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'roadmap-recovery-')); const home = join(root, 'home'); const output = join(root, 'out');
@@ -14,6 +15,19 @@ function fixture() {
 }
 
 describe('operator recovery CLI', () => {
+  it('reports only the stored identity without changing the source or creating output', () => {
+    const f = fixture(); const database = join(f.home, 'roadmap.db'); const before = readFileSync(database); const entries = readdirSync(f.root);
+    expect(identity(f.home)).toBe('gp');
+    expect(readFileSync(database)).toEqual(before); expect(readdirSync(f.root)).toEqual(entries); expect(readdirSync(f.output)).toEqual([]);
+  });
+  it('exposes the identity-only result through the operator CLI', () => {
+    const f = fixture(); const result = execFileSync(process.execPath, ['--import', 'tsx', 'src/recovery.ts', 'identity', '--source-home', f.home], { encoding: 'utf8' });
+    expect(JSON.parse(result)).toEqual({ installation: 'gp' }); expect(readdirSync(f.output)).toEqual([]);
+  });
+  it('reports a missing stored identity distinctly', () => {
+    const f = fixture(); const db = new Database(join(f.home, 'roadmap.db')); db.prepare("DELETE FROM meta WHERE key = 'installation_name'").run(); db.close();
+    expect(() => identity(f.home)).toThrow('stored installation identity is missing'); expect(readdirSync(f.output)).toEqual([]);
+  });
   it('makes an owner-only backup and validates an unchanged isolated copy', async () => {
     const f = fixture(); const backed = await backup(f.home, 'gp', f.output, join(f.output, 'backup'));
     expect(backed.tables.projects).toBe(1); expect(statSync(backed.file).mode & 0o777).toBe(0o600); const before = readFileSync(backed.file);
@@ -21,6 +35,10 @@ describe('operator recovery CLI', () => {
   });
   it('refuses identity mismatch before creating a destination', async () => {
     const f = fixture(); const destination = join(f.output, 'never'); await expect(backup(f.home, 'wrong', f.output, destination)).rejects.toThrow('identity'); expect(() => statSync(destination)).toThrow();
+  });
+  it('still refuses validation identity mismatch before creating a destination', async () => {
+    const f = fixture(); const backed = await backup(f.home, 'gp', f.output, join(f.output, 'backup')); const destination = join(f.output, 'never-restore');
+    await expect(validate(backed.file, 'wrong', f.output, destination)).rejects.toThrow('identity'); expect(() => statSync(destination)).toThrow();
   });
   it('refuses existing destinations and corrupt backups', async () => {
     const f = fixture(); mkdirSync(join(f.output, 'existing'), { mode: 0o700 }); await expect(backup(f.home, 'gp', f.output, join(f.output, 'existing'))).rejects.toThrow();

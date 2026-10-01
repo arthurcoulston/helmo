@@ -11,14 +11,30 @@ function deadline(start: number, limit = LIMIT_MS): void { if (performance.now()
 function effectiveUid(): number { if (!process.geteuid) throw new Error('roadmap-recovery requires a platform with effective-user ownership checks'); return process.geteuid(); }
 function ownedRegular(path: string): void { const s = lstatSync(path); if (!s.isFile() || s.isSymbolicLink() || s.uid !== effectiveUid()) throw new Error(`${path} must be an owner-owned regular file`); }
 
-function source(sourceHome: string, installation: string): Database.Database {
+function source(sourceHome: string): Database.Database {
   if (!sourceHome || !isAbsolute(sourceHome)) throw new Error('--source-home must be an explicit absolute path');
-  if (!installation.trim()) throw new Error('--installation must be nonempty');
   const stated = resolve(sourceHome); const parent = realpathSync(dirname(stated)); const home = join(parent, stated.slice(dirname(stated).length + 1));
   const hs = lstatSync(home); if (!hs.isDirectory() || hs.isSymbolicLink() || hs.uid !== effectiveUid()) throw new Error('source home must be an owner-owned real directory');
   const path = join(realpathSync(home), 'roadmap.db'); ownedRegular(path);
-  const db = new Database(path, { readonly: true, fileMustExist: true });
-  try { const row = db.prepare("SELECT value FROM meta WHERE key = 'installation_name'").get() as { value?: string } | undefined; if (!row?.value || row.value !== installation) throw new Error(`stored installation identity does not match '${installation}'`); return db; }
+  return new Database(path, { readonly: true, fileMustExist: true });
+}
+
+function storedIdentity(db: Database.Database): string {
+  const row = db.prepare("SELECT value FROM meta WHERE key = 'installation_name'").get() as { value?: string } | undefined;
+  if (!row?.value) throw new Error('stored installation identity is missing');
+  return row.value;
+}
+
+export function identity(sourceHome: string): string {
+  const db = source(sourceHome);
+  try { return storedIdentity(db); }
+  finally { db.close(); }
+}
+
+function matchingSource(sourceHome: string, installation: string): Database.Database {
+  if (!installation.trim()) throw new Error('--installation must be nonempty');
+  const db = source(sourceHome);
+  try { if (storedIdentity(db) !== installation) throw new Error(`stored installation identity does not match '${installation}'`); return db; }
   catch (e) { db.close(); throw e; }
 }
 
@@ -54,7 +70,7 @@ async function inspect(path: string, installation: string, start: number, hooks:
 }
 
 export async function backup(sourceHome: string, installation: string, outputRoot: string, outputDir: string, hooks: RecoveryTestHooks = {}): Promise<RecoveryReport> {
-  const start = performance.now(); const db = source(sourceHome, installation);
+  const start = performance.now(); const db = matchingSource(sourceHome, installation);
   try {
     const run = freshDir(outputRoot, outputDir); const file = join(run.path, 'roadmap-backup.db'); const staging = join(run.path, `.roadmap-backup-${randomUUID()}.db`);
     process.umask(0o077); await db.backup(staging, { progress: () => { deadline(start, hooks.limitMs); return 100; } }); ownedRegular(staging);

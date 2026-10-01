@@ -112,7 +112,9 @@ append-only event log, materialized state, `.immediate()` write transactions
   order. No write routes at all — unlike Helmo's view there is no answer
   surface; add none.
 - `recovery.ts` / `recovery-lib.ts` — operator-only `roadmap-recovery`, absent
-  from MCP. `backup` requires explicit `--source-home`, `--installation`,
+  from MCP. `identity` requires only explicit `--source-home` and reports only
+  the stored installation name through a read-only, file-must-exist connection;
+  it creates no destination. `backup` requires explicit `--source-home`, `--installation`,
   `--output-root`, and fresh `--output-dir`; `validate` replaces source-home
   with an absolute `--backup`. Both create only a fresh 0700 run directory and
   0600 database below a canonical owner-owned root, verify identity, exact

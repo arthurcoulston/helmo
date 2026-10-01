@@ -23,7 +23,7 @@ a decision.
 
 The fleet capability is implemented and used in day-to-day operation: one supervisor runs every
 roster loop, with respawn backoff, graceful stop-all (drain, never kill), per-loop pace, and reboot
-resilience as a user service (launchd/systemd). The current package is `0.1.0` and the project is at
+resilience as a user service (launchd/systemd). The current package is `0.2.0` and the project is at
 the MVP stage. Its automated floor includes build and integration tests, and independent review
 still gates acceptance. Rev has not declared the additional 1.0 gates.
 

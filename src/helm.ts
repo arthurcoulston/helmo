@@ -78,7 +78,7 @@ export function seatHolds(g: GlobalConfig, l: LoopConfig): SeatHold[] {
 }
 
 export function revActor(): object {
-  return { name: 'rev', kind: 'agent', model: 'rev-harness', version: '0.1.0' };
+  return { name: 'rev', kind: 'agent', model: 'rev-harness', version: '0.2.0' };
 }
 
 /** Why a helmo-cli call failed, in the store's own words. execFileSync's

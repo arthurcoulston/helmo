@@ -231,9 +231,9 @@ is cut; the table below is what a consumer checks their `RELEASE.json` against.
 
 | component      | version | commit                                      |
 | -------------- | ------- | ------------------------------------------- |
-| `rev`          | 0.1.0   | the commit tagged `v0.1.0` here — `git rev-parse v0.1.0` |
-| `helmo`        | 0.5.0   | `792f51a31243b1ed20934fec0977c9846e6d8164`  |
-| `helmo-roadmap`| 0.1.0   | `1799eb31aa3815c5fe7a8e95350aa7a1f6740ea4`  |
+| `rev`          | 0.2.0   | the commit tagged `v0.2.0` here — `git rev-parse v0.2.0` |
+| `helmo`        | 0.5.0   | `c72d8c1d64be01a78682909b52f8c57fe1af9bfb`  |
+| `helmo-roadmap`| 0.1.0   | `32afbe159df302a7f298420bf8a1870ec06af3d9`  |
 
 **There is no upstream release id to check against**, and that is not an
 omission. A release's id is its directory's name, you assemble that directory

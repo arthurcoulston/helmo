@@ -1,10 +1,14 @@
 # Changelog
 
-This is Rev's first published set of release notes. It is scoped to the
-independent-installations release and does not reconstruct what came before it;
-earlier history is in the git log.
+These notes start at v0.1.0, the independent-installations release. They do
+not reconstruct what came before it; earlier history is in the git log.
 
-## Unreleased
+## v0.2.0 — 2026-10-01
+
+A loop no longer spends a session the work record would refuse, and the pinned
+service path from v0.1.0 is safe to use: a pinned supervisor is recognised as
+running, and installing the service over an in-flight one waits rather than
+races.
 
 - Before a loop spends a session, Rev asks Helmo whether the seat may launch
   at all, so a ticket bound to a workflow attempt is started only once its
@@ -21,6 +25,9 @@ earlier history is in the git log.
 - On macOS, service installation waits for the previous launchd job to release
   its label before bootstrapping the replacement. If bootstrap fails, it
   restores the previous definition and running job (H-2560).
+- Removal never pairs a Helmo home whose own name is already a conventional
+  roadmap home: the bounds for `.rev-roadmap-b` no longer claim
+  `.helmo-roadmap-b`, which belongs to the roadmap `-b` installation (H-2553).
 
 ## v0.1.0 — 2026-09-30
 

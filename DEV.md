@@ -492,8 +492,10 @@ orchestrator meetings and the read-only view. Product intent:
   that reaches 118 items on one ticket, 64-character digests — and the first
   assertion in the budget block refuses to measure anything until the fixture
   exceeds the numbers in `src/floor.ts`'s `REAL_RECORD` in total text, in
-  bytes per row and in the longest unbreakable run it draws. The budget it
-  shipped with before did none of that: 300,000 bytes asserted over 80
+  bytes per row and in the longest unbreakable run it draws. It warms each
+  document once, then requires the slowest of three bounded warm
+  responses to meet the 400 ms budget so one fast sample cannot mask a miss.
+  The budget it shipped with before did none of that: 300,000 bytes asserted over 80
   one-line tickets while the record it was shipped against served 2,718,020,
   nine times the ceiling, green the whole time (H-202).
   Nothing in that file opens a browser, so it cannot measure real geometry or

@@ -195,22 +195,25 @@ export async function serveRecord(db: string): Promise<{ view: ChildProcess; ori
   return { view, origin: `http://127.0.0.1:${port}` };
 }
 
-/** Fetched twice, timed on the second. The first request to a document pays
+/** Warmed once, then fetched three times. The first request to a document pays
  *  for opening the store and warming the module, which is a real cost once per
  *  process and pure noise in a budget — measuring it forced a budget so loose
- *  it no longer failed for a render gone quadratic. */
+ *  it no longer failed for a render gone quadratic. Every bounded warm sample
+ *  must fit: keeping the slowest makes the gate impossible for one fast sample
+ *  to mask. */
 export async function load(origin: string, path: string) {
   const first = await fetch(`${origin}${path}`, { redirect: 'error' });
   await first.text();
   let html = '';
-  let ms = Infinity;
+  let ms = 0;
   for (let attempt = 0; attempt < 3; attempt++) {
     const started = performance.now();
     const res = await fetch(`${origin}${path}`, { redirect: 'error' });
     const body = await res.text();
     if (res.status !== 200) throw new Error(`${path} answered ${res.status}`);
     const elapsed = performance.now() - started;
-    if (elapsed < ms) { html = body; ms = elapsed; }
+    html = body;
+    ms = Math.max(ms, elapsed);
   }
   return { html, bytes: Buffer.byteLength(html), ms, rows: rowsDrawn(html) };
 }

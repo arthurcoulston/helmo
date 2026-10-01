@@ -301,6 +301,55 @@ describe('atomic workflow admission (H-431)', () => {
     s.recordWorkflowDecision({ id: 'pass-after-denial', requirement_id: 'technical', manifest_id: 'manifest-a', verdict: 'pass', source: 'review:recovered' });
     expect(s.launchAdmission('helmo-dev', builder.name, 'rev:builder-loop:1')).toMatchObject({ admitted: true, ticket_id: ticket.id });
   });
+
+  it('reads and revalidates the exact captured launch evidence', () => {
+    const s = admissionStore();
+    const ticket = create(s, { workflow_attempt_id: 'attempt-1' }); triage(s, ticket.id);
+    s.recordWorkflowDecision({ id: 'pass-1', requirement_id: 'technical', manifest_id: 'manifest-a', verdict: 'pass', source: 'review:event-1' });
+    const admitted = s.launchAdmission('helmo-dev', builder.name, 'rev:builder-loop:1');
+    const admissionId = admitted.admission_id as string;
+    expect(s.launchReceipt(admissionId, 'rev:builder-loop:1')).toMatchObject({
+      id: admissionId, launch_id: 'rev:builder-loop:1', workflow_id: 'release', definition_revision: 'v1',
+      evidence: [{ requirement: { id: 'technical' }, manifest: { id: 'manifest-a' }, decision: { id: 'pass-1' } }],
+    });
+    expect(s.revalidateLaunch(admissionId, 'rev:builder-loop:1')).toEqual({ valid: true, admission_id: admissionId, launch_id: 'rev:builder-loop:1', attempt_id: 'attempt-1' });
+    expect(() => s.launchReceipt(admissionId, 'rev:builder-loop:other')).toThrow(/does not match/);
+  });
+
+  it('fails closed after authority changes and quarantines an interrupted launch idempotently', () => {
+    const s = admissionStore();
+    const ticket = create(s, { workflow_attempt_id: 'attempt-1' }); triage(s, ticket.id);
+    s.recordWorkflowDecision({ id: 'pass-1', requirement_id: 'technical', manifest_id: 'manifest-a', verdict: 'pass', source: 'review:event-1' });
+    const admitted = s.launchAdmission('helmo-dev', builder.name, 'rev:builder-loop:1');
+    const admissionId = admitted.admission_id as string;
+    s.recordWorkflowDecision({ id: 'revoke-1', requirement_id: 'technical', manifest_id: 'manifest-a', verdict: 'revocation', source: 'review:event-2', revokes_decision_id: 'pass-1' });
+    expect(() => s.revalidateLaunch(admissionId, 'rev:builder-loop:1')).toThrow(/invalidation/);
+    const first = s.quarantineLaunch(admissionId, 'rev:builder-loop:1', 'worker exited before outcome');
+    expect(s.quarantineLaunch(admissionId, 'rev:builder-loop:1', 'different replay wording')).toEqual(first);
+    expect(() => s.quarantineLaunch(admissionId, 'rev:builder-loop:other', 'wrong launch')).toThrow(/does not match/);
+  });
+
+  it('shares recovery state between store instances without touching another run', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'helmo-launch-recovery-'));
+    const dbPath = join(dir, 'helmo.db');
+    try {
+      const first = new Store(dbPath, undefined, reviewer);
+      first.addWorkflowDefinition({ workflow_id: 'release', revision: 'v1', stages: [{ id: 'build' }] });
+      for (const suffix of ['a', 'b']) {
+        first.addWorkflowRun({ id: `run-${suffix}`, workflow_id: 'release', definition_revision: 'v1' });
+        first.addWorkflowAttempt({ id: `attempt-${suffix}`, run_id: `run-${suffix}`, stage_id: 'build', ordinal: 1 });
+      }
+      const ticket = create(first, { workflow_attempt_id: 'attempt-a' }); triage(first, ticket.id);
+      const other = create(first, { workflow_attempt_id: 'attempt-b' }); triage(first, other.id);
+      const admitted = first.launchAdmission('helmo-dev', builder.name, 'rev:builder-loop:1');
+      const admissionId = admitted.admission_id as string;
+      const second = new Store(dbPath, undefined, reviewer);
+      second.quarantineLaunch(admissionId, 'rev:builder-loop:1', 'crash boundary');
+      expect(() => first.revalidateLaunch(admissionId, 'rev:builder-loop:1')).toThrow(/invalidation/);
+      expect(first.updateTicket(builder, { ticket_id: other.id, note: 'other run remains usable', status: 'in_progress' }).ticket.status).toBe('in_progress');
+      second.close(); first.close();
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
 });
 
 describe('workflow invalidation and quarantine (H-432)', () => {

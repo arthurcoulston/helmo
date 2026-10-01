@@ -23,6 +23,9 @@ const COMMAND_FLAGS: Record<string, readonly string[]> = {
   'wake-check': ['since-seq', 'workstream', 'assignee'],
   'seat-check': ['assignee'],
   'launch-admit': ['workstream', 'assignee', 'launch-id'],
+  'launch-receipt': ['admission-id', 'launch-id'],
+  'launch-revalidate': ['admission-id', 'launch-id'],
+  'launch-quarantine': ['admission-id', 'launch-id', 'reason'],
   'purge-orphan': ['ticket', 'confirm'],
   'actor-activity': ['name', 'since-seq', 'session', 'advancing'],
   'actor-tickets': ['name', 'since-seq', 'session'],
@@ -326,6 +329,18 @@ try {
       out(store.launchAdmission(req('workstream'), req('assignee'), req('launch-id')));
       break;
     }
+    case 'launch-receipt': {
+      out(store.launchReceipt(req('admission-id'), req('launch-id')));
+      break;
+    }
+    case 'launch-revalidate': {
+      out(store.revalidateLaunch(req('admission-id'), req('launch-id')));
+      break;
+    }
+    case 'launch-quarantine': {
+      out(store.quarantineLaunch(req('admission-id'), req('launch-id'), req('reason')));
+      break;
+    }
     case 'create': {
       const t = store.createTicket(actor(), {
         title: req('title'),
@@ -405,6 +420,9 @@ try {
   wake-check     --workstream W --assignee A --since-seq N     (read-only harness poll)
   seat-check     --assignee A                                  (in_progress holds in a name + claiming actor; rev's same-seat guard)
   launch-admit   --workstream W --assignee A --launch-id ID     (atomic next-candidate workflow admission; read-only for ordinary tickets)
+  launch-receipt --admission-id ID --launch-id ID                (read exact immutable launch authority and captured evidence)
+  launch-revalidate --admission-id ID --launch-id ID             (atomically fail closed unless captured authority still stands)
+  launch-quarantine --admission-id ID --launch-id ID --reason R  (idempotently quarantine one interrupted or invalid launch)
   purge-orphan   --ticket H-n --confirm                          (remove a row with NO events — a write that came from outside)
   actor-activity --name A --since-seq N [--session S] [--advancing] (did this actor/session write events?)
   actor-tickets  --name A --since-seq N [--session S]          (which tickets, most-touched first)

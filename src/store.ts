@@ -805,6 +805,73 @@ export class Store {
     }).immediate();
   }
 
+  /** Resolve one launch receipt by both immutable identities. The expanded
+   * evidence is intentionally read from the ids captured in the admission,
+   * never from whatever happens to be current now. */
+  launchReceipt(admissionId: string, launchId: string): Record<string, unknown> {
+    if (!admissionId?.trim() || !launchId?.trim()) throw new HelmoError('launch-receipt requires exact non-empty admission-id and launch-id values.');
+    const row = this.db.prepare('SELECT admission, created_at FROM workflow_admissions WHERE id = ?').get(admissionId) as { admission: string; created_at: string } | undefined;
+    if (!row) throw new HelmoError(`Launch admission ${admissionId} does not exist.`);
+    let admission: Record<string, unknown>;
+    try { admission = JSON.parse(row.admission) as Record<string, unknown>; }
+    catch { throw new HelmoError(`Launch admission ${admissionId} is corrupt.`); }
+    if (admission.operation !== 'launch' || admission.launch_id !== launchId) throw new HelmoError(`Launch admission ${admissionId} does not match launch ${launchId}.`);
+    const requirements = admission.requirements;
+    if (!Array.isArray(requirements)) throw new HelmoError(`Launch admission ${admissionId} is corrupt.`);
+    const evidence = requirements.map((item) => {
+      const captured = item as { requirement_id?: string; manifest_id?: string; decision_id?: string; verdict?: string };
+      if (![captured.requirement_id, captured.manifest_id, captured.decision_id, captured.verdict].every((v) => typeof v === 'string' && v.length)) throw new HelmoError(`Launch admission ${admissionId} is corrupt.`);
+      const requirement = this.db.prepare('SELECT requirement FROM workflow_requirements WHERE id = ?').get(captured.requirement_id) as { requirement: string } | undefined;
+      const manifest = this.db.prepare('SELECT manifest FROM workflow_manifests WHERE id = ?').get(captured.manifest_id) as { manifest: string } | undefined;
+      const decision = this.db.prepare('SELECT decision FROM workflow_decisions WHERE id = ?').get(captured.decision_id) as { decision: string } | undefined;
+      if (!requirement || !manifest || !decision) throw new HelmoError(`Launch admission ${admissionId} has unavailable evidence.`);
+      try { return { requirement: JSON.parse(requirement.requirement), manifest: JSON.parse(manifest.manifest), decision: JSON.parse(decision.decision) }; }
+      catch { throw new HelmoError(`Launch admission ${admissionId} has corrupt evidence.`); }
+    });
+    return { ...admission, created_at: row.created_at, evidence };
+  }
+
+  /** Re-check the exact captured authority in one snapshot. This read never
+   * repairs or substitutes evidence: changed authority makes the launch stale. */
+  revalidateLaunch(admissionId: string, launchId: string): Record<string, unknown> {
+    return this.db.transaction(() => {
+      const receipt = this.launchReceipt(admissionId, launchId);
+      const attemptId = receipt.attempt_id as string;
+      const attempt = this.db.prepare('SELECT state FROM workflow_attempts WHERE id = ?').get(attemptId) as { state: string } | undefined;
+      const stale: string[] = [];
+      if (!attempt) stale.push('attempt');
+      else if (attempt.state === 'quarantined' || this.db.prepare('SELECT 1 FROM workflow_invalidations WHERE attempt_id = ? LIMIT 1').get(attemptId)) stale.push('invalidation');
+      for (const item of receipt.requirements as { requirement_id: string; manifest_id: string; decision_id: string }[]) {
+        const decisions = this.db.prepare('SELECT decision FROM workflow_decisions WHERE requirement_id = ? AND manifest_id = ? ORDER BY rowid')
+          .all(item.requirement_id, item.manifest_id).map((row) => JSON.parse((row as { decision: string }).decision) as WorkflowDecision);
+        const revoked = new Set(decisions.filter((decision) => decision.verdict === 'revocation').map((decision) => decision.revokes_decision_id));
+        const standing = decisions.filter((decision) => decision.verdict !== 'revocation' && !revoked.has(decision.id)).at(-1);
+        if (!standing || standing.id !== item.decision_id) stale.push(`requirement:${item.requirement_id}`);
+      }
+      if (stale.length) throw new HelmoError(`workflow_admission_denied ${JSON.stringify({ admission_id: admissionId, attempt_id: attemptId, missing: [], stale: [...new Set(stale)], failed: [] })}`);
+      return { valid: true, admission_id: admissionId, launch_id: launchId, attempt_id: attemptId };
+    }).immediate();
+  }
+
+  /** Mark one exact launch unusable. Replays return the same state, while a
+   * mismatched identity cannot touch the attempt or any neighboring branch. */
+  quarantineLaunch(admissionId: string, launchId: string, reason: string): Record<string, unknown> {
+    if (!reason?.trim()) throw new HelmoError('launch-quarantine requires a non-empty reason.');
+    return this.db.transaction(() => {
+      const receipt = this.launchReceipt(admissionId, launchId);
+      const attemptId = receipt.attempt_id as string;
+      const source = `launch:${admissionId}`;
+      const prior = this.db.prepare("SELECT reason FROM workflow_invalidations WHERE attempt_id = ? AND reason LIKE 'launch_quarantined:%' AND source = ?").get(attemptId, source) as { reason: string } | undefined;
+      const attempt = this.db.prepare('SELECT state FROM workflow_attempts WHERE id = ?').get(attemptId) as { state: string } | undefined;
+      if (!attempt) throw new HelmoError(`Workflow attempt ${attemptId} does not exist.`);
+      if (attempt.state === 'complete' && !prior) throw new HelmoError(`Workflow attempt ${attemptId} is already complete and cannot be quarantined.`);
+      const recordedReason = prior?.reason.slice('launch_quarantined:'.length) ?? reason;
+      if (!prior) this.db.prepare('INSERT INTO workflow_invalidations (attempt_id, reason, source, created_at) VALUES (?, ?, ?, ?)').run(attemptId, `launch_quarantined:${reason}`, source, now());
+      this.db.prepare("UPDATE workflow_attempts SET state = 'quarantined' WHERE id = ? AND state != 'complete'").run(attemptId);
+      return { quarantined: true, admission_id: admissionId, launch_id: launchId, attempt_id: attemptId, reason: recordedReason };
+    }).immediate();
+  }
+
   private refuseQuarantinedWorkflowMutation(ticketId: string, operation: string): void {
     const row = this.db.prepare(`SELECT a.id FROM tickets t
       JOIN workflow_attempts a ON a.id = t.workflow_attempt_id

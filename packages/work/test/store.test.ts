@@ -306,6 +306,19 @@ describe('atomic workflow admission (H-431)', () => {
     expect(s.getTicket(ticket.id).status).toBe('open');
   });
 
+  it('refuses a second launch admission on the claim path too', () => {
+    // launch-claim admits through the same rule as launch-admit. Minting its
+    // own would let a candidate released back to the queue draw a fresh
+    // workflow permission per launch id.
+    const s = admissionStore();
+    const ticket = create(s, { workflow_attempt_id: 'attempt-1' }); triage(s, ticket.id);
+    s.recordWorkflowDecision({ id: 'pass-1', requirement_id: 'technical', manifest_id: 'manifest-a', verdict: 'pass', source: 'review:event-1' });
+    expect(s.launchClaim(builder, 'helmo-dev', builder.name, 'launch-one')).toMatchObject({ claimed: true, ticket_id: ticket.id });
+    s.updateTicket(builder, { ticket_id: ticket.id, note: 'released back to the queue', status: 'open' });
+    expect(() => s.launchClaim(builder, 'helmo-dev', builder.name, 'launch-two')).toThrow(/"stale":\["launch"\]/);
+    expect(s.getTicket(ticket.id).status).toBe('open');
+  });
+
   it('denies missing evidence, then issues one idempotent exact launch admission', () => {
     const s = admissionStore();
     const ticket = create(s, { workflow_attempt_id: 'attempt-1' }); triage(s, ticket.id);

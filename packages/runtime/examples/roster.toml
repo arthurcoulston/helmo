@@ -1,0 +1,97 @@
+# Rev roster — copy to ~/.rev/roster.toml and edit.
+# Loops are instance data: they live here, never in the Rev repo.
+#
+# Every loop you define below runs unattended agent sessions with the agent CLI's
+# permission prompts and sandbox disabled, in the cwd you name. See "What a loop
+# session can do" in the README before adding one.
+
+[global]
+# Paths to your Helm checkout's built CLI and MCP server (required).
+helmo_cli = "/path/to/helm/dist/cli.js"
+helmo_mcp_server = "/path/to/helm/dist/server.js"
+# helmo_db = "/custom/path/helm.db"   # optional; default ~/.helm/helm.db
+# poll_seconds = 60                  # idle wake-poll interval
+# iteration_ceiling = 2000           # safety stop for unbounded runs
+# fail_cap = 2                       # consecutive failures before BLOCKED
+# limit_wait_seconds = 900           # park time on transient API/network conditions
+# limit_cap = 20                     # consecutive parks before BLOCKED (~5h default)
+# escalation_workstream = "rev"  # where loop-blocked tickets are filed
+# respawn_backoff_seconds = 30       # supervisor: first-crash respawn wait, doubles per streak
+# respawn_backoff_cap_seconds = 900  # supervisor: backoff ceiling
+# min_uptime_seconds = 60            # supervisor: exits younger than this count as unhealthy
+# intake_preparation_origin = "https://booking.example.com" # optional narrow pull adapter
+# intake_preparation_checkout = "/absolute/path/to/goodplumb" # verified signup target
+# The HMAC capability is never stored here: macOS Keychain service
+# plumb-intake-executor-secret is the adapter's only credential source.
+
+# Providers: where work can run. Each is an adapter (runtime) plus the
+# operator's tier→model table — the machine copy of the crew's
+# skills/model-selection.md table. Model names churn; keeping them here (never
+# in rev's code) makes churn a roster edit. 'claude' and 'codex' default their
+# runtime; a new provider names the adapter it rides (see [providers.kimi]).
+# Prices ($/MTok) give notional cost where the CLI reports none (codex under
+# plan auth) — without them the burn breaker cannot see that provider's spend.
+#
+# 'billing' says what the account IS, not what rev should do about it (H-185):
+#   metered       pay-per-token. The default, and every dollar gate applies.
+#   subscription  a flat plan (Claude Max, Codex Pro). The token-log's dollars
+#                 for it are notional, so they never gate productive work; the
+#                 provider's own plan bars are what bounds it. Declare this
+#                 only where it is true of the account.
+# [providers.claude]
+# billing = "subscription"
+[providers.claude.models]
+small = "claude-haiku-4-5-20251001"
+mid = "claude-sonnet-5"
+frontier = "claude-opus-5"
+high = "claude-fable-5-1"
+
+[providers.codex.models]
+small = "gpt-5.6-luna"
+mid = "gpt-5.6-terra"
+frontier = "gpt-5.6-sol"
+high = "gpt-6-astra"
+
+[providers.codex.prices]
+"gpt-5.6-luna" = { input = 0.20, output = 1.20 }
+"gpt-5.6-terra" = { input = 2.0, output = 12.0 }
+"gpt-5.6-sol" = { input = 4.0, output = 20.0 }
+"gpt-6-astra" = { input = 10.0, output = 50.0 }
+
+# Adapter config applied to every run of this provider (codex: -c overrides).
+# Fleet sessions ignore ~/.codex/config.toml entirely (H-520) — whatever a run
+# needs is stated here. A custom endpoint rides the same table:
+#   model_providers = { openrouter = { base_url = "...", env_key = "OPENROUTER_API_KEY", wire_api = "responses" } }
+[providers.codex.config]
+model_reasoning_effort = "medium"
+
+# A future provider is a table entry naming its adapter:
+# [providers.kimi]
+# runtime = "codex"                   # rides the codex adapter against a custom endpoint
+# [providers.kimi.models]
+# mid = "kimi-k2"
+
+# A worker loop. The name is also its Helm actor identity.
+[loops.example-worker]
+workstream = "my-workstream"          # which Helm workstream it draws from
+cwd = "~/projects/my-project"         # sessions run here; any folder on the machine
+provider = "claude"                   # a [providers.*] name (or the v0 form: runtime = "claude" + model = "...")
+tier = "mid"                          # from the run-type table in crew skills/model-selection.md
+probe_tier = "small"                  # empty-handed iterations run here (H-412)
+constitution = "constitutions/example-worker.md"  # relative to ~/.rev
+version = "0.1"                       # bump when the constitution changes — it's provenance
+pace = 1.0                            # velocity fraction; 0.5 = half speed
+# rotation = ["claude", "codex"]      # alternate providers per iteration, same tier ("codex:small" pins a tier)
+# routing = "headroom"                # rank same-tier rotation by allowance/hour until reset; first choice when telemetry is stale
+# fallback = ["codex:mid"]            # tried when every scheduled provider's cap is out
+# mcp_extra = "mcp/example-worker.json"  # additional MCP servers for this loop's sessions
+#   Keep secrets out of an mcp_extra server's "env" block if the loop can run on codex:
+#   that adapter passes the whole MCP table on the command line, where any local user can
+#   read it with `ps`. Have such a server read its credential from a file or the keychain.
+
+# A mock loop — for testing Rev itself and verifying installs; no tokens.
+# [loops.smoke]
+# workstream = "rev-test"
+# cwd = "/tmp"
+# runtime = "mock"
+# mock_cmd = "echo 'iteration ran'; exit 0"

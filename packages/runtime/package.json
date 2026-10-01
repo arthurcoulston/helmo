@@ -1,0 +1,39 @@
+{
+  "name": "rev",
+  "version": "0.2.0",
+  "description": "Rev keeps agent loops turning: process supervision for autonomous agent loops driven by a Helm work record.",
+  "main": "index.js",
+  "scripts": {
+    "test": "vitest run --maxWorkers=2 --reporter=verbose",
+    "build": "tsc",
+    "view": "tsx src/view.ts",
+    "vendor:tokens": "node scripts/vendor-estate-tokens.mjs",
+    "vendor:avatars": "node scripts/vendor-estate-avatars.mjs",
+    "vendor:reach": "node scripts/vendor-estate-reach.mjs",
+    "postbuild": "node scripts/stamp-build.mjs"
+  },
+  "publish": {
+    "cold": {
+      "requires_env": [
+        "REV_TEST_HELMO"
+      ]
+    }
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "rev": "dist/cli.js",
+    "gp-rev": "bin/gp-rev.js"
+  },
+  "dependencies": {
+    "smol-toml": "^1.7.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "tsx": "^4.23.5",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

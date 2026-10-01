@@ -1,0 +1,42 @@
+{
+  "name": "helmo-roadmap",
+  "version": "0.1.0",
+  "description": "The layer above the ticket: where ideas get parked, shaped, ranked, and declared go.",
+  "scripts": {
+    "test": "vitest run",
+    "build": "tsc",
+    "postbuild": "node scripts/stamp-build.mjs",
+    "view": "tsx src/view.ts",
+    "mcp": "tsx src/server.ts",
+    "vendor:tokens": "node scripts/vendor-estate-tokens.mjs",
+    "vendor:avatars": "node scripts/vendor-estate-avatars.mjs"
+  },
+  "keywords": [
+    "ai-agents",
+    "mcp",
+    "roadmap",
+    "backlog",
+    "prioritization",
+    "sqlite"
+  ],
+  "author": "Arthur Coulston",
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "better-sqlite3": "^13.0.2",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^26.1.2",
+    "tsx": "^4.23.5",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  },
+  "bin": {
+    "roadmap-mcp": "dist/server.js",
+    "roadmap-view": "dist/view.js",
+    "roadmap-recovery": "dist/recovery.js"
+  }
+}

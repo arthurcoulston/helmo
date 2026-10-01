@@ -2768,11 +2768,13 @@ export class Store {
           case 'updated':
             this.applyUpdated(ev.ts, ev.ticket_id, ev.payload);
             break;
-          case 'returned':
+          case 'returned': {
+            const { outcome_owner: _outcomeOwner, ...request } = ev.payload;
             this.db
               .prepare("UPDATE tickets SET status = 'awaiting_human', assignee = NULL, question = ?, updated_at = ? WHERE id = ?")
-              .run(JSON.stringify(ev.payload), ev.ts, ev.ticket_id);
+              .run(JSON.stringify(request), ev.ts, ev.ticket_id);
             break;
+          }
           case 'answered': {
             const res = (ev.payload['resolution'] as string) ?? 'resume';
             if (res === 'resume') {

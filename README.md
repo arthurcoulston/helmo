@@ -8,6 +8,8 @@ a decision.
 
 - Product & architecture: [rev-product-description.md](rev-product-description.md)
 - Agent-led install (the primary path): [AGENT-INSTALL.md](AGENT-INSTALL.md)
+- Existing-installation upgrade: [Rev 0.2.0 runbook](UPGRADE-0.2.0.md) — exact
+  published refs, compatibility review, isolated preparation, activation and recovery.
 - Running more than one installation, and changing which release one runs:
   [INSTALLATIONS.md](INSTALLATIONS.md) — install identity, pinned releases,
   upgrade, rollback and removal. One installation needs none of it. An

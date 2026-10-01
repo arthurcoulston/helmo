@@ -11,18 +11,28 @@
 
    So the rule is written once, here, in terms of what the tree itself
    declares rather than of how deep a package happens to sit. The checkout
-   root is the outermost enclosing directory whose package.json declares npm
-   workspaces, and failing that the nearest enclosing package — a product
-   that is its own checkout, which is what every one of these was before. A
-   standalone clone of any one product therefore resolves exactly as it did
-   before C1, and the same source tree inside the workspace resolves to the
-   same place.
+   root is the outermost enclosing directory within this working tree whose
+   package.json declares npm workspaces, and failing that the nearest
+   enclosing package — a product that is its own checkout, which is what every
+   one of these was before. The same source tree therefore resolves to the
+   same place inside the workspace and as a lone clone.
+
+   THAT IS A STATEMENT ABOUT PATHS AND NOTHING ELSE. A lone clone of any one
+   product no longer INSTALLS: all three now depend on `@helmo/core`, at
+   `0.0.0-c1-candidate`, which is published nowhere and resolves only through
+   the workspace link, so `npm install` in a clone of the runtime, the work
+   record or the roadmap fails before any of its scripts run — the runtime's
+   `prebuild` import-boundary guard among them. It fails closed, not open, but
+   it fails. What a release of one repository holding three products IS, and
+   how `@helmo/core` reaches a consumer outside this workspace, is C1's
+   build-containment decision, recorded on H-2647 and owned by H-2630. Do not
+   read this file as evidence that it has been settled.
 
    Plain .mjs on purpose. `scripts/*.mjs` run before anything is compiled —
    one of them is `prebuild` — and `dist/` is not checked in, so a helper they
    share must not need a build to exist.
 */
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
 function packageJson(dir) {
@@ -33,9 +43,25 @@ function packageJson(dir) {
   }
 }
 
+/** Does a working tree top out here? `.git` is a directory in a clone and a
+ *  file in a worktree or submodule; either way, nothing above this directory
+ *  is part of the same checkout. */
+function isWorkingTreeTop(dir) {
+  return existsSync(join(dir, '.git'));
+}
+
 /** The root of the working tree `from` belongs to: the outermost enclosing
  *  directory whose package.json declares workspaces, and failing that the
- *  nearest enclosing package — a product that is its own checkout. */
+ *  nearest enclosing package — a product that is its own checkout.
+ *
+ *  The walk STOPS at the nearest enclosing `.git`, because "outermost" has to
+ *  mean outermost within this checkout (H-2647). Unbounded, it ran to `/`,
+ *  and any stray ancestor package.json declaring workspaces — one left in a
+ *  home directory or a scratch parent — would silently become the root, so
+ *  productCheckout would spawn a sibling product from beside the WRONG tree
+ *  and besideCheckout would look for the estate in the wrong place. A tree
+ *  with no `.git` at all (an export, a fixture) still walks to `/` as before;
+ *  there is nothing better to stop at. */
 export function checkoutRoot(from) {
   const start = resolve(from);
   let nearestPackage = null;
@@ -46,7 +72,7 @@ export function checkoutRoot(from) {
       nearestPackage ??= dir;
       if (pkg.workspaces) outermostWorkspace = dir;
     }
-    if (dir === dirname(dir)) break;
+    if (isWorkingTreeTop(dir) || dir === dirname(dir)) break;
   }
   return outermostWorkspace ?? nearestPackage ?? start;
 }

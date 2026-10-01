@@ -62,16 +62,69 @@ const CODE = /\.(?:ts|mts|cts|js|mjs|cjs)$/;
    stands in for can be confused with code someone really wrote. */
 const MARK = String.fromCharCode(0);
 
+/* Where a `/` starts a regular expression rather than dividing. Nothing can
+   lex JavaScript without deciding this, and the guard must decide it for one
+   concrete reason: `const re = /it's/;` holds an apostrophe that is not a
+   quote, and reading it as one swallows everything up to the next quote in
+   the file — which can be the quote of a real `from 'helmo'` below it, making
+   that import invisible (H-2647).
+
+   The test is the language's own: a `/` in OPERAND position opens a literal,
+   a `/` after an operand divides. Operand position is the start of the file,
+   just after one of the punctuators a literal really does follow here (`=`,
+   `(`, `,`, `[`, `{`, `:`, `;`, `!`, `&`, `|`, `?`, `}`, and `>` for an arrow
+   body), or just after one of the keywords an expression follows. The
+   arithmetic operators and `)` are deliberately OUT: `(a + b) / 2` and
+   `i++ / 2` are far more common in this tree than `if (x) /re/`, and every
+   character left out of the set can only cost the blind spot this already
+   had, never a new one.
+
+   Where the two readings still disagree, division wins, because a regex
+   literal cannot span a line: a candidate that does not close before the
+   newline is a division (see regexEnd). So the worst a misreading can cost
+   is the remainder of ONE line, never the rest of the file. */
+const OPERAND_AFTER = new Set('=(,[{;:!&|?}>'.split(''));
+const OPERAND_AFTER_WORD = new Set([
+  'return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void',
+  'case', 'do', 'else', 'yield', 'await', 'throw',
+]);
+const WORD_CHAR = /[A-Za-z0-9_$]/;
+
+function regexAllowed(prev, prevWord) {
+  if (prev === '') return true; // start of file
+  if (WORD_CHAR.test(prev)) return OPERAND_AFTER_WORD.has(prevWord);
+  return OPERAND_AFTER.has(prev);
+}
+
+/** The index of the `/` closing the regex literal opened at `start`, or -1 if
+ *  it does not close on its own line — in which case the `/` was a division.
+ *  `\/` is escaped and a `/` inside a `[...]` class does not close. */
+function regexEnd(src, start) {
+  let inClass = false;
+  for (let j = start + 1; j < src.length; j += 1) {
+    const c = src[j];
+    if (c === '\n') return -1;
+    if (c === '\\') { j += 1; continue; }
+    if (inClass) { if (c === ']') inClass = false; continue; }
+    if (c === '[') { inClass = true; continue; }
+    if (c === '/') return j;
+  }
+  return -1;
+}
+
 /**
  * Splits source into a code skeleton and the string literals it contained,
- * each literal replaced by its marker and each comment blanked out.
+ * each literal replaced by its marker, and every comment and regex literal
+ * blanked out.
  *
- * Both halves of this matter. Comments must go, or a commented-out import
+ * All three of those matter. Comments must go, or a commented-out import
  * reads as a violation. Strings must come out of the code before any import
  * form is matched against it, or PROSE trips the guard: src/build.ts already
  * carries `dist/store.js` in a comment, and a sentence containing the words
  * "from 'helmo'" inside a template literal would otherwise be a finding.
- * Newlines are preserved on both sides, so a reported line is a real line.
+ * Regex literals must go before the strings are read, or a quote character
+ * inside one opens a string that was never there and hides what follows it.
+ * Newlines are preserved throughout, so a reported line is a real line.
  */
 export function tokenize(src) {
   const blank = (text) => text.replace(/[^\n]/g, ' ');
@@ -79,12 +132,21 @@ export function tokenize(src) {
   const strings = [];
   let i = 0;
   let line = 1;
+  /* The last significant code character and the identifier it ended, which
+     is what regexAllowed is asked about. Whitespace and comments are
+     transparent to `prev` — `const re =\n  /x/` is one expression — but they
+     do END an identifier, so `gap` keeps `const c of` from reading as one
+     word and losing the keyword that the regex after it follows. */
+  let prev = '';
+  let prevWord = '';
+  let gap = false;
   while (i < src.length) {
     const two = src.slice(i, i + 2);
     if (two === '//') {
       const end = src.indexOf('\n', i);
       const stop = end === -1 ? src.length : end;
       code += blank(src.slice(i, stop));
+      gap = true;
       i = stop;
       continue;
     }
@@ -94,8 +156,20 @@ export function tokenize(src) {
       const text = src.slice(i, stop);
       code += blank(text);
       line += (text.match(/\n/g) ?? []).length;
+      gap = true;
       i = stop;
       continue;
+    }
+    if (src[i] === '/' && regexAllowed(prev, prevWord)) {
+      const end = regexEnd(src, i);
+      if (end !== -1) {
+        code += blank(src.slice(i, end + 1));
+        prev = ')'; // a literal is an operand: the next `/` divides it
+        prevWord = '';
+        gap = false;
+        i = end + 1;
+        continue;
+      }
     }
     const q = src[i];
     if (q === '"' || q === "'" || q === '`') {
@@ -110,10 +184,21 @@ export function tokenize(src) {
       code += MARK + strings.length + MARK;
       strings.push({ value, line });
       line += (src.slice(i, j + 1).match(/\n/g) ?? []).length;
+      prev = ')';
+      prevWord = '';
+      gap = false;
       i = j + 1;
       continue;
     }
     if (q === '\n') line += 1;
+    if (/\s/.test(q)) {
+      gap = true;
+    } else {
+      if (!WORD_CHAR.test(q)) prevWord = '';
+      else prevWord = gap || !WORD_CHAR.test(prev) ? q : prevWord + q;
+      prev = q;
+      gap = false;
+    }
     code += q;
     i += 1;
   }

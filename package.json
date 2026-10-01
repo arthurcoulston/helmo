@@ -1,5 +1,5 @@
 {
-  "name": "helmo",
+  "name": "helmo-workspace",
   "private": true,
   "version": "0.0.0-c1-candidate",
   "description": "C1 unification candidate (H-2630). Not published; rebuilt by crew:projects/r39/consolidation/c1/import.mjs.",

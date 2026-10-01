@@ -808,7 +808,11 @@ summary, where a `console.log` from a passing test is not.
 beside this package — `@helmo/core/checkout` resolves it, from what the tree
 declares rather than from how deep the package sits. The pre-C1 spelling
 (`<package>/../estate`) named `packages/estate`, which has never existed, so
-every one of these checks skipped for the wrong reason (H-2638).
+every one of these checks skipped for the wrong reason (H-2638). The walk for
+that root stops at the nearest enclosing `.git`: "outermost" has to mean
+outermost *within this checkout*, or a stray ancestor package.json declaring
+workspaces — one left in a home or scratch directory — silently becomes the
+root and points every one of these paths at the wrong tree (H-2647).
 
 **Rev was the third adopter and the only one starting from nothing.** Helmo and
 the roadmap already had token layers to alias; rev's view had fifteen literal
@@ -1264,6 +1268,20 @@ spelling, dynamic import, require, re-export) and the ones it must leave alone
 (a commented-out import, the word in prose, `helmo-roadmap`, `@helmo/core`).
 Watched refusing: a deliberate `import { Store } from 'helmo'` at the head of
 `src/helm.ts` failed the build for exactly that reason before being reverted.
+
+The scan **lexes regex literals** before it reads strings (H-2647). It has to:
+`const re = /it's/;` holds an apostrophe that is not a quote, and read as one
+it opens a string running to the next real quote in the file — the opening
+quote of an import below it — so that import is never seen. A `/` in operand
+position opens a literal; after an operand it divides; where the two readings
+disagree division wins, because a regex cannot span a line, so a misreading
+costs the rest of one line and never the rest of the file. No shipped file
+today has a quote inside a regex, and the lexers old and new extract the
+identical 185 specifiers from all 37 of them — the case is proven by
+`test/import-boundary.test.ts` and by the probe above re-run with the regex in
+front of it, which the old scan passed and the new one refuses. What it still
+cannot see is a specifier assembled at runtime, and the inside of a template
+literal's `${...}`.
 # Prime team control
 
 `gp-rev team stop|resume <loop|all>` is the Good Plumb leadership surface. It

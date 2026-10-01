@@ -228,7 +228,11 @@ summary, where a `console.log` from a passing test is not.
 beside this package — `@helmo/core/checkout` resolves it, from what the tree
 declares rather than from how deep the package sits. The pre-C1 spelling
 (`<package>/../estate`) named `packages/estate`, which has never existed, so
-every one of these checks skipped for the wrong reason (H-2638).
+every one of these checks skipped for the wrong reason (H-2638). The walk for
+that root stops at the nearest enclosing `.git`: "outermost" has to mean
+outermost *within this checkout*, or a stray ancestor package.json declaring
+workspaces — one left in a home or scratch directory — silently becomes the
+root and points every one of these paths at the wrong tree (H-2647).
 
 **What was adopted, and what was not.** `view.ts` keeps every one of its own
 token names and not one of its rules changed in meaning; the aliases at the top

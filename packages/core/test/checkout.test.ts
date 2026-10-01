@@ -8,14 +8,16 @@ import { describe, expect, it } from 'vitest';
 import { besideCheckout, checkoutRoot, productCheckout, workspacePackage } from '../checkout.mjs';
 
 /** A layout under a fresh temp directory: each key a directory, each value its
- *  package.json or null for a plain directory. Left for the OS to reap. */
-function tree(layout: Record<string, unknown>): string {
+ *  package.json or null for a plain directory. `gitAt` names the directories
+ *  that additionally top out a working tree. Left for the OS to reap. */
+function tree(layout: Record<string, unknown>, gitAt: string[] = []): string {
   const root = mkdtempSync(join(tmpdir(), 'checkout-'));
   for (const [path, pkg] of Object.entries(layout)) {
     const dir = join(root, path);
     mkdirSync(dir, { recursive: true });
     if (pkg) writeFileSync(join(dir, 'package.json'), JSON.stringify(pkg));
   }
+  for (const path of gitAt) mkdirSync(join(root, path, '.git'), { recursive: true });
   return root;
 }
 
@@ -66,6 +68,37 @@ describe('checkout resolution (F4)', () => {
       join(workspace, 'ws', 'packages', 'work'),
     );
     expect(productCheckout(join(standalone, 'rev', 'test'), 'helmo', 'helmo')).toBe(join(standalone, 'helmo'));
+  });
+
+  // "Outermost" has to mean outermost WITHIN this checkout. The walk used to
+  // run to `/`, so a stray ancestor package.json declaring workspaces — one
+  // left in a home directory or a scratch parent — became the root, and both
+  // productCheckout and besideCheckout then pointed at the wrong tree
+  // (H-2647). Measured where it differs: the same clone under an ancestor
+  // that declares workspaces, with and without its own `.git`.
+  describe('bounded by the working tree it is in', () => {
+    const layout = {
+      'outer': { name: 'not-our-root', workspaces: ['clone', 'helmo'] },
+      'outer/clone': { name: 'rev' },
+      'outer/clone/test': null,
+      'outer/helmo': { name: 'helmo' },
+      'outer/estate/tokens': null,
+    };
+
+    it('stops at the clone\'s own .git instead of adopting the ancestor', () => {
+      const bounded = tree(layout, ['outer/clone']);
+      const from = join(bounded, 'outer', 'clone', 'test');
+      expect(checkoutRoot(from)).toBe(join(bounded, 'outer', 'clone'));
+      expect(besideCheckout(from, 'estate', 'tokens')).toBe(join(bounded, 'outer', 'estate', 'tokens'));
+      expect(workspacePackage(from, 'helmo')).toBeNull();
+    });
+
+    it('is the defect itself when nothing bounds the walk: the ancestor wins', () => {
+      const unbounded = tree(layout);
+      const from = join(unbounded, 'outer', 'clone', 'test');
+      expect(checkoutRoot(from)).toBe(join(unbounded, 'outer'));
+      expect(workspacePackage(from, 'helmo')).toBe(join(unbounded, 'outer', 'helmo'));
+    });
   });
 
   it('ignores a workspace pattern it does not fully understand rather than guessing', () => {

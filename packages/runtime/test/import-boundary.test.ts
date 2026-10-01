@@ -9,8 +9,10 @@
 //
 // The quiet failures aimed at here: a scan that reads zero files and reports
 // a clean boundary; a scan that catches a commented-out import; a scan that
-// catches the word "helmo" in prose; and a relative specifier written with a
-// spelling the pattern was not written for.
+// catches the word "helmo" in prose; a relative specifier written with a
+// spelling the pattern was not written for; and a quote inside a REGEX
+// literal opening a string that was never there, so that every import below
+// it goes unread (H-2647).
 
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -60,6 +62,46 @@ describe('the specifiers a source really imports', () => {
   it('is not confused by a URL, whose // is not a comment', () => {
     expect(specifiers("const u = 'http://localhost:4400/';\nimport { x } from './view.js';\n").map((s) => s.specifier))
       .toEqual(['./view.js']);
+  });
+
+  // A quote inside a regex literal is not a quote. Read as one, it opens a
+  // string that runs to the next real quote in the file — the opening quote
+  // of the import below — and the import is never seen (H-2647).
+  it('reads an import that follows a regex holding a quote character', () => {
+    const found = specifiers("const re = /it's/;\nimport { Store } from 'helmo';\n");
+    expect(found).toEqual([{ specifier: 'helmo', line: 2 }]);
+  });
+
+  it('reads an import below a regex whose character class holds a slash', () => {
+    const found = specifiers("const sep = /[/\\\\]'/;\nimport { S } from 'helmo';\n");
+    expect(found.map((f) => f.specifier)).toEqual(['helmo']);
+  });
+
+  it('does not read the inside of a regex as an import', () => {
+    expect(specifiers("const bad = /from 'helmo'/;\nconst also = [/import 'helmo'/, /x/g];\n")).toEqual([]);
+  });
+
+  // The other half of the same decision: a `/` that divides must stay a
+  // division. Read as a regex, it blanks out the code up to the next `/` on
+  // the line, which is one more way to lose an import.
+  it('still reads a division as a division, not as an opening regex', () => {
+    const found = specifiers("const half = (a + b) / 2 / c;\nimport { S } from 'helmo';\n");
+    expect(found.map((f) => f.specifier)).toEqual(['helmo']);
+    expect(specifiers("let n = i++ / 2 / 3; import { S } from 'helmo';\n").map((f) => f.specifier))
+      .toEqual(['helmo']);
+  });
+
+  it('reads a regex in the places this tree actually writes one', () => {
+    const sources = [
+      "const re = /x/;\nimport { S } from 'helmo';",
+      "if (!/x'/.test(s)) { import('helmo'); }",
+      "const f = (s: string) => /x'/.test(s) || require('helmo');",
+      "const o = { re: /x'/, f: 1 };\nexport { S } from 'helmo';",
+      "for (const c of /x'/.source) require('helmo');",
+    ];
+    for (const source of sources) {
+      expect(specifiers(source).map((f) => f.specifier), source).toEqual(['helmo']);
+    }
   });
 });
 

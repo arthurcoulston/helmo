@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ChildProcess, spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { homedir, tmpdir, userInfo } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -327,5 +327,28 @@ describe('the store owns its explicitly named installation (H-2488)', () => {
     store.createProject(mason, { title: 'Old single install' });
     expect(store.installationIdentity()).toEqual({ process: 'dev.roadmap', stored: null, clear: true });
     store.close();
+  });
+
+  it('accepts the path-derived legacy name for the same shared installation and refuses a different derived writer', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'roadmap-store-derived-identity-'));
+    const path = join(dir, 'roadmap.db');
+    const home = join(dir, '.helmo-roadmap-gp');
+    const legacy = installation(env({ ROADMAP_HOME: home }));
+    const sharedLabel = legacy.label.replace(/^dev\.roadmap/, 'dev.rev');
+    const first = new Store(path, installation(env({ ROADMAP_HOME: home, REV_LABEL: sharedLabel })));
+    const project = first.createProject(mason, { title: 'Shared project' });
+    first.close();
+
+    const compatible = new Store(path, legacy);
+    expect(compatible.installationIdentity()).toEqual({ process: legacy.label, stored: sharedLabel, clear: true });
+    compatible.updateProject(mason, { project_id: project.id, note: 'legacy name still identifies this installation' });
+    compatible.close();
+
+    const before = readFileSync(path);
+    const wrong = new Store(path, installation(env({ ROADMAP_HOME: join(dir, '.helmo-roadmap-other') })));
+    expect(() => wrong.updateProject(mason, { project_id: project.id, note: 'must not land' })).toThrow(/UNCLEAR/);
+    wrong.close();
+    expect(readFileSync(path)).toEqual(before);
+    rmSync(dir, { recursive: true, force: true });
   });
 });

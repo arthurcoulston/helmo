@@ -19,10 +19,11 @@ append-only event log, materialized state, `.immediate()` write transactions
   log (`rebuild()` is the invariant, tests enforce it — every side effect
   of a write lives in an apply* function, or replay silently diverges).
   Explicitly named installations claim `meta.installation_name` atomically
-  with their first event. Every later event under another explicit/inherited
-  name refuses; reads remain available and report both names as UNCLEAR.
-  Derived-only stores do not claim a durable name, preserving single-install
-  use.
+  with their first event. Every writer, including a derived one, must match
+  that claim; the path-derived `dev.roadmap[.*]` name and shared `dev.rev[.*]`
+  name are aliases only when the resolved home derives that exact pair. Other
+  names refuse; reads remain available. Derived-only stores do not claim a
+  durable name, preserving single-install use.
   Derived rank: facts set the tier (ship_next · ready · shaping · blocked ·
   parked), judgments order within it (best cited objective rank, latest
   value claim, effort), every rank carries a one-line explanation; shipped
@@ -110,6 +111,13 @@ append-only event log, materialized state, `.immediate()` write transactions
   expanded on top, charter strip, everything else collapsed in derived rank
   order. No write routes at all — unlike Helmo's view there is no answer
   surface; add none.
+- `recovery.ts` / `recovery-lib.ts` — operator-only `roadmap-recovery`, absent
+  from MCP. `backup` requires explicit `--source-home`, `--installation`,
+  `--output-root`, and fresh `--output-dir`; `validate` replaces source-home
+  with an absolute `--backup`. Both create only a fresh 0700 run directory and
+  0600 database below a canonical owner-owned root, verify identity, exact
+  application schema, integrity and counts, retain failures, and never restore
+  live. Permissions isolate OS users, not hostile processes under one login.
 - `types.ts` — the vocabulary. Gates and stances are named in PRODUCT.md
   but deliberately absent from v1 behavior; leave the room, don't fill it.
 

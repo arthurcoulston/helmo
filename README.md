@@ -38,6 +38,7 @@ unavailable for your Node/platform pair.
   `~/.helmo-roadmap/roadmap.db` (`ROADMAP_DB` overrides); writer identity from
   `ROADMAP_ACTOR` or `HELMO_ACTOR` (JSON), or a per-call `actor` param.
 - Read-only view: `node dist/view.js` — `http://localhost:4410`
+- Operator recovery: `node dist/recovery.js backup|validate ...` creates only fresh owner-only artifacts; it never restores into a live installation. See `DEV.md` for flags and the safety boundary.
   (`ROADMAP_VIEW_PORT`).
 
 Tests use temporary stores. Two optional source-drift comparisons report

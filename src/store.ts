@@ -3,7 +3,7 @@ import {
   ACTOR_KINDS, Actor, ActorKind, Bet, Citation, Claim, Dep, DepType, EFFORT_SIZES, Horizon, Objective,
   Project, ProjectSnapshot, Ranked, ReadinessReview, ReadinessVerdict, RoadmapError, RoadmapEvent, SHIPPED, Status, TERMINAL, VALUE_LEVELS,
 } from './types.js';
-import { Installation } from './install.js';
+import { Installation, namesInstallation } from './install.js';
 
 export interface CreateInput {
   title: string;
@@ -164,7 +164,7 @@ export class Store {
   installationIdentity(): { process: string | null; stored: string | null; clear: boolean } {
     const row = this.db.prepare("SELECT value FROM meta WHERE key = 'installation_name'").get() as { value: string } | undefined;
     const processName = this.installation?.label ?? null;
-    return { process: processName, stored: row?.value ?? null, clear: !processName || !row || row.value === processName };
+    return { process: processName, stored: row?.value ?? null, clear: !processName || !row || namesInstallation(this.installation as Installation, row.value) };
   }
 
   // ---------- reads ----------
@@ -808,14 +808,16 @@ export class Store {
   }
 
   private assertInstallationForWrite(): void {
-    if (!this.installation || this.installation.source === 'derived') return;
+    if (!this.installation) return;
     const row = this.db.prepare("SELECT value FROM meta WHERE key = 'installation_name'").get() as { value: string } | undefined;
-    if (row && row.value !== this.installation.label) {
+    if (row && !namesInstallation(this.installation, row.value)) {
       throw new RoadmapError(
         `Installation target UNCLEAR: process names '${this.installation.label}', but this store belongs to '${row.value}'. Nothing was written. Point ROADMAP_HOME or ROADMAP_DB at the intended installation.`,
       );
     }
-    if (!row) this.db.prepare("INSERT INTO meta (key, value) VALUES ('installation_name', ?)").run(this.installation.label);
+    if (!row && this.installation.source !== 'derived') {
+      this.db.prepare("INSERT INTO meta (key, value) VALUES ('installation_name', ?)").run(this.installation.label);
+    }
   }
 
   private applyCreated(ts: string, p: Record<string, unknown>): void {

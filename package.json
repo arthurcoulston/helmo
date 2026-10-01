@@ -36,6 +36,7 @@
   },
   "bin": {
     "roadmap-mcp": "dist/server.js",
-    "roadmap-view": "dist/view.js"
+    "roadmap-view": "dist/view.js",
+    "roadmap-recovery": "dist/recovery.js"
   }
 }

@@ -119,6 +119,19 @@ export interface LaunchAdmission {
   ticketId: string | null;
 }
 
+interface LaunchCandidate {
+  id: string;
+  workflowAttemptId: string | null;
+}
+
+function launchCandidate(g: GlobalConfig, l: LoopConfig): LaunchCandidate | null {
+  const res = run(g, ['list', '--ready', '--workstream', l.workstream, '--limit', '1'], loopActor(l)) as
+    { tickets?: { id?: string; workflow_attempt_id?: string | null }[] };
+  const ticket = res.tickets?.[0];
+  if (!ticket?.id) return null;
+  return { id: ticket.id, workflowAttemptId: ticket.workflow_attempt_id ?? null };
+}
+
 /** Names one launch attempt. Helmo records it with the admission and admits a
  *  retry carrying the same name, so one launch cannot become two admissions. */
 export function launchId(l: LoopConfig, attempt: number): string {
@@ -135,12 +148,25 @@ function deniedReason(body: Record<string, unknown>, ticketId: string | null): s
 }
 
 export function launchAdmit(g: GlobalConfig, l: LoopConfig, id: string): LaunchAdmission {
+  // This is the same ordered query Helmo performs inside launch-admit. It does
+  // not grant permission; it tells Rev whether a broken/old gate affects the
+  // candidate, so ordinary work can retain its pre-gate behaviour while a
+  // workflow-bound launch fails closed.
+  let candidate: LaunchCandidate | null;
+  try {
+    candidate = launchCandidate(g, l);
+  } catch (e) {
+    return { act: 'deny', how: 'unavailable', reason: `launch candidate could not be identified: ${cliError(e).split('\n')[0]!.slice(0, 160)}`, ticketId: null };
+  }
   try {
     // The echoed launch_id is deliberately not compared with the one sent: the
     // answer is Helmo's record of a decision, not a token Rev validates.
     const res = run(g, ['launch-admit', '--workstream', l.workstream, '--assignee', l.name, '--launch-id', id], revActor(), true) as
       { admitted?: boolean; ticket_id?: string; workflow_attempt_id?: string | null; admission_id?: string | null };
     const ticketId = res.ticket_id ?? null;
+    if (candidate?.workflowAttemptId && (res.admitted !== true || ticketId !== candidate.id || res.workflow_attempt_id !== candidate.workflowAttemptId || !res.admission_id)) {
+      return { act: 'deny', how: 'unavailable', reason: `Helmo returned no exact immutable admission for workflow-bound ${candidate.id}`, ticketId: candidate.id };
+    }
     if (res.admitted !== true) return { act: 'launch', how: 'nothing_gated', reason: 'nothing ready to admit', ticketId };
     const attempt = res.workflow_attempt_id ? ` for attempt ${res.workflow_attempt_id}` : '';
     return { act: 'launch', how: 'admitted', ticketId, reason: `admitted${res.admission_id ? ` as ${res.admission_id}` : ''}${attempt}` };
@@ -155,12 +181,13 @@ export function launchAdmit(g: GlobalConfig, l: LoopConfig, id: string): LaunchA
       return { act: 'deny', how: 'denied', reason: deniedReason(body, ticketId), ticketId };
     }
     // An absent command is the store's usage text, and nothing else looks like
-    // it: a locked store or a crash is 'unavailable' — also a launch, but a
-    // one-off worth seeing every time rather than a standing condition.
+    // it. A locked store or crash is 'unavailable'; either condition blocks a
+    // workflow candidate but leaves ordinary work compatible.
     const detail = cliError(e).split('\n')[0]!.slice(0, 160);
+    const affected = Boolean(candidate?.workflowAttemptId);
     return raw.startsWith('usage:')
-      ? { act: 'launch', how: 'unsupported', reason: `this store has no launch-admit command: ${detail}`, ticketId: null }
-      : { act: 'launch', how: 'unavailable', reason: `launch admission could not be asked: ${detail}`, ticketId: null };
+      ? { act: affected ? 'deny' : 'launch', how: 'unsupported', reason: `this store has no launch-admit command: ${detail}`, ticketId: candidate?.id ?? null }
+      : { act: affected ? 'deny' : 'launch', how: 'unavailable', reason: `launch admission could not be asked: ${detail}`, ticketId: candidate?.id ?? null };
   }
 }
 

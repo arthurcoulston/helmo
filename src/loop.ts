@@ -112,7 +112,6 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
   let tAvg = 0;
   let firstPoll = true; // restart pickup: see the wake gate below (H-426)
   let seatHeld = false; // same-seat guard episode flag: log once per hold, not per poll (H-558)
-  let admitInert = false; // this store has no launch-admit command: stop asking
   const lineage = ancestryStamp();
 
   // Bounded runs and the iteration ceiling. A helper because an iteration can
@@ -287,9 +286,9 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     // Helmo can do. So Rev asks, and keeps no verdict: a denied seat re-idles
     // at the cursor it read and asks again on the next motion or the hourly
     // resync, and a fresh process asks again on its restart pickup rather than
-    // walking through a denial it never saw. The one thing remembered is a
-    // store that cannot answer at all — see below.
-    const admission = admitInert ? null : launchAdmit(g, l, launchId(l, i + 1));
+    // walking through a denial it never saw. Even an old store is asked every
+    // pass so an ordinary candidate cannot confer a later workflow bypass.
+    const admission = launchAdmit(g, l, launchId(l, i + 1));
     if (admission?.act === 'deny') {
       i += 1;
       firstPoll = false;
@@ -301,14 +300,9 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       await sleep(g.poll_seconds);
       continue;
     } else if (admission?.how === 'unsupported') {
-      // Asked once, not once per pass: helmo-cli opens (and migrates) the
-      // store before it dispatches a command, so a question this store cannot
-      // answer still costs a full store open every iteration of every loop in
-      // the fleet. A store gains the command by being upgraded, which replaces
-      // the shared dist and restarts every loop — so a fresh process is
-      // exactly when to ask again. Only an absent command is remembered; a
-      // store that merely could not answer is asked again next pass.
-      admitInert = true;
+      // This branch is reachable only for an ordinary candidate;
+      // workflow-bound work takes the deny branch above. Ask on every pass so
+      // a later workflow candidate cannot inherit an ordinary ticket's bypass.
       logEvent(l.name, 'launch-admit-unsupported', admission.reason);
     } else if (admission?.how === 'unavailable') {
       logEvent(l.name, 'launch-admit-failed', admission.reason);

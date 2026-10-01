@@ -110,17 +110,16 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   means nothing READY was there to gate — not a refusal: the seat still has its
   held work and its probe pass, and whether to spend an iteration on those is
   Rev's decision, so it is not even recorded as one. A thrown
-  `workflow_admission_denied` is the only refusal: it logs `launch-denied`,
+  `workflow_admission_denied` is an explicit refusal: it logs `launch-denied`,
   spends nothing, and re-idles at the cursor it read, so the question returns
-  on the next motion or the hourly resync. And an installation that predates
-  the command answers with its usage text, which the gate must never read as a
-  refusal or it stops every loop in the estate: that logs
-  `launch-admit-unsupported` and then **stops asking until the process
-  restarts** — helmo-cli opens and migrates the store before it dispatches a
-  command, so an unanswerable question still costs a store open per iteration
-  per loop, and a store gains the command by an upgrade that restarts the loops
-  anyway. Only an absent command is remembered that way; a store that merely
-  could not answer logs `launch-admit-failed` and is asked again next pass.
+  on the next motion or the hourly resync. An installation that predates the
+  command answers with its usage text. Rev first reads Helmo's same ordered
+  next-candidate query: ordinary work keeps its prior behaviour and logs
+  `launch-admit-unsupported`. The question is repeated on every pass so a later
+  workflow candidate cannot inherit an ordinary ticket's bypass. Workflow-bound
+  work instead fails closed until an exact immutable admission is returned.
+  A corrupt or temporarily unavailable gate follows
+  the same affected-work-only rule and is asked again next pass.
   That stderr is captured rather than forwarded (`run`'s `quiet`) —
   `execFileSync` does both by default, which would put Helmo's whole usage text
   in the loop log once per pass.

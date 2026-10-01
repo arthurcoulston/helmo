@@ -15,9 +15,9 @@ races.
   requirements have passed and the admission is recorded in the same
   transaction as the check. A refusal costs no session, is reported in the
   loop's log, and is asked again after a restart rather than bypassed by one.
-  Only an explicit refusal holds a launch back: a seat with nothing ready to
-  gate, and an installation whose Helmo has no `launch-admit` command, both
-  run as before (H-2561).
+  An explicit refusal holds a launch back. If admission is unavailable or
+  corrupt, workflow-bound work also fails closed while ordinary tickets keep
+  their prior launch behaviour (H-2561, H-472).
 - Pinned services now report their launcher-backed supervisor as live while
   retaining exact command identity for loop drivers; status no longer mistakes
   the real supervisor for a stale marker and risks starting a duplicate

@@ -72,7 +72,7 @@ process.exit(result.status ?? 1);
 
 // An installation that predates launch-admit: helmo-cli prints its usage text
 // and exits 1 for an unrecognized command. The live fleet still runs one.
-function unsupportedAdmissionProxy(e: Env): string {
+function unsupportedAdmissionProxy(e: Env, workflowBound = false): string {
   const calls = join(e.home, 'launch-admit-calls');
   const proxy = join(e.home, 'old-helmo-proxy.mjs');
   writeFileSync(proxy, `import { appendFileSync } from 'node:fs';
@@ -83,6 +83,14 @@ if (args[0] === 'launch-admit') {
   process.stderr.write('usage: helmo-cli <command> [flags]\\n  wake-check --workstream W\\n');
   process.exit(1);
 }
+${workflowBound ? `if (args[0] === 'list' && args.includes('--ready')) {
+  const result = spawnSync(process.execPath, [${JSON.stringify(HELM_CLI)}, ...args], { env: process.env, encoding: 'utf8' });
+  if (result.status !== 0) { process.stderr.write(result.stderr); process.exit(result.status ?? 1); }
+  const body = JSON.parse(result.stdout);
+  if (body.tickets?.[0]) body.tickets[0].workflow_attempt_id = 'attempt-old-store';
+  process.stdout.write(JSON.stringify(body));
+  process.exit(0);
+}` : ''}
 const result = spawnSync(process.execPath, [${JSON.stringify(HELM_CLI)}, ...args], { env: process.env, stdio: 'inherit' });
 process.exit(result.status ?? 1);
 `);
@@ -222,12 +230,12 @@ mock_cmd = "touch $REV_HOME/session-launched"
   });
 
   // The gate must be inert against an installation that has no launch-admit
-  // command — reading its usage text as a refusal would stop every loop in the
-  // estate — and it must stop asking, because helmo-cli opens and migrates the
-  // store before it dispatches a command, so the question is not free.
-  it('launches against a store with no launch-admit command, and asks it only once', () => {
+  // command — reading its usage text as a refusal would stop ordinary work.
+  // It still asks on every pass so a later workflow candidate cannot inherit
+  // an ordinary ticket's bypass.
+  it('launches ordinary work against a store with no launch-admit command', () => {
     // The mock claims the ready ticket, so the first pass produces and a
-    // second iteration follows it: two launches, and the question asked once.
+    // second iteration follows it: two launches and two fresh classifications.
     const e = setup(`[loops.old-store-loop]
 workstream = "rev-test"
 cwd = "/tmp"
@@ -244,10 +252,28 @@ echo launched >> $REV_HOME/sessions
     rev(e, ['run', 'old-store-loop', '--count', '2']);
 
     expect(readFileSync(join(e.home, 'sessions'), 'utf8').trim().split('\n')).toEqual(['launched', 'launched']);
-    expect(readFileSync(calls, 'utf8').trim().split('\n')).toHaveLength(1);
+    expect(readFileSync(calls, 'utf8').trim().split('\n')).toHaveLength(2);
     const events = readFileSync(join(e.home, 'state', 'old-store-loop', 'events.log'), 'utf8');
-    expect(events.match(/launch-admit-unsupported/g)).toHaveLength(1);
+    expect(events.match(/launch-admit-unsupported/g)).toHaveLength(2);
     expect(events).not.toMatch(/launch-denied/);
+  });
+
+  it('fails closed only for workflow-bound work when launch admission is unsupported', () => {
+    const e = setup(`[loops.old-gated-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = "touch $REV_HOME/session-launched"
+`);
+    seedTicket(e, 'Workflow work against an older store');
+    const calls = unsupportedAdmissionProxy(e, true);
+
+    rev(e, ['run', 'old-gated-loop', '--count', '1']);
+
+    expect(existsSync(join(e.home, 'session-launched'))).toBe(false);
+    expect(readFileSync(calls, 'utf8').trim().split('\n')).toHaveLength(1);
+    const events = readFileSync(join(e.home, 'state', 'old-gated-loop', 'events.log'), 'utf8');
+    expect(events).toMatch(/launch-denied.*no launch-admit command/);
   });
 
   it('wakes on ready work, session completes it via helm-cli, then idles', () => {

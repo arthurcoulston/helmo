@@ -14,11 +14,23 @@ function fixture() {
   db.pragma('journal_mode = WAL'); db.prepare('INSERT INTO projects VALUES (?)').run('R-1'); db.close(); return { root, home, output };
 }
 
+function inventory(path: string) {
+  return readdirSync(path).sort().map(name => ({ name, bytes: readFileSync(join(path, name)), mode: statSync(join(path, name)).mode }));
+}
+
 describe('operator recovery CLI', () => {
   it('reports only the stored identity without changing the source or creating output', () => {
-    const f = fixture(); const database = join(f.home, 'roadmap.db'); const before = readFileSync(database); const entries = readdirSync(f.root);
+    const f = fixture(); const before = inventory(f.home);
     expect(identity(f.home)).toBe('gp');
-    expect(readFileSync(database)).toEqual(before); expect(readdirSync(f.root)).toEqual(entries); expect(readdirSync(f.output)).toEqual([]);
+    expect(inventory(f.home)).toEqual(before); expect(readdirSync(f.output)).toEqual([]);
+  });
+  it('refuses a writer-active WAL database without changing its source home', () => {
+    const f = fixture(); const writer = new Database(join(f.home, 'roadmap.db'));
+    try {
+      writer.prepare('INSERT INTO projects VALUES (?)').run('R-live'); const before = inventory(f.home);
+      expect(before.map(entry => entry.name)).toEqual(expect.arrayContaining(['roadmap.db-wal', 'roadmap.db-shm']));
+      expect(() => identity(f.home)).toThrow('while SQLite sidecars exist'); expect(inventory(f.home)).toEqual(before); expect(readdirSync(f.output)).toEqual([]);
+    } finally { writer.close(); }
   });
   it('exposes the identity-only result through the operator CLI', () => {
     const f = fixture(); const result = execFileSync(process.execPath, ['--import', 'tsx', 'src/recovery.ts', 'identity', '--source-home', f.home], { encoding: 'utf8' });

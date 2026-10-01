@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
-import { constants, closeSync, fstatSync, lstatSync, linkSync, mkdirSync, openSync, readSync, realpathSync, statSync, writeSync } from 'node:fs';
+import { constants, closeSync, fstatSync, lstatSync, linkSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, readdirSync, statSync, writeSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { Worker } from 'node:worker_threads';
 
@@ -11,12 +11,36 @@ function deadline(start: number, limit = LIMIT_MS): void { if (performance.now()
 function effectiveUid(): number { if (!process.geteuid) throw new Error('roadmap-recovery requires a platform with effective-user ownership checks'); return process.geteuid(); }
 function ownedRegular(path: string): void { const s = lstatSync(path); if (!s.isFile() || s.isSymbolicLink() || s.uid !== effectiveUid()) throw new Error(`${path} must be an owner-owned regular file`); }
 
-function source(sourceHome: string): Database.Database {
+function sourcePath(sourceHome: string): string {
   if (!sourceHome || !isAbsolute(sourceHome)) throw new Error('--source-home must be an explicit absolute path');
   const stated = resolve(sourceHome); const parent = realpathSync(dirname(stated)); const home = join(parent, stated.slice(dirname(stated).length + 1));
   const hs = lstatSync(home); if (!hs.isDirectory() || hs.isSymbolicLink() || hs.uid !== effectiveUid()) throw new Error('source home must be an owner-owned real directory');
   const path = join(realpathSync(home), 'roadmap.db'); ownedRegular(path);
-  return new Database(path, { readonly: true, fileMustExist: true });
+  return path;
+}
+
+function source(sourceHome: string): Database.Database {
+  return new Database(sourcePath(sourceHome), { readonly: true, fileMustExist: true });
+}
+
+function identitySource(sourceHome: string): Database.Database {
+  const path = sourcePath(sourceHome); const home = dirname(path); const database = basename(path);
+  const assertStandalone = () => {
+    const sidecars = new Set([`${database}-wal`, `${database}-shm`, `${database}-journal`]);
+    if (readdirSync(home).some(entry => sidecars.has(entry))) throw new Error('stored installation identity cannot be read safely while SQLite sidecars exist');
+  };
+  assertStandalone();
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW); let bytes: Buffer;
+  try {
+    const before = fstatSync(fd); if (!before.isFile() || before.uid !== effectiveUid()) throw new Error(`${path} must be an owner-owned regular file`);
+    bytes = readFileSync(fd); const after = fstatSync(fd);
+    if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs) throw new Error('source database changed during identity inspection');
+  } finally { closeSync(fd); }
+  assertStandalone();
+  // A closed WAL database keeps WAL mode in bytes 18-19 even after its sidecars
+  // disappear. Normalize only the detached image so SQLite never seeks sidecars.
+  if (bytes[18] === 2 && bytes[19] === 2) { bytes[18] = 1; bytes[19] = 1; }
+  return new Database(bytes);
 }
 
 function storedIdentity(db: Database.Database): string {
@@ -26,7 +50,7 @@ function storedIdentity(db: Database.Database): string {
 }
 
 export function identity(sourceHome: string): string {
-  const db = source(sourceHome);
+  const db = identitySource(sourceHome);
   try { return storedIdentity(db); }
   finally { db.close(); }
 }

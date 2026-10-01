@@ -316,6 +316,52 @@ describe('describing a selection (H-2493)', () => {
     expect(shown).toContain('pid 2147483647 is not live');
   });
 
+  it('compares every recorded running component with the selected release', () => {
+    const dir = root();
+    const file = selectionAt(dir);
+    const release = makeRelease(dir, 'next');
+    upgrade(file, release);
+    const selected = readSelection(file)!;
+    selected.install = 'dev.rev';
+    writeSelection(file, selected);
+    const components = Object.fromEntries(REPOS.map((repo) => [repo, sha(`next:${repo}`)]));
+    const process = (recorded: Record<string, string>) => ({
+      process: 'supervisor', pid: 2147483647, command: 'rev service', installation: 'dev.rev', release: 'next', components: recorded,
+      observed_at: new Date().toISOString(), identity_verified_at: new Date().toISOString(),
+    });
+
+    for (const [recorded, problem] of [
+      [{ ...components, rev: sha('old:rev') }, 'record rev ref does not match selected'],
+      [{}, 'record has no selected rev ref'],
+      [{ ...components, elsewhere: sha('elsewhere') }, 'record has unselected component elsewhere'],
+    ] as const) {
+      writeDeployment(deploymentFile(file), {
+        format: 1, installation: 'dev.rev', phase: 'running', release: 'next', directory: release,
+        components: recorded, updated_at: new Date().toISOString(), recovery: 'Restore matching release evidence.',
+        required_processes: ['supervisor'], processes: [process(recorded)],
+      });
+      const shown = describeRelease(file).join('\n');
+      expect(shown).toContain('deployment: UNVERIFIED — record says running');
+      expect(shown).toContain(problem);
+    }
+  });
+
+  it('rejects duplicate process names instead of hiding one observation in a map', () => {
+    const dir = root();
+    const file = selectionAt(dir);
+    const release = makeRelease(dir, 'next');
+    upgrade(file, release);
+    const components = Object.fromEntries(REPOS.map((repo) => [repo, sha(`next:${repo}`)]));
+    const evidence = { process: 'supervisor', pid: 2147483647, command: 'rev service', installation: 'dev.rev', release: 'next', components,
+      observed_at: new Date().toISOString(), identity_verified_at: new Date().toISOString() };
+    writeDeployment(deploymentFile(file), {
+      format: 1, installation: 'dev.rev', phase: 'running', release: 'next', directory: release, components,
+      updated_at: new Date().toISOString(), recovery: 'Replace duplicate evidence.', required_processes: ['supervisor'],
+      processes: [evidence, { ...evidence, pid: 42 }],
+    });
+    expect(describeRelease(file).join('\n')).toContain('deployment: UNREADABLE');
+  });
+
   it('keeps malformed evidence diagnostic and keeps recovery visible when selection is broken', () => {
     const dir = root();
     const file = selectionAt(dir);

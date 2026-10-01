@@ -40,7 +40,7 @@ export function readDeployment(file: string): DeploymentRecord | null {
   catch (e) { throw new Error(`${file} is not readable: ${e instanceof Error ? e.message : String(e)}`); }
   if (value.format !== 1 || !text(value.installation) || !phases.has(value.phase as string) || !text(value.release) || !text(value.directory)
       || !refs(value.components) || !instant(value.updated_at) || !text(value.recovery)
-      || (value.processes !== undefined && (!Array.isArray(value.processes) || !value.processes.every(processEvidence)))
+      || (value.processes !== undefined && (!Array.isArray(value.processes) || !value.processes.every(processEvidence) || !uniqueProcessNames(value.processes)))
       || (value.required_processes !== undefined && (!Array.isArray(value.required_processes) || !value.required_processes.every(text)))) {
     throw new Error(`${file} is partial: format, installation, phase, release, directory, components, updated_at and recovery are required`);
   }
@@ -58,6 +58,7 @@ const processEvidence = (value: unknown): value is ProcessEvidence => {
   return text(p.process) && Number.isInteger(p.pid) && p.pid! > 0 && text(p.command) && text(p.installation)
     && text(p.release) && refs(p.components) && instant(p.observed_at) && instant(p.identity_verified_at);
 };
+const uniqueProcessNames = (processes: ProcessEvidence[]): boolean => new Set(processes.map((p) => p.process)).size === processes.length;
 
 function liveCommand(pid: number): string | null {
   try { return execFileSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim() || null; }
@@ -112,6 +113,13 @@ export function describeDeployment(file: string, selected: Selection | null, obs
     if (!selected) problems.push('no readable selection exists');
     if (stale) problems.push('the record describes another selection');
     if (expectedInstall && record.installation !== expectedInstall) problems.push(`record installation ${record.installation} does not match selected ${expectedInstall}`);
+    if (selected) {
+      for (const [name, component] of Object.entries(selected.components)) {
+        if (record.components[name] === undefined) problems.push(`record has no selected ${name} ref`);
+        else if (record.components[name] !== component.commit) problems.push(`record ${name} ref does not match selected ${component.commit}`);
+      }
+      for (const name of Object.keys(record.components)) if (selected.components[name] === undefined) problems.push(`record has unselected component ${name}`);
+    }
     if (required.size === 0) problems.push('no required process coverage is declared');
     for (const name of required) if (!observed.has(name)) problems.push(`required process ${name} has no evidence`);
     for (const p of observed.values()) {

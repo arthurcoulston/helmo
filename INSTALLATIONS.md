@@ -159,10 +159,12 @@ required fields are absent, and unrecorded when activation has supplied no
 evidence. A running record also declares the complete required-process set;
 each observation carries its exact command, loaded refs, installation identity,
 and the time an identity write/readback passed. Status probes each recorded PID
-and command afresh and prints `UNVERIFIED` if coverage, identity, refs, selection,
-or liveness disagree. It never promotes `selected`, saved phase, or a
-`BUILD.json` stamp to “running,” and a broken selection cannot hide the
-independently readable recovery instruction in the activation record.
+and command afresh, requires unique process names, and compares the record's
+complete component set with the selected release. It prints `UNVERIFIED` if
+coverage, identity, refs, selection, or liveness disagree. It never promotes
+`selected`, saved phase, or a `BUILD.json` stamp to “running,” and a broken
+selection cannot hide the independently readable recovery instruction in the
+activation record.
 
 From then on **every entry point verifies the set before it does anything** —
 every Rev CLI invocation and the supervisor, and the Helmo MCP servers Rev

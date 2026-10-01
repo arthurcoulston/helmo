@@ -2528,8 +2528,9 @@ export class Store {
     rejectSwallowedMarkup({ recovery_owner: recoveryOwner, reason });
     return this.db.transaction(() => {
       const cur = this.getTicket(ticketId);
-      if (cur.status !== 'awaiting_human' || !cur.question || questionFingerprint(cur.question) !== expectQuestion) {
-        throw new HelmoError(`${cur.id} is no longer asking the expected question — reload before withdrawing it; a real answer or replacement ask wins.`);
+      const pendingFingerprint = cur.question ? questionFingerprint(cur.question) : cur.action ? actionFingerprint(cur.action) : null;
+      if (cur.status !== 'awaiting_human' || pendingFingerprint !== expectQuestion) {
+        throw new HelmoError(`${cur.id} is no longer asking the expected question or action — reload before withdrawing it; a real answer, completed action, or replacement request wins.`);
       }
       const owner = recoveryOwner.trim();
       const cutoff = new Date(Date.now() - SILENT_ASSIGNEE_HOURS * 3_600_000).toISOString();

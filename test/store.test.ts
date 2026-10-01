@@ -893,6 +893,24 @@ describe('return to human / answer', () => {
     expect(s.getTicket(t.id)).toMatchObject({ status: 'open', assignee: orch.name, question: null });
   });
 
+  it('withdraws an inspected action without recording completion or consent (H-503)', () => {
+    const s = freshStore();
+    const t = create(s, { assignee: 'builder-loop' });
+    const asked = s.requestAction(builder, t.id, {
+      situation: 'The team incorrectly classified a supported contribution as sovereign.',
+      action: 'Carry the patch to another estate.',
+      why_human: 'The team believed only Arthur could cross the boundary.',
+      if_unanswered: 'Preparation remains stranded.',
+    });
+    const fingerprint = actionFingerprint(asked.action!);
+    const recovered = s.withdrawHumanReturn(builder, t.id, fingerprint, builder.name, 'The classification was corrected; team preparation resumes.');
+    expect(recovered).toMatchObject({ status: 'open', assignee: builder.name, question: null, action: null });
+    expect(s.lastAnswer(t.id)).toBeNull();
+    expect(s.actedRequests(t.id).size).toBe(0);
+    expect(s.getEvents(t.id).find((e) => e.event_type === 'return_withdrawn')?.payload).toMatchObject({ question_fingerprint: fingerprint });
+    expect(() => s.withdrawHumanReturn(builder, t.id, fingerprint, builder.name, 'Stale retry.')).toThrow(/no longer asking/);
+  });
+
   it('lets a concurrent real answer win and refuses ownerless or stale withdrawal (H-391)', () => {
     const s = freshStore();
     const t = create(s);

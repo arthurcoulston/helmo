@@ -166,6 +166,15 @@ coverage, identity, refs, selection, or liveness disagree. It never promotes
 selection cannot hide the independently readable recovery instruction in the
 activation record.
 
+Activate an already selected set with `rev release activate`. It records the
+attempt, asks the existing supervisor to drain at the next poll, lets every
+in-flight iteration finish its close-out, and relies on the stable service
+launcher to start the selected release only after the old supervisor exits.
+The drain uses Rev's configured grace and escalation; the detached restart
+watch records `failed` with the exact recovery command if no replacement
+supervisor returns. A replacement supervisor records `running` only after its
+installation identity and selected component refs survive durable readback.
+
 From then on **every entry point verifies the set before it does anything** —
 every Rev CLI invocation and the supervisor, and the Helmo MCP servers Rev
 spawns for its sessions, which are given the selector. Missing code, a mixed set, or

@@ -23,6 +23,9 @@ import { endSessionGroup, sessionGroupsOf } from './shim.js';
 import { REDEPLOY_EXIT, RedeployRequest, armRedeployWatch, readRedeploy, reportRedeployLanded } from './redeploy.js';
 import { agentFalseAlarmDisposition, answeredResumeEscalation, completeAnsweredResume, failAnsweredResume, returnRelapseToHuman, cliError } from './helm.js';
 import { GlobalConfig, LoopConfig } from './types.js';
+import { completeActivation, deploymentFile } from './deployment.js';
+import { readSelection, selectionFile } from './release.js';
+import { target } from './install.js';
 
 const SUP = 'supervisor';
 
@@ -82,6 +85,11 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
     console.log(`rev: previous supervisor (pid ${stale}) left a stale marker — clearing it and starting.`);
   }
   sSet(SUP, 'RUNNING', runningStamp());
+  const selected = selectionFile();
+  if (selected) {
+    const selection = readSelection(selected);
+    if (selection) completeActivation(deploymentFile(selected), selection, target().label);
+  }
   process.on('exit', () => sClear(SUP, 'RUNNING'));
   // A REDEPLOY found at startup is the record of the restart that just
   // happened, not an ask. Clearing it here, before any poll can read it, is

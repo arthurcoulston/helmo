@@ -568,6 +568,12 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   identity and PID liveness, and keeps activation recovery visible even when
   the selection is unreadable. Activation code writes running only after its
   process probes supply their loaded refs, identities and identity write/readback.
+  `rev release activate` (H-2571) is the supported write path: it records
+  `activating`, reuses the redeploy sentinel so the current iteration closes
+  before the bounded supervisor drain, and lets only the replacement supervisor
+  record `running`. The detached restart watch records `failed` and recovery if
+  no supervisor returns; identity conflicts refuse at the CLI door before any
+  activation record or sentinel is written.
 - `remove.ts` — **the one command that deletes an installation's records**
   (H-2512). `rev install remove [--confirm]`. Every other removal rev has keeps
   the data: `rev service uninstall` takes the definition and leaves the store,

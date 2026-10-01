@@ -99,6 +99,49 @@ export function recordSelection(file: string, selection: Selection, phase: 'sele
   });
 }
 
+export function beginActivation(file: string, selection: Selection, installation: string, attempt = `${Date.now()}-${process.pid}`): DeploymentRecord {
+  const record: DeploymentRecord = {
+    format: 1, installation, phase: 'activating', release: selection.release, directory: selection.directory,
+    components: Object.fromEntries(Object.entries(selection.components).map(([name, component]) => [name, component.commit])),
+    updated_at: new Date().toISOString(), attempt,
+    recovery: 'Wait for the bounded supervisor drain. If no replacement supervisor returns, run rev service start; rev release status preserves the failed attempt and selected release.',
+  };
+  writeDeployment(file, record);
+  return record;
+}
+
+export function completeActivation(file: string, selection: Selection, installation: string, command: string | null = null, pid = process.pid): DeploymentRecord | null {
+  let previous: DeploymentRecord | null;
+  try { previous = readDeployment(file); } catch { return null; }
+  if (!previous || previous.phase !== 'activating' || previous.release !== selection.release || previous.directory !== selection.directory) return null;
+  const observed = new Date().toISOString();
+  const processEvidence: ProcessEvidence = {
+    process: 'supervisor', pid, command: command ?? liveCommand(pid) ?? `${process.execPath} ${process.argv.join(' ')}`, installation, release: selection.release,
+    components: Object.fromEntries(Object.entries(selection.components).map(([name, component]) => [name, component.commit])),
+    observed_at: observed, identity_verified_at: observed,
+  };
+  const record: DeploymentRecord = {
+    ...previous, phase: 'running', updated_at: observed, processes: [processEvidence], required_processes: ['supervisor'],
+    recovery: 'This release is running. To recover, select the retained release with rev release rollback, then run rev release activate.',
+  };
+  writeDeployment(file, record);
+  const readback = readDeployment(file);
+  if (!readback || readback.attempt !== previous.attempt || readback.installation !== installation) throw new Error('activation identity readback disagreed with the record just written');
+  return record;
+}
+
+export function failActivation(file: string, detail: string): DeploymentRecord | null {
+  let previous: DeploymentRecord | null;
+  try { previous = readDeployment(file); } catch { return null; }
+  if (!previous || previous.phase !== 'activating') return null;
+  const record: DeploymentRecord = {
+    ...previous, phase: 'failed', updated_at: new Date().toISOString(), detail,
+    recovery: 'The selected release remains selected. Start it with rev service start; if it will not stay up, inspect rev release status and roll back before activating again.',
+  };
+  writeDeployment(file, record);
+  return record;
+}
+
 export function describeDeployment(file: string, selected: Selection | null, observe = liveCommand): string[] {
   let record: DeploymentRecord | null;
   try { record = readDeployment(file); }

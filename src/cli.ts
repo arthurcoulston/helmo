@@ -12,7 +12,8 @@ import { runLoop } from './loop.js';
 import { serviceFile, serviceInstall, serviceStart, serviceStatusLine, serviceUninstall, stalePinnedService } from './service.js';
 import { assertInstallation, requireTarget, target, targetLine } from './install.js';
 import { planLines, removalPlan, removeInstallation } from './remove.js';
-import { ReleaseError, describe as describeRelease, migrationLine, rollback, selectionFile, upgrade } from './release.js';
+import { ReleaseError, describe as describeRelease, migrationLine, readSelection, rollback, selectionFile, upgrade } from './release.js';
+import { beginActivation, deploymentFile } from './deployment.js';
 import { readRedeploy, requestRedeploy, watchRedeploy } from './redeploy.js';
 import { logEvent, pidAlive, processObservation, sClear, sGet, sHas, sPendingPid, sSetOwned, sValue, streakReset } from './sentinels.js';
 import { runFleet } from './supervisor.js';
@@ -116,7 +117,7 @@ const COMMAND_HELP: Record<string, string> = {
   resume: `usage: ${commandName} resume <loop>`,
   service: `usage: ${commandName} service <install|uninstall|start|status>`,
   install: `usage: ${commandName} install remove [--confirm]`,
-  release: `usage: ${commandName} release <status | upgrade <release directory> | rollback>`,
+  release: `usage: ${commandName} release <status | upgrade <release directory> | rollback | activate>`,
   redeploy: `usage: ${commandName} redeploy [--ticket <id>] [--reason "<why>"]`,
   pace: `usage: ${commandName} pace <loop> <fraction (0,1] | park | clear>`,
   usage: `usage: ${commandName} usage [--poll]`,
@@ -426,7 +427,7 @@ switch (cmd) {
       for (const line of describeRelease(file)) console.log(line);
       break;
     }
-    if ((verb !== 'upgrade' && verb !== 'rollback') || (verb === 'upgrade' && !rest[1])) {
+    if (!['upgrade', 'rollback', 'activate'].includes(verb) || (verb === 'upgrade' && !rest[1])) {
       console.error(COMMAND_HELP['release']);
       process.exit(1);
     }
@@ -439,6 +440,20 @@ switch (cmd) {
     }
     console.log(targetLine(requireTarget(`${commandName} release ${verb}`, 'unchecked')));
     try {
+      if (verb === 'activate') {
+        const selection = readSelection(file);
+        if (!selection) throw new ReleaseError(`${file} names no selected release to activate`);
+        if (!existsSync(serviceFile().file)) throw new ReleaseError(`no service is installed at ${serviceFile().file}; install the stable launcher before activation`);
+        const stale = stalePinnedService();
+        if (stale) throw new ReleaseError(`the installed service ${stale.file} names ${stale.program} inside a release; run '${commandName} service install' once so activation can restart through the stable launcher`);
+        const sup = pidAlive('supervisor');
+        if (!sup) throw new ReleaseError(`no supervisor is running; use '${commandName} service start' and verify it before activating a later selection`);
+        if (readRedeploy()) throw new ReleaseError('a supervisor redeploy is already pending; wait for it to land before activating a release');
+        const record = beginActivation(deploymentFile(file), selection, target('unchecked').label);
+        requestRedeploy({ by: cliActor().label, reason: `activate selected release ${selection.release}`, requested_at: record.updated_at });
+        console.log(`activation ${record.attempt}: ${selection.release} is queued. The current fleet drains within the configured bound; replacement sessions start only after the supervisor exits.`);
+        break;
+      }
       const change = verb === 'upgrade' ? upgrade(file, rest[1]!) : rollback(file);
       if (change.unchanged) {
         console.log(`release: already ${change.to} (${change.directory}) — nothing written.`);
@@ -602,7 +617,7 @@ switch (cmd) {
   session-spec <seat>      the composed session as JSON (model, cwd, skills, MCP, env) — reads nothing else
   service <verb>           install|uninstall|start|status — survive reboots (launchd/systemd)
   install remove           delete this installation's records, controls and selection (no undo; --confirm)
-  release <verb>           status|upgrade <dir>|rollback — which release set this installation runs
+  release <verb>           status|upgrade <dir>|rollback|activate — select, then activate with a bounded drain
   redeploy [--ticket <id>] [--reason "<why>"]
                            activate a committed fix: drain after in-flight iterations, come back on the new code
   tail <loop>              print the path of the loop's event trace

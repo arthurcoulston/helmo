@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { Migration, ReleaseError, describe as describeRelease, readSelection, releaseProblems, rollback, upgrade, writeSelection } from '../src/release.js';
-import { deploymentFile, writeDeployment } from '../src/deployment.js';
+import { beginActivation, completeActivation, deploymentFile, failActivation, readDeployment, writeDeployment } from '../src/deployment.js';
 
 const REV_CLI = join(import.meta.dirname, '..', 'src', 'cli.ts');
 const ROOT = join(import.meta.dirname, '..');
@@ -163,6 +163,43 @@ describe('upgrading (H-2493)', () => {
     const again = upgrade(file, release);
     expect(again.unchanged).toBe(true);
     expect(readFileSync(file, 'utf8')).toBe(written);
+  });
+});
+
+describe('activating a selected release (H-2571)', () => {
+  it('moves through activating to running only on replacement-supervisor evidence', () => {
+    const dir = root();
+    const file = selectionAt(dir);
+    upgrade(file, makeRelease(dir, 'next'));
+    const selection = readSelection(file)!;
+    const activation = deploymentFile(file);
+
+    const started = beginActivation(activation, selection, 'fixture-a', 'attempt-1');
+    expect(started).toMatchObject({ phase: 'activating', attempt: 'attempt-1', installation: 'fixture-a' });
+    const running = completeActivation(activation, selection, 'fixture-a', '/release/rev/dist/cli.js run', 4242);
+    expect(running).toMatchObject({ phase: 'running', required_processes: ['supervisor'] });
+    expect(running?.processes?.[0]).toMatchObject({ pid: 4242, installation: 'fixture-a', release: 'next' });
+    expect(readDeployment(activation)?.phase).toBe('running');
+  });
+
+  it('records a bounded restart failure with an exact recovery path', () => {
+    const dir = root();
+    const file = selectionAt(dir);
+    upgrade(file, makeRelease(dir, 'next'));
+    beginActivation(deploymentFile(file), readSelection(file)!, 'fixture-a', 'attempt-2');
+    const failed = failActivation(deploymentFile(file), 'no supervisor returned within 3s');
+    expect(failed).toMatchObject({ phase: 'failed', detail: 'no supervisor returned within 3s' });
+    expect(failed?.recovery).toContain('rev service start');
+  });
+
+  it('does not let a stale replacement complete another selection\'s attempt', () => {
+    const dir = root();
+    const file = selectionAt(dir);
+    upgrade(file, makeRelease(dir, 'first'));
+    beginActivation(deploymentFile(file), readSelection(file)!, 'fixture-a', 'attempt-3');
+    upgrade(file, makeRelease(dir, 'second'));
+    expect(completeActivation(deploymentFile(file), readSelection(file)!, 'fixture-a', 'cmd', 1)).toBeNull();
+    expect(readDeployment(deploymentFile(file))?.phase).toBe('selected');
   });
 });
 

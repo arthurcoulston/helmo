@@ -20,6 +20,8 @@ import { notifyOperator } from './health.js';
 import { cliError, redeployFailed, redeployLanded, ticketStatus } from './helm.js';
 import { logEvent, pidAlive, sGet, sSet } from './sentinels.js';
 import { GlobalConfig } from './types.js';
+import { failActivation, deploymentFile } from './deployment.js';
+import { selectionFile } from './release.js';
 
 const SUP = 'supervisor';
 
@@ -138,6 +140,8 @@ export async function watchRedeploy(g: GlobalConfig, deadlineSeconds: number): P
   const detail =
     `no supervisor returned within ${deadlineSeconds}s of the drain (requested ${req.requested_at} by ${req.by}: ${req.reason})`;
   logEvent(SUP, 'redeploy-failed', detail.slice(0, 300));
+  const selected = selectionFile();
+  if (selected) failActivation(deploymentFile(selected), detail);
   console.error(`rev: redeploy failed — ${detail}. The fleet is down.`);
   notifyOperator('Rev: redeploy failed', 'The fleet drained to redeploy and no supervisor came back. No work is being drawn.');
   try {

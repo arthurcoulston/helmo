@@ -54,6 +54,9 @@ describe('mistaken human returns through the MCP boundary (H-391)', () => {
     });
     const fingerprint = questionFingerprint(asked.question!);
     const client = await connect(store);
+    const returnTool = (await client.listTools()).tools.find((t) => t.name === 'helmo_return_to_human')!;
+    expect(returnTool.description).toContain("A tool refusing to operate on a resource proves that tool's scope, not that only the human can produce the outcome.");
+    expect(returnTool.description).toContain('This never widens contribution authority into main-branch merge or publication, sovereign writes, or a scanner exception.');
     const tool = (await client.listTools()).tools.find((t) => t.name === 'helmo_withdraw_human_return')!;
     expect(Object.keys(tool.inputSchema['properties'] as object).sort()).toEqual([
       'actor', 'question_fingerprint', 'reason', 'recovery_owner', 'ticket_id',

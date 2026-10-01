@@ -429,7 +429,7 @@ describe('the release commands (H-2493)', () => {
     for (const key of ['INSTALLATION_RELEASE', 'REV_LABEL', 'HELMO_HOME', 'HELMO_DB', 'HELMO_LABEL', 'ROADMAP_HOME', 'ROADMAP_DB', 'ROADMAP_LABEL']) {
       delete inherited[key];
     }
-    return spawnSync('npx', ['tsx', REV_CLI, ...args], {
+    return spawnSync(process.execPath, ['--import', 'tsx', REV_CLI, ...args], {
       cwd: ROOT, encoding: 'utf8', env: { ...inherited, HOME: dirname(home), REV_HOME: home, ...env },
     });
   }

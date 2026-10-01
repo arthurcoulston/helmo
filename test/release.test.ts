@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -433,6 +433,81 @@ describe('the release commands (H-2493)', () => {
       cwd: ROOT, encoding: 'utf8', env: { ...inherited, HOME: dirname(home), REV_HOME: home, ...env },
     });
   }
+
+  function activatableInstallation(id: string) {
+    const dir = root();
+    const home = join(dir, '.rev');
+    mkdirSync(home, { recursive: true });
+    const file = selectionAt(dir);
+    const built = JSON.parse(readFileSync(join(ROOT, 'dist', 'BUILD.json'), 'utf8')) as { commit: string };
+    const commits = { rev: built.commit, helmo: sha(`${id}:helmo`), 'helmo-roadmap': sha(`${id}:helmo-roadmap`) };
+    const release = makeRelease(dir, id, { commits, stamped: commits });
+    rmSync(join(release, 'rev'), { recursive: true });
+    symlinkSync(ROOT, join(release, 'rev'), 'dir');
+    upgrade(file, release);
+
+    const label = `dev.rev.${id}`;
+    const agents = join(dir, 'Library', 'LaunchAgents');
+    mkdirSync(agents, { recursive: true });
+    writeFileSync(join(agents, `${label}.plist`), [
+      '<plist><dict>',
+      '<key>ProgramArguments</key><array>',
+      `<string>${process.execPath}</string><string>${join(home, 'service', 'launch.mjs')}</string><string>run</string>`,
+      '</array>',
+      `<key>REV_HOME</key><string>${home}</string>`,
+      '</dict></plist>',
+    ].join('\n'));
+    const supervisor = join(home, 'state', 'supervisor');
+    mkdirSync(supervisor, { recursive: true });
+    const env = { INSTALLATION_RELEASE: file, REV_LABEL: label };
+    const markOldSupervisor = () => writeFileSync(join(supervisor, 'RUNNING'), `${process.pid}\n`);
+    markOldSupervisor();
+    return { dir, home, file, env, supervisor, markOldSupervisor };
+  }
+
+  it('drives activate through the CLI, bounded drain, and replacement supervisor readback', () => {
+    const i = activatableInstallation('activation-success');
+    const activated = rev(i.home, ['release', 'activate'], i.env);
+    expect(activated.status, activated.stderr).toBe(0);
+    expect(readDeployment(deploymentFile(i.file))).toMatchObject({ phase: 'activating', installation: i.env.REV_LABEL });
+    expect(readFileSync(join(i.supervisor, 'REDEPLOY'), 'utf8')).toContain('activate selected release activation-success');
+
+    unlinkSync(join(i.supervisor, 'RUNNING'));
+    const replacement = rev(i.home, ['run'], i.env);
+    expect(replacement.status, `${replacement.stdout}${replacement.stderr}`).toBe(0);
+    expect(readDeployment(deploymentFile(i.file))).toMatchObject({
+      phase: 'running', installation: i.env.REV_LABEL, release: 'activation-success', required_processes: ['supervisor'],
+    });
+    expect(readDeployment(deploymentFile(i.file))?.processes?.[0]).toMatchObject({
+      process: 'supervisor', installation: i.env.REV_LABEL, release: 'activation-success',
+    });
+    expect(existsSync(join(i.supervisor, 'REDEPLOY'))).toBe(false);
+  });
+
+  it('records watch expiry and recovers only through a fresh activation attempt', () => {
+    const i = activatableInstallation('activation-recovery');
+    expect(rev(i.home, ['release', 'activate'], i.env).status).toBe(0);
+
+    const bin = join(i.dir, 'bin');
+    mkdirSync(bin);
+    const osascript = join(bin, 'osascript');
+    writeFileSync(osascript, '#!/bin/sh\nexit 0\n');
+    chmodSync(osascript, 0o755);
+    const expired = rev(i.home, ['redeploy-watch', '--deadline', '0'], { ...i.env, PATH: `${bin}:${process.env.PATH ?? ''}` });
+    expect(expired.status).toBe(1);
+    expect(readDeployment(deploymentFile(i.file))).toMatchObject({ phase: 'failed', release: 'activation-recovery' });
+    expect(readDeployment(deploymentFile(i.file))?.recovery).toContain('rev service start');
+
+    unlinkSync(join(i.supervisor, 'RUNNING'));
+    expect(rev(i.home, ['run'], i.env).status).toBe(0);
+    expect(readDeployment(deploymentFile(i.file))?.phase).toBe('failed');
+
+    i.markOldSupervisor();
+    expect(rev(i.home, ['release', 'activate'], i.env).status).toBe(0);
+    unlinkSync(join(i.supervisor, 'RUNNING'));
+    expect(rev(i.home, ['run'], i.env).status).toBe(0);
+    expect(readDeployment(deploymentFile(i.file))).toMatchObject({ phase: 'running', release: 'activation-recovery' });
+  });
 
   it('upgrades, rolls back, and says what a running process still has', () => {
     const dir = root();

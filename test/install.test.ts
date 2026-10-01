@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { ChildProcess, spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { homedir, tmpdir, userInfo } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -452,5 +452,28 @@ describe('the store owns its explicitly named installation (H-2487)', () => {
     store.createTicket(orch, { title: 'Old single install', body: 'Derived use stays unnamed.', workstream: 'rev-dev', type: 'build' });
     expect(store.installationIdentity()).toEqual({ process: 'dev.helmo', stored: null, clear: true });
     store.close();
+  });
+
+  it('accepts the path-derived legacy name for the same shared installation and refuses a different derived writer', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'helmo-store-derived-identity-'));
+    const path = join(dir, 'helmo.db');
+    const home = join(dir, '.helmo-gp');
+    const legacy = installation(env({ HELMO_HOME: home }));
+    const sharedLabel = legacy.label.replace(/^dev\.helmo/, 'dev.rev');
+    const first = new Store(path, installation(env({ HELMO_HOME: home, REV_LABEL: sharedLabel })));
+    const ticket = first.createTicket(orch, { title: 'Shared store', body: 'One installation, two compatible names.', workstream: 'rev-dev', type: 'build' });
+    first.close();
+
+    const compatible = new Store(path, legacy);
+    expect(compatible.installationIdentity()).toEqual({ process: legacy.label, stored: sharedLabel, clear: true });
+    compatible.updateTicket(orch, { ticket_id: ticket.id, note: 'legacy name still identifies this installation' });
+    compatible.close();
+
+    const before = readFileSync(path);
+    const wrong = new Store(path, installation(env({ HELMO_HOME: join(dir, '.helmo-other') })));
+    expect(() => wrong.updateTicket(orch, { ticket_id: ticket.id, note: 'must not land' })).toThrow(/UNCLEAR/);
+    wrong.close();
+    expect(readFileSync(path)).toEqual(before);
+    rmSync(dir, { recursive: true, force: true });
   });
 });

@@ -140,7 +140,11 @@ function mismatch(i: Installation, requested?: string): string | null {
  * drift into accepting different words for the same install.
  */
 export function namesInstallation(i: Installation, want: string): boolean {
-  return want === i.label || resolve(want) === i.home || resolve(want) === i.db;
+  if (!i.home || !i.db) return want === i.label;
+  const standalone = derivedLabel(i.home);
+  const shared = standalone.replace(/^dev\.helmo(?=\.|$)/, 'dev.rev');
+  const labels = i.label === standalone || i.label === shared ? [standalone, shared] : [i.label];
+  return labels.includes(want) || resolve(want) === i.home || resolve(want) === i.db;
 }
 
 /**

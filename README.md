@@ -74,6 +74,16 @@ the loop stays down until `rev resume`, and the running supervisor then picks it
 one poll. Stopping the machine is a drain: SIGTERM defers past the in-flight session, so
 agents always finish their close-out.
 
+Good Plumb installations can opt that supervisor poll into the narrow intake
+preparation pull boundary with `intake_preparation_origin` and an absolute
+`intake_preparation_checkout` in `[global]`. Rev reads the HMAC capability only
+from the macOS Keychain service `plumb-intake-executor-secret`; never put it in
+the roster, environment or command line. The adapter validates the claimed
+occurrence identity and signup hash, writes the exact signup to the scoped
+client path, and creates one Builder assignment containing identifiers only.
+Omitting either setting disables the integration and preserves ordinary Rev
+behaviour.
+
 ## Development
 
 ```bash

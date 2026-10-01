@@ -32,6 +32,8 @@ export interface GlobalConfig {
   anomaly_abs_percent: number;          // plan percentage points one iteration may consume
   exhaustion_ceiling_seconds: number;   // a reset further out than this is bad telemetry, not a plan
   probe?: RunChoice;                    // global probe pin ("provider:tier"): every probe pass runs here while its cap stands (H-625)
+  intake_preparation_origin?: string;   // opt-in Good Plumb Worker origin; capability remains in Keychain
+  intake_preparation_checkout?: string; // checkout receiving the verified signup source
 }
 
 export type Runtime = 'claude' | 'codex' | 'mock';

@@ -2,6 +2,7 @@
 // rev — run and control loops. Control verbs are sentinel writes; anything
 // that reads state is safe from any context (the watch officer uses these).
 import { existsSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { buildLine, compare, parseMarker, runningLine, snapshot } from './build.js';
 import { loadRoster, resolveRef, stateDir } from './config.js';
 import { sessionSpec } from './shim.js';
@@ -18,6 +19,7 @@ import { readRedeploy, requestRedeploy, watchRedeploy } from './redeploy.js';
 import { logEvent, pidAlive, processObservation, sClear, sGet, sHas, sPendingPid, sSetOwned, sValue, streakReset } from './sentinels.js';
 import { runFleet } from './supervisor.js';
 import { teamResume, teamStop } from './team-control.js';
+import { buildIntakeResult, recordIntakeResult } from './intake-preparation.js';
 
 const [cmd, ...rest] = process.argv.slice(2);
 // `--installation <name|home>` may follow any command: it asserts which
@@ -126,6 +128,7 @@ const COMMAND_HELP: Record<string, string> = {
   tail: `usage: ${commandName} tail <loop>`,
   'session-spec': `usage: ${commandName} session-spec <seat> --session <actor stamp> [--provider claude] [--tier high] [--model M] [--cwd P] [--constitution P] [--version V]`,
   team: `usage: ${commandName} team <stop|resume> <loop|all>`,
+  intake: `usage: ${commandName} intake result goodplumb@<40-hex-commit>`,
 };
 
 if (cmd === '--help' || cmd === '-h') {
@@ -190,6 +193,18 @@ function state(name: string): string {
 }
 
 switch (cmd) {
+  case 'intake': {
+    if (rest[0] !== 'result' || !rest[1] || !g.intake_preparation_checkout) {
+      console.error(COMMAND_HELP.intake);
+      process.exit(1);
+    }
+    const dir = stateDir('supervisor');
+    const stateFile = join(dir, 'intake-preparation.json');
+    const resultFile = join(dir, 'intake-preparation-result.json');
+    recordIntakeResult(resultFile, buildIntakeResult(g.intake_preparation_checkout, stateFile, rest[1]));
+    console.log('intake preparation result staged; the supervisor will sign and deliver it on its next poll.');
+    break;
+  }
   case 'team': {
     if (commandName !== 'gp-rev' || process.env['REV_LOOP'] !== 'prime') {
       console.error('team control is available only to Prime through gp-rev.');

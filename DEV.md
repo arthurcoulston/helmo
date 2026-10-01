@@ -349,6 +349,20 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   `shim.ts`.
   Child stdout/err goes to state/<loop>/console.log; supervisor decisions to
   state/supervisor/events.log. 'supervisor' is a reserved loop name.
+  An installation may also opt this same poll into the narrow Good Plumb
+  intake-preparation adapter with `intake_preparation_origin` and
+  `intake_preparation_checkout`. `intake-preparation.ts` signs outbound
+  claim/heartbeat/failure/result requests with the macOS Keychain service
+  `plumb-intake-executor-secret`, validates the occurrence identity and exact
+  signup hash before writing, and creates one identifiers-only Builder ticket
+  using only Helmo CLI-supported fields; project metadata is not passed because
+  that CLI refuses fields which exist only on the MCP create surface.
+  Attempt state contains no signup text and lives under state/supervisor; a
+  stale result is discarded on the Worker's 409. Before heartbeat or result,
+  the adapter re-reads that ticket and retains the lease only while it is open
+  or in progress; any other status discards the local attempt and result so the
+  Worker can recover it after lease expiry. There is no listener or
+  second scheduler, and an installation declaring neither key is unchanged.
 - A human answer reopens a Helmo ticket with `resolution: resume` regardless
   of whether its operational choice was resume, hold, or investigate. The
   supervisor clears `BLOCKED` only when `last_answer.chosen_option` is the
@@ -693,7 +707,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
 
 ## Commands
 
-- `npm run build`, `npm test` (ladder units + e2e with mock runtime).
+- `npm run build`, `npm test` (ladder units + e2e with mock runtime). The
+  verbose reporter is deliberate: the real-process e2e files can take several
+  minutes on a loaded fleet host, and per-case progress distinguishes that
+  bounded work from a hung run without inspecting or killing its fixtures.
 - The release CLI fixture clears inherited `INSTALLATION_RELEASE` and product
   identity/store variables before applying explicit fixture overrides, and its
   `HOME` is the disposable parent of `REV_HOME`. Redirecting `REV_HOME` alone

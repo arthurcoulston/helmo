@@ -164,8 +164,14 @@ export function launchAdmit(g: GlobalConfig, l: LoopConfig, id: string): LaunchA
     const res = run(g, ['launch-admit', '--workstream', l.workstream, '--assignee', l.name, '--launch-id', id], revActor(), true) as
       { admitted?: boolean; ticket_id?: string; workflow_attempt_id?: string | null; admission_id?: string | null };
     const ticketId = res.ticket_id ?? null;
-    if (candidate?.workflowAttemptId && (res.admitted !== true || ticketId !== candidate.id || res.workflow_attempt_id !== candidate.workflowAttemptId || !res.admission_id)) {
-      return { act: 'deny', how: 'unavailable', reason: `Helmo returned no exact immutable admission for workflow-bound ${candidate.id}`, ticketId: candidate.id };
+    const exactCandidate = candidate
+      ? res.admitted === true && ticketId === candidate.id
+        && (candidate.workflowAttemptId
+          ? res.workflow_attempt_id === candidate.workflowAttemptId && Boolean(res.admission_id)
+          : res.workflow_attempt_id == null && res.admission_id == null)
+      : res.admitted !== true;
+    if (!exactCandidate) {
+      return { act: 'deny', how: 'unavailable', reason: `Helmo's launch answer did not match the selected candidate${candidate ? ` ${candidate.id}` : ''}`, ticketId: candidate?.id ?? ticketId };
     }
     if (res.admitted !== true) return { act: 'launch', how: 'nothing_gated', reason: 'nothing ready to admit', ticketId };
     const attempt = res.workflow_attempt_id ? ` for attempt ${res.workflow_attempt_id}` : '';

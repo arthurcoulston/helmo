@@ -52,7 +52,7 @@ function seedTicket(e: Env, title: string): string {
   return (helm(e, ['create', '--title', title, '--body', 'test work: claim me, complete me', '--workstream', 'rev-test', '--type', 'ops']) as { id: string }).id;
 }
 
-function workflowAdmissionProxy(e: Env, response: object, denied = false): string {
+function workflowAdmissionProxy(e: Env, response: object, denied = false, classifiedAttempt?: string): string {
   const calls = join(e.home, 'launch-admit-calls');
   const proxy = join(e.home, 'workflow-helmo-proxy.mjs');
   writeFileSync(proxy, `import { appendFileSync } from 'node:fs';
@@ -62,6 +62,14 @@ if (args[0] === 'launch-admit') {
   appendFileSync(${JSON.stringify(calls)}, JSON.stringify(args.slice(1)) + '\\n');
   ${denied ? `process.stderr.write(JSON.stringify(${JSON.stringify(response)})); process.exit(1);` : `process.stdout.write(JSON.stringify(${JSON.stringify(response)})); process.exit(0);`}
 }
+${classifiedAttempt ? `if (args[0] === 'list' && args.includes('--ready')) {
+  const result = spawnSync(process.execPath, [${JSON.stringify(HELM_CLI)}, ...args], { env: process.env, encoding: 'utf8' });
+  if (result.status !== 0) { process.stderr.write(result.stderr); process.exit(result.status ?? 1); }
+  const body = JSON.parse(result.stdout);
+  if (body.tickets?.[0]) body.tickets[0].workflow_attempt_id = ${JSON.stringify(classifiedAttempt)};
+  process.stdout.write(JSON.stringify(body));
+  process.exit(0);
+}` : ''}
 const result = spawnSync(process.execPath, [${JSON.stringify(HELM_CLI)}, ...args], { env: process.env, stdio: 'inherit' });
 process.exit(result.status ?? 1);
 `);
@@ -204,12 +212,32 @@ mock_cmd = "echo launched >> $REV_HOME/sessions"
     const id = seedTicket(e, 'Admitted candidate');
     const calls = workflowAdmissionProxy(e, {
       admitted: true, ticket_id: id, workflow_attempt_id: 'attempt-1', admission_id: 'launch-admission-1', launch_id: 'echoed-by-helmo',
-    });
+    }, false, 'attempt-1');
 
     rev(e, ['run', 'admitted-loop', '--count', '1']);
 
     expect(readFileSync(join(e.home, 'sessions'), 'utf8').trim().split('\n')).toEqual(['launched']);
     expect(readFileSync(calls, 'utf8').trim().split('\n')).toHaveLength(1);
+  });
+
+  it('denies when the ready candidate changes between classification and admission', () => {
+    const e = setup(`[loops.racing-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = "touch $REV_HOME/session-launched"
+`);
+    seedTicket(e, 'Ordinary candidate seen first');
+    const calls = workflowAdmissionProxy(e, {
+      admitted: true, ticket_id: 'H-racing-workflow', workflow_attempt_id: 'attempt-racing', admission_id: 'launch-admission-racing', launch_id: 'echoed-by-helmo',
+    });
+
+    rev(e, ['run', 'racing-loop', '--count', '1']);
+
+    expect(existsSync(join(e.home, 'session-launched'))).toBe(false);
+    expect(readFileSync(calls, 'utf8').trim().split('\n')).toHaveLength(1);
+    const events = readFileSync(join(e.home, 'state', 'racing-loop', 'events.log'), 'utf8');
+    expect(events).toMatch(/launch-denied.*did not match the selected candidate/);
   });
 
   it('rechecks launch admission after a direct restart instead of bypassing the prior denial', () => {

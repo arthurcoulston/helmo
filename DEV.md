@@ -105,6 +105,9 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   walking through a denial it never saw. Helmo's echoed `launch_id` is
   deliberately not compared with the one sent; it is there so Helmo can admit a
   retry of the same launch without recording a second admission.
+  Rev also requires the atomic answer to identify the same candidate as its
+  immediately preceding compatibility read; a queue substitution fails closed
+  instead of borrowing the earlier candidate's workflow classification.
   **Three of the four answers are a launch, and only one of them is a yes.**
   `admitted: true` admits a candidate (`launch-admitted`). `admitted: false`
   means nothing READY was there to gate — not a refusal: the seat still has its

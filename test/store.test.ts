@@ -278,6 +278,29 @@ describe('atomic workflow admission (H-431)', () => {
     expect(s.launchAdmission('helmo-dev', builder.name, 'rev:builder-loop:1')).toEqual(first);
     expect(() => s.launchAdmission('helmo-dev', builder.name, 'rev:builder-loop:2')).toThrow(/"stale":\["launch"\]/);
   });
+
+  it('shares an exact admission across separate store instances', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'helmo-launch-instances-'));
+    const dbPath = join(dir, 'helmo.db');
+    const first = new Store(dbPath, undefined, reviewer);
+    first.addWorkflowDefinition({ workflow_id: 'release', revision: 'v1', stages: [{ id: 'build' }] });
+    first.addWorkflowRun({ id: 'run-1', workflow_id: 'release', definition_revision: 'v1' });
+    first.addWorkflowAttempt({ id: 'attempt-1', run_id: 'run-1', stage_id: 'build', ordinal: 1 });
+    const ticket = create(first, { workflow_attempt_id: 'attempt-1' }); triage(first, ticket.id);
+    const admitted = first.launchAdmission('helmo-dev', builder.name, 'rev:builder-loop:1');
+    const second = new Store(dbPath, undefined, reviewer);
+    expect(second.launchAdmission('helmo-dev', builder.name, 'rev:builder-loop:1')).toEqual(admitted);
+    expect(() => second.launchAdmission('helmo-dev', builder.name, 'rev:builder-loop:2')).toThrow(/"stale":\["launch"\]/);
+    second.close(); first.close(); rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('leaves no admission after denial and succeeds after the failure is repaired', () => {
+    const s = admissionStore();
+    const ticket = create(s, { workflow_attempt_id: 'attempt-1' }); triage(s, ticket.id);
+    expect(() => s.launchAdmission('helmo-dev', builder.name, 'rev:builder-loop:1')).toThrow(/"missing":\["requirement:technical"\]/);
+    s.recordWorkflowDecision({ id: 'pass-after-denial', requirement_id: 'technical', manifest_id: 'manifest-a', verdict: 'pass', source: 'review:recovered' });
+    expect(s.launchAdmission('helmo-dev', builder.name, 'rev:builder-loop:1')).toMatchObject({ admitted: true, ticket_id: ticket.id });
+  });
 });
 
 describe('workflow invalidation and quarantine (H-432)', () => {
@@ -2043,7 +2066,7 @@ describe('write contention', () => {
     ], { cwd: new URL('..', import.meta.url).pathname });
     const heldAt = await heldLock(holder);
     const started = Date.now();
-    expect(() => s.updateTicket(builder, { ticket_id: t.id, note: 'claim racing revocation', status: 'in_progress' })).toThrow(/"stale":\["requirement:race-check"\]/);
+    expect(() => s.launchAdmission('helmo-dev', builder.name, 'rev:builder-loop:1')).toThrow(/"stale":\["requirement:race-check"\]/);
     expect(started - heldAt).toBeLessThan(HOLD_MS);
     expect(s.getTicket(t.id).status).toBe('open');
     holder.kill();

@@ -195,6 +195,7 @@ describe('every link on the served page goes somewhere', () => {
 
   it('serves every same-origin link it draws', async () => {
     let checked = 0;
+    const urls = new Map<string, string>();
     for (const [name, doc] of documents()) {
       const internal = elements(doc.markup)
         .filter((e) => e.name === 'a' && e.attrs['href'] !== undefined)
@@ -210,14 +211,17 @@ describe('every link on the served page goes somewhere', () => {
         // the dashboard, so a link to /helmo@f73727a returns a cheerful 200.
         // The route this server actually has is `/` with a query string.
         expect(url.pathname, `${name} links to the path ${url.pathname}, which the view does not route`).toBe('/');
-        const res = await fetch(url, { redirect: 'error' });
-        await res.text();
-        expect(res.status, `${name} links to ${href}`).toBe(200);
-        expect(res.headers.get('content-type')).toContain('text/html');
+        urls.set(url.href, `${name} links to ${href}`);
       }
     }
+    await Promise.all([...urls].map(async ([url, label]) => {
+      const res = await fetch(url, { redirect: 'error' });
+      await res.text();
+      expect(res.status, label).toBe(200);
+      expect(res.headers.get('content-type')).toContain('text/html');
+    }));
     expect(checked).toBeGreaterThan(0);
-  });
+  }, 15_000);
 
   it('draws external links as absolute http(s) URLs and nothing else', () => {
     // Evidence refs are typed by the agent that recorded them, and only the

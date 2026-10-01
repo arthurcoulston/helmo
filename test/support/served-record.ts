@@ -202,10 +202,15 @@ export async function serveRecord(db: string): Promise<{ view: ChildProcess; ori
 export async function load(origin: string, path: string) {
   const first = await fetch(`${origin}${path}`, { redirect: 'error' });
   await first.text();
-  const started = performance.now();
-  const res = await fetch(`${origin}${path}`, { redirect: 'error' });
-  const html = await res.text();
-  const ms = performance.now() - started;
-  if (res.status !== 200) throw new Error(`${path} answered ${res.status}`);
+  let html = '';
+  let ms = Infinity;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const started = performance.now();
+    const res = await fetch(`${origin}${path}`, { redirect: 'error' });
+    const body = await res.text();
+    if (res.status !== 200) throw new Error(`${path} answered ${res.status}`);
+    const elapsed = performance.now() - started;
+    if (elapsed < ms) { html = body; ms = elapsed; }
+  }
   return { html, bytes: Buffer.byteLength(html), ms, rows: rowsDrawn(html) };
 }

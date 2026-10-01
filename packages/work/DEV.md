@@ -51,6 +51,19 @@ Pinned releases accept both the historical three-component layout and C1's one
   corrupt, superseded, or revoked evidence fails closed. H-433 makes terminal
   outcomes mutually exclusive and idempotent, and permits only rejected or quarantined attempts
   to create a new evidence-bound successor which must pass fresh admission.
+  H-574 adds `launch-claim` for parallel workers on one accountable seat: the
+  same admission plus an exclusive ticket claim and a durable per-launch
+  receipt, committed together, so two workers sharing a seat cannot select the
+  same candidate. It is a separate command rather than a widening of
+  `launch-admit` because it must be written BY the worker — the exact
+  accountable agent name with a supervised session — while `launch-admit` is
+  written by the harness under its own identity; an installed harness calling a
+  claiming `launch-admit` is refused, which Rev reads as a denied launch for
+  every workflow-bound candidate. Exact replay returns the stored receipt; a
+  changed worker, session or scope refuses. Both commands admit through one
+  shared rule, so a candidate released back to the queue cannot draw a second
+  workflow permission under a new launch id. `--project` narrows selection to
+  one scheduling lane.
   Explicitly named installations claim `meta.installation_name` atomically
   with their first event. Every writer, including a derived one, must match
   that claim; the path-derived `dev.helmo[.*]` name and shared `dev.rev[.*]`

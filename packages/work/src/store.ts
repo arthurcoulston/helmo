@@ -807,25 +807,41 @@ export class Store {
     return this.db.transaction(() => {
       const ticket = this.listTickets({ ready: true, workstream, caller: assignee, limit: 1 })[0];
       if (!ticket) return { admitted: false, launch_id: launchId };
-      if (!ticket.workflow_attempt_id) return { admitted: true, ticket_id: ticket.id, workflow_attempt_id: null, admission_id: null, launch_id: launchId };
-      const prior = this.db.prepare("SELECT admission FROM workflow_admissions WHERE attempt_id = ? AND json_extract(admission, '$.operation') = 'launch' ORDER BY rowid DESC LIMIT 1")
-        .get(ticket.workflow_attempt_id) as { admission: string } | undefined;
-      if (prior) {
-        const admission = JSON.parse(prior.admission) as Record<string, unknown>;
-        if (admission.launch_id === launchId) return { admitted: true, ticket_id: ticket.id, workflow_attempt_id: ticket.workflow_attempt_id, admission_id: admission.id, launch_id: launchId };
-        throw new HelmoError(`workflow_admission_denied ${JSON.stringify({ ticket_id: ticket.id, attempt_id: ticket.workflow_attempt_id, missing: [], stale: ['launch'], failed: [] })}`);
-      }
-      const admission = this.admitWorkflow(ticket.id, ticket.workflow_attempt_id, 'launch', launchId);
-      return { admitted: true, ticket_id: ticket.id, workflow_attempt_id: ticket.workflow_attempt_id, admission_id: admission.id, launch_id: launchId };
+      const admissionId = this.admitLaunch(ticket.id, ticket.workflow_attempt_id, launchId);
+      return { admitted: true, ticket_id: ticket.id, workflow_attempt_id: ticket.workflow_attempt_id ?? null, admission_id: admissionId, launch_id: launchId };
     }).immediate();
   }
 
-  /** Atomically select, workflow-admit, and exclusively claim one launch. */
+  /** The workflow permission one launch consumes, shared by launch-admit and
+   * launch-claim so the two commands cannot drift apart on the gate itself.
+   * An attempt already admitted under a DIFFERENT launch id is stale, not a
+   * second permission: without that, a candidate released back to the queue
+   * could mint a fresh launch admission per attempt. Returns null when there
+   * is no attempt to gate. */
+  private admitLaunch(ticketId: string, attemptId: string | null | undefined, launchId: string): string | null {
+    if (!attemptId) return null;
+    const prior = this.db.prepare("SELECT admission FROM workflow_admissions WHERE attempt_id = ? AND json_extract(admission, '$.operation') = 'launch' ORDER BY rowid DESC LIMIT 1")
+      .get(attemptId) as { admission: string } | undefined;
+    if (prior) {
+      const admission = JSON.parse(prior.admission) as Record<string, unknown>;
+      if (admission.launch_id === launchId) return admission.id as string;
+      throw new HelmoError(`workflow_admission_denied ${JSON.stringify({ ticket_id: ticketId, attempt_id: attemptId, missing: [], stale: ['launch'], failed: [] })}`);
+    }
+    return this.admitWorkflow(ticketId, attemptId, 'launch', launchId).id as string;
+  }
+
+  /** Atomically select, workflow-admit, and exclusively claim one launch. This
+   * is a SEPARATE command from launch-admit, not a widening of it: parallel
+   * workers on one accountable seat need selection and claim to commit
+   * together, while a harness that admits and lets the model session claim
+   * later keeps the read-only admission it was built against. Folding the two
+   * back together breaks every installed caller, because this one must be
+   * written BY the worker — launch-admit is written by the harness. */
   launchClaim(actor: Actor, workstream: string, assignee: string, launchId: string, project?: string): Record<string, unknown> {
     validateActor(actor);
-    if (!workstream.trim() || !assignee.trim() || !launchId.trim()) throw new HelmoError('launch-admit requires exact non-empty workstream, assignee, and launch-id values.');
+    if (!workstream.trim() || !assignee.trim() || !launchId.trim()) throw new HelmoError('launch-claim requires exact non-empty workstream, assignee, and launch-id values.');
     if (actor.name !== assignee || actor.kind !== 'agent' || !actor.session?.trim()) {
-      throw new HelmoError('launch-admit must be written by the exact accountable agent with a supervised worker session.');
+      throw new HelmoError('launch-claim must be written by the exact accountable agent with a supervised worker session.');
     }
     return this.db.transaction(() => {
       const exact = { workstream, assignee, launch_id: launchId, session: actor.session, project: project ?? null };
@@ -838,11 +854,7 @@ export class Store {
       }
       const ticket = this.listTickets({ ready: true, workstream, caller: assignee, project, limit: 1 })[0];
       if (!ticket) return { admitted: false, launch_id: launchId };
-      let admissionId: string | null = null;
-      if (ticket.workflow_attempt_id) {
-        const admission = this.admitWorkflow(ticket.id, ticket.workflow_attempt_id, 'launch', launchId);
-        admissionId = admission.id as string;
-      }
+      const admissionId = this.admitLaunch(ticket.id, ticket.workflow_attempt_id, launchId);
       this.updateTicket(actor, { ticket_id: ticket.id, status: 'in_progress', note: `Claimed atomically for supervised launch ${launchId}.` });
       const receipt = { admitted: true, claimed: true, ticket_id: ticket.id, workflow_attempt_id: ticket.workflow_attempt_id ?? null, admission_id: admissionId, launch_id: launchId, scope: exact };
       this.db.prepare('INSERT INTO launch_claims (launch_id, ticket_id, claim, created_at) VALUES (?, ?, ?, ?)')

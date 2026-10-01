@@ -392,3 +392,46 @@ describe('a flag the command has no field for (R-39 Q9)', () => {
       '--workstream', 'helmo-dev', '--type', 'ops', '--schedule', 'every 1d');
   });
 });
+
+// H-574. The atomic claim arrived by replacing `launch-admit`'s body, which
+// made the gate demand the WORKER's identity on a call the harness makes with
+// its own. Rev's reply to that refusal is 'unavailable' — a deny for every
+// workflow-bound candidate — so adopting the store would have stopped gated
+// launches across the estate. The claim is a separate command; these two tests
+// are the installed caller and the new one, exercised through argv.
+describe('launch-admit stays the harness call it was (H-574)', () => {
+  const rev: Actor = { name: 'rev', kind: 'agent', model: 'rev-harness', version: '0.2.0' };
+  const worker: Actor = { ...writer, session: 'rev:builder-loop' };
+
+  function as(actor: Actor, ...argv: string[]) {
+    const r = spawnSync(process.execPath, ['node_modules/.bin/tsx', 'src/cli.ts', ...argv], {
+      cwd: new URL('..', import.meta.url).pathname,
+      env: { ...process.env, HELMO_DB: dbPath, HELMO_ACTOR: JSON.stringify(actor) },
+      encoding: 'utf8',
+    });
+    return { status: r.status, stdout: r.stdout, stderr: r.stderr };
+  }
+
+  it('admits for the harness actor without a session, and leaves the ticket open', () => {
+    const r = as(rev, 'launch-admit', '--workstream', 'helmo-dev', '--assignee', 'builder-loop',
+      '--launch-id', 'rev:builder-loop:4242:1:1700000000000');
+
+    expect(r.stderr).toBe('');
+    expect(r.status).toBe(0);
+    expect(JSON.parse(r.stdout)).toMatchObject({ admitted: true, ticket_id: ticket, admission_id: null });
+    expect(read().status).toBe('open');
+  });
+
+  it('claims for the worker itself, and refuses the harness actor', () => {
+    const claimed = as(worker, 'launch-claim', '--workstream', 'helmo-dev', '--assignee', 'builder-loop',
+      '--launch-id', 'rev:builder-loop:4242:2:1700000000001');
+    expect(claimed.status).toBe(0);
+    expect(JSON.parse(claimed.stdout)).toMatchObject({ claimed: true, ticket_id: ticket });
+    expect(read().status).toBe('in_progress');
+
+    const refused = as(rev, 'launch-claim', '--workstream', 'helmo-dev', '--assignee', 'builder-loop',
+      '--launch-id', 'rev:builder-loop:4242:3:1700000000002');
+    expect(refused.status).toBe(1);
+    expect(JSON.parse(refused.stderr).error).toMatch(/launch-claim must be written by the exact accountable agent/);
+  });
+});

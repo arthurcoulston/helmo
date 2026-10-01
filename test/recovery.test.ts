@@ -17,14 +17,14 @@ describe('operator recovery CLI', () => {
   it('makes an owner-only backup and validates an unchanged isolated copy', async () => {
     const f = fixture(); const backed = await backup(f.home, 'gp', f.output, join(f.output, 'backup'));
     expect(backed.tables.projects).toBe(1); expect(statSync(backed.file).mode & 0o777).toBe(0o600); const before = readFileSync(backed.file);
-    const restored = validate(backed.file, 'gp', f.output, join(f.output, 'restore')); expect(restored.sha256).toBe(backed.sha256); expect(readFileSync(backed.file)).toEqual(before);
+    const restored = await validate(backed.file, 'gp', f.output, join(f.output, 'restore')); expect(restored.sha256).toBe(backed.sha256); expect(readFileSync(backed.file)).toEqual(before);
   });
   it('refuses identity mismatch before creating a destination', async () => {
     const f = fixture(); const destination = join(f.output, 'never'); await expect(backup(f.home, 'wrong', f.output, destination)).rejects.toThrow('identity'); expect(() => statSync(destination)).toThrow();
   });
   it('refuses existing destinations and corrupt backups', async () => {
     const f = fixture(); mkdirSync(join(f.output, 'existing'), { mode: 0o700 }); await expect(backup(f.home, 'gp', f.output, join(f.output, 'existing'))).rejects.toThrow();
-    const corrupt = join(f.root, 'corrupt.db'); writeFileSync(corrupt, 'not sqlite', { mode: 0o600 }); expect(() => validate(corrupt, 'gp', f.output, join(f.output, 'bad'))).toThrow();
+    const corrupt = join(f.root, 'corrupt.db'); writeFileSync(corrupt, 'not sqlite', { mode: 0o600 }); await expect(validate(corrupt, 'gp', f.output, join(f.output, 'bad'))).rejects.toThrow();
   });
   it('refuses unsafe and symlinked output roots before creating a run directory', async () => {
     const f = fixture(); const unsafe = join(f.root, 'unsafe'); mkdirSync(unsafe, { mode: 0o700 }); chmodSync(unsafe, 0o777);
@@ -44,12 +44,16 @@ describe('operator recovery CLI', () => {
   });
   it('copies through the exclusive descriptor and rejects a replaced validation leaf', async () => {
     const f = fixture(); const backed = await backup(f.home, 'gp', f.output, join(f.output, 'backup')); const victim = join(f.root, 'victim'); writeFileSync(victim, 'keep', { mode: 0o600 });
-    expect(() => validate(backed.file, 'gp', f.output, join(f.output, 'restore'), { afterValidateOpen: (_run, file) => { unlinkSync(file); symlinkSync(victim, file); } })).toThrow('replaced');
+    await expect(validate(backed.file, 'gp', f.output, join(f.output, 'restore'), { afterValidateOpen: (_run, file) => { unlinkSync(file); symlinkSync(victim, file); } })).rejects.toThrow('replaced');
     expect(readFileSync(victim, 'utf8')).toBe('keep');
   });
   it('refuses a replaced validation run directory before copying', async () => {
     const f = fixture(); const backed = await backup(f.home, 'gp', f.output, join(f.output, 'backup')); const destination = join(f.output, 'restore'); const moved = join(f.output, 'moved');
-    expect(() => validate(backed.file, 'gp', f.output, destination, { afterValidateOpen: run => { renameSync(run, moved); mkdirSync(run, { mode: 0o700 }); } })).toThrow('replaced');
+    await expect(validate(backed.file, 'gp', f.output, destination, { afterValidateOpen: run => { renameSync(run, moved); mkdirSync(run, { mode: 0o700 }); } })).rejects.toThrow('replaced');
     expect(() => statSync(join(destination, 'roadmap-restore-check.db'))).toThrow();
+  });
+  it('interrupts inspection work when the operation ceiling expires', async () => {
+    const f = fixture();
+    await expect(backup(f.home, 'gp', f.output, join(f.output, 'timeout'), { limitMs: 25, inspectDelayMs: 250 })).rejects.toThrow('exceeded 30 seconds');
   });
 });

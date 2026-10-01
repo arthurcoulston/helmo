@@ -1,13 +1,13 @@
 import Database from 'better-sqlite3';
-import { createHash, randomUUID } from 'node:crypto';
-import { constants, closeSync, fstatSync, lstatSync, linkSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync, writeSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { constants, closeSync, fstatSync, lstatSync, linkSync, mkdirSync, openSync, readSync, realpathSync, statSync, writeSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { Worker } from 'node:worker_threads';
 
-const TABLES = ['events', 'projects', 'deps', 'claims', 'citations', 'objectives', 'bets', 'meta'] as const;
 const LIMIT_MS = 30_000;
 export interface RecoveryReport { installation: string; file: string; sha256: string; bytes: number; tables: Record<string, number>; }
-export interface RecoveryTestHooks { beforeBackupPublish?: (runDir: string, file: string) => void; afterValidateOpen?: (runDir: string, file: string) => void; }
-function deadline(start: number): void { if (performance.now() - start > LIMIT_MS) throw new Error('recovery operation exceeded 30 seconds'); }
+export interface RecoveryTestHooks { beforeBackupPublish?: (runDir: string, file: string) => void; afterValidateOpen?: (runDir: string, file: string) => void; limitMs?: number; inspectDelayMs?: number; }
+function deadline(start: number, limit = LIMIT_MS): void { if (performance.now() - start > limit) throw new Error('recovery operation exceeded 30 seconds'); }
 function effectiveUid(): number { if (!process.geteuid) throw new Error('roadmap-recovery requires a platform with effective-user ownership checks'); return process.geteuid(); }
 function ownedRegular(path: string): void { const s = lstatSync(path); if (!s.isFile() || s.isSymbolicLink() || s.uid !== effectiveUid()) throw new Error(`${path} must be an owner-owned regular file`); }
 
@@ -41,47 +41,45 @@ function unchangedDir(run: { path: string; dev: number; ino: number }): void {
   if (!current.isDirectory() || current.isSymbolicLink() || current.dev !== run.dev || current.ino !== run.ino) throw new Error('fresh output directory was replaced before use');
 }
 
-function inspect(path: string, installation: string, start: number): RecoveryReport {
-  deadline(start); ownedRegular(path); const db = new Database(path, { readonly: true, fileMustExist: true });
-  try {
-    const integrity = db.pragma('integrity_check') as Array<{ integrity_check: string }>; if (integrity.length !== 1 || integrity[0]?.integrity_check !== 'ok') throw new Error('SQLite integrity check failed');
-    if ((db.pragma('foreign_key_check') as unknown[]).length) throw new Error('SQLite foreign-key check failed');
-    const actual = (db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all() as Array<{ name: string }>).map(r => r.name).sort();
-    if (actual.join('\0') !== [...TABLES].sort().join('\0')) throw new Error('Roadmap application schema does not match');
-    const id = db.prepare("SELECT value FROM meta WHERE key='installation_name'").get() as { value?: string } | undefined; if (id?.value !== installation) throw new Error('backup installation identity does not match');
-    const tables = Object.fromEntries(TABLES.map(name => [name, (db.prepare(`SELECT count(*) AS n FROM ${name}`).get() as { n: number }).n]));
-    deadline(start); const bytes = statSync(path).size; const sha256 = createHash('sha256').update(readFileSync(path)).digest('hex'); deadline(start);
-    return { installation, file: path, sha256, bytes, tables };
-  } finally { db.close(); }
+async function inspect(path: string, installation: string, start: number, hooks: RecoveryTestHooks): Promise<RecoveryReport> {
+  const limit = hooks.limitMs ?? LIMIT_MS; deadline(start, limit); ownedRegular(path);
+  const remaining = Math.max(1, limit - (performance.now() - start));
+  return await new Promise((resolve, reject) => {
+    const workerModule = import.meta.url.endsWith('.ts') ? './recovery-inspect-worker.ts' : './recovery-inspect-worker.js';
+    const worker = new Worker(new URL(workerModule, import.meta.url), { workerData: { path, installation, delayMs: hooks.inspectDelayMs ?? 0 } });
+    const timer = setTimeout(() => { void worker.terminate(); reject(new Error('recovery operation exceeded 30 seconds')); }, remaining);
+    worker.once('message', (message: { report?: RecoveryReport; error?: string }) => { clearTimeout(timer); void worker.terminate(); message.report ? resolve(message.report) : reject(new Error(message.error ?? 'recovery inspection failed')); });
+    worker.once('error', error => { clearTimeout(timer); reject(error); });
+  });
 }
 
 export async function backup(sourceHome: string, installation: string, outputRoot: string, outputDir: string, hooks: RecoveryTestHooks = {}): Promise<RecoveryReport> {
   const start = performance.now(); const db = source(sourceHome, installation);
   try {
     const run = freshDir(outputRoot, outputDir); const file = join(run.path, 'roadmap-backup.db'); const staging = join(run.path, `.roadmap-backup-${randomUUID()}.db`);
-    process.umask(0o077); await db.backup(staging, { progress: () => { deadline(start); return 100; } }); ownedRegular(staging);
+    process.umask(0o077); await db.backup(staging, { progress: () => { deadline(start, hooks.limitMs); return 100; } }); ownedRegular(staging);
     if ((statSync(staging).mode & 0o777) !== 0o600) throw new Error('backup was not created mode 0600');
-    inspect(staging, installation, start); hooks.beforeBackupPublish?.(run.path, file); unchangedDir(run); linkSync(staging, file);
+    await inspect(staging, installation, start, hooks); hooks.beforeBackupPublish?.(run.path, file); unchangedDir(run); linkSync(staging, file);
     const staged = lstatSync(staging); const published = lstatSync(file);
     if (staged.dev !== published.dev || staged.ino !== published.ino) throw new Error('published backup is not the completed staging database');
-    return inspect(file, installation, start);
+    return await inspect(file, installation, start, hooks);
   }
   finally { db.close(); }
 }
 
-export function validate(backupFile: string, installation: string, outputRoot: string, outputDir: string, hooks: RecoveryTestHooks = {}): RecoveryReport {
+export async function validate(backupFile: string, installation: string, outputRoot: string, outputDir: string, hooks: RecoveryTestHooks = {}): Promise<RecoveryReport> {
   const start = performance.now(); if (!isAbsolute(backupFile) || !installation.trim()) throw new Error('backup file must be absolute and installation nonempty');
   if (lstatSync(backupFile).isSymbolicLink()) throw new Error('backup file must not be a symlink');
-  const original = inspect(realpathSync(backupFile), installation, start); const run = freshDir(outputRoot, outputDir); const copy = join(run.path, 'roadmap-restore-check.db'); process.umask(0o077);
+  const original = await inspect(realpathSync(backupFile), installation, start, hooks); const run = freshDir(outputRoot, outputDir); const copy = join(run.path, 'roadmap-restore-check.db'); process.umask(0o077);
   const sourceFd = openSync(backupFile, constants.O_RDONLY | constants.O_NOFOLLOW); const fd = openSync(copy, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600); const opened = fstatSync(fd);
   try {
     hooks.afterValidateOpen?.(run.path, copy); unchangedDir(run);
     const buffer = Buffer.allocUnsafe(64 * 1024); let read = 0;
-    while ((read = readSync(sourceFd, buffer, 0, buffer.length, null)) > 0) { deadline(start); let offset = 0; while (offset < read) offset += writeSync(fd, buffer, offset, read - offset); }
+    while ((read = readSync(sourceFd, buffer, 0, buffer.length, null)) > 0) { deadline(start, hooks.limitMs); let offset = 0; while (offset < read) offset += writeSync(fd, buffer, offset, read - offset); }
   } finally { closeSync(fd); closeSync(sourceFd); }
   const copied = lstatSync(copy);
   if (!copied.isFile() || copied.isSymbolicLink() || copied.dev !== opened.dev || copied.ino !== opened.ino) throw new Error('isolated restore destination was replaced during copy');
-  const restored = inspect(copy, installation, start);
+  const restored = await inspect(copy, installation, start, hooks);
   if (original.sha256 !== restored.sha256 || original.bytes !== restored.bytes || JSON.stringify(original.tables) !== JSON.stringify(restored.tables)) throw new Error('isolated restore copy does not match the completed backup');
   return restored;
 }

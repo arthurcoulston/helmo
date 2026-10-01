@@ -117,18 +117,24 @@ An installation can either run whatever code its entry points were started from
 Pinning is what makes "which version is this installation on?" a question with
 an enforceable answer.
 
-A **release directory** holds the three products built side by side, plus two
-files that describe the set:
+A **release directory** holds one Helmo checkout, with all three shipped
+packages built, plus two files that describe the set:
 
 ```
-releases/2026.09-1/
-  RELEASE.json        commits: { rev, helmo, helmo-roadmap } — which build this set is
+releases/2026.10-2/
+  RELEASE.json        commits: { helmo } — the one commit this product was built from
   MIGRATION.json      data_compatibility + rollback — what this release does to your data,
-                      copied in from the rev checkout you built (see below)
-  rev/dist/           built, with its BUILD.json stamp
-  helmo/dist/
-  helmo-roadmap/dist/
+                      copied in from the Helmo checkout you built (see below)
+  helmo/
+    packages/work/dist/       built, with its BUILD.json stamp
+    packages/roadmap/dist/
+    packages/runtime/dist/
 ```
+
+Selections made before C1 used sibling `rev`, `helmo`, and `helmo-roadmap`
+components. That layout remains readable and selectable so an installation can
+inspect its current release and roll back across the consolidation boundary;
+new releases use the one-component layout above.
 
 The release's **id is its directory's name**. A selection records both the id
 and the directory, so a set carrying an id of its own could disagree with where
@@ -205,26 +211,24 @@ so repairing the selection brings the supervisor back with no command run.
 
 ## Which versions go together, and what a migration cannot undo
 
-**A version here is a commit, not an npm version.** Each product carries its own
-`package.json` version, and nothing in the release machinery reads one. What
-identifies a set is the release directory's name and the three commits its
-`RELEASE.json` names. Two builds of the same `helmo` version are different
-members of different sets if they came from different commits, and the product
-will say so.
+**A version here is one commit, not an npm version.** Package manifests carry
+the product's declared version, while release identity is the directory name
+plus the one Helmo commit in `RELEASE.json`. Two builds of the same version are
+different releases if they came from different commits, and the product says so.
 
-**The rule the product enforces.** A release set is valid when, for each of
-`rev`, `helmo` and `helmo-roadmap`: the set's `RELEASE.json` names a commit for
-it; its `dist` holds JavaScript; and its `BUILD.json` stamp names *exactly* that
-commit, built from a clean tree. A dirty component is refused — a build stamp
+**The rule the product enforces.** A new release is valid when `RELEASE.json`
+names exactly one `helmo` commit and Work, Roadmap, and Runtime each have a
+`dist` holding JavaScript whose `BUILD.json` stamp names *exactly* that commit,
+built from a clean tree. A dirty package is refused — a build stamp
 records a dirty tree rather than refusing it, which is right for a build and not
 enough for a release, because the manifest's commit would not identify the bytes.
 Every fault in a set is reported at once, so a bad set is fixed in one pass
 instead of three rebuilds.
 
-Three products at three arbitrary versions is therefore not a supported
-combination and cannot be made into one by editing a file: the set is what is
-verified, and a mismatch is visible rather than masquerading as a completed
-upgrade.
+A manifest with a subset, an extra component, or both unified and legacy names
+is refused rather than guessed. The exact historical three-component shape is
+the sole compatibility exception, and each of those components is still
+verified under its original commit.
 
 **What a refusal looks like.** Every fault, named, with the repair, and nothing
 written:
@@ -238,10 +242,10 @@ installation: acme.rev (/srv/acme/rev)
     selected, because after the upgrade is too late: {"data_compatibility":"compatible",
     "rollback":{"supported":true}}, or "one_way" with {"supported":false,"limit":"<what cannot
     be recovered, and how to>"}
-  - rev is built from 999999999999 but the manifest names aaaaaaaaaaaa — this set is mixed
-  - /srv/releases/2026.09-1/helmo/dist holds no JavaScript — helmo is not built in this release
-  - helmo-roadmap was built from a dirty tree, so commit cccccccccccc does not identify the
-    bytes in /srv/releases/2026.09-1/helmo-roadmap/dist — rebuild it from a clean checkout
+  - Runtime is built from 999999999999 but the manifest names aaaaaaaaaaaa — this set is mixed
+  - /srv/releases/2026.10-2/helmo/packages/work/dist holds no JavaScript — Work is not built in this release
+  - Roadmap was built from a dirty tree, so commit aaaaaaaaaaaa does not identify the bytes
+    in /srv/releases/2026.10-2/helmo/packages/roadmap/dist — rebuild it from a clean checkout
 ```
 
 That is one command reporting four separate faults, and it exits non-zero with
@@ -253,14 +257,9 @@ to find out. This is a property you can test rather than a promise: break one
 component's stamp, and the mismatch is named in the output of `rev release
 status` and of every command in the installation.
 
-**This release's set.** The two Helmo-family commits are fixed when the version
-is cut; the table below is what a consumer checks their `RELEASE.json` against.
-
-| component      | version | commit                                      |
-| -------------- | ------- | ------------------------------------------- |
-| `rev`          | 0.2.0   | the commit tagged `v0.2.0` here — `git rev-parse v0.2.0` |
-| `helmo`        | 0.5.0   | `c72d8c1d64be01a78682909b52f8c57fe1af9bfb`  |
-| `helmo-roadmap`| 0.1.0   | `32afbe159df302a7f298420bf8a1870ec06af3d9`  |
+**This release's set.** The Helmo commit is fixed when the version is cut. A
+consumer checks `RELEASE.json` against the released tag; all three package
+stamps must name that same commit.
 
 **There is no upstream release id to check against**, and that is not an
 omission. A release's id is its directory's name, you assemble that directory
@@ -270,16 +269,9 @@ examples use). What identifies the set is the three commits above, and the
 release directory's own `RELEASE.json` is the authority every entry point
 reads: if yours names other commits, you have assembled a different set.
 
-`rev`'s row names its tag rather than a sha, and that is not evasion. This
-document ships inside `rev`, and a set is built from the commit the tag names,
-so writing rev's sha here would mean writing a commit's own sha into that
-commit — a value that does not exist until after the file is written. Filling it
-with the sha of the commit *before* the fill produces a table that disagrees
-with the `RELEASE.json` of a perfectly coherent set, which is worse than an
-empty cell: the product would verify the set while this document told you it was
-mixed. The tag resolves to exactly one commit, and `RELEASE.json` records the
-sha the set was actually built from, which is the value every entry point
-checks.
+The document cannot embed its own commit: that value does not exist until after
+the file is committed. The released tag resolves to exactly one commit, and
+`RELEASE.json` records that sha, which is the value every entry point checks.
 
 **`MIGRATION.json` is required**, and it is authored rather than generated,
 because it is a claim about consequences no build step can compute:
@@ -318,8 +310,9 @@ code that cannot read it. Recover from a pre-upgrade backup as above, then
 select the older release.
 ```
 
-**This release's declaration ships inside `rev`.** `MIGRATION.json` at the root
-of the `rev` checkout you built from is this release's own, authored at the cut;
+**This release's declaration ships inside Helmo.** `MIGRATION.json` in the
+Runtime package is this release's own until the root product document replaces
+it, authored at the cut;
 copy it into the release directory beside `RELEASE.json`. It is upstream's claim
 about consequences and not yours to write, and it deliberately carries no
 `release` field — a declaration that names an id is refused in any directory with

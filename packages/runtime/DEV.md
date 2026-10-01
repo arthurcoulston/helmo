@@ -12,6 +12,9 @@ It is a published promise: a change to any of those modules' behaviour is a
 change to that document in the same pass.
 Release selection is shared through `packages/core`; historical three-component
 sets remain readable, while C1 locates Rev at `helmo/packages/runtime`.
+New selections contain one `helmo` component. Runtime validates Work, Roadmap
+and Runtime artifacts under that component against the same clean commit;
+partial or extended manifests refuse rather than falling through to legacy.
 Renamed from Capstan 2026-08-05 (H-53); Helm event history before then carries
 the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
 

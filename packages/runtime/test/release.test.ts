@@ -53,9 +53,50 @@ function makeRelease(dir: string, id: string, opts: {
   return release;
 }
 
+function makeUnifiedRelease(dir: string, id: string, opts: {
+  commit?: string;
+  stamped?: string;
+  dirty?: boolean;
+  migration?: unknown;
+  stamp?: boolean;
+} = {}): string {
+  const commit = opts.commit ?? sha(`${id}:helmo`);
+  const stamped = opts.stamped ?? commit;
+  const release = join(dir, 'release', id);
+  for (const path of ['packages/work', 'packages/roadmap', 'packages/runtime']) {
+    const dist = join(release, 'helmo', path, 'dist');
+    mkdirSync(dist, { recursive: true });
+    writeFileSync(join(dist, 'index.js'), `export const release = ${JSON.stringify(id)};\n`);
+    if (opts.stamp !== false) {
+      writeFileSync(join(dist, 'BUILD.json'), JSON.stringify({ commit: stamped, dirty: opts.dirty === true, built_at: '2026-10-01T00:00:00.000Z' }));
+    }
+  }
+  writeFileSync(join(release, 'RELEASE.json'), JSON.stringify({ ref: id, commits: { helmo: commit }, built_at: '2026-10-01T00:00:00.000Z' }));
+  const migration = 'migration' in opts ? opts.migration : COMPATIBLE;
+  if (migration !== null) writeFileSync(join(release, 'MIGRATION.json'), JSON.stringify(migration));
+  return release;
+}
+
 const selectionAt = (dir: string) => join(dir, 'ADOPTED.json');
 
 describe('reading a release set (H-2493)', () => {
+  it('accepts one Helmo component only when all three shipped packages carry its exact clean stamp', () => {
+    const dir = root();
+    const release = makeUnifiedRelease(dir, 'next');
+    expect(releaseProblems(release)).toEqual([]);
+
+    writeFileSync(join(release, 'helmo', 'packages/roadmap', 'dist', 'BUILD.json'), JSON.stringify({ commit: sha('other'), dirty: false, built_at: '2026-10-01T00:00:00.000Z' }));
+    expect(releaseProblems(release).join('\n')).toContain('Roadmap is built from');
+  });
+
+  it('refuses a partial or mixed component manifest instead of interpreting it as a legacy set', () => {
+    const dir = root();
+    const release = makeRelease(dir, 'mixed');
+    const manifest = JSON.parse(readFileSync(join(release, 'RELEASE.json'), 'utf8')) as { commits: Record<string, string> };
+    writeFileSync(join(release, 'RELEASE.json'), JSON.stringify({ commits: { helmo: manifest.commits.helmo, rev: manifest.commits.rev } }));
+    expect(releaseProblems(release).join('\n')).toContain('must name either the one helmo component or exactly the legacy');
+  });
+
   it('accepts a set whose manifest, stamps and artifacts agree', () => {
     const dir = root();
     expect(releaseProblems(makeRelease(dir, 'next'))).toEqual([]);
@@ -106,6 +147,16 @@ describe('reading a release set (H-2493)', () => {
 });
 
 describe('upgrading (H-2493)', () => {
+  it('writes one component for a unified release, which all three products consume', () => {
+    const dir = root();
+    const release = makeUnifiedRelease(dir, 'next');
+    const file = selectionAt(dir);
+
+    upgrade(file, release);
+    const manifest = JSON.parse(readFileSync(join(release, 'RELEASE.json'), 'utf8')) as { commits: { helmo: string } };
+    expect(readSelection(file)!.components).toEqual({ helmo: { release: 'next', commit: manifest.commits.helmo } });
+  });
+
   it('writes a coherent selection that install.ts can verify, and leaves no temp file behind', () => {
     const dir = root();
     const release = makeRelease(dir, 'next');

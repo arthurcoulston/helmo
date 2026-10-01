@@ -13,7 +13,12 @@ export function selectedRelease(product: keyof typeof PACKAGE_PATHS, runningRoot
   const releaseDir = resolve(dirname(selectionFile), selection.directory);
   const manifest = JSON.parse(readFileSync(join(releaseDir, 'RELEASE.json'), 'utf8')) as { commits?: Record<string, string> };
   const commits = manifest.commits ?? {};
-  const unified = Object.keys(commits).length === 1 && typeof commits.helmo === 'string';
+  const names = Object.keys(commits).sort();
+  const unified = names.length === 1 && names[0] === 'helmo' && typeof commits.helmo === 'string';
+  const legacy = names.length === LEGACY_COMPONENTS.length && LEGACY_COMPONENTS.every((name) => names.includes(name));
+  if (!unified && !legacy) {
+    throw new Error(`release manifest must name either helmo or exactly ${LEGACY_COMPONENTS.join(', ')}`);
+  }
   const components = unified ? ['helmo'] : LEGACY_COMPONENTS;
   for (const componentName of components) {
     const component = selection.components?.[componentName];

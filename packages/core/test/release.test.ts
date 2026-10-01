@@ -29,4 +29,14 @@ describe('release layout', () => {
     writeFileSync(selection, JSON.stringify({ release: '2026.10-1', directory: release, components: Object.fromEntries(Object.entries(commits).map(([name, commit]) => [name, { release: '2026.10-1', commit }])) }));
     expect(selectedRelease('rev', realpathSync(join(release, 'rev')), { INSTALLATION_RELEASE: selection })).toBe('2026.10-1');
   });
+
+  it('refuses a partial or extended manifest rather than guessing which layout it means', () => {
+    const root = mkdtempSync(join(tmpdir(), 'helmo-release-'));
+    const release = join(root, 'mixed');
+    mkdirSync(join(release, 'helmo'), { recursive: true });
+    writeFileSync(join(release, 'RELEASE.json'), JSON.stringify({ commits: { helmo: 'a'.repeat(40), rev: 'b'.repeat(40) } }));
+    const selection = join(root, 'selected.json');
+    writeFileSync(selection, JSON.stringify({ release: 'mixed', directory: release, components: {} }));
+    expect(() => selectedRelease('helmo', join(release, 'helmo'), { INSTALLATION_RELEASE: selection })).toThrow(/must name either helmo or exactly/);
+  });
 });

@@ -21,9 +21,11 @@
 // filesystem has not recorded.
 //
 // VALIDATED BEFORE THE POINTER MOVES, NOT AFTER. The whole set is checked
-// first: the manifest names a commit per product, each product's `dist` holds
-// JavaScript, and its BUILD.json stamp says it was built from exactly that
-// commit on a clean tree. An unverifiable component refuses the upgrade while
+// first: the manifest names the Helmo commit, each shipped package's `dist`
+// holds JavaScript, and every BUILD.json stamp says it was built from exactly
+// that commit on a clean tree. Historical three-component sets are checked by
+// their original rule so they remain valid rollback targets. An unverifiable
+// set refuses the upgrade while
 // the installation is still running the release it was running — the failure
 // mode being avoided is the one where the pointer moves and the next process
 // to start is the one that discovers the set is incoherent.
@@ -55,9 +57,15 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { digestOf, readStamp } from './build.js';
 import { deploymentFile, describeDeployment, recordSelection } from './deployment.js';
 
-/** The products that make up one release set — the same three `install.ts`
- *  verifies, because a set with two of them coherent is not a set. */
+/** The historical products in a pre-C1 release set. Kept so an installation
+ *  can inspect and roll back to the release it was already running. */
 export const RELEASE_REPOS = ['rev', 'helmo', 'helmo-roadmap'] as const;
+const UNIFIED_COMPONENT = 'helmo';
+const UNIFIED_ARTIFACTS = [
+  ['Work', 'packages/work'],
+  ['Roadmap', 'packages/roadmap'],
+  ['Runtime', 'packages/runtime'],
+] as const;
 
 /** The manifest a build leaves beside the products it built. */
 const MANIFEST = 'RELEASE.json';
@@ -165,24 +173,33 @@ export function releaseProblems(dir: string): string[] {
     problems.push(e instanceof Error ? e.message : String(e));
   }
 
-  for (const repo of RELEASE_REPOS) {
-    const dist = join(dir, repo, 'dist');
-    const want = commits[repo];
+  const names = Object.keys(commits).sort();
+  const unified = names.length === 1 && names[0] === UNIFIED_COMPONENT;
+  const legacy = names.length === RELEASE_REPOS.length && RELEASE_REPOS.every((repo) => names.includes(repo));
+  if (names.length && !unified && !legacy) {
+    problems.push(`${join(dir, MANIFEST)} must name either the one helmo component or exactly the legacy rev, helmo and helmo-roadmap components (it names ${names.join(', ')})`);
+  }
+
+  const artifacts: readonly (readonly [string, string, string | undefined])[] = unified
+    ? UNIFIED_ARTIFACTS.map(([name, path]) => [name, join(UNIFIED_COMPONENT, path), commits[UNIFIED_COMPONENT]])
+    : RELEASE_REPOS.map((repo) => [repo, repo, commits[repo]]);
+  for (const [name, path, want] of artifacts) {
+    const dist = join(dir, path, 'dist');
     if (!want) {
-      problems.push(`the manifest names no commit for ${repo}, so nothing can say which build this set's ${repo} is`);
+      problems.push(`the manifest names no commit for ${name}, so nothing can say which build this set's ${name} is`);
       continue;
     }
     if (digestOf(dist) === null) {
-      problems.push(`${dist} holds no JavaScript — ${repo} is not built in this release`);
+      problems.push(`${dist} holds no JavaScript — ${name} is not built in this release`);
       continue;
     }
     const stamp = readStamp(dist);
     if (!stamp) {
-      problems.push(`${join(dist, 'BUILD.json')} is missing, so ${repo}'s build cannot be identified (build it with npm run build, which stamps it)`);
+      problems.push(`${join(dist, 'BUILD.json')} is missing, so ${name}'s build cannot be identified (build it with npm run build, which stamps it)`);
     } else if (stamp.commit !== want) {
-      problems.push(`${repo} is built from ${short(stamp.commit)} but the manifest names ${short(want)} — this set is mixed`);
+      problems.push(`${name} is built from ${short(stamp.commit)} but the manifest names ${short(want)} — this set is mixed`);
     } else if (stamp.dirty) {
-      problems.push(`${repo} was built from a dirty tree, so commit ${short(want)} does not identify the bytes in ${dist} — rebuild it from a clean checkout`);
+      problems.push(`${name} was built from a dirty tree, so commit ${short(want)} does not identify the bytes in ${dist} — rebuild it from a clean checkout`);
     }
   }
   return problems;
@@ -324,11 +341,11 @@ export function rollback(file: string): Change {
   if (restored.id !== previous.release) {
     throw new ReleaseError(`${previous.directory} is now release '${restored.id}', not the '${previous.release}' this selection retained`);
   }
-  for (const repo of RELEASE_REPOS) {
-    const was = previous.components[repo]?.commit;
-    if (was && restored.commits[repo] !== was) {
+  for (const [component, previousComponent] of Object.entries(previous.components)) {
+    const was = previousComponent.commit;
+    if (restored.commits[component] !== was) {
       throw new ReleaseError(
-        `refusing to roll back to ${previous.release}: its ${repo} was ${short(was)} when this installation left it and is ${short(restored.commits[repo])} now. `
+        `refusing to roll back to ${previous.release}: its ${component} was ${short(was)} when this installation left it and is ${short(restored.commits[component])} now. `
         + 'The directory has been rebuilt, so rolling back would not restore what was running.',
       );
     }
@@ -353,7 +370,7 @@ function selectionFor(set: ReleaseSet, previous: PreviousSelection | null, insta
     ...(install ? { install } : {}),
     release: set.id,
     directory: set.dir,
-    components: Object.fromEntries(RELEASE_REPOS.map((repo) => [repo, { release: set.id, commit: set.commits[repo] }])),
+    components: Object.fromEntries(Object.entries(set.commits).map(([component, commit]) => [component, { release: set.id, commit }])),
     migration: set.migration,
     selected_at: new Date().toISOString(),
     previous,
@@ -436,7 +453,7 @@ export function describe(file: string | null): string[] {
     for (const p of problems) lines.push(`    - ${p}`);
   } else {
     const set = readRelease(selection.directory);
-    for (const repo of RELEASE_REPOS) lines.push(`  ${repo.padEnd(14)} ${short(set.commits[repo])}`);
+    for (const [component, commit] of Object.entries(set.commits)) lines.push(`  ${component.padEnd(14)} ${short(commit)}`);
   }
   lines.push(`  data compatibility: ${selection.migration ? migrationLine(selection.migration) : 'undeclared (selected before it was recorded)'}`);
   lines.push(selection.previous

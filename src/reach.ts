@@ -44,12 +44,13 @@ export const REACH_SCRIPT = `if (!${JSON.stringify(LOCAL_HOSTNAMES)}.includes(lo
  *  surface renamed in the registry must not come back as another one of those.
  *  test/estate-reach.test.ts fires the same check over the ids this view uses,
  *  so a rename goes red in CI rather than on Arthur's phone. */
-export function reachLink(id: string, label: string): string {
+export function reachLink(id: string, label: string, url?: string): string {
   const target = ESTATE_REACH[id];
   if (!target)
     throw new Error(
       `no estate surface "${id}" in the vendored reach table — it was renamed or dropped from ` +
         `the registry; run node scripts/vendor-estate-reach.mjs and fix the link`,
     );
-  return `<a href="${target.url}" data-reach="${target.path}">${label}</a>`;
+  const href = (url ?? target.url).replace(/[&"<>]/g, (c) => ({ '&': '&amp;', '"': '&quot;', '<': '&lt;', '>': '&gt;' })[c]!);
+  return `<a href="${href}" data-reach="${target.path}">${label}</a>`;
 }

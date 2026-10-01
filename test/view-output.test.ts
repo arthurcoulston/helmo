@@ -88,7 +88,12 @@ model = "mock"
   origin = `http://127.0.0.1:${port}`;
   child = spawn(process.execPath, ['--import', 'tsx', VIEW], {
     cwd: join(import.meta.dirname, '..'),
-    env: { ...process.env, REV_HOME: home, REV_VIEW_PORT: String(port) },
+    env: {
+      ...process.env,
+      REV_HOME: home,
+      REV_VIEW_PORT: String(port),
+      REV_HELMO_VIEW_URL: 'http://localhost:4420/',
+    },
     stdio: 'ignore',
   });
   await request('/health.json');
@@ -109,6 +114,7 @@ describe('view idle reasons (H-954)', () => {
     for (const reason of Object.values(reasons)) expect(html).toContain(reason);
     expect(html).toContain('SEAT_HELD');
     expect(html).toContain("another live session ('desk') holds H-891");
+    expect(html).toContain('href="http://localhost:4420/" data-reach="/s/helmo-view/"');
   });
 
   it('presents all three bounded reasons in /health.json', async () => {

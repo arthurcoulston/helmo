@@ -94,7 +94,37 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   wait cannot create Helmo motion and wake the same seat again. A SEAT_HELD
   sentinel makes the same-seat guard visible while the loop stands down for
   another live session; the view, health feed, and CLI show the hold instead
-  of calling it a running iteration, and the marker clears with the hold. After
+  of calling it a running iteration, and the marker clears with the hold.
+  **Workflow launch admission** is the last gate before a session is spent
+  (H-2561, helmo H-471): `launchAdmit` asks helm-cli `launch-admit --workstream
+  W --assignee A --launch-id rev:<seat>:<pid>:<iter>:<ms>`, and Helmo picks the
+  seat's ready candidate, checks it, and records the admission in one
+  transaction — so the verdict cannot drift between the check and the launch.
+  Rev asks rather than deciding and keeps no verdict: the question is put again
+  every pass, and a fresh process asks again on its restart pickup rather than
+  walking through a denial it never saw. Helmo's echoed `launch_id` is
+  deliberately not compared with the one sent; it is there so Helmo can admit a
+  retry of the same launch without recording a second admission.
+  **Three of the four answers are a launch, and only one of them is a yes.**
+  `admitted: true` admits a candidate (`launch-admitted`). `admitted: false`
+  means nothing READY was there to gate — not a refusal: the seat still has its
+  held work and its probe pass, and whether to spend an iteration on those is
+  Rev's decision, so it is not even recorded as one. A thrown
+  `workflow_admission_denied` is the only refusal: it logs `launch-denied`,
+  spends nothing, and re-idles at the cursor it read, so the question returns
+  on the next motion or the hourly resync. And an installation that predates
+  the command answers with its usage text, which the gate must never read as a
+  refusal or it stops every loop in the estate: that logs
+  `launch-admit-unsupported` and then **stops asking until the process
+  restarts** — helmo-cli opens and migrates the store before it dispatches a
+  command, so an unanswerable question still costs a store open per iteration
+  per loop, and a store gains the command by an upgrade that restarts the loops
+  anyway. Only an absent command is remembered that way; a store that merely
+  could not answer logs `launch-admit-failed` and is asked again next pass.
+  That stderr is captured rather than forwarded (`run`'s `quiet`) —
+  `execFileSync` does both by default, which would put Helmo's whole usage text
+  in the loop log once per pass.
+  After
   each iteration it writes the session's metered spend back to the
   most-touched ticket via session-filtered helm-cli event queries and
   `record-spend` (H-19, H-878), so desk writes under the same actor name cannot

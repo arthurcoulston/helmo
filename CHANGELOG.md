@@ -6,6 +6,14 @@ earlier history is in the git log.
 
 ## Unreleased
 
+- Before a loop spends a session, Rev asks Helmo whether the seat may launch
+  at all, so a ticket bound to a workflow attempt is started only once its
+  requirements have passed and the admission is recorded in the same
+  transaction as the check. A refusal costs no session, is reported in the
+  loop's log, and is asked again after a restart rather than bypassed by one.
+  Only an explicit refusal holds a launch back: a seat with nothing ready to
+  gate, and an installation whose Helmo has no `launch-admit` command, both
+  run as before (H-2561).
 - Pinned services now report their launcher-backed supervisor as live while
   retaining exact command identity for loop drivers; status no longer mistakes
   the real supervisor for a stale marker and risks starting a duplicate

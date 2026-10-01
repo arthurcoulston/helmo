@@ -4,7 +4,7 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { stateDir } from './config.js';
-import { WakeCheck, WorkstreamInfo, actorActivity, actorSelfSpend, actorTickets, escalateBlocked, escalateSilentDeclines, openEscalation, readyTicketIds, recordSpend, scopeLabel, seatHolds, seatId, seatStreams, wakeCheck, workstreamInfo } from './helm.js';
+import { WakeCheck, WorkstreamInfo, actorActivity, actorSelfSpend, actorTickets, escalateBlocked, escalateSilentDeclines, launchAdmit, launchId, openEscalation, readyTicketIds, recordSpend, scopeLabel, seatHolds, seatId, seatStreams, wakeCheck, workstreamInfo } from './helm.js';
 import { burnWindow, markBurnFloor, recentCosts } from './burn.js';
 import { exhaustedLimit, pollUsage, readCodexUsage, readUsage, refreshCodexUsage, refreshFor, usageForModel } from './usage.js';
 import { anomalyDecide, capacityDecide, planPointsConsumed } from './capacity.js';
@@ -112,7 +112,24 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
   let tAvg = 0;
   let firstPoll = true; // restart pickup: see the wake gate below (H-426)
   let seatHeld = false; // same-seat guard episode flag: log once per hold, not per poll (H-558)
+  let admitInert = false; // this store has no launch-admit command: stop asking
   const lineage = ancestryStamp();
+
+  // Bounded runs and the iteration ceiling. A helper because an iteration can
+  // now end before a session is ever spent: the launch gate below refuses one.
+  const countReached = (): boolean => {
+    if (opts.count && i >= opts.count) {
+      console.log(`rev: requested run count (${opts.count}) reached — halting '${l.name}'.`);
+      logEvent(l.name, 'loop-stop', `reason=count runs=${i}`);
+      return true;
+    }
+    if (i >= g.iteration_ceiling) {
+      console.log(`rev: iteration ceiling (${g.iteration_ceiling}) reached — halting '${l.name}'.`);
+      logEvent(l.name, 'loop-stop', `reason=ceiling runs=${i}`);
+      return true;
+    }
+    return false;
+  };
 
   // The drain's last step. A signal arriving mid-iteration cannot be delivered
   // until the event loop turns (see the yield below), so by the time this runs
@@ -262,6 +279,41 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
         sClear(l.name, 'SEAT_HELD');
       }
       logEvent(l.name, 'seat-check-failed', String(e).slice(0, 200));
+    }
+    // Workflow launch admission (H-2561): the last gate before a session is
+    // spent. A ticket bound to a workflow attempt may only be started once its
+    // requirements have passed, and the check, the admission record and the
+    // attempt's own state have to move together or not at all — which only
+    // Helmo can do. So Rev asks, and keeps no verdict: a denied seat re-idles
+    // at the cursor it read and asks again on the next motion or the hourly
+    // resync, and a fresh process asks again on its restart pickup rather than
+    // walking through a denial it never saw. The one thing remembered is a
+    // store that cannot answer at all — see below.
+    const admission = admitInert ? null : launchAdmit(g, l, launchId(l, i + 1));
+    if (admission?.act === 'deny') {
+      i += 1;
+      firstPoll = false;
+      logEvent(l.name, 'launch-denied', admission.reason);
+      console.log(`rev: '${l.name}' was not admitted to launch — ${admission.reason}`);
+      sSet(l.name, 'IDLE', `${before.max_seq}\n${admission.reason}\n`);
+      sSet(l.name, 'IDLE_AT', String(Date.now()));
+      if (countReached()) return;
+      await sleep(g.poll_seconds);
+      continue;
+    } else if (admission?.how === 'unsupported') {
+      // Asked once, not once per pass: helmo-cli opens (and migrates) the
+      // store before it dispatches a command, so a question this store cannot
+      // answer still costs a full store open every iteration of every loop in
+      // the fleet. A store gains the command by being upgraded, which replaces
+      // the shared dist and restarts every loop — so a fresh process is
+      // exactly when to ask again. Only an absent command is remembered; a
+      // store that merely could not answer is asked again next pass.
+      admitInert = true;
+      logEvent(l.name, 'launch-admit-unsupported', admission.reason);
+    } else if (admission?.how === 'unavailable') {
+      logEvent(l.name, 'launch-admit-failed', admission.reason);
+    } else if (admission?.how === 'admitted') {
+      logEvent(l.name, 'launch-admitted', `${admission.reason}${admission.ticketId ? ` (${admission.ticketId})` : ''}`);
     }
     i += 1;
     firstPoll = false; // an iteration IS the restart pickup — see the wake gate
@@ -716,16 +768,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
         break;
     }
 
-    if (opts.count && i >= opts.count) {
-      console.log(`rev: requested run count (${opts.count}) reached — halting '${l.name}'.`);
-      logEvent(l.name, 'loop-stop', `reason=count runs=${i}`);
-      return;
-    }
-    if (i >= g.iteration_ceiling) {
-      console.log(`rev: iteration ceiling (${g.iteration_ceiling}) reached — halting '${l.name}'.`);
-      logEvent(l.name, 'loop-stop', `reason=ceiling runs=${i}`);
-      return;
-    }
+    if (countReached()) return;
 
     // Inter-iteration velocity throttle, honoring live sentinel changes.
     const pace = parseFloat(sValue(l.name, 'PACE') ?? '') || 1;

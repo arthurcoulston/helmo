@@ -35,11 +35,18 @@ export interface WorkstreamInfo {
   remaining_usd: number | null;
 }
 
-function run(g: GlobalConfig, args: string[], actor?: object): unknown {
+// `quiet` captures the child's stderr instead of letting it through to ours.
+// execFileSync does both by default, which is right for a surprise and wrong
+// for a refusal the caller expects and handles: the launch gate below asks on
+// every iteration, and on a store without the command that forwarded Helmo's
+// whole usage text into the loop's log once per pass.
+function run(g: GlobalConfig, args: string[], actor?: object, quiet = false): unknown {
   const env: NodeJS.ProcessEnv = { ...process.env };
   if (g.helmo_db) env['HELMO_DB'] = g.helmo_db;
   if (actor) env['HELMO_ACTOR'] = JSON.stringify(actor);
-  const out = execFileSync('node', [g.helmo_cli, ...args], { env, encoding: 'utf8' });
+  const out = execFileSync('node', [g.helmo_cli, ...args], quiet
+    ? { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
+    : { env, encoding: 'utf8' });
   return JSON.parse(out);
 }
 
@@ -86,6 +93,74 @@ export function cliError(e: unknown): string {
     return String((JSON.parse(raw) as { error?: unknown }).error ?? raw);
   } catch {
     return raw || String(err.message ?? e);
+  }
+}
+
+/** Workflow launch admission (H-2561, helmo H-471). Asked immediately before a
+ *  session is spent: may this seat launch at all? A ready candidate bound to a
+ *  workflow attempt may be started only once its requirements have passed, and
+ *  only Helmo can read those decisions, record the admission and move the
+ *  attempt in one transaction — so Rev asks rather than deciding, and keeps no
+ *  verdict. The question is put again on every pass, which is what keeps a
+ *  restart from walking through a denial it never saw.
+ *
+ *  Three of Helmo's four answers are a launch, and only one of them is a yes:
+ *  `admitted: true` admits a candidate; `admitted: false` means there was
+ *  nothing READY to gate, which is not a refusal — a seat still has its own
+ *  held work and its probe pass, and whether to spend an iteration on them is
+ *  Rev's decision, not Helmo's; and a store with no launch-admit command (an
+ *  installation that predates the protocol) answers with usage text, which a
+ *  gate must not read as a refusal or it stops every loop in the estate. Only
+ *  a thrown `workflow_admission_denied` holds a launch back. */
+export interface LaunchAdmission {
+  act: 'launch' | 'deny';
+  how: 'admitted' | 'nothing_gated' | 'denied' | 'unsupported' | 'unavailable';
+  reason: string;
+  ticketId: string | null;
+}
+
+/** Names one launch attempt. Helmo records it with the admission and admits a
+ *  retry carrying the same name, so one launch cannot become two admissions. */
+export function launchId(l: LoopConfig, attempt: number): string {
+  return `${seatId(l)}:${process.pid}:${attempt}:${Date.now()}`;
+}
+
+function deniedReason(body: Record<string, unknown>, ticketId: string | null): string {
+  const named = (['missing', 'stale', 'failed'] as const)
+    .map((key) => [key, Array.isArray(body[key]) ? (body[key] as unknown[]).map(String) : []] as const)
+    .filter(([, items]) => items.length > 0)
+    .map(([key, items]) => `${key} ${items.join(', ')}`);
+  const detail = named.length > 0 ? named.join('; ') : String(body['error'] ?? 'no detail given');
+  return `Helmo refused this launch${ticketId ? ` for ${ticketId}` : ''}: ${detail}`;
+}
+
+export function launchAdmit(g: GlobalConfig, l: LoopConfig, id: string): LaunchAdmission {
+  try {
+    // The echoed launch_id is deliberately not compared with the one sent: the
+    // answer is Helmo's record of a decision, not a token Rev validates.
+    const res = run(g, ['launch-admit', '--workstream', l.workstream, '--assignee', l.name, '--launch-id', id], revActor(), true) as
+      { admitted?: boolean; ticket_id?: string; workflow_attempt_id?: string | null; admission_id?: string | null };
+    const ticketId = res.ticket_id ?? null;
+    if (res.admitted !== true) return { act: 'launch', how: 'nothing_gated', reason: 'nothing ready to admit', ticketId };
+    const attempt = res.workflow_attempt_id ? ` for attempt ${res.workflow_attempt_id}` : '';
+    return { act: 'launch', how: 'admitted', ticketId, reason: `admitted${res.admission_id ? ` as ${res.admission_id}` : ''}${attempt}` };
+  } catch (e) {
+    const raw = String((e as { stderr?: string | Buffer }).stderr ?? '').trim();
+    if (raw.includes('workflow_admission_denied')) {
+      // Two shapes carry the same refusal: the protocol's own JSON body, and a
+      // store error whose message is the keyword followed by that body.
+      let body: Record<string, unknown> = {};
+      try { body = JSON.parse(raw) as Record<string, unknown>; } catch { /* keep the lists empty; the message is the detail */ }
+      const ticketId = typeof body['ticket_id'] === 'string' ? body['ticket_id'] : null;
+      return { act: 'deny', how: 'denied', reason: deniedReason(body, ticketId), ticketId };
+    }
+    // An absent command is the store's usage text, and nothing else looks like
+    // it: a locked store or a crash is 'unavailable' — also a launch, but a
+    // one-off worth seeing every time rather than a standing condition.
+    const detail = cliError(e).split('\n')[0]!.slice(0, 160);
+    return raw.startsWith('usage:')
+      ? { act: 'launch', how: 'unsupported', reason: `this store has no launch-admit command: ${detail}`, ticketId: null }
+      : { act: 'launch', how: 'unavailable', reason: `launch admission could not be asked: ${detail}`, ticketId: null };
   }
 }
 

@@ -70,6 +70,27 @@ process.exit(result.status ?? 1);
   return calls;
 }
 
+// An installation that predates launch-admit: helmo-cli prints its usage text
+// and exits 1 for an unrecognized command. The live fleet still runs one.
+function unsupportedAdmissionProxy(e: Env): string {
+  const calls = join(e.home, 'launch-admit-calls');
+  const proxy = join(e.home, 'old-helmo-proxy.mjs');
+  writeFileSync(proxy, `import { appendFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+const args = process.argv.slice(2);
+if (args[0] === 'launch-admit') {
+  appendFileSync(${JSON.stringify(calls)}, JSON.stringify(args.slice(1)) + '\\n');
+  process.stderr.write('usage: helmo-cli <command> [flags]\\n  wake-check --workstream W\\n');
+  process.exit(1);
+}
+const result = spawnSync(process.execPath, [${JSON.stringify(HELM_CLI)}, ...args], { env: process.env, stdio: 'inherit' });
+process.exit(result.status ?? 1);
+`);
+  const roster = join(e.home, 'roster.toml');
+  writeFileSync(roster, readFileSync(roster, 'utf8').replace(`helmo_cli = "${HELM_CLI}"`, `helmo_cli = "${proxy}"`));
+  return calls;
+}
+
 // Prompt assertions read the compiled prompt from a file the mock writes, not
 // from rev's stdout. The loop prints only the last 2000 characters of a
 // session's output (loop.ts), so the head of a long prompt never reaches the
@@ -200,6 +221,35 @@ mock_cmd = "touch $REV_HOME/session-launched"
     expect(readFileSync(calls, 'utf8').trim().split('\n')).toHaveLength(2);
   });
 
+  // The gate must be inert against an installation that has no launch-admit
+  // command — reading its usage text as a refusal would stop every loop in the
+  // estate — and it must stop asking, because helmo-cli opens and migrates the
+  // store before it dispatches a command, so the question is not free.
+  it('launches against a store with no launch-admit command, and asks it only once', () => {
+    // The mock claims the ready ticket, so the first pass produces and a
+    // second iteration follows it: two launches, and the question asked once.
+    const e = setup(`[loops.old-store-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = '''
+ID=$(node ${HELM_CLI} list --ready --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
+if [ -n "$ID" ]; then node ${HELM_CLI} update --ticket $ID --note "claimed by mock" --status in_progress; fi
+echo launched >> $REV_HOME/sessions
+'''
+`);
+    seedTicket(e, 'Ordinary work against an older store');
+    const calls = unsupportedAdmissionProxy(e);
+
+    rev(e, ['run', 'old-store-loop', '--count', '2']);
+
+    expect(readFileSync(join(e.home, 'sessions'), 'utf8').trim().split('\n')).toEqual(['launched', 'launched']);
+    expect(readFileSync(calls, 'utf8').trim().split('\n')).toHaveLength(1);
+    const events = readFileSync(join(e.home, 'state', 'old-store-loop', 'events.log'), 'utf8');
+    expect(events.match(/launch-admit-unsupported/g)).toHaveLength(1);
+    expect(events).not.toMatch(/launch-denied/);
+  });
+
   it('wakes on ready work, session completes it via helm-cli, then idles', () => {
     // The mock "agent": claims the first ready ticket and completes it with evidence.
     const e = setup(`[loops.test-loop]
@@ -246,6 +296,11 @@ fi
     expect(events).toMatch(/run-end.*produced=true/);
     expect(events).toMatch(new RegExp(`spend\\s+iter=1 ticket=${id} tokens=1200 cost=0\\.25`));
     expect(events).toMatch(/action=idle/);
+    // The launch gate (H-2561) against a store that implements it: the first
+    // iteration had a ready candidate and was admitted; the second had none,
+    // which is not a refusal and is not recorded as a decision.
+    expect(events.match(/launch-admitted/g)).toHaveLength(1);
+    expect(events).not.toMatch(/launch-denied|launch-admit-unsupported/);
   });
 
   it('stands down while a desk session holds work in its name, resumes when the seat clears (H-558)', async () => {

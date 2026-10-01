@@ -653,6 +653,12 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
 ## Commands
 
 - `npm run build`, `npm test` (ladder units + e2e with mock runtime).
+- The release CLI fixture clears inherited `INSTALLATION_RELEASE` and product
+  identity/store variables before applying explicit fixture overrides, and its
+  `HOME` is the disposable parent of `REV_HOME`. Redirecting `REV_HOME` alone
+  leaves an inherited absolute selection writable (H-2579). The regression
+  runs an unpinned command beneath a disposable pinned parent and requires the
+  parent's selection to remain byte-for-byte unchanged.
 - **`npm test` runs two test files at a time, not eight (H-1347).** Vitest's
   default is `availableParallelism() - 1`, and this suite's parallel unit is
   not a worker, it is everything a worker spawns: the five e2e files each

@@ -2,8 +2,8 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { dirname, join } from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
 import { Migration, ReleaseError, describe as describeRelease, readSelection, releaseProblems, rollback, upgrade, writeSelection } from '../src/release.js';
 import { deploymentFile, writeDeployment } from '../src/deployment.js';
 
@@ -292,8 +292,13 @@ describe('describing a selection (H-2493)', () => {
 describe('the release commands (H-2493)', () => {
   function rev(home: string, args: string[], env: Record<string, string> = {}) {
     writeFileSync(join(home, 'roster.toml'), '[global]\nhelmo_cli = "/tmp/helmo-cli.js"\nhelmo_mcp_server = "/tmp/helmo-server.js"\n');
+    const inherited = { ...process.env };
+    // A loop's absolute selection overrides REV_HOME, even in an unpinned test.
+    for (const key of ['INSTALLATION_RELEASE', 'REV_LABEL', 'HELMO_HOME', 'HELMO_DB', 'HELMO_LABEL', 'ROADMAP_HOME', 'ROADMAP_DB', 'ROADMAP_LABEL']) {
+      delete inherited[key];
+    }
     return spawnSync('npx', ['tsx', REV_CLI, ...args], {
-      cwd: ROOT, encoding: 'utf8', env: { ...process.env, REV_HOME: home, ...env },
+      cwd: ROOT, encoding: 'utf8', env: { ...inherited, HOME: dirname(home), REV_HOME: home, ...env },
     });
   }
 
@@ -396,6 +401,27 @@ describe('the release commands (H-2493)', () => {
     expect(res.status).not.toBe(0);
     expect(res.stderr).toContain('not pinned');
     expect(readdirSync(dir)).not.toContain('ADOPTED.json');
+  });
+
+  it('leaves the parent installation untouched when a pinned loop runs an unpinned test', () => {
+    const parent = root();
+    const file = selectionAt(parent);
+    upgrade(file, makeRelease(parent, 'current'));
+    const before = readFileSync(file, 'utf8');
+    const dir = root();
+    const home = join(dir, '.rev');
+    mkdirSync(home, { recursive: true });
+    vi.stubEnv('INSTALLATION_RELEASE', file);
+    vi.stubEnv('REV_LABEL', 'dev.rev.parent');
+    try {
+      const res = rev(home, ['release', 'upgrade', makeRelease(dir, 'next')]);
+      expect(readFileSync(file, 'utf8')).toBe(before);
+      expect(res.status).not.toBe(0);
+      expect(res.stderr).toContain('not pinned');
+      expect(readdirSync(home)).toEqual(['roster.toml']);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 

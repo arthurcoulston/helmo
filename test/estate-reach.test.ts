@@ -68,6 +68,18 @@ describe('vendored estate reach table', () => {
     expect(html).toContain(`data-reach="${ESTATE_REACH['helmo-view']!.path}"`);
   });
 
+  it('takes an explicit local URL without changing the composed reach', () => {
+    const html = reachLink('helmo-view', 'Helm', 'http://localhost:4420/');
+    expect(html).toContain('href="http://localhost:4420/"');
+    expect(html).toContain(`data-reach="${ESTATE_REACH['helmo-view']!.path}"`);
+  });
+
+  it('keeps an explicit URL inside its href attribute', () => {
+    expect(reachLink('helmo-view', 'Helm', 'http://localhost:4420/\" data-crossed=\"yes')).not.toContain(
+      'href="http://localhost:4420/" data-crossed=',
+    );
+  });
+
   it('refuses a surface the table does not hold', () => {
     expect(() => reachLink('no-such-view', 'x')).toThrow(/no estate surface/);
   });

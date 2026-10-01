@@ -729,7 +729,8 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   and a service manager — with no service installed it warns that the fleet
   will drain and stay down.
 - Dashboard: `node dist/view.js` (`REV_VIEW_PORT`, default 4500; binds
-  127.0.0.1, `REV_VIEW_HOST` to change) — restart after rebuild. It has no
+  127.0.0.1, `REV_VIEW_HOST` to change; `REV_HELMO_VIEW_URL` overrides only
+  the standalone Helm link while preserving the composed-estate reach) — restart after rebuild. It has no
   authentication: widening the host serves every loop's home path, spend and
   event trace to anyone who reaches the port.
 - Delete an installation: `node dist/cli.js install remove` prints exactly what

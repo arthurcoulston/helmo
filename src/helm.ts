@@ -86,7 +86,7 @@ export function createIntakeAssignment(g: GlobalConfig, body: string): string {
   return (run(g, [
     'create', '--title', 'Prepare the claimed meeting intake', '--body', body,
     '--workstream', 'goodplumb', '--type', 'build', '--priority', '0',
-    '--assignee', 'builder', '--project', 'R-8',
+    '--assignee', 'builder',
   ], revActor()) as { id: string }).id;
 }
 

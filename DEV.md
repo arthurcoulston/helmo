@@ -331,7 +331,9 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   `intake_preparation_checkout`. `intake-preparation.ts` signs outbound
   claim/heartbeat/failure/result requests with the macOS Keychain service
   `plumb-intake-executor-secret`, validates the occurrence identity and exact
-  signup hash before writing, and creates one identifiers-only Builder ticket.
+  signup hash before writing, and creates one identifiers-only Builder ticket
+  using only Helmo CLI-supported fields; project metadata is not passed because
+  that CLI refuses fields which exist only on the MCP create surface.
   Attempt state contains no signup text and lives under state/supervisor; a
   stale result is discarded on the Worker's 409. Before heartbeat or result,
   the adapter re-reads that ticket and retains the lease only while it is open

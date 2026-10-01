@@ -148,6 +148,16 @@ selected release and directory, when it was selected, each component's commit,
 the data-compatibility declaration, and whether there is anything to roll back
 to. An unpinned installation says so plainly rather than pretending to a version.
 
+Beside the selection, `activation.json` is the deployment record. Selection
+writes it as `selected`; rollback writes `rolled_back`; the activation driver
+then owns `activating`, `running`, and `failed`. A running record is evidence,
+not intent: it names the effective installation identity and the release and
+component refs observed from the processes that loaded them. Every state keeps
+an explicit recovery instruction. `rev release status` reads both files and
+calls a record stale when it describes a different selection, partial when its
+required fields are absent, and unrecorded when activation has supplied no
+evidence. It never promotes `selected` or a `BUILD.json` stamp to “running.”
+
 From then on **every entry point verifies the set before it does anything** —
 every Rev CLI invocation and the supervisor, and the Helmo MCP servers Rev
 spawns for its sessions, which are given the selector. Missing code, a mixed set, or

@@ -53,6 +53,7 @@
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { digestOf, readStamp } from './build.js';
+import { deploymentFile, describeDeployment, recordSelection } from './deployment.js';
 
 /** The products that make up one release set — the same three `install.ts`
  *  verifies, because a set with two of them coherent is not a set. */
@@ -275,6 +276,7 @@ export function upgrade(file: string, dir: string): Change {
     return { from: current.release, to: next.id, directory: next.dir, migration: next.migration, unchanged: true };
   }
   writeSelection(file, selectionFor(next, current ? retained(current) : null, current?.install));
+  recordSelection(deploymentFile(file), readSelection(file)!, 'selected');
   return {
     from: current?.release ?? null, to: next.id, directory: next.dir, migration: next.migration, unchanged: false,
     ...(discarded ? { discarded } : {}),
@@ -332,6 +334,7 @@ export function rollback(file: string): Change {
     }
   }
   writeSelection(file, selectionFor(restored, retained(current), current.install));
+  recordSelection(deploymentFile(file), readSelection(file)!, 'rolled_back');
   return { from: current.release, to: restored.id, directory: restored.dir, migration: restored.migration, unchanged: false };
 }
 
@@ -433,6 +436,7 @@ export function describe(file: string | null): string[] {
   lines.push(selection.previous
     ? `  previous: ${selection.previous.release} (${selection.previous.directory}) — go back with: rev release rollback`
     : '  previous: none retained — nothing to roll back to');
+  lines.push(...describeDeployment(deploymentFile(file), selection));
   return lines;
 }
 

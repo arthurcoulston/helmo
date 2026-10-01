@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { Migration, ReleaseError, describe as describeRelease, readSelection, releaseProblems, rollback, upgrade, writeSelection } from '../src/release.js';
+import { deploymentFile, writeDeployment } from '../src/deployment.js';
 
 const REV_CLI = join(import.meta.dirname, '..', 'src', 'cli.ts');
 const ROOT = join(import.meta.dirname, '..');
@@ -122,6 +123,9 @@ describe('upgrading (H-2493)', () => {
     expect(selection.migration).toEqual(COMPATIBLE);
     expect(selection.previous).toBeNull();
     expect(readdirSync(dir).filter((f) => f.includes('.tmp'))).toEqual([]);
+    const activation = JSON.parse(readFileSync(deploymentFile(file), 'utf8')) as { phase: string; release: string; recovery: string };
+    expect(activation).toMatchObject({ phase: 'selected', release: 'next' });
+    expect(activation.recovery).toContain('not completed');
   });
 
   it('refuses an unverifiable set without touching the selection', () => {
@@ -246,6 +250,42 @@ describe('describing a selection (H-2493)', () => {
 
   it('says an unpinned installation is unpinned, and how to pin it', () => {
     expect(describeRelease(null).join('\n')).toMatch(/not pinned[\s\S]*INSTALLATION_RELEASE/);
+  });
+
+  it('keeps selected and running distinct and exposes stale live evidence with its recovery', () => {
+    const dir = root();
+    const file = selectionAt(dir);
+    const current = makeRelease(dir, 'current');
+    upgrade(file, current);
+    writeDeployment(deploymentFile(file), {
+      format: 1, installation: 'dev.rev', phase: 'running', release: 'current', directory: current,
+      components: Object.fromEntries(REPOS.map((repo) => [repo, sha(`current:${repo}`)])),
+      updated_at: '2026-10-01T00:00:00.000Z', recovery: 'Restart the down service, then repeat its live probe.',
+      processes: [{ process: 'supervisor', pid: 42, installation: 'dev.rev', release: 'current', components: {}, observed_at: '2026-10-01T00:00:00.000Z' }],
+    });
+    upgrade(file, makeRelease(dir, 'next'));
+    // Simulate interruption after selection but before activation: the durable
+    // old live observation must be called stale, never silently upgraded.
+    writeDeployment(deploymentFile(file), {
+      format: 1, installation: 'dev.rev', phase: 'running', release: 'current', directory: current,
+      components: Object.fromEntries(REPOS.map((repo) => [repo, sha(`current:${repo}`)])),
+      updated_at: '2026-10-01T00:00:00.000Z', recovery: 'Restart the down service, then repeat its live probe.',
+    });
+    const shown = describeRelease(file).join('\n');
+    expect(shown).toContain('deployment: STALE running');
+    expect(shown).toContain('selected now: next');
+    expect(shown).toContain('Restart the down service');
+  });
+
+  it('reports a partial deployment record without losing release status', () => {
+    const dir = root();
+    const file = selectionAt(dir);
+    upgrade(file, makeRelease(dir, 'next'));
+    writeFileSync(deploymentFile(file), '{"format":1,"phase":"activating"}');
+    const shown = describeRelease(file).join('\n');
+    expect(shown).toContain('release: next');
+    expect(shown).toContain('deployment: UNREADABLE');
+    expect(shown).toContain('do not infer running state');
   });
 });
 

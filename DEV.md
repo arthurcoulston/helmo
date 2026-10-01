@@ -557,6 +557,14 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   - It changes one file and restarts nothing: a running process keeps the code
     it loaded and takes the release when it next starts. Operating a service
     here would be operating one the command has not established it owns.
+- `deployment.ts` — **the durable activation record** (H-2572), stored as
+  `activation.json` beside the release selection. Built, published, selected,
+  activating, running, failed, and rolled-back are distinct; every record
+  carries exact component refs, effective installation identity and an owned
+  recovery instruction. `rev release status` combines it with the selection
+  and reports missing, partial, or stale evidence rather than treating selected
+  artifacts as live processes. Activation code writes running only after its
+  process probes supply their loaded refs and identities.
 - `remove.ts` — **the one command that deletes an installation's records**
   (H-2512). `rev install remove [--confirm]`. Every other removal rev has keeps
   the data: `rev service uninstall` takes the definition and leaves the store,

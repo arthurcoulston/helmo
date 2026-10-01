@@ -131,6 +131,7 @@ describe('codexArgs (H-520)', () => {
   it('is hermetic: user config ignored, everything explicit, prompt on stdin', () => {
     const args = codexArgs('gpt-5.6-terra', 'mcp_servers={}');
     expect(args).toContain('--ignore-user-config');
+    expect(args).toContain('--dangerously-bypass-hook-trust');
     expect(args).toContain('--json');
     expect(args[args.length - 1]).toBe('-');
     expect(args[args.indexOf('--model') + 1]).toBe('gpt-5.6-terra');

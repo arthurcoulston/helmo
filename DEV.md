@@ -238,7 +238,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   change when the operator tweaks `~/.codex/config.toml` (auth.json and
   session rollouts are unaffected); anything a run needs beyond the MCP table
   arrives as `-c` overrides from `[providers.<name>.config]` in the roster
-  (reasoning effort, future custom endpoints via `model_providers`); MCP
+  (reasoning effort, future custom endpoints via `model_providers`). Project
+  hooks remain in scope, and Rev passes `--dangerously-bypass-hook-trust`
+  because an unattended loop cannot answer Codex's interactive trust prompt;
+  the estate reviews those hook definitions in git. MCP
   tools need `default_tools_approval_mode = "auto"` AND the
   approvals/sandbox bypass or every call hard-fails under `approval_policy =
   never`; exit 0 without a `turn.completed` event is a real failure

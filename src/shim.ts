@@ -384,13 +384,16 @@ const CODEX_LIMIT = /rate.?limit|too many requests|quota|usage.?limit|\b429\b|\b
  *  reasoning-effort, notify, and plugin settings in ~/.codex/config.toml all
  *  stay out, while auth.json and session rollouts are unaffected (verified on
  *  codex-cli 0.150.1; an earlier belief that this flag broke -c MCP servers
- *  was a misread — that failure was a malformed HELMO_ACTOR). Everything a
+ *  was a misread — that failure was a malformed HELMO_ACTOR). Repository hooks
+ *  are still loaded; unattended fleet runs explicitly trust their reviewed
+ *  definitions instead of waiting on an interactive trust prompt. Everything a
  *  fleet run needs arrives as explicit -c overrides: the MCP table, then the
  *  provider's [providers.<name>.config] entries — reasoning effort today,
  *  custom endpoints (model_providers) when a provider needs one. */
 export function codexArgs(model: string, mcpArg: string, config?: Record<string, unknown>): string[] {
   return [
     'exec', '--json', '--skip-git-repo-check', '--ignore-user-config',
+    '--dangerously-bypass-hook-trust',
     '--dangerously-bypass-approvals-and-sandbox',
     '--model', model,
     '-c', mcpArg,

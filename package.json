@@ -1,0 +1,15 @@
+{
+  "name": "helmo",
+  "private": true,
+  "version": "0.0.0-c1-candidate",
+  "description": "C1 unification candidate (H-2630). Not published; rebuilt by crew:projects/r39/consolidation/c1/import.mjs.",
+  "workspaces": [
+    "packages/work",
+    "packages/roadmap",
+    "packages/runtime"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  }
+}

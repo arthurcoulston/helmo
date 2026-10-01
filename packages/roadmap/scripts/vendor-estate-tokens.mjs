@@ -19,8 +19,10 @@
      node scripts/vendor-estate-tokens.mjs            # refresh the copy
      node scripts/vendor-estate-tokens.mjs --check     # exit 1 on drift
 
-   ESTATE_TOKENS_CSS overrides the source path; it defaults to the sibling
-   checkout. --check with no source present is not a pass — it exits 2 and
+   ESTATE_TOKENS_CSS overrides the source path; it defaults to a checkout
+   beside this one — beside the WORKSPACE root when this package sits in a
+   workspace, which is NOT the directory beside the package (F4, H-2638).
+   --check with no source present is not a pass — it exits 2 and
    says so, because a check that goes quiet when its input is missing is the
    one shape that can never go red. The test that wraps it (test/
    estate-tokens.test.ts) is the thing allowed to skip, and it says so aloud.
@@ -29,12 +31,13 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { besideCheckout } from '@helmo/core/checkout';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 export const SOURCE =
   process.env.ESTATE_TOKENS_CSS ??
-  join(ROOT, '..', 'estate', 'tokens', 'estate-tokens.css');
+  besideCheckout(ROOT, 'estate', 'tokens', 'estate-tokens.css');
 export const VENDORED = join(ROOT, 'src', 'estate-tokens.generated.ts');
 
 /** The vendored module's exact contents for a given token stylesheet. */
@@ -72,7 +75,7 @@ function run() {
   try {
     css = readFileSync(SOURCE, 'utf8');
   } catch {
-    console.error(`no estate token file at ${SOURCE} — set ESTATE_TOKENS_CSS or clone the estate repo alongside helmo-roadmap`);
+    console.error(`no estate token file at ${SOURCE} — set ESTATE_TOKENS_CSS or clone the estate repo beside this checkout`);
     process.exit(2);
   }
   const want = render(css);

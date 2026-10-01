@@ -803,6 +803,13 @@ why the drift test uses `it.skipIf` rather than an early return — with no
 source to compare against it reports **skipped**, which is visible in the run
 summary, where a `console.log` from a passing test is not.
 
+**Beside WHAT.** The source path defaults to an `estate` checkout beside this
+*checkout*, which inside a workspace is beside the workspace root and not
+beside this package — `@helmo/core/checkout` resolves it, from what the tree
+declares rather than from how deep the package sits. The pre-C1 spelling
+(`<package>/../estate`) named `packages/estate`, which has never existed, so
+every one of these checks skipped for the wrong reason (H-2638).
+
 **Rev was the third adopter and the only one starting from nothing.** Helmo and
 the roadmap already had token layers to alias; rev's view had fifteen literal
 hex colours and no dark half at all — it served a white page at midnight. So
@@ -1221,10 +1228,15 @@ follow a module imported dynamically much later.
 
 Helmo is the work record and must be built separately; runtime rosters point at
 its `dist/cli.js` and `dist/server.js`. Integration tests run the source checkout
-named by `REV_TEST_HELMO` (falling back to sibling `../helmo`) through dedicated
-CLI and server shims, so an immutable Rev candidate needs neither shared build —
-every reference through `test/helmo.ts`, never a written-out `../../helmo`
-path, which resolves only where the two checkouts are adjacent. That
+named by `REV_TEST_HELMO` through dedicated CLI and server shims, so an immutable
+Rev candidate needs neither shared build — every reference through
+`test/helmo.ts`, never a written-out `../../helmo` path, which resolves only
+where the two checkouts are adjacent. With the variable unset, `test/helmo.ts`
+asks `@helmo/core/checkout` for the work record: the package of this workspace
+whose package.json declares the name `helmo`, and failing that a `helmo`
+repository cloned beside this checkout. That is one rule for both worlds, and it
+is why this suite no longer needs `REV_TEST_HELMO` inside the workspace —
+`../../helmo` named `packages/helmo` here, which has never existed (H-2638). That
 prerequisite is declared to the release gate as `publish.cold.requires_env` in
 package.json, so its scratch clone is given the variable instead of failing at
 collection; see crew's PUBLISHING.md, "Works cold" (H-1400). Loop

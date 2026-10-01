@@ -223,6 +223,13 @@ also why the drift test uses `it.skipIf` rather than an early return — with no
 source to compare against it reports **skipped**, which is visible in the run
 summary, where a `console.log` from a passing test is not.
 
+**Beside WHAT.** The source path defaults to an `estate` checkout beside this
+*checkout*, which inside a workspace is beside the workspace root and not
+beside this package — `@helmo/core/checkout` resolves it, from what the tree
+declares rather than from how deep the package sits. The pre-C1 spelling
+(`<package>/../estate`) named `packages/estate`, which has never existed, so
+every one of these checks skipped for the wrong reason (H-2638).
+
 **What was adopted, and what was not.** `view.ts` keeps every one of its own
 token names and not one of its rules changed in meaning; the aliases at the top
 of `CSS` are the whole seam, so a look ratified upstream restyles this page

@@ -101,12 +101,13 @@ distinguished the installations, and cross-install references stayed qualified.
 
 ## Public tests you can run
 
-From clean sibling checkouts, install dependencies and run:
+From a clean checkout, install dependencies (`npm ci` at the workspace root)
+and run:
 
 ```sh
-cd rev && npm test -- test/cli.test.ts test/release.test.ts
-cd ../helmo && npm test -- test/install.test.ts test/reference.test.ts test/build.test.ts
-cd ../helmo-roadmap && npm test -- test/install.test.ts test/reference.test.ts test/build.test.ts
+cd packages/runtime && npm test -- test/cli.test.ts test/release.test.ts
+cd ../work && npm test -- test/install.test.ts test/reference.test.ts test/build.test.ts
+cd ../roadmap && npm test -- test/install.test.ts test/reference.test.ts test/build.test.ts
 ```
 
 These suites directly cover identity resolution, conflicting environment and

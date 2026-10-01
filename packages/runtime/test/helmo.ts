@@ -1,8 +1,15 @@
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { productCheckout } from '@helmo/core/checkout';
 
+// The work record is a package in this workspace when the products share one
+// and a repository cloned beside this checkout when they do not; keyed on the
+// name its package.json declares, never on a directory basename. A written-out
+// `../../helmo` found nothing once rev became packages/runtime and helmo became
+// packages/work — a directory move is a rename to anything reading a basename,
+// and it made REV_TEST_HELMO mandatory for the whole suite (F4, H-2638).
 export const HELMO_ROOT = resolve(
-  process.env['REV_TEST_HELMO'] ?? join(import.meta.dirname, '..', '..', 'helmo'),
+  process.env['REV_TEST_HELMO'] ?? productCheckout(import.meta.dirname, 'helmo', 'helmo'),
 );
 process.env['REV_TEST_HELMO'] = HELMO_ROOT;
 export const HELMO_CLI = join(import.meta.dirname, 'helmo-cli.mjs');

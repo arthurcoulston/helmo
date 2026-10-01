@@ -18,8 +18,10 @@
      node scripts/vendor-estate-avatars.mjs           # refresh the copy
      node scripts/vendor-estate-avatars.mjs --check   # exit 1 on drift
 
-   ESTATE_AVATARS_SVG overrides the source path; it defaults to the sibling
-   checkout. --check with no source present exits 2 and says so — a check that
+   ESTATE_AVATARS_SVG overrides the source path; it defaults to a checkout
+   beside this one — beside the WORKSPACE root when this package sits in a
+   workspace, which is NOT the directory beside the package (F4, H-2638).
+   --check with no source present exits 2 and says so — a check that
    goes quiet when its input is missing is the one shape that can never go red.
    The test that wraps it (test/estate-avatars.test.ts) is the thing allowed to
    skip, and it skips aloud.
@@ -28,12 +30,13 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { besideCheckout } from '@helmo/core/checkout';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 export const SOURCE =
   process.env.ESTATE_AVATARS_SVG ??
-  join(ROOT, '..', 'estate', 'avatars', 'crew-avatars.svg');
+  besideCheckout(ROOT, 'estate', 'avatars', 'crew-avatars.svg');
 export const VENDORED = join(ROOT, 'src', 'estate-avatars.generated.ts');
 
 /** Marks and kinds, read from the composed `crew-<mark>-<kind>` symbols.
@@ -122,7 +125,7 @@ function run() {
   try {
     svg = readFileSync(SOURCE, 'utf8');
   } catch {
-    console.error(`no estate avatar sprite at ${SOURCE} — set ESTATE_AVATARS_SVG or clone the estate repo alongside helmo`);
+    console.error(`no estate avatar sprite at ${SOURCE} — set ESTATE_AVATARS_SVG or clone the estate repo beside this checkout`);
     process.exit(2);
   }
   const want = render(svg);

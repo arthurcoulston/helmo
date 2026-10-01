@@ -89,12 +89,13 @@ behaviour.
 ```bash
 npm ci
 npm run build
-REV_TEST_HELMO=/absolute/path/to/helmo npm test
+npm test
 ```
 
 Rev deliberately depends on a built Helmo checkout for its integration tests and at runtime. The
-test path is configurable with `REV_TEST_HELMO`; when omitted, the suite checks the historical
-sibling location `../helmo` and fails with the missing path if it is unavailable. Runtime paths are
+test path is configurable with `REV_TEST_HELMO`; when omitted, the suite resolves the work record
+as a package of this workspace, by the name its own package.json declares, and otherwise as a
+`helmo` checkout beside this one — failing with the missing path if neither exists. Runtime paths are
 independent of the test setting and are always explicit as `helmo_cli` and `helmo_mcp_server` in
 the instance roster.
 

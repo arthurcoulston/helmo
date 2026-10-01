@@ -39,13 +39,19 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { workspacePackage } from '@helmo/core/checkout';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-/** The work record as this workspace spells it: a sibling package directory,
- *  and the package name `packages/work/package.json` declares. */
-export const WORK_DIR = resolve(ROOT, '..', 'work');
+/** The work record as this workspace spells it: the package name
+ *  `packages/work/package.json` declares, and the directory the workspace
+ *  resolves that name to. Asked for by NAME rather than written out as a
+ *  sibling directory, so renaming `packages/work` moves the guard with it
+ *  rather than quietly leaving it scanning for a directory that is gone
+ *  (F4, H-2638). A lone clone of the runtime has no such package and nothing
+ *  to guard against; the sibling path is what it used to mean. */
 export const WORK_PACKAGE = 'helmo';
+export const WORK_DIR = workspacePackage(ROOT, WORK_PACKAGE) ?? resolve(ROOT, '..', 'work');
 
 /** The shipped surface. `test` is out of scope; see the header. */
 export const SHIPPED = ['src', 'bin', 'scripts'];

@@ -809,6 +809,13 @@ source to compare against it reports **skipped**, which is visible in the run
 summary, where a `console.log` from a passing test is not. The runs that judge
 the copy are Arthur's machine and estate CI.
 
+**Beside WHAT.** The source path defaults to an `estate` checkout beside this
+*checkout*, which inside a workspace is beside the workspace root and not
+beside this package — `@helmo/core/checkout` resolves it, from what the tree
+declares rather than from how deep the package sits. The pre-C1 spelling
+(`<package>/../estate`) named `packages/estate`, which has never existed, so
+every one of these checks skipped for the wrong reason (H-2638).
+
 The copy is verbatim, and the script refuses a source containing a backtick or
 `${` rather than escaping it. If a token file ever needs translating to be
 usable here, that is a change to make in the estate's generator, once — not

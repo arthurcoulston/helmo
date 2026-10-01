@@ -167,6 +167,11 @@ which has two consequences worth knowing:
   reach the supervisor itself, so drain, `rev stop` and the sentinels behave as
   if the manager had named the supervisor directly.
 
+On macOS a reinstall waits for the old job to finish its bounded launchd drain
+before bootstrapping the replacement. If that bootstrap fails, Rev restores the
+previous definition and starts it again rather than leaving the installation
+down.
+
 If the launcher cannot resolve the selection, it refuses in one line naming the
 installation and the repair, and exits non-zero on purpose: the manager retries,
 so repairing the selection brings the supervisor back with no command run.

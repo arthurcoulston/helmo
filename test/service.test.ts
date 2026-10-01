@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { homedir, tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, it, expect } from 'vitest';
-import { definedHome, definedProgram, installLaunchd, launchdPlist, launcherPath, legacyServiceLabel, retireLegacyService, serviceLabel, stalePinnedService, systemdUnit, systemdUnitName, writeLauncher } from '../src/service.js';
+import { definedHome, definedProgram, installLaunchd, launchdPlist, launcherPath, legacyServiceLabel, retireLegacyService, serviceLabel, stalePinnedService, systemdUnit, systemdUnitName, waitForLaunchdExit, writeLauncher } from '../src/service.js';
 
 describe('service unit generation', () => {
   it('launchd: restarts on crash only — a graceful drain (exit 0) stays down', () => {
@@ -31,10 +31,11 @@ describe('service unit generation', () => {
   it('launchd: replaces a loaded service before bootstrapping the new plist', () => {
     const file = join(mkdtempSync(join(tmpdir(), 'rev-service-')), 'dev.rev.plist');
     const calls: string[][] = [];
-    installLaunchd(file, '<plist>new</plist>', 'gui/501', 'dev.rev.gp', (...args) => calls.push(args));
+    installLaunchd(file, '<plist>new</plist>', 'gui/501', 'dev.rev.gp', (...args) => calls.push(args), (target) => calls.push(['wait', target]));
     expect(readFileSync(file, 'utf8')).toBe('<plist>new</plist>');
     expect(calls).toEqual([
       ['bootout', 'gui/501/dev.rev.gp'],
+      ['wait', 'gui/501/dev.rev.gp'],
       ['bootstrap', 'gui/501', file],
     ]);
   });
@@ -45,6 +46,28 @@ describe('service unit generation', () => {
       calls.push(args);
       if (args[0] === 'bootout') throw new Error('not loaded');
     });
+    expect(calls.at(-1)).toEqual(['bootstrap', 'gui/501', file]);
+  });
+  it('launchd: waits until bootout has released the label', () => {
+    let reads = 0;
+    let clock = 0;
+    waitForLaunchdExit('gui/501/dev.rev', (...args) => {
+      expect(args).toEqual(['print', 'gui/501/dev.rev']);
+      reads += 1;
+      if (reads === 3) throw new Error('not loaded');
+    }, 1000, () => clock, (ms) => { clock += ms; });
+    expect(reads).toBe(3);
+  });
+  it('launchd: restores the previous definition and job after bootstrap fails', () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'rev-service-')), 'dev.rev.plist');
+    writeFileSync(file, '<plist>old</plist>');
+    const calls: string[][] = [];
+    let bootstraps = 0;
+    expect(() => installLaunchd(file, '<plist>new</plist>', 'gui/501', 'dev.rev', (...args) => {
+      calls.push(args);
+      if (args[0] === 'bootstrap' && bootstraps++ === 0) throw new Error('candidate rejected');
+    }, (target) => calls.push(['wait', target]))).toThrow('candidate rejected');
+    expect(readFileSync(file, 'utf8')).toBe('<plist>old</plist>');
     expect(calls.at(-1)).toEqual(['bootstrap', 'gui/501', file]);
   });
   it('systemd: on-failure restart with the embedded environment', () => {

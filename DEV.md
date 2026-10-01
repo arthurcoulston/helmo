@@ -410,6 +410,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
     back with no command run.
   - **Unpinned installations are untouched** — no launcher, and the definition
     still names the `cli.js` it was installed from.
+  The launcher records its physical path in `REV_SERVICE_LAUNCHER` before it
+  corrects `argv[1]`. `runningStamp()` uses that path only for the supervisor's
+  exact `run` invocation; inherited loop processes keep their cli.js command.
+  Thus liveness matches the kernel command line without weakening loop identity.
   A definition installed before this change still names a release directory;
   `stalePinnedService()` finds it and `rev release upgrade|rollback` says so,
   where the promise is made, rather than leaving it for launchd.log.
@@ -417,7 +421,9 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   signals the supervisor rather than every process in the cgroup (H-467).
   launchd is different: it clamps `ExitTimeOut` at 60s even when the plist asks
   for 660s (measured on Darwin 25.6, H-877). Its bootout/reinstall path is
-  therefore a hard stop after the largest available 60s window; the detached
+  therefore a hard stop after the largest available 60s window. Installation
+  waits until that job has actually released its label before bootstrap, and a
+  failed bootstrap restores the prior definition and job. The detached
   session process group is what lets an agent finish and close its work. Use
   `rev stop` when the whole machine must drain gracefully before service work.
 - `build.ts` — **what did this process load?** (H-2489). `snapshot()` reads a

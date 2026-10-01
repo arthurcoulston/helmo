@@ -90,6 +90,7 @@ if (!existsSync(cli)) {
 // downstream — the loop drivers the supervisor spawns, REV_CLI in an agent's
 // environment, the command line the sentinels record — is exactly what it would
 // have been had the manager named that file directly.
+process.env.REV_SERVICE_LAUNCHER = process.argv[1];
 process.argv[1] = cli;
 await import(pathToFileURL(cli).href);
 `;
@@ -308,18 +309,68 @@ function launchctl(...args: string[]): void {
   execFileSync('launchctl', args, { stdio: 'inherit' });
 }
 
+function inspectLaunchctl(...args: string[]): void {
+  execFileSync('launchctl', args, { stdio: 'ignore' });
+}
+
+const pause = (ms: number): void => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); };
+
+/** launchctl bootout may return while a draining job still owns its label. */
+export function waitForLaunchdExit(
+  target: string,
+  inspect: (...args: string[]) => void = inspectLaunchctl,
+  timeoutMs = (LAUNCHD_EXIT_TIMEOUT_SECONDS + 5) * 1000,
+  now: () => number = Date.now,
+  wait: (ms: number) => void = pause,
+): void {
+  const deadline = now() + timeoutMs;
+  while (now() < deadline) {
+    try {
+      inspect('print', target);
+    } catch {
+      return;
+    }
+    wait(50);
+  }
+  throw new Error(`timed out after ${timeoutMs}ms waiting for ${target} to stop`);
+}
+
 function systemctl(...args: string[]): void {
   execFileSync('systemctl', ['--user', ...args], { stdio: 'inherit' });
 }
 
-export function installLaunchd(file: string, plist: string, domain: string, label: string, run = launchctl): void {
+export function installLaunchd(
+  file: string,
+  plist: string,
+  domain: string,
+  label: string,
+  run = launchctl,
+  awaitExit: (target: string) => void = waitForLaunchdExit,
+): void {
+  const previous = existsSync(file) ? readFileSync(file, 'utf8') : null;
   writeFileSync(file, plist);
+  const target = `${domain}/${label}`;
+  let wasLoaded = true;
   try {
-    run('bootout', `${domain}/${label}`);
+    run('bootout', target);
   } catch {
+    wasLoaded = false;
     /* not loaded is fine */
   }
-  run('bootstrap', domain, file);
+  if (wasLoaded) awaitExit(target);
+  try {
+    run('bootstrap', domain, file);
+  } catch (error) {
+    // Restore the definition as well as the running job. A failed bootstrap
+    // after the new plist was written must not turn a reinstall into a silent
+    // permanent outage.
+    try { run('bootout', target); } catch { /* candidate never loaded */ }
+    try { awaitExit(target); } catch { /* original error remains primary */ }
+    if (previous === null) rmSync(file, { force: true });
+    else writeFileSync(file, previous);
+    if (previous !== null && wasLoaded) run('bootstrap', domain, file);
+    throw error;
+  }
 }
 
 /**

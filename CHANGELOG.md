@@ -4,6 +4,16 @@ This is Rev's first published set of release notes. It is scoped to the
 independent-installations release and does not reconstruct what came before it;
 earlier history is in the git log.
 
+## Unreleased
+
+- Pinned services now report their launcher-backed supervisor as live while
+  retaining exact command identity for loop drivers; status no longer mistakes
+  the real supervisor for a stale marker and risks starting a duplicate
+  (H-2560).
+- On macOS, service installation waits for the previous launchd job to release
+  its label before bootstrapping the replacement. If bootstrap fails, it
+  restores the previous definition and running job (H-2560).
+
 ## v0.1.0 — 2026-09-30
 
 Two Rev installations can now run under one login without reaching into each

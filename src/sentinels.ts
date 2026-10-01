@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync, rmSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { markerLines } from './build.js';
-import { stateDir } from './config.js';
+import { revHome, stateDir } from './config.js';
 import { rotateIfOversized } from './logretention.js';
 import { Sentinel } from './types.js';
 
@@ -164,6 +164,17 @@ export function runningStamp(): string {
 
 // Our own driver invocation, minus the node binary — 'dist/cli.js run ward'.
 function ownCommand(): string {
+  // A pinned launchd/systemd definition starts the installation-owned
+  // launcher, which imports the selected cli.js in this same process. Node's
+  // argv can be corrected for every downstream consumer, but the kernel's
+  // command line remains the launcher. Record that physical entry point for
+  // the supervisor only; loop drivers inherit the environment but have a loop
+  // name after `run`, so their ordinary cli.js identity remains exact.
+  const launcher = process.env['REV_SERVICE_LAUNCHER'];
+  const expected = join(revHome(), 'service', 'launch.mjs');
+  if (launcher === expected && process.argv.length === 3 && process.argv[2] === 'run') {
+    return `${launcher} run`;
+  }
   return [process.argv[1] ?? '', ...process.argv.slice(2)].join(' ').trim();
 }
 

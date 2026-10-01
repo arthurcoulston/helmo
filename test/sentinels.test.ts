@@ -39,6 +39,19 @@ describe('pidAlive', () => {
     expect(pidAlive('self')).toBe(process.pid);
   });
 
+  it('records the physical launcher for a pinned supervisor, but not its loop children', () => {
+    const saved = { argv: [...process.argv], launcher: process.env['REV_SERVICE_LAUNCHER'] };
+    const launcher = join(home, 'service', 'launch.mjs');
+    process.env['REV_SERVICE_LAUNCHER'] = launcher;
+    process.argv.splice(1, process.argv.length - 1, '/release/rev/dist/cli.js', 'run');
+    expect(runningStamp()).toContain(`cmd ${launcher} run\n`);
+    process.argv.push('mason');
+    expect(runningStamp()).toContain('cmd /release/rev/dist/cli.js run mason\n');
+    process.argv.splice(0, process.argv.length, ...saved.argv);
+    if (saved.launcher === undefined) delete process.env['REV_SERVICE_LAUNCHER'];
+    else process.env['REV_SERVICE_LAUNCHER'] = saved.launcher;
+  });
+
   it('reports denied inspection as unknown and keeps the marker occupied', () => {
     marker('hidden', runningStamp());
     expect(processObservation('hidden', () => null)).toEqual({ state: 'unknown', pid: process.pid });

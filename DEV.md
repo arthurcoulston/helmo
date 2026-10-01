@@ -673,7 +673,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
 
 ## Commands
 
-- `npm run build`, `npm test` (ladder units + e2e with mock runtime).
+- `npm run build`, `npm test` (ladder units + e2e with mock runtime). The
+  verbose reporter is deliberate: the real-process e2e files can take several
+  minutes on a loaded fleet host, and per-case progress distinguishes that
+  bounded work from a hung run without inspecting or killing its fixtures.
 - The release CLI fixture clears inherited `INSTALLATION_RELEASE` and product
   identity/store variables before applying explicit fixture overrides, and its
   `HOME` is the disposable parent of `REV_HOME`. Redirecting `REV_HOME` alone

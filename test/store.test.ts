@@ -316,6 +316,21 @@ describe('atomic workflow admission (H-431)', () => {
     expect(() => s.launchReceipt(admissionId, 'rev:builder-loop:other')).toThrow(/does not match/);
   });
 
+  it('fails closed when a same-revision requirement is added after launch admission', () => {
+    const s = admissionStore();
+    const ticket = create(s, { workflow_attempt_id: 'attempt-1' }); triage(s, ticket.id);
+    s.recordWorkflowDecision({ id: 'pass-1', requirement_id: 'technical', manifest_id: 'manifest-a', verdict: 'pass', source: 'review:event-1' });
+    const admitted = s.launchAdmission('helmo-dev', builder.name, 'rev:builder-loop:1');
+    s.addWorkflowRequirement({
+      id: 'later', workflow_id: 'release', definition_revision: 'v1', stage_id: 'build', scope: 'security', subject_manifest_id: 'manifest-a',
+      allowed_verdicts: ['pass'], authorities: [{ name: reviewer.name, kind: reviewer.kind }], independence: 'different_from_manifest_creators',
+    });
+
+    expect(() => s.revalidateLaunch(admitted.admission_id as string, 'rev:builder-loop:1')).toThrow(
+      /workflow_admission_denied .*"missing":\["requirement:later"\]/,
+    );
+  });
+
   it('fails closed after authority changes and quarantines an interrupted launch idempotently', () => {
     const s = admissionStore();
     const ticket = create(s, { workflow_attempt_id: 'attempt-1' }); triage(s, ticket.id);

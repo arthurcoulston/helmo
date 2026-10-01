@@ -39,7 +39,8 @@ orchestrator meetings and the read-only view. Product intent:
   behavior remain later slices. H-509 adds the recovery half of that protocol:
   `launch-receipt` resolves both immutable identities and expands only the
   captured requirement/manifest/decision evidence; `launch-revalidate` checks
-  that exact authority under one IMMEDIATE snapshot; and `launch-quarantine`
+  that exact authority and the attempt's complete current same-revision
+  requirement set under one IMMEDIATE snapshot; and `launch-quarantine`
   idempotently invalidates only that exact launch attempt. Missing, mismatched,
   corrupt, superseded, or revoked evidence fails closed. H-433 makes terminal
   outcomes mutually exclusive and idempotent, and permits only rejected or quarantined attempts

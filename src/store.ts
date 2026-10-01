@@ -837,18 +837,37 @@ export class Store {
     return this.db.transaction(() => {
       const receipt = this.launchReceipt(admissionId, launchId);
       const attemptId = receipt.attempt_id as string;
-      const attempt = this.db.prepare('SELECT state FROM workflow_attempts WHERE id = ?').get(attemptId) as { state: string } | undefined;
+      const attempt = this.db.prepare(`SELECT a.stage_id, a.state, r.workflow_id, r.definition_revision
+        FROM workflow_attempts a JOIN workflow_runs r ON r.id = a.run_id WHERE a.id = ?`).get(attemptId) as
+        { stage_id: string; state: string; workflow_id: string; definition_revision: string } | undefined;
+      const missing: string[] = [];
       const stale: string[] = [];
+      const failed: string[] = [];
       if (!attempt) stale.push('attempt');
-      else if (attempt.state === 'quarantined' || this.db.prepare('SELECT 1 FROM workflow_invalidations WHERE attempt_id = ? LIMIT 1').get(attemptId)) stale.push('invalidation');
-      for (const item of receipt.requirements as { requirement_id: string; manifest_id: string; decision_id: string }[]) {
-        const decisions = this.db.prepare('SELECT decision FROM workflow_decisions WHERE requirement_id = ? AND manifest_id = ? ORDER BY rowid')
-          .all(item.requirement_id, item.manifest_id).map((row) => JSON.parse((row as { decision: string }).decision) as WorkflowDecision);
-        const revoked = new Set(decisions.filter((decision) => decision.verdict === 'revocation').map((decision) => decision.revokes_decision_id));
-        const standing = decisions.filter((decision) => decision.verdict !== 'revocation' && !revoked.has(decision.id)).at(-1);
-        if (!standing || standing.id !== item.decision_id) stale.push(`requirement:${item.requirement_id}`);
+      else {
+        if (attempt.workflow_id !== receipt.workflow_id || attempt.definition_revision !== receipt.definition_revision) stale.push('attempt');
+        if (attempt.state === 'quarantined' || this.db.prepare('SELECT 1 FROM workflow_invalidations WHERE attempt_id = ? LIMIT 1').get(attemptId)) stale.push('invalidation');
+        const captured = new Map((receipt.requirements as { requirement_id: string; manifest_id: string; decision_id: string }[])
+          .map((item) => [item.requirement_id, item]));
+        const current = this.db.prepare('SELECT id, requirement FROM workflow_requirements WHERE workflow_id = ? AND definition_revision = ? ORDER BY id')
+          .all(attempt.workflow_id, attempt.definition_revision) as { id: string; requirement: string }[];
+        const applicable = new Set<string>();
+        for (const row of current) {
+          const requirement = JSON.parse(row.requirement) as WorkflowRequirement;
+          if (requirement.stage_id && requirement.stage_id !== attempt.stage_id) continue;
+          applicable.add(requirement.id);
+          const item = captured.get(requirement.id);
+          const decisions = this.db.prepare('SELECT decision FROM workflow_decisions WHERE requirement_id = ? AND manifest_id = ? ORDER BY rowid')
+            .all(requirement.id, requirement.subject_manifest_id).map((decisionRow) => JSON.parse((decisionRow as { decision: string }).decision) as WorkflowDecision);
+          const revoked = new Set(decisions.filter((decision) => decision.verdict === 'revocation').map((decision) => decision.revokes_decision_id));
+          const standing = decisions.filter((decision) => decision.verdict !== 'revocation' && !revoked.has(decision.id)).at(-1);
+          if (!standing) (decisions.length ? stale : missing).push(`requirement:${requirement.id}`);
+          else if (standing.verdict === 'fail') failed.push(`requirement:${requirement.id}`);
+          else if (!item || item.manifest_id !== requirement.subject_manifest_id || item.decision_id !== standing.id) stale.push(`requirement:${requirement.id}`);
+        }
+        for (const id of captured.keys()) if (!applicable.has(id)) stale.push(`requirement:${id}`);
       }
-      if (stale.length) throw new HelmoError(`workflow_admission_denied ${JSON.stringify({ admission_id: admissionId, attempt_id: attemptId, missing: [], stale: [...new Set(stale)], failed: [] })}`);
+      if (missing.length || stale.length || failed.length) throw new HelmoError(`workflow_admission_denied ${JSON.stringify({ admission_id: admissionId, attempt_id: attemptId, missing: [...new Set(missing)], stale: [...new Set(stale)], failed: [...new Set(failed)] })}`);
       return { valid: true, admission_id: admissionId, launch_id: launchId, attempt_id: attemptId };
     }).immediate();
   }

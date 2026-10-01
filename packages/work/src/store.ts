@@ -238,6 +238,10 @@ CREATE TABLE IF NOT EXISTS workflow_admissions (
   id TEXT PRIMARY KEY, attempt_id TEXT NOT NULL, admission TEXT NOT NULL, created_at TEXT NOT NULL,
   FOREIGN KEY (attempt_id) REFERENCES workflow_attempts(id)
 );
+CREATE TABLE IF NOT EXISTS launch_claims (
+  launch_id TEXT PRIMARY KEY, ticket_id TEXT NOT NULL, claim TEXT NOT NULL, created_at TEXT NOT NULL,
+  FOREIGN KEY (ticket_id) REFERENCES tickets(id)
+);
 CREATE TABLE IF NOT EXISTS workflow_invalidations (
   id INTEGER PRIMARY KEY AUTOINCREMENT, attempt_id TEXT NOT NULL, reason TEXT NOT NULL,
   source TEXT NOT NULL, created_at TEXT NOT NULL,
@@ -813,6 +817,37 @@ export class Store {
       }
       const admission = this.admitWorkflow(ticket.id, ticket.workflow_attempt_id, 'launch', launchId);
       return { admitted: true, ticket_id: ticket.id, workflow_attempt_id: ticket.workflow_attempt_id, admission_id: admission.id, launch_id: launchId };
+    }).immediate();
+  }
+
+  /** Atomically select, workflow-admit, and exclusively claim one launch. */
+  launchClaim(actor: Actor, workstream: string, assignee: string, launchId: string, project?: string): Record<string, unknown> {
+    validateActor(actor);
+    if (!workstream.trim() || !assignee.trim() || !launchId.trim()) throw new HelmoError('launch-admit requires exact non-empty workstream, assignee, and launch-id values.');
+    if (actor.name !== assignee || actor.kind !== 'agent' || !actor.session?.trim()) {
+      throw new HelmoError('launch-admit must be written by the exact accountable agent with a supervised worker session.');
+    }
+    return this.db.transaction(() => {
+      const exact = { workstream, assignee, launch_id: launchId, session: actor.session, project: project ?? null };
+      const priorClaim = this.db.prepare('SELECT ticket_id, claim FROM launch_claims WHERE launch_id = ?').get(launchId) as
+        { ticket_id: string; claim: string } | undefined;
+      if (priorClaim) {
+        const prior = JSON.parse(priorClaim.claim) as Record<string, unknown>;
+        if (JSON.stringify(prior.scope) !== JSON.stringify(exact)) throw new HelmoError(`Launch ${launchId} was replayed with different scope or worker identity.`);
+        return prior;
+      }
+      const ticket = this.listTickets({ ready: true, workstream, caller: assignee, project, limit: 1 })[0];
+      if (!ticket) return { admitted: false, launch_id: launchId };
+      let admissionId: string | null = null;
+      if (ticket.workflow_attempt_id) {
+        const admission = this.admitWorkflow(ticket.id, ticket.workflow_attempt_id, 'launch', launchId);
+        admissionId = admission.id as string;
+      }
+      this.updateTicket(actor, { ticket_id: ticket.id, status: 'in_progress', note: `Claimed atomically for supervised launch ${launchId}.` });
+      const receipt = { admitted: true, claimed: true, ticket_id: ticket.id, workflow_attempt_id: ticket.workflow_attempt_id ?? null, admission_id: admissionId, launch_id: launchId, scope: exact };
+      this.db.prepare('INSERT INTO launch_claims (launch_id, ticket_id, claim, created_at) VALUES (?, ?, ?, ?)')
+        .run(launchId, ticket.id, JSON.stringify(receipt), now());
+      return receipt;
     }).immediate();
   }
 

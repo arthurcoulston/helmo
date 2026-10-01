@@ -268,6 +268,44 @@ describe('atomic workflow admission (H-431)', () => {
     });
   });
 
+  it('atomically gives parallel workers distinct claims and replays the exact receipt', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'helmo-parallel-claims-'));
+    const dbPath = join(dir, 'helmo.db');
+    try {
+      const first = new Store(dbPath);
+      const a = create(first, { project: 'R-a' }); triage(first, a.id);
+      const b = create(first, { project: 'R-b' }); triage(first, b.id);
+      const second = new Store(dbPath);
+      const workerA = { ...builder, session: 'rev:builder-a' };
+      const workerB = { ...builder, session: 'rev:builder-b' };
+
+      const claimA = first.launchClaim(workerA, 'helmo-dev', builder.name, 'launch-a');
+      const claimB = second.launchClaim(workerB, 'helmo-dev', builder.name, 'launch-b');
+      expect(claimA).toMatchObject({ claimed: true, ticket_id: a.id, launch_id: 'launch-a' });
+      expect(claimB).toMatchObject({ claimed: true, ticket_id: b.id, launch_id: 'launch-b' });
+      expect(first.launchClaim(workerA, 'helmo-dev', builder.name, 'launch-a')).toEqual(claimA);
+      expect(() => first.launchClaim(workerB, 'helmo-dev', builder.name, 'launch-a')).toThrow(/different scope or worker/);
+      expect(first.getTicket(a.id)).toMatchObject({ status: 'in_progress', assignee: builder.name });
+      expect(first.getTicket(b.id)).toMatchObject({ status: 'in_progress', assignee: builder.name });
+      second.close(); first.close();
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('claims only inside the requested project scope', () => {
+    const s = freshStore();
+    const other = create(s, { project: 'R-other' }); triage(s, other.id);
+    const wanted = create(s, { project: 'R-wanted' }); triage(s, wanted.id);
+    expect(s.launchClaim(builder, 'helmo-dev', builder.name, 'launch-scoped', 'R-wanted')).toMatchObject({ ticket_id: wanted.id });
+    expect(s.getTicket(other.id).status).toBe('open');
+  });
+
+  it('rolls back the claim when workflow admission is denied', () => {
+    const s = admissionStore();
+    const ticket = create(s, { workflow_attempt_id: 'attempt-1' }); triage(s, ticket.id);
+    expect(() => s.launchClaim(builder, 'helmo-dev', builder.name, 'launch-denied')).toThrow(/workflow_admission_denied/);
+    expect(s.getTicket(ticket.id).status).toBe('open');
+  });
+
   it('denies missing evidence, then issues one idempotent exact launch admission', () => {
     const s = admissionStore();
     const ticket = create(s, { workflow_attempt_id: 'attempt-1' }); triage(s, ticket.id);

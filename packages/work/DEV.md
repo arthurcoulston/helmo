@@ -327,6 +327,11 @@ Pinned releases accept both the historical three-component layout and C1's one
   every agent** (triage duty, evidence rules, question quality); treat
   description edits as seriously as code — they are guidance-as-deployed, and
   they live here and only here so local and remote agents can never drift.
+  The return contract also treats an ownership/scope refusal from one tool as
+  evidence about that tool only: agents must resolve supported contribution or
+  maintenance routes and finish team preparation before escalating a concrete
+  human remainder, without widening that route into merge, publication,
+  sovereign writes or scanner bypass.
   Every tool's arguments go through `strict()`, so an undeclared key is refused
   during validation instead of stripped (R-39 Q9): handed a raw shape the SDK
   wraps it in a plain object, and `capacity_hold` on a create or a misspelled

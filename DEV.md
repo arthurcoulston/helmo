@@ -333,7 +333,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   `plumb-intake-executor-secret`, validates the occurrence identity and exact
   signup hash before writing, and creates one identifiers-only Builder ticket.
   Attempt state contains no signup text and lives under state/supervisor; a
-  stale result is discarded on the Worker's 409. There is no listener or
+  stale result is discarded on the Worker's 409. Before heartbeat or result,
+  the adapter re-reads that ticket and retains the lease only while it is open
+  or in progress; any other status discards the local attempt and result so the
+  Worker can recover it after lease expiry. There is no listener or
   second scheduler, and an installation declaring neither key is unchanged.
 - A human answer reopens a Helmo ticket with `resolution: resume` regardless
   of whether its operational choice was resume, hold, or investigate. The

@@ -21,7 +21,7 @@ import { rotateOpenFd } from './logretention.js';
 import { logEvent, occupiedPid, pidAlive, runningStamp, sClear, sGet, sHas, sSet, streakReset } from './sentinels.js';
 import { endSessionGroup, sessionGroupsOf } from './shim.js';
 import { REDEPLOY_EXIT, RedeployRequest, armRedeployWatch, readRedeploy, reportRedeployLanded } from './redeploy.js';
-import { agentFalseAlarmDisposition, answeredResumeEscalation, completeAnsweredResume, createIntakeAssignment, failAnsweredResume, returnRelapseToHuman, cliError } from './helm.js';
+import { agentFalseAlarmDisposition, answeredResumeEscalation, completeAnsweredResume, createIntakeAssignment, failAnsweredResume, returnRelapseToHuman, cliError, ticketStatus } from './helm.js';
 import { GlobalConfig, LoopConfig } from './types.js';
 import { completeActivation, deploymentFile } from './deployment.js';
 import { readSelection, selectionFile } from './release.js';
@@ -306,6 +306,7 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
         stateFile: join(dir, 'intake-preparation.json'),
         resultFile: join(dir, 'intake-preparation-result.json'),
         assign: (body) => createIntakeAssignment(g, body),
+        assignmentStatus: (ticketId) => ticketStatus(g, ticketId),
       }).then((result) => {
         if (result !== 'idle' && result !== 'heartbeat') logEvent(SUP, 'intake-preparation', `result=${result}`);
       }).catch((error) => logEvent(SUP, 'intake-preparation-error', String(error).replace(/\s+/g, ' ').slice(0, 200)));

@@ -24,9 +24,9 @@ function harness(responses: Array<[number, unknown]>) {
   return { calls, request: request as typeof fetch };
 }
 
-function options(request: typeof fetch, assign = (_body: string) => 'H-test') {
+function options(request: typeof fetch, assign = (_body: string) => 'H-test', assignmentStatus = (_ticketId: string) => 'in_progress') {
   const root = mkdtempSync(join(tmpdir(), 'rev-intake-'));
-  return { origin: 'https://example.test', checkout: root, stateFile: join(root, '.state.json'), resultFile: join(root, '.result.json'), request, assign, secret: () => 'NOT_A_REAL_SECRET' };
+  return { origin: 'https://example.test', checkout: root, stateFile: join(root, '.state.json'), resultFile: join(root, '.result.json'), request, assign, assignmentStatus, secret: () => 'NOT_A_REAL_SECRET' };
 }
 
 describe('intake preparation executor', () => {
@@ -45,6 +45,18 @@ describe('intake preparation executor', () => {
     expect(h.calls.map((c) => c.action)).toEqual(['claim', 'heartbeat']);
     expect(h.calls[1]!.body).toMatchObject({ identity: envelope().identity, attemptId: 'attempt_1' });
     expect(h.calls.every((c) => c.headers.get('x-gp-signature')?.match(/^[0-9a-f]{64}$/))).toBe(true);
+  });
+
+  it.each(['done', 'cancelled', 'awaiting_human'])('stops lease retention when the assignment is %s', async (status) => {
+    const h = harness([[200, envelope()]]);
+    const o = options(h.request);
+    expect(await intakePreparationPass(o)).toBe('claimed');
+    writeFileSync(o.resultFile, '{}');
+    o.assignmentStatus = () => status;
+    expect(await intakePreparationPass(o)).toBe('abandoned');
+    expect(h.calls.map((c) => c.action)).toEqual(['claim']);
+    expect(() => readFileSync(o.stateFile)).toThrow();
+    expect(() => readFileSync(o.resultFile)).toThrow();
   });
 
   it('reports a bounded invariant failure and leaves retry ownership with the Worker', async () => {

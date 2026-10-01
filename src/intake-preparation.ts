@@ -78,9 +78,10 @@ export interface IntakeExecutorOptions {
   executorId?: string; executorVersion?: string; secret?: () => string;
   request?: typeof fetch;
   assign: (body: string) => Promise<string> | string;
+  assignmentStatus: (ticketId: string) => Promise<string> | string;
 }
 
-type PassResult = 'idle' | 'claimed' | 'heartbeat' | 'completed' | 'superseded' | 'failed';
+type PassResult = 'idle' | 'claimed' | 'heartbeat' | 'completed' | 'superseded' | 'abandoned' | 'failed';
 let running: Promise<PassResult> | null = null;
 
 /** One bounded scheduling pass: reconcile an owned attempt, or claim one job. */
@@ -97,6 +98,11 @@ async function runPass(options: IntakeExecutorOptions): Promise<PassResult> {
   let active: Active | null = null;
   if (existsSync(options.stateFile)) active = JSON.parse(readFileSync(options.stateFile, 'utf8')) as Active;
   if (active) {
+    const assignmentStatus = await options.assignmentStatus(active.ticketId);
+    if (!['open', 'in_progress'].includes(assignmentStatus)) {
+      rmSync(options.stateFile, { force: true }); rmSync(options.resultFile, { force: true });
+      return 'abandoned';
+    }
     const owned = { ...executor, identity: active.identity, version: active.version, attemptId: active.attemptId };
     if (existsSync(options.resultFile)) {
       const result = JSON.parse(readFileSync(options.resultFile, 'utf8')) as IntakeResult;

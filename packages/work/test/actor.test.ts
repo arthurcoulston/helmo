@@ -81,7 +81,7 @@ describe('the seat stamp survives an explicit actor (H-687)', () => {
 
     const r = spawnSync(
       process.execPath,
-      ['node_modules/.bin/tsx', 'src/cli.ts', 'update', '--ticket', id, '--note', 'claiming to build it', '--status', 'in_progress', '--actor', JSON.stringify(stated)],
+      ['--import', 'tsx', 'src/cli.ts', 'update', '--ticket', id, '--note', 'claiming to build it', '--status', 'in_progress', '--actor', JSON.stringify(stated)],
       { cwd: new URL('..', import.meta.url).pathname, env: { ...process.env, HELMO_DB: dbPath, HELMO_ACTOR: JSON.stringify(seat) }, encoding: 'utf8' },
     );
     expect(r.status, r.stderr).toBe(0);

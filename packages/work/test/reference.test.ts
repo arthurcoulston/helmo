@@ -156,7 +156,7 @@ describe('helmo-cli, across two installations with the same ids', () => {
   // A real child process, because the CLI's refusal has to reach the caller as
   // its own JSON on stderr with a non-zero exit, not as a thrown object.
   function cli(target: ReturnType<typeof makeInstall>, ...argv: string[]) {
-    const r = spawnSync(process.execPath, ['node_modules/.bin/tsx', 'src/cli.ts', ...argv], {
+    const r = spawnSync(process.execPath, ['--import', 'tsx', 'src/cli.ts', ...argv], {
       cwd: new URL('..', import.meta.url).pathname,
       env: { ...process.env, HELMO_HOME: target.home, HELMO_LABEL: target.install.label, HELMO_ACTOR: JSON.stringify(seat), HELMO_DB: '' },
       encoding: 'utf8',
@@ -164,9 +164,20 @@ describe('helmo-cli, across two installations with the same ids', () => {
     return { status: r.status, out: r.stdout, err: r.stderr };
   }
 
+  // A child that never got as far as the CLI leaves stdout empty, and parsing
+  // that fails as "Unexpected end of JSON input" — which says nothing about
+  // why. Name the child's own stderr instead.
+  function json(r: { out: string; err: string }): Record<string, unknown> {
+    try {
+      return JSON.parse(r.out) as Record<string, unknown>;
+    } catch {
+      throw new Error(`the CLI wrote no JSON to stdout; its stderr was:\n${r.err}`);
+    }
+  }
+
   it('resolves a bare id and a matching qualifier, and refuses the other installation’s', () => {
-    expect(JSON.parse(cli(b, 'get', '--ticket', 'H-1').out).title).toBe('B: draft the letter');
-    expect(JSON.parse(cli(b, 'get', '--ticket', 'H-1@dev.helmo.b').out).title).toBe('B: draft the letter');
+    expect(json(cli(b, 'get', '--ticket', 'H-1'))['title']).toBe('B: draft the letter');
+    expect(json(cli(b, 'get', '--ticket', 'H-1@dev.helmo.b'))['title']).toBe('B: draft the letter');
 
     const refused = cli(b, 'get', '--ticket', 'H-1@dev.helmo.a');
     expect(refused.status).toBe(1);
@@ -180,6 +191,6 @@ describe('helmo-cli, across two installations with the same ids', () => {
   it('refuses a carried reference on a write, leaving the record alone', () => {
     const refused = cli(b, 'update', '--ticket', 'H-1@dev.helmo.a', '--note', 'Claiming this.', '--status', 'in_progress');
     expect(refused.status).toBe(1);
-    expect(JSON.parse(cli(b, 'get', '--ticket', 'H-1').out).status).toBe('open');
+    expect(json(cli(b, 'get', '--ticket', 'H-1'))['status']).toBe('open');
   });
 });

@@ -3,7 +3,7 @@
   "version": "0.4.0",
   "description": "Agent work record: agents write, humans read and meet.",
   "scripts": {
-    "test": "vitest run --exclude 'test/view-viewport-render.test.ts'",
+    "test": "vitest run --exclude 'test/view-viewport-render.test.ts' --exclude 'test/view-release-floor.test.ts' && vitest run test/view-release-floor.test.ts",
     "build": "tsc",
     "postbuild": "node scripts/stamp-build.mjs",
     "smoke": "node scripts/smoke.mjs",

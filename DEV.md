@@ -621,8 +621,12 @@ orchestrator meetings and the read-only view. Product intent:
 - `npm run build` (tsc → dist/), `npm test` (store + e2e against a temp db).
 - `npm run floor` runs the release-floor checks alone (links, performance
   budget, declared widths, accessibility) against the served page. They are
-  part of `npm test` too; the separate script exists because the floor is what
-  a release is gated on and it is worth being able to ask for by name.
+  part of `npm test` too, but `npm test` runs them in a second Vitest process
+  after the rest of the suite. The 400 ms render budget measures the view, not
+  contention from unrelated parallel test workers; isolating the timed gate
+  keeps that budget strict and repeatable. The separate script exists because
+  the floor is what a release is gated on and it is worth being able to ask
+  for by name.
 - `npm run viewport` lays the same document out in Chromium at 360, 390, 480,
   700 and 1280px, delivered and with every row opened, and fails on anything
   that reaches past the right edge — boxes and text runs alike. It is NOT part

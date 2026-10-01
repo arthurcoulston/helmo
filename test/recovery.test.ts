@@ -4,7 +4,7 @@ import { chmodSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, renameSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { backup, identity, validate } from '../src/recovery-lib.js';
+import { backup, backupObserved, identity, validate } from '../src/recovery-lib.js';
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'roadmap-recovery-')); const home = join(root, 'home'); const output = join(root, 'out');
@@ -44,6 +44,26 @@ describe('operator recovery CLI', () => {
     const f = fixture(); const backed = await backup(f.home, 'gp', f.output, join(f.output, 'backup'));
     expect(backed.tables.projects).toBe(1); expect(statSync(backed.file).mode & 0o777).toBe(0o600); const before = readFileSync(backed.file);
     const restored = await validate(backed.file, 'gp', f.output, join(f.output, 'restore')); expect(restored.sha256).toBe(backed.sha256); expect(readFileSync(backed.file)).toEqual(before);
+  });
+  it('observes the stored identity and backs up an active WAL database through one connection', async () => {
+    const f = fixture(); const writer = new Database(join(f.home, 'roadmap.db'));
+    try {
+      writer.prepare('INSERT INTO projects VALUES (?)').run('R-live');
+      expect(readdirSync(f.home)).toEqual(expect.arrayContaining(['roadmap.db-wal', 'roadmap.db-shm']));
+      const backed = await backupObserved(f.home, f.output, join(f.output, 'backup'));
+      expect(backed.installation).toBe('gp'); expect(backed.tables.projects).toBe(2);
+      const restored = await validate(backed.file, backed.installation, f.output, join(f.output, 'restore'));
+      expect(restored.sha256).toBe(backed.sha256); expect(restored.tables.projects).toBe(2);
+    } finally { writer.close(); }
+  });
+  it('exposes the observed online backup through the operator CLI', () => {
+    const f = fixture(); const writer = new Database(join(f.home, 'roadmap.db'));
+    try {
+      writer.prepare('INSERT INTO projects VALUES (?)').run('R-live');
+      const result = execFileSync(process.execPath, ['--import', 'tsx', 'src/recovery.ts', 'backup-observed', '--source-home', f.home, '--output-root', f.output, '--output-dir', join(f.output, 'backup')], { encoding: 'utf8' });
+      const report = JSON.parse(result);
+      expect(report.installation).toBe('gp'); expect(report.tables.projects).toBe(2); expect(statSync(report.file).mode & 0o777).toBe(0o600);
+    } finally { writer.close(); }
   });
   it('refuses identity mismatch before creating a destination', async () => {
     const f = fixture(); const destination = join(f.output, 'never'); await expect(backup(f.home, 'wrong', f.output, destination)).rejects.toThrow('identity'); expect(() => statSync(destination)).toThrow();

@@ -38,7 +38,7 @@ unavailable for your Node/platform pair.
   `~/.helmo-roadmap/roadmap.db` (`ROADMAP_DB` overrides); writer identity from
   `ROADMAP_ACTOR` or `HELMO_ACTOR` (JSON), or a per-call `actor` param.
 - Read-only view: `node dist/view.js` — `http://localhost:4410`
-- Operator recovery: `node dist/recovery.js identity|backup|validate ...`; `identity` reports only the stored installation name and creates nothing, while backup and validation create only fresh owner-only artifacts and never restore into a live installation. See `DEV.md` for flags and the safety boundary.
+- Operator recovery: `node dist/recovery.js identity|backup-observed|backup|validate ...`; `identity` reports only the stored installation name and creates nothing. `backup-observed` reads the stored identity and makes a consistent online backup through the same SQLite connection, while backup and validation retain explicit identity assertions. All artifact-producing commands create only fresh owner-only paths and never restore into a live installation. See `DEV.md` for flags and the safety boundary.
   (`ROADMAP_VIEW_PORT`).
 
 Tests use temporary stores. Two optional source-drift comparisons report

@@ -115,8 +115,11 @@ append-only event log, materialized state, `.immediate()` write transactions
   from MCP. `identity` requires only explicit `--source-home` and reports only
   the stored installation name by reading an owner-checked, sidecar-free main
   database into memory; it refuses WAL, SHM or rollback-journal sidecars rather
-  than risk a stale identity, and creates no destination. `backup` requires explicit `--source-home`, `--installation`,
-  `--output-root`, and fresh `--output-dir`; `validate` replaces source-home
+  than risk a stale identity, and creates no destination. `backup-observed`
+  requires explicit `--source-home`, `--output-root`, and fresh `--output-dir`;
+  it reads the stored identity and makes the online backup through one SQLite
+  connection, then validates the completed image against that exact identity.
+  `backup` additionally requires an explicit `--installation`; `validate` replaces source-home
   with an absolute `--backup`. Both create only a fresh 0700 run directory and
   0600 database below a canonical owner-owned root, verify identity, exact
   application schema, integrity and counts, retain failures, and never restore

@@ -93,16 +93,29 @@ async function inspect(path: string, installation: string, start: number, hooks:
   });
 }
 
+async function backupOpen(db: Database.Database, installation: string, outputRoot: string, outputDir: string, start: number, hooks: RecoveryTestHooks): Promise<RecoveryReport> {
+  const run = freshDir(outputRoot, outputDir); const file = join(run.path, 'roadmap-backup.db'); const staging = join(run.path, `.roadmap-backup-${randomUUID()}.db`);
+  process.umask(0o077); await db.backup(staging, { progress: () => { deadline(start, hooks.limitMs); return 100; } }); ownedRegular(staging);
+  if ((statSync(staging).mode & 0o777) !== 0o600) throw new Error('backup was not created mode 0600');
+  await inspect(staging, installation, start, hooks); hooks.beforeBackupPublish?.(run.path, file); unchangedDir(run); linkSync(staging, file);
+  const staged = lstatSync(staging); const published = lstatSync(file);
+  if (staged.dev !== published.dev || staged.ino !== published.ino) throw new Error('published backup is not the completed staging database');
+  return await inspect(file, installation, start, hooks);
+}
+
 export async function backup(sourceHome: string, installation: string, outputRoot: string, outputDir: string, hooks: RecoveryTestHooks = {}): Promise<RecoveryReport> {
   const start = performance.now(); const db = matchingSource(sourceHome, installation);
   try {
-    const run = freshDir(outputRoot, outputDir); const file = join(run.path, 'roadmap-backup.db'); const staging = join(run.path, `.roadmap-backup-${randomUUID()}.db`);
-    process.umask(0o077); await db.backup(staging, { progress: () => { deadline(start, hooks.limitMs); return 100; } }); ownedRegular(staging);
-    if ((statSync(staging).mode & 0o777) !== 0o600) throw new Error('backup was not created mode 0600');
-    await inspect(staging, installation, start, hooks); hooks.beforeBackupPublish?.(run.path, file); unchangedDir(run); linkSync(staging, file);
-    const staged = lstatSync(staging); const published = lstatSync(file);
-    if (staged.dev !== published.dev || staged.ino !== published.ino) throw new Error('published backup is not the completed staging database');
-    return await inspect(file, installation, start, hooks);
+    return await backupOpen(db, installation, outputRoot, outputDir, start, hooks);
+  }
+  finally { db.close(); }
+}
+
+export async function backupObserved(sourceHome: string, outputRoot: string, outputDir: string, hooks: RecoveryTestHooks = {}): Promise<RecoveryReport> {
+  const start = performance.now(); const db = source(sourceHome);
+  try {
+    const installation = storedIdentity(db);
+    return await backupOpen(db, installation, outputRoot, outputDir, start, hooks);
   }
   finally { db.close(); }
 }

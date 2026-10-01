@@ -22,7 +22,7 @@ const cmd = args.shift();
 const COMMAND_FLAGS: Record<string, readonly string[]> = {
   'wake-check': ['since-seq', 'workstream', 'assignee'],
   'seat-check': ['assignee'],
-  'launch-admit': ['workstream', 'assignee', 'launch-id'],
+  'launch-admit': ['workstream', 'assignee', 'launch-id', 'project'],
   'launch-receipt': ['admission-id', 'launch-id'],
   'launch-revalidate': ['admission-id', 'launch-id'],
   'launch-quarantine': ['admission-id', 'launch-id', 'reason'],
@@ -335,7 +335,7 @@ try {
       break;
     }
     case 'launch-admit': {
-      out(store.launchAdmission(req('workstream'), req('assignee'), req('launch-id')));
+      out(store.launchClaim(actor(), req('workstream'), req('assignee'), req('launch-id'), flag('project')));
       break;
     }
     case 'launch-receipt': {
@@ -428,7 +428,7 @@ try {
       console.error(`usage: helmo-cli <command> [flags]
   wake-check     --workstream W --assignee A --since-seq N     (read-only harness poll)
   seat-check     --assignee A                                  (in_progress holds in a name + claiming actor; rev's same-seat guard)
-  launch-admit   --workstream W --assignee A --launch-id ID     (atomic next-candidate workflow admission; read-only for ordinary tickets)
+  launch-admit   --workstream W --assignee A --launch-id ID [--project P] (atomic next-candidate admission and claim)
   launch-receipt --admission-id ID --launch-id ID                (read exact immutable launch authority and captured evidence)
   launch-revalidate --admission-id ID --launch-id ID             (atomically fail closed unless captured authority still stands)
   launch-quarantine --admission-id ID --launch-id ID --reason R  (idempotently quarantine one interrupted or invalid launch)

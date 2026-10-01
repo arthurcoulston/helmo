@@ -718,7 +718,7 @@ export class Store {
    * attempt. The caller must already be inside the ticket mutation's IMMEDIATE
    * transaction: the decisions read here, the admission, and the status/event
    * write are one SQLite commit rather than a queued snapshot. */
-  private admitWorkflow(ticketId: string, attemptId: string, operation: string): void {
+  private admitWorkflow(ticketId: string, attemptId: string, operation: string, launchId?: string): Record<string, unknown> {
     const attempt = this.db.prepare(`SELECT a.stage_id, a.state, r.id AS run_id, r.workflow_id, r.definition_revision
       FROM workflow_attempts a JOIN workflow_runs r ON r.id = a.run_id WHERE a.id = ?`).get(attemptId) as
       { stage_id: string; state: string; run_id: string; workflow_id: string; definition_revision: string } | undefined;
@@ -777,10 +777,32 @@ export class Store {
       workflow_id: attempt.workflow_id,
       definition_revision: attempt.definition_revision,
       requirements: admitted,
+      ...(launchId ? { launch_id: launchId } : {}),
     };
     this.db.prepare('INSERT INTO workflow_admissions (id, attempt_id, admission, created_at) VALUES (?, ?, ?, ?)')
       .run(admission.id, attemptId, JSON.stringify(admission), now());
     this.db.prepare("UPDATE workflow_attempts SET state = 'running' WHERE id = ?").run(attemptId);
+    return admission;
+  }
+
+  /** Atomically select Rev's next candidate and, when it is workflow-bound,
+   * record the exact permission consumed by this one model launch. */
+  launchAdmission(workstream: string, assignee: string, launchId: string): Record<string, unknown> {
+    if (!workstream.trim() || !assignee.trim() || !launchId.trim()) throw new HelmoError('launch-admit requires exact non-empty workstream, assignee, and launch-id values.');
+    return this.db.transaction(() => {
+      const ticket = this.listTickets({ ready: true, workstream, caller: assignee, limit: 1 })[0];
+      if (!ticket) return { admitted: false, launch_id: launchId };
+      if (!ticket.workflow_attempt_id) return { admitted: true, ticket_id: ticket.id, workflow_attempt_id: null, admission_id: null, launch_id: launchId };
+      const prior = this.db.prepare("SELECT admission FROM workflow_admissions WHERE attempt_id = ? AND json_extract(admission, '$.operation') = 'launch' ORDER BY rowid DESC LIMIT 1")
+        .get(ticket.workflow_attempt_id) as { admission: string } | undefined;
+      if (prior) {
+        const admission = JSON.parse(prior.admission) as Record<string, unknown>;
+        if (admission.launch_id === launchId) return { admitted: true, ticket_id: ticket.id, workflow_attempt_id: ticket.workflow_attempt_id, admission_id: admission.id, launch_id: launchId };
+        throw new HelmoError(`workflow_admission_denied ${JSON.stringify({ ticket_id: ticket.id, attempt_id: ticket.workflow_attempt_id, missing: [], stale: ['launch'], failed: [] })}`);
+      }
+      const admission = this.admitWorkflow(ticket.id, ticket.workflow_attempt_id, 'launch', launchId);
+      return { admitted: true, ticket_id: ticket.id, workflow_attempt_id: ticket.workflow_attempt_id, admission_id: admission.id, launch_id: launchId };
+    }).immediate();
   }
 
   private refuseQuarantinedWorkflowMutation(ticketId: string, operation: string): void {

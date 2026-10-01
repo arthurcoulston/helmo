@@ -259,6 +259,25 @@ describe('atomic workflow admission (H-431)', () => {
       action: { action: 'Add the release DNS record in the provider dashboard.' },
     });
   });
+
+  it('admits ordinary launch candidates without inventing workflow state', () => {
+    const s = freshStore();
+    const ticket = create(s); triage(s, ticket.id);
+    expect(s.launchAdmission('helmo-dev', builder.name, 'rev:builder-loop:1')).toEqual({
+      admitted: true, ticket_id: ticket.id, workflow_attempt_id: null, admission_id: null, launch_id: 'rev:builder-loop:1',
+    });
+  });
+
+  it('denies missing evidence, then issues one idempotent exact launch admission', () => {
+    const s = admissionStore();
+    const ticket = create(s, { workflow_attempt_id: 'attempt-1' }); triage(s, ticket.id);
+    expect(() => s.launchAdmission('helmo-dev', builder.name, 'rev:builder-loop:1')).toThrow(/"missing":\["requirement:technical"\]/);
+    s.recordWorkflowDecision({ id: 'pass-1', requirement_id: 'technical', manifest_id: 'manifest-a', verdict: 'pass', source: 'review:event-1' });
+    const first = s.launchAdmission('helmo-dev', builder.name, 'rev:builder-loop:1');
+    expect(first).toMatchObject({ admitted: true, ticket_id: ticket.id, workflow_attempt_id: 'attempt-1', launch_id: 'rev:builder-loop:1' });
+    expect(s.launchAdmission('helmo-dev', builder.name, 'rev:builder-loop:1')).toEqual(first);
+    expect(() => s.launchAdmission('helmo-dev', builder.name, 'rev:builder-loop:2')).toThrow(/"stale":\["launch"\]/);
+  });
 });
 
 describe('workflow invalidation and quarantine (H-432)', () => {

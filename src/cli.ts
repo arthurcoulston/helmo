@@ -22,6 +22,7 @@ const cmd = args.shift();
 const COMMAND_FLAGS: Record<string, readonly string[]> = {
   'wake-check': ['since-seq', 'workstream', 'assignee'],
   'seat-check': ['assignee'],
+  'launch-admit': ['workstream', 'assignee', 'launch-id'],
   'purge-orphan': ['ticket', 'confirm'],
   'actor-activity': ['name', 'since-seq', 'session', 'advancing'],
   'actor-tickets': ['name', 'since-seq', 'session'],
@@ -321,6 +322,10 @@ try {
       if (acceptance.state !== 'accepted') process.exitCode = 1;
       break;
     }
+    case 'launch-admit': {
+      out(store.launchAdmission(req('workstream'), req('assignee'), req('launch-id')));
+      break;
+    }
     case 'create': {
       const t = store.createTicket(actor(), {
         title: req('title'),
@@ -399,6 +404,7 @@ try {
       console.error(`usage: helmo-cli <command> [flags]
   wake-check     --workstream W --assignee A --since-seq N     (read-only harness poll)
   seat-check     --assignee A                                  (in_progress holds in a name + claiming actor; rev's same-seat guard)
+  launch-admit   --workstream W --assignee A --launch-id ID     (atomic next-candidate workflow admission; read-only for ordinary tickets)
   purge-orphan   --ticket H-n --confirm                          (remove a row with NO events — a write that came from outside)
   actor-activity --name A --since-seq N [--session S] [--advancing] (did this actor/session write events?)
   actor-tickets  --name A --since-seq N [--session S]          (which tickets, most-touched first)
@@ -431,8 +437,12 @@ different record.`);
       process.exit(cmd ? 1 : 0);
   }
 } catch (e) {
+  const message = e instanceof HelmoError ? e.message : String(e);
+  const denialPrefix = 'workflow_admission_denied ';
+  const detail = message.startsWith(denialPrefix) ? JSON.parse(message.slice(denialPrefix.length)) as Record<string, unknown> : undefined;
   console.error(JSON.stringify({
-    error: e instanceof HelmoError ? e.message : String(e),
+    error: detail ? 'workflow_admission_denied' : message,
+    ...(detail ?? {}),
     installation: installationRef(install, store.installationIdentity()),
   }));
   process.exit(1);

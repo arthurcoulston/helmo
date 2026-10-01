@@ -29,7 +29,10 @@ orchestrator meetings and the read-only view. Product intent:
   Create-in-progress, claim, handoff, decision-answer resume and action-report
   resume all read the exact definition, stage prerequisites and current scoped
   decisions, record the admission, mark the attempt running and commit the
-  ticket event under the same IMMEDIATE lock. Missing, revoked/stale and failed
+  ticket event under the same IMMEDIATE lock. The `launch-admit` CLI command
+  applies that transaction before Rev starts a model session, returns ordinary
+  ready work without synthesizing workflow state, and binds a workflow
+  admission to one idempotent launch id. Missing, revoked/stale and failed
   requirements are returned as separate structured arrays. A racing revocation
   commits first and is observed, or the admission commits first; no queued
   snapshot can authorize the later write. Retry/outcome and invalidation

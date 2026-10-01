@@ -74,6 +74,9 @@ ${!denied && classifiedAttempt ? `if (args[0] === 'launch-receipt') {
 ${!denied && classifiedAttempt ? `if (args[0] === 'launch-revalidate') {
   process.stdout.write(JSON.stringify({ valid: true })); process.exit(0);
 }` : ''}
+${!denied && classifiedAttempt ? `if (args[0] === 'launch-quarantine') {
+  process.stdout.write(JSON.stringify({ quarantined: true })); process.exit(0);
+}` : ''}
 ${classifiedAttempt ? `if (args[0] === 'list' && args.includes('--ready')) {
   const result = spawnSync(process.execPath, [${JSON.stringify(HELM_CLI)}, ...args], { env: process.env, encoding: 'utf8' });
   if (result.status !== 0) { process.stderr.write(result.stderr); process.exit(result.status ?? 1); }
@@ -296,6 +299,37 @@ mock_cmd = "echo launched >> $REV_HOME/sessions"
     expect(admissions[0]![admissions[0]!.indexOf('--launch-id') + 1]).toBe(admissions[1]![admissions[1]!.indexOf('--launch-id') + 1]);
     const events = readFileSync(join(e.home, 'state', 'replay-loop', 'events.log'), 'utf8');
     expect(events).toMatch(/launch-replay.*already reached dispatch/);
+  });
+
+  it('quarantines an in-flight workflow launch after SIGKILL and never launches it twice', async () => {
+    const e = setup(`[loops.killed-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = "touch $REV_HOME/model-started; sleep 0.2; echo launched >> $REV_HOME/sessions"
+`);
+    seedTicket(e, 'Workflow work interrupted at the process boundary');
+    workflowAdmissionProxy(e, {
+      admitted: true, ticket_id: 'H-1', workflow_attempt_id: 'attempt-killed', admission_id: 'admission-killed',
+    }, false, 'attempt-killed');
+
+    const child = spawn('npx', ['tsx', REV_CLI, 'run', 'killed-loop', '--count', '1'], {
+      env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore',
+    });
+    await waitForFile(join(e.home, 'model-started'));
+    const eventsPath = join(e.home, 'state', 'killed-loop', 'events.log');
+    const loopPid = Number(/loop-start\s+pid=(\d+)/.exec(readFileSync(eventsPath, 'utf8'))![1]);
+    process.kill(loopPid, 'SIGKILL');
+    await stop(child);
+    await waitForFile(join(e.home, 'sessions'));
+
+    rev(e, ['run', 'killed-loop', '--count', '1']);
+
+    expect(readFileSync(join(e.home, 'sessions'), 'utf8').trim().split('\n')).toEqual(['launched']);
+    const events = readFileSync(eventsPath, 'utf8');
+    expect(events).toMatch(/launch-quarantined.*recovered dispatching/);
+    expect(events).toMatch(/launch-replay.*already reached dispatch/);
+    expect(events).not.toMatch(/run-end.*ok/);
   });
 
   // The gate must be inert against an installation that has no launch-admit

@@ -134,6 +134,11 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   the affected attempt is withheld while ordinary work and sibling branches
   continue. Failed quarantine remains unsettled for the next restart rather
   than being mistaken for safe output.
+  Revocation is therefore bounded by one already in-flight model session: a
+  killed driver cannot stop that detached session, but the next Rev boundary
+  quarantines its attempt and refuses to launch it again or count its output as
+  success. This relies on the host OS and process tree reporting honestly;
+  unrestricted local process access remains outside Rev's trust boundary.
   That stderr is captured rather than forwarded (`run`'s `quiet`) —
   `execFileSync` does both by default, which would put Helmo's whole usage text
   in the loop log once per pass.

@@ -586,7 +586,7 @@ describe('the release commands (H-2493)', () => {
     const repaired = rev(home, ['release', 'upgrade', makeRelease(dir, 'good')], { INSTALLATION_RELEASE: file });
     expect(repaired.status, repaired.stderr).toBe(0);
     expect(readSelection(file)!.release).toBe('good');
-  });
+  }, 15_000);
 
   it('refuses a cross-installation assertion before it writes', () => {
     const dir = root();

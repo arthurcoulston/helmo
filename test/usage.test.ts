@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { exhaustedLimit, parseCodexRateLimits, parseUsage, usageLine, worstSeverity } from '../src/usage.js';
+import { exhaustedLimit, hasSpendableCredits, parseCodexRateLimits, parseUsage, usageLine, worstSeverity } from '../src/usage.js';
 
 // The real wire shape, captured from api/oauth/usage on 2026-08-27. The
 // endpoint is undocumented, so this fixture is the contract: if a future
@@ -134,7 +134,10 @@ describe('parseCodexRateLimits (H-479)', () => {
     for (const l of s.limits) {
       expect(Object.keys(l).sort()).toEqual(['active', 'kind', 'label', 'percent', 'resets_at', 'severity']);
     }
-    expect(JSON.stringify(s)).not.toContain('credits');
+    expect(s.credit_capacity).toEqual({
+      has_credits: false, unlimited: false, balance: '0',
+      spend_control_reached: false, ordinary_usage_allowed: null,
+    });
   });
 
   it('a reached cap is the endpoint speaking: fullest window goes critical, so exhaustedLimit sees it', () => {
@@ -149,9 +152,52 @@ describe('parseCodexRateLimits (H-479)', () => {
     expect(exhaustedLimit(s)?.kind).toBe('codex_secondary');
   });
 
+  it('continues past included exhaustion only on explicit spendable credit capacity (H-481)', () => {
+    const live = parseCodexRateLimits({
+      ...ROLLOUT_RL,
+      primary: { used_percent: 100, window_minutes: 10080, resets_at: 1788497906 },
+      credits: { hasCredits: true, unlimited: false, balance: '123.45' },
+      ordinaryUsageAllowed: false,
+      spendControlReached: false,
+    });
+    expect(hasSpendableCredits(live)).toBe(true);
+    expect(exhaustedLimit(live)).toBeNull();
+    for (const credits of [
+      { hasCredits: true, unlimited: false, balance: '0' },
+      { hasCredits: true, unlimited: false },
+      { hasCredits: false, unlimited: false, balance: '456.78' },
+    ]) {
+      const empty = parseCodexRateLimits({ ...ROLLOUT_RL, primary: { used_percent: 100 }, credits });
+      expect(hasSpendableCredits(empty)).toBe(false);
+      expect(exhaustedLimit(empty)).not.toBeNull();
+    }
+  });
+
+  it('honours unlimited credits but never crosses a spend-control refusal or stale snapshot (H-481)', () => {
+    const unlimited = parseCodexRateLimits({ ...ROLLOUT_RL, primary: { used_percent: 100 }, credits: { unlimited: true } });
+    expect(hasSpendableCredits(unlimited)).toBe(true);
+    expect(hasSpendableCredits({ ...unlimited, stale: true })).toBe(false);
+    const refused = parseCodexRateLimits({
+      ...ROLLOUT_RL, primary: { used_percent: 100 }, credits: { unlimited: true }, spend_control_reached: true,
+    });
+    expect(hasSpendableCredits(refused)).toBe(false);
+    expect(exhaustedLimit(refused)).not.toBeNull();
+  });
+
   it('survives a shape it has never seen rather than throwing', () => {
     expect(parseCodexRateLimits(null).limits).toEqual([]);
     expect(parseCodexRateLimits({}).limits).toEqual([]);
     expect(parseCodexRateLimits({ primary: {} }).limits).toEqual([]);
+  });
+
+  it('does not let credits from an unrelated Codex model bucket widen shared capacity', () => {
+    const spark = parseCodexRateLimits({
+      ...ROLLOUT_RL,
+      limit_id: 'codex_bengalfox',
+      primary: { used_percent: 0 },
+      credits: { hasCredits: true, unlimited: true, balance: '456.78' },
+    });
+    expect(spark.limits).toEqual([]);
+    expect(hasSpendableCredits(spark)).toBe(false);
   });
 });

@@ -100,6 +100,19 @@ describe('capacityDecide — switching', () => {
 });
 
 describe('capacityDecide — genuine exhaustion (matrix 4)', () => {
+  it('continues on fresh Codex credits after included plan bars are exhausted (H-481)', () => {
+    const credited = {
+      ...snap([100], [48]),
+      credit_capacity: {
+        has_credits: true, unlimited: false, balance: '123.45',
+        spend_control_reached: false, ordinary_usage_allowed: false,
+      },
+    };
+    expect(capacityDecide({
+      choices: [{ choice: codex, snapshot: credited, refreshed: false }],
+      isLoopRun: true, staleIterations: 0, thresholds, nowMs: NOW,
+    })).toEqual({ act: 'continue', on: codex });
+  });
   it('waits out a reset inside the horizon', () => {
     const d = capacityDecide({
       choices: [

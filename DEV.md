@@ -149,6 +149,11 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   provider, Rev also reads bounded tails of the twenty newest rollouts in
   today's/yesterday's folders, so local desk meetings count too (H-892).
   Only parsed shared-Codex usage survives; Spark's separate bucket is ignored.
+  Parsed Codex credit capacity survives with it: a fresh positive balance (in
+  credits, never dollars) or explicit unlimited allowance keeps the account
+  runnable after included bars fill, while missing/zero credits and provider
+  spend-control refusal remain out. Credit availability does not bypass the
+  subscription anomaly detector; it only answers whether another run can start.
   Event timestamps are preserved: rereading an old event never refreshes it.
   `rev usage [--poll]`, `rev status` and the view
   header read both. Every failure is soft — keep the last numbers, mark

@@ -19,7 +19,7 @@
 // are. `headroomRate` in usage.ts already holds this line and nothing new may
 // cross it.
 import { BillingMode, RunChoice } from './types.js';
-import { UsageSnapshot, USAGE_MAX_AGE_MS } from './usage.js';
+import { hasSpendableCredits, UsageSnapshot, USAGE_MAX_AGE_MS } from './usage.js';
 
 export type { BillingMode };
 
@@ -126,7 +126,7 @@ export function capacityDecide(c: {
   const out: ChoiceCapacity[] = [];
   for (const cc of c.choices) {
     if (snapshotStale(cc.snapshot, now)) stale.push(cc);
-    else if (outBars(cc.snapshot!, pct).length) out.push(cc);
+    else if (outBars(cc.snapshot!, pct).length && !hasSpendableCredits(cc.snapshot)) out.push(cc);
     else available.push(cc);
   }
 

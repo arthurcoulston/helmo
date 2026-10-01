@@ -44,6 +44,13 @@ export interface UsageSnapshot {
   stale: boolean;         // the read failed; these numbers are the last good ones
   error?: string;         // why, in one line, never carrying a response body
   limits: UsageLimit[];
+  credit_capacity?: {
+    has_credits: boolean;
+    unlimited: boolean;
+    balance: string | null;
+    spend_control_reached: boolean;
+    ordinary_usage_allowed: boolean | null;
+  };
 }
 
 export function usagePath(): string {
@@ -179,6 +186,7 @@ export function worstSeverity(s: UsageSnapshot | null): string {
  *  cap, back at 18:00 on Thursday". */
 export function exhaustedLimit(s: UsageSnapshot | null, atPercent = 95): UsageLimit | null {
   if (!s || s.stale) return null; // stale numbers must never justify a long wait
+  if (hasSpendableCredits(s)) return null; // exhausted included allowance can roll onto available credits
   const hit = s.limits.filter((l) => l.percent >= atPercent || l.severity === 'critical');
   if (!hit.length) return null;
   return hit.reduce((worst, l) => (l.percent > worst.percent ? l : worst));
@@ -242,6 +250,36 @@ interface CodexRateLimits {
   secondary?: CodexRateLimitWindow | null;
   plan_type?: string | null;
   rate_limit_reached_type?: string | null;
+  credits?: Record<string, unknown> | null;
+  spend_control_reached?: boolean | null;
+  spendControlReached?: boolean | null;
+  ordinary_usage_allowed?: boolean | null;
+  ordinaryUsageAllowed?: boolean | null;
+}
+
+function booleanField(o: Record<string, unknown>, snake: string, camel: string): boolean | null {
+  const value = o[snake] ?? o[camel];
+  return typeof value === 'boolean' ? value : null;
+}
+
+function codexCreditCapacity(rl: CodexRateLimits): UsageSnapshot['credit_capacity'] {
+  const credits = rl.credits && typeof rl.credits === 'object' ? rl.credits : {};
+  const balance = credits['balance'];
+  return {
+    has_credits: booleanField(credits, 'has_credits', 'hasCredits') === true,
+    unlimited: credits['unlimited'] === true,
+    balance: typeof balance === 'string' && /^\d+(?:\.\d+)?$/.test(balance) ? balance : null,
+    spend_control_reached: booleanField(rl as Record<string, unknown>, 'spend_control_reached', 'spendControlReached') === true,
+    ordinary_usage_allowed: booleanField(rl as Record<string, unknown>, 'ordinary_usage_allowed', 'ordinaryUsageAllowed'),
+  };
+}
+
+/** Fresh parsed Codex credit capacity. A positive balance is allowance, not
+ * dollars; missing or malformed balance never becomes invented capacity. */
+export function hasSpendableCredits(s: UsageSnapshot | null): boolean {
+  if (!s || s.stale || !s.credit_capacity || s.credit_capacity.spend_control_reached) return false;
+  if (s.credit_capacity.unlimited) return true;
+  return s.credit_capacity.has_credits && s.credit_capacity.balance !== null && Number(s.credit_capacity.balance) > 0;
 }
 
 function codexWindowLabel(minutes: number | undefined): string {
@@ -273,7 +311,7 @@ export function parseCodexRateLimits(raw: unknown, now = new Date().toISOString(
     const worst = limits.reduce((a, l) => (l.percent > a.percent ? l : a));
     worst.severity = 'critical';
   }
-  return { fetched_at: now, stale: false, limits };
+  return { fetched_at: now, stale: false, limits, credit_capacity: codexCreditCapacity(rl) };
 }
 
 export function readCodexUsage(): UsageSnapshot | null {

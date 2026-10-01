@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { readLaunch, recordLaunchAdmission, recordLaunchDispatch, recordLaunchIntent, type LaunchReceipt } from '../src/launch-journal.js';
+import { readLaunch, recordLaunchAdmission, recordLaunchDispatch, recordLaunchIntent, settleLaunch, unsettledLaunches, type LaunchReceipt } from '../src/launch-journal.js';
 
 const receipt: LaunchReceipt = {
   id: 'admission:attempt-1:launch:7',
@@ -44,5 +44,13 @@ describe('launch journal', () => {
     // A restarted caller sees the marker written before the first model spawn.
     expect(recordLaunchDispatch('builder', receipt.launch_id, '2026-10-01T00:00:03.000Z')).toBe(false);
     expect(readLaunch('builder', receipt.launch_id)).toMatchObject({ phase: 'dispatching', dispatching_at: '2026-10-01T00:00:02.000Z' });
+  });
+
+  it('exposes only unsettled recovered launches and durably settles them', () => {
+    recordLaunchAdmission('builder', receipt);
+    expect(unsettledLaunches('builder')).toHaveLength(1);
+    settleLaunch('builder', receipt.launch_id, 'quarantined', '2026-10-01T00:00:04.000Z');
+    expect(unsettledLaunches('builder')).toEqual([]);
+    expect(readLaunch('builder', receipt.launch_id)).toMatchObject({ phase: 'quarantined', quarantined_at: '2026-10-01T00:00:04.000Z' });
   });
 });

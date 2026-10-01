@@ -128,6 +128,12 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   work instead fails closed until an exact immutable admission is returned.
   A corrupt or temporarily unavailable gate follows
   the same affected-work-only rule and is asked again next pass.
+  Workflow admissions are durably revalidated immediately before dispatch and
+  again after the model returns. A restart quarantines any admitted or
+  dispatching journal entry it recovers: that boundary is ambiguous, so only
+  the affected attempt is withheld while ordinary work and sibling branches
+  continue. Failed quarantine remains unsettled for the next restart rather
+  than being mistaken for safe output.
   That stderr is captured rather than forwarded (`run`'s `quiet`) —
   `execFileSync` does both by default, which would put Helmo's whole usage text
   in the loop log once per pass.

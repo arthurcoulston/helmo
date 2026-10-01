@@ -227,6 +227,14 @@ export function launchReceipt(g: GlobalConfig, admissionId: string, launchId: st
   return run(g, ['launch-receipt', '--admission-id', admissionId, '--launch-id', launchId], revActor(), true) as LaunchReceipt;
 }
 
+export function launchRevalidate(g: GlobalConfig, admissionId: string, launchId: string): void {
+  run(g, ['launch-revalidate', '--admission-id', admissionId, '--launch-id', launchId], revActor(), true);
+}
+
+export function launchQuarantine(g: GlobalConfig, admissionId: string, launchId: string, reason: string): void {
+  run(g, ['launch-quarantine', '--admission-id', admissionId, '--launch-id', launchId, '--reason', reason], revActor(), true);
+}
+
 /** A ticket's current status. A read, so no actor is needed. */
 export function ticketStatus(g: GlobalConfig, ticketId: string): string {
   return (run(g, ['get', ticketId]) as { status: string }).status;

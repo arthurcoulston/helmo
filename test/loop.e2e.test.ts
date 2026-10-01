@@ -71,6 +71,9 @@ ${!denied && classifiedAttempt ? `if (args[0] === 'launch-receipt') {
   }));
   process.exit(0);
 }` : ''}
+${!denied && classifiedAttempt ? `if (args[0] === 'launch-revalidate') {
+  process.stdout.write(JSON.stringify({ valid: true })); process.exit(0);
+}` : ''}
 ${classifiedAttempt ? `if (args[0] === 'list' && args.includes('--ready')) {
   const result = spawnSync(process.execPath, [${JSON.stringify(HELM_CLI)}, ...args], { env: process.env, encoding: 'utf8' });
   if (result.status !== 0) { process.stderr.write(result.stderr); process.exit(result.status ?? 1); }
@@ -230,7 +233,7 @@ mock_cmd = "echo launched >> $REV_HOME/sessions"
     const launches = join(e.home, 'state', 'admitted-loop', 'launches');
     const journal = JSON.parse(readFileSync(join(launches, readdirSync(launches).find((name) => name.endsWith('.json'))!), 'utf8'));
     expect(journal).toMatchObject({
-      phase: 'dispatching', ticket_id: id, workflow_attempt_id: 'attempt-1', admission_id: 'launch-admission-1',
+      phase: 'complete', ticket_id: id, workflow_attempt_id: 'attempt-1', admission_id: 'launch-admission-1',
       definition_revision: 'v1', requirement_refs: [{ requirement_id: 'technical', manifest_id: 'candidate', decision_id: 'pass' }],
     });
   });

@@ -4,7 +4,7 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { stateDir } from './config.js';
-import { LaunchAdmission, WakeCheck, WorkstreamInfo, actorActivity, actorSelfSpend, actorTickets, escalateBlocked, escalateSilentDeclines, launchAdmit, launchId, launchReceipt, openEscalation, readyTicketIds, recordSpend, scopeLabel, seatHolds, seatId, seatStreams, wakeCheck, workstreamInfo } from './helm.js';
+import { LaunchAdmission, WakeCheck, WorkstreamInfo, actorActivity, actorSelfSpend, actorTickets, escalateBlocked, escalateSilentDeclines, launchAdmit, launchId, launchQuarantine, launchReceipt, launchRevalidate, openEscalation, readyTicketIds, recordSpend, scopeLabel, seatHolds, seatId, seatStreams, wakeCheck, workstreamInfo } from './helm.js';
 import { burnWindow, markBurnFloor, recentCosts } from './burn.js';
 import { exhaustedLimit, pollUsage, readCodexUsage, readUsage, refreshCodexUsage, refreshFor, usageForModel } from './usage.js';
 import { anomalyDecide, capacityDecide, planPointsConsumed } from './capacity.js';
@@ -15,7 +15,7 @@ import { logEvent, occupiedPid, paceAutoRelease, pidAlive, runningStamp, sClear,
 import { ancestryBroken, ancestryStamp } from './ancestry.js';
 import { runSession } from './shim.js';
 import { GlobalConfig, LoopConfig, RunChoice } from './types.js';
-import { recordLaunchAdmission, recordLaunchDispatch, recordLaunchIntent } from './launch-journal.js';
+import { recordLaunchAdmission, recordLaunchDispatch, recordLaunchIntent, settleLaunch, unsettledLaunches } from './launch-journal.js';
 
 const sleep = (s: number) => new Promise((r) => setTimeout(r, s * 1000));
 
@@ -107,6 +107,20 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
   console.log(`rev: loop '${l.name}' | ${scopeLabel(l)} | ${cycle} | cwd ${l.cwd}`);
   console.log(`rev: state ${dir} — stop it with: rev stop ${l.name}`);
   logEvent(l.name, 'loop-start', `pid=${process.pid} count=${opts.count ?? 0}`);
+
+  // A prior process that died after admission left an ambiguous boundary.
+  // Quarantine only that workflow attempt; ordinary work and sibling branches
+  // remain runnable. Failed quarantine stays journaled for the next restart.
+  for (const recovered of unsettledLaunches(l.name)) {
+    if (!recovered.admission_id) continue;
+    try {
+      launchQuarantine(g, recovered.admission_id, recovered.launch_id, `Rev recovered an unsettled ${recovered.phase} launch after process restart.`);
+      settleLaunch(l.name, recovered.launch_id, 'quarantined');
+      logEvent(l.name, 'launch-quarantined', `${recovered.launch_id} recovered ${recovered.phase}`);
+    } catch (e) {
+      logEvent(l.name, 'launch-quarantine-failed', `${recovered.launch_id} ${String(e).split('\n')[0]!.slice(0, 160)}`);
+    }
+  }
 
   let i = 0;
   let durWindow: number[] = [];
@@ -509,6 +523,22 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     const usageBefore = (run.billing ?? 'metered') === 'subscription'
       ? usageForModel(providerUsage()[run.runtime], model)
       : null;
+    if (journaledLaunchId && admission.admissionId) {
+      try {
+        launchRevalidate(g, admission.admissionId, journaledLaunchId);
+      } catch (e) {
+        try {
+          launchQuarantine(g, admission.admissionId, journaledLaunchId, `Authority failed revalidation before dispatch: ${String(e).split('\n')[0]!.slice(0, 120)}`);
+          settleLaunch(l.name, journaledLaunchId, 'quarantined');
+        } catch { /* retain the unsettled journal for restart recovery */ }
+        logEvent(l.name, 'launch-denied', `${journaledLaunchId} failed pre-dispatch revalidation`);
+        sSet(l.name, 'IDLE', `${before.max_seq}\nworkflow launch ${journaledLaunchId} failed revalidation\n`);
+        sSet(l.name, 'IDLE_AT', String(Date.now()));
+        if (countReached()) return;
+        await sleep(g.poll_seconds);
+        continue;
+      }
+    }
     if (journaledLaunchId && !recordLaunchDispatch(l.name, journaledLaunchId)) {
       logEvent(l.name, 'launch-replay', `${journaledLaunchId} already reached dispatch`);
       console.error(`rev: suppressed replay of launch '${journaledLaunchId}' before model dispatch.`);
@@ -519,6 +549,26 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       continue;
     }
     const res = runSession(g, l, prompt, model, run);
+    let launchTrusted = true;
+
+    if (journaledLaunchId && admission.admissionId) {
+      try {
+        launchRevalidate(g, admission.admissionId, journaledLaunchId);
+        if (res.cls === 'ok') settleLaunch(l.name, journaledLaunchId, 'complete');
+        else {
+          launchQuarantine(g, admission.admissionId, journaledLaunchId, `Model session ended ${res.cls} before a trusted advance boundary.`);
+          settleLaunch(l.name, journaledLaunchId, 'quarantined');
+          logEvent(l.name, 'launch-quarantined', `${journaledLaunchId} session ${res.cls}`);
+        }
+      } catch (e) {
+        launchTrusted = false;
+        try {
+          launchQuarantine(g, admission.admissionId, journaledLaunchId, `Authority failed revalidation after model output: ${String(e).split('\n')[0]!.slice(0, 120)}`);
+          settleLaunch(l.name, journaledLaunchId, 'quarantined');
+        } catch { /* recovery retries this exact affected launch */ }
+        logEvent(l.name, 'launch-quarantined', `${journaledLaunchId} post-session revalidation failed`);
+      }
+    }
 
     const durSec = Math.round((Date.now() - started) / 1000);
     ({ window: durWindow, mean: tAvg } = rollingMean(durWindow, durSec));
@@ -528,7 +578,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     // Production means work advanced, not bytes written (H-412): a note-only
     // update does not count, so an agent that reports "nothing to do" idles
     // instead of re-certifying itself busy.
-    const produced = res.cls === 'ok' ? actorActivity(g, l, before.max_seq) > 0 : false;
+    const produced = res.cls === 'ok' && launchTrusted ? actorActivity(g, l, before.max_seq) > 0 : false;
     const failStreak = res.cls === 'failure' ? streak(l.name, 'fail', true) : 0;
     const limitStreak = res.cls === 'transient' ? streak(l.name, 'limit', true) : 0;
     let action = ladderDecide(res.cls, {

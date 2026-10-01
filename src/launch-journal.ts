@@ -1,4 +1,4 @@
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 import { stateDir } from './config.js';
@@ -14,7 +14,7 @@ export interface LaunchReceipt {
 
 export interface LaunchJournalEntry {
   format: 1;
-  phase: 'intent' | 'admitted' | 'dispatching';
+  phase: 'intent' | 'admitted' | 'dispatching' | 'complete' | 'quarantined';
   launch_id: string;
   intent_at: string;
   ticket_id?: string;
@@ -24,6 +24,8 @@ export interface LaunchJournalEntry {
   requirement_refs?: { requirement_id: string; manifest_id: string; decision_id: string }[];
   admitted_at?: string;
   dispatching_at?: string;
+  completed_at?: string;
+  quarantined_at?: string;
 }
 
 function journalDir(loop: string): string {
@@ -56,10 +58,18 @@ export function readLaunch(loop: string, launchId: string): LaunchJournalEntry |
   const file = entryPath(loop, launchId);
   if (!existsSync(file)) return null;
   const entry = JSON.parse(readFileSync(file, 'utf8')) as LaunchJournalEntry;
-  if (entry.format !== 1 || entry.launch_id !== launchId || !['intent', 'admitted', 'dispatching'].includes(entry.phase)) {
+  if (entry.format !== 1 || entry.launch_id !== launchId || !['intent', 'admitted', 'dispatching', 'complete', 'quarantined'].includes(entry.phase)) {
     throw new Error(`Launch journal entry for ${launchId} is corrupt.`);
   }
   return entry;
+}
+
+export function unsettledLaunches(loop: string): LaunchJournalEntry[] {
+  return readdirSync(journalDir(loop)).filter((name) => name.endsWith('.json')).map((name) => {
+    const entry = JSON.parse(readFileSync(join(journalDir(loop), name), 'utf8')) as LaunchJournalEntry;
+    if (entry.format !== 1 || !entry.launch_id) throw new Error(`Launch journal entry ${name} is corrupt.`);
+    return entry;
+  }).filter((entry) => entry.phase === 'admitted' || entry.phase === 'dispatching');
 }
 
 export function recordLaunchIntent(
@@ -128,4 +138,13 @@ export function recordLaunchDispatch(loop: string, launchId: string, at = new Da
   if (prior.phase === 'dispatching') return false;
   writeDurable(entryPath(loop, launchId), { ...prior, phase: 'dispatching', dispatching_at: at });
   return true;
+}
+
+export function settleLaunch(loop: string, launchId: string, phase: 'complete' | 'quarantined', at = new Date().toISOString()): void {
+  const prior = readLaunch(loop, launchId);
+  if (!prior?.admission_id) throw new Error(`Launch ${launchId} has no durable admission.`);
+  writeDurable(entryPath(loop, launchId), {
+    ...prior, phase,
+    ...(phase === 'complete' ? { completed_at: at } : { quarantined_at: at }),
+  });
 }

@@ -81,6 +81,15 @@ export function revActor(): object {
   return { name: 'rev', kind: 'agent', model: 'rev-harness', version: '0.2.0' };
 }
 
+/** One visible Builder assignment for an owned intake-preparation attempt. */
+export function createIntakeAssignment(g: GlobalConfig, body: string): string {
+  return (run(g, [
+    'create', '--title', 'Prepare the claimed meeting intake', '--body', body,
+    '--workstream', 'goodplumb', '--type', 'build', '--priority', '0',
+    '--assignee', 'builder', '--project', 'R-8',
+  ], revActor()) as { id: string }).id;
+}
+
 /** Why a helmo-cli call failed, in the store's own words. execFileSync's
  *  message is the command line and nothing else, so a caller that logs
  *  String(e) records what it ran and never what Helm said back — which is how

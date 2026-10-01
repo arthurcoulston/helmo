@@ -326,6 +326,15 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   `shim.ts`.
   Child stdout/err goes to state/<loop>/console.log; supervisor decisions to
   state/supervisor/events.log. 'supervisor' is a reserved loop name.
+  An installation may also opt this same poll into the narrow Good Plumb
+  intake-preparation adapter with `intake_preparation_origin` and
+  `intake_preparation_checkout`. `intake-preparation.ts` signs outbound
+  claim/heartbeat/failure/result requests with the macOS Keychain service
+  `plumb-intake-executor-secret`, validates the occurrence identity and exact
+  signup hash before writing, and creates one identifiers-only Builder ticket.
+  Attempt state contains no signup text and lives under state/supervisor; a
+  stale result is discarded on the Worker's 409. There is no listener or
+  second scheduler, and an installation declaring neither key is unchanged.
 - A human answer reopens a Helmo ticket with `resolution: resume` regardless
   of whether its operational choice was resume, hold, or investigate. The
   supervisor clears `BLOCKED` only when `last_answer.chosen_option` is the

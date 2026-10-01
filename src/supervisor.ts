@@ -21,11 +21,12 @@ import { rotateOpenFd } from './logretention.js';
 import { logEvent, occupiedPid, pidAlive, runningStamp, sClear, sGet, sHas, sSet, streakReset } from './sentinels.js';
 import { endSessionGroup, sessionGroupsOf } from './shim.js';
 import { REDEPLOY_EXIT, RedeployRequest, armRedeployWatch, readRedeploy, reportRedeployLanded } from './redeploy.js';
-import { agentFalseAlarmDisposition, answeredResumeEscalation, completeAnsweredResume, failAnsweredResume, returnRelapseToHuman, cliError } from './helm.js';
+import { agentFalseAlarmDisposition, answeredResumeEscalation, completeAnsweredResume, createIntakeAssignment, failAnsweredResume, returnRelapseToHuman, cliError } from './helm.js';
 import { GlobalConfig, LoopConfig } from './types.js';
 import { completeActivation, deploymentFile } from './deployment.js';
 import { readSelection, selectionFile } from './release.js';
 import { target } from './install.js';
+import { intakePreparationPass } from './intake-preparation.js';
 
 const SUP = 'supervisor';
 
@@ -109,6 +110,7 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
       for (const s of slots.values()) if (s.child) return;
       clearInterval(timer);
       if (usageTimer) clearInterval(usageTimer);
+      if (intakeTimer) clearInterval(intakeTimer);
       if (redeploying) {
         // Exit unsuccessfully on purpose: that is the exit launchd and systemd
         // restart, and the supervisor that returns is the new code.
@@ -291,6 +293,26 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
     const usageTimer =
       g.usage_poll_seconds > 0 ? setInterval(() => void pollUsage(), g.usage_poll_seconds * 1000) : null;
     if (usageTimer) void pollUsage();
+
+    // The existing supervisor poll is the scheduler: no inbound listener and
+    // no second daemon. The origin and checkout opt in; the capability itself
+    // is read by the adapter from Mac Keychain on every signed pass.
+    const intake = () => {
+      if (!g.intake_preparation_origin || !g.intake_preparation_checkout) return;
+      const dir = stateDir(SUP);
+      void intakePreparationPass({
+        origin: g.intake_preparation_origin,
+        checkout: g.intake_preparation_checkout,
+        stateFile: join(dir, 'intake-preparation.json'),
+        resultFile: join(dir, 'intake-preparation-result.json'),
+        assign: (body) => createIntakeAssignment(g, body),
+      }).then((result) => {
+        if (result !== 'idle' && result !== 'heartbeat') logEvent(SUP, 'intake-preparation', `result=${result}`);
+      }).catch((error) => logEvent(SUP, 'intake-preparation-error', String(error).replace(/\s+/g, ' ').slice(0, 200)));
+    };
+    const intakeTimer = g.intake_preparation_origin && g.intake_preparation_checkout
+      ? setInterval(intake, g.poll_seconds * 1000) : null;
+    if (intakeTimer) intake();
 
     const drain = (sig: string) => {
       if (shuttingDown) return;

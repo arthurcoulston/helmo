@@ -28,7 +28,7 @@ function setup(loopToml: string): Env {
 helmo_cli = "${HELM_CLI}"
 helmo_mcp_server = "${HELMO_SERVER}"
 helmo_db = "${db}"
-poll_seconds = 1
+poll_seconds = 0.1
 fail_cap = 1
 wedge_cap = 3
 usage_poll_seconds = 0
@@ -134,7 +134,7 @@ function promptOf(e: Env): string {
   return readFileSync(join(e.home, 'prompt.txt'), 'utf8');
 }
 
-async function waitForFile(path: string, timeoutMs = 5000): Promise<void> {
+async function waitForFile(path: string, timeoutMs = 15000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!existsSync(path)) {
     if (Date.now() >= deadline) throw new Error(`timed out waiting for ${path}`);

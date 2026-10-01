@@ -10,7 +10,7 @@
     "packages/runtime"
   ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present"
+    "build": "node scripts/build.mjs",
+    "test": "node --test scripts/build.test.mjs && npm run test --workspaces --if-present"
   }
 }

@@ -3,6 +3,8 @@
 Shared installation and qualified-reference mechanics live in `packages/core`.
 Every Helmo-family surface accepts `ROADMAP_LABEL`, `HELMO_LABEL`, then
 `REV_LABEL`; multiple set keys must carry the same value or startup refuses.
+Pinned releases accept both the historical three-component layout and C1's one
+`helmo` checkout, where this product lives at `packages/roadmap`.
 
 **Stage: MVP** (recorded in the R-11/R-5 completion pass, H-916). Publication
 readiness is a separate obligation: the privacy/history, disclosure and cold

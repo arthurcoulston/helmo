@@ -24,11 +24,11 @@
 //
 // Single-install use is untouched: one installation, no flags, and the only
 // difference is a line saying which one.
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { selectedRelease as selectedCoreRelease } from '@helmo/core/release';
 import { revHome } from './config.js';
-import { RELEASE_REPOS } from './release.js';
 import { definedHome, serviceFile, serviceLabel } from './service.js';
 
 export interface Target {
@@ -83,27 +83,8 @@ export function targetLine(t: Target = target()): string {
 }
 
 function selectedRelease(product: 'rev' | 'helmo' | 'helmo-roadmap'): string | null {
-  const named = process.env['INSTALLATION_RELEASE']?.trim();
-  if (!named) return null; // Existing unpinned installations keep working until explicitly migrated.
-  const selectionFile = resolve(named);
   try {
-    const selection = JSON.parse(readFileSync(selectionFile, 'utf8')) as {
-      release?: string; directory?: string; components?: Record<string, { release?: string; commit?: string }>;
-    };
-    if (!selection.release || !selection.directory) throw new Error('selection lacks release or directory');
-    const releaseDir = resolve(dirname(selectionFile), selection.directory);
-    const manifest = JSON.parse(readFileSync(join(releaseDir, 'RELEASE.json'), 'utf8')) as { commits?: Record<string, string> };
-    for (const repo of RELEASE_REPOS) {
-      const component = selection.components?.[repo];
-      if (!component || component.release !== selection.release || component.commit !== manifest.commits?.[repo]) {
-        throw new Error(`${repo} does not match selected release ${selection.release}`);
-      }
-    }
-    const runningRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-    if (realpathSync(runningRoot) !== realpathSync(resolve(releaseDir, product))) {
-      throw new Error(`${product} is running from ${runningRoot}, not ${join(releaseDir, product)}`);
-    }
-    return selection.release;
+    return selectedCoreRelease(product, dirname(dirname(fileURLToPath(import.meta.url))));
   } catch (e) {
     throw new Error(`incoherent release set: ${product}: ${e instanceof Error ? e.message : String(e)}`);
   }

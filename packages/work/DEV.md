@@ -10,6 +10,8 @@ orchestrator meetings and the read-only view. Product intent:
 Shared installation and qualified-reference mechanics live in `packages/core`.
 Every Helmo-family surface accepts `ROADMAP_LABEL`, `HELMO_LABEL`, then
 `REV_LABEL`; multiple set keys must carry the same value or startup refuses.
+Pinned releases accept both the historical three-component layout and C1's one
+`helmo` checkout, where this product lives at `packages/work`.
 
 - `store.ts` — the heart: SQLite store (better-sqlite3), append-only event log
   with a global `seq` cursor (Rev's wake signal rides on it), ticket

@@ -10,6 +10,8 @@ releases, upgrade, rollback and removal — what `install.ts`, `release.ts`,
 `remove.ts` and the service-definition section below look like from outside.
 It is a published promise: a change to any of those modules' behaviour is a
 change to that document in the same pass.
+Release selection is shared through `packages/core`; historical three-component
+sets remain readable, while C1 locates Rev at `helmo/packages/runtime`.
 Renamed from Capstan 2026-08-05 (H-53); Helm event history before then carries
 the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
 

@@ -158,7 +158,7 @@ describe('helmo-cli, across two installations with the same ids', () => {
   function cli(target: ReturnType<typeof makeInstall>, ...argv: string[]) {
     const r = spawnSync(process.execPath, ['--import', 'tsx', 'src/cli.ts', ...argv], {
       cwd: new URL('..', import.meta.url).pathname,
-      env: { ...process.env, HELMO_HOME: target.home, HELMO_LABEL: target.install.label, HELMO_ACTOR: JSON.stringify(seat), HELMO_DB: '' },
+      env: { ...process.env, ROADMAP_LABEL: '', HELMO_HOME: target.home, HELMO_LABEL: target.install.label, REV_LABEL: '', HELMO_ACTOR: JSON.stringify(seat), HELMO_DB: '' },
       encoding: 'utf8',
     });
     return { status: r.status, out: r.stdout, err: r.stderr };

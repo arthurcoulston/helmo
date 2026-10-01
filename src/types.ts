@@ -249,7 +249,7 @@ export interface Dep {
   type: DepType;
 }
 
-export type EventType = 'created' | 'updated' | 'returned' | 'answered' | 'linked' | 'unlinked' | 'spend' | 'workstream_set' | 'workstream_renamed' | 'hygiene_disposed' | 'notice_set' | 'product_completed' | 'acceptance_verdict' | 'acted';
+export type EventType = 'created' | 'updated' | 'returned' | 'return_withdrawn' | 'answered' | 'linked' | 'unlinked' | 'spend' | 'workstream_set' | 'workstream_renamed' | 'hygiene_disposed' | 'notice_set' | 'product_completed' | 'acceptance_verdict' | 'acted';
 
 /** The standing notice: a one-line current priority with its provenance,
  *  riding along on every ticket-queue response the way workstream steering

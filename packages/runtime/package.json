@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "test": "vitest run --maxWorkers=2 --reporter=verbose",
+    "prebuild": "node scripts/check-import-boundary.mjs",
     "build": "tsc",
     "view": "tsx src/view.ts",
     "vendor:tokens": "node scripts/vendor-estate-tokens.mjs",

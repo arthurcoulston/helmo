@@ -1234,6 +1234,24 @@ dependency: it shells out to `session-spec` to run a seat's session under a
 human's typing instead of the queue, so a change to what a loop session carries
 changes what a meeting carries too — which is the point. In a larger estate, its
 own project map owns the remaining cross-project context.
+
+**The import boundary is now enforced, because the workspace stopped enforcing
+it** (R-47 C1, H-2639). In two repositories you could not import a repository
+you had not installed. In the unified candidate `packages/work` is a package
+named `helmo`, so `import { Store } from 'helmo'` inside the runtime resolves
+through the workspace link and links the supervisor to the work record's source
+at build time: one store schema, one upgrade, one blast radius. `prebuild` runs
+`scripts/check-import-boundary.mjs` over the shipped surface (`src`, `bin`,
+`scripts`), exits 1 naming file, line and specifier, and `tsc` never starts;
+the root workspace build fails with it. `test` is outside that surface on
+purpose — `test/helmo.ts` opens the store directly to assert what a loop
+actually wrote, which observes the other side rather than coupling this one.
+`test/import-boundary.test.ts` asserts the same scan over the live tree, plus
+the shapes it must catch (bare name, scoped rename, relative path by either
+spelling, dynamic import, require, re-export) and the ones it must leave alone
+(a commented-out import, the word in prose, `helmo-roadmap`, `@helmo/core`).
+Watched refusing: a deliberate `import { Store } from 'helmo'` at the head of
+`src/helm.ts` failed the build for exactly that reason before being reverted.
 # Prime team control
 
 `gp-rev team stop|resume <loop|all>` is the Good Plumb leadership surface. It

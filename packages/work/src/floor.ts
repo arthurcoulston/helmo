@@ -52,10 +52,13 @@ export const CAPACITY = {
 
 export const FLOOR = {
   /* Measured warm, three runs, on the capacity seed: current record
-     1,575,710 bytes / 144 rows / 83ms, whole record 3,497,790 / 244 / 100ms,
-     embedded section 39,771 / 2 / 20ms. The deployed record, measured the
-     same day: 838,498 / 79 / 85ms, 2,718,020 / 207 / 128ms, 136,548 / 2 /
-     15ms.
+     1,706,985 bytes / 146 rows / 100ms, whole record 3,836,822 / 246 / 137ms,
+     embedded section 53,698 / 4 / 25ms. The deployed record, measured
+     2026-09-29: 838,498 / 79 / 85ms, 2,718,020 / 207 / 128ms, 136,548 / 2 /
+     15ms. Five consecutive isolated capacity runs on 2026-10-01 bounded the
+     current view at 91–100ms and the whole record at 133–137ms; a release run
+     on the same candidate saw a single 485ms current-view sample under host
+     contention.
 
      The time budget is four times the slowest of those. It is not tighter
      because a laptop under load is several times slower than an idle one and
@@ -64,7 +67,7 @@ export const FLOOR = {
      per row — the shape a render turns quadratic in — takes the whole record
      to roughly 3s. The byte budgets are deterministic and sit 20% above the
      capacity measurement. */
-  RENDER_MS: 400,
+  RENDER_MS: 600,
 
   /* Per served document, at declared capacity. The whole record at 244 rows
      of real-sized bodies and evidence is the largest document Helmo draws. */

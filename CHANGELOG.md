@@ -11,7 +11,7 @@ consolidation imported still carried that release's notes under "Unreleased";
 this is the published wording, which is two entries and one commit reference
 longer.
 
-## Unreleased — 0.6.0
+## v0.6.0 — 2026-10-02
 
 The three products become one: one repository, one version, one set of
 documents, and one module for the mechanics all three were implementing

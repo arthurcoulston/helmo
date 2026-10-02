@@ -44,6 +44,27 @@ test('every workspace package carries the product version', () => {
   }
 });
 
+// The cut is the one place the version number has to agree with prose. A
+// release's GitHub Release body is the CHANGELOG section for its tag, read out
+// of the frozen commit (crew:tools/publishing/release-notes.mjs), so a version
+// bumped without its section refuses the whole publication at send time — far
+// too late. Two headings are legitimate: the cut one the tag reads, and the
+// in-development one. Both must name the version the packages carry.
+test('the changelog opens on this version, cut or in development', () => {
+  const root = new URL('../', import.meta.url);
+  const product = JSON.parse(readFileSync(new URL('package.json', root))).version;
+  const lines = readFileSync(new URL('CHANGELOG.md', root), 'utf8').split('\n');
+  const start = lines.findIndex((l) => /^##\s/.test(l));
+  assert.notEqual(start, -1, 'CHANGELOG.md has no section headings');
+  const heading = lines[start].replace(/^##\s+/, '').trim();
+  const cut = new RegExp(`^v${product.replace(/\./g, '\\.')}(?![\\w.-])`);
+  assert.ok(cut.test(heading) || heading.startsWith(`Unreleased — ${product}`),
+    `CHANGELOG.md opens on "${heading}" — expected "v${product} — <date>" once cut, or "Unreleased — ${product}" before`);
+  let end = start + 1;
+  while (end < lines.length && !/^##\s/.test(lines[end])) end++;
+  assert.ok(lines.slice(start + 1, end).join('\n').trim(), `the "${heading}" section is empty`);
+});
+
 // One product, one of each document. Three products that each carried their own
 // LICENSE, SECURITY.md and changelog are how a consolidation drifts back apart:
 // nothing fails, the copies just stop agreeing, and the reader cannot tell which

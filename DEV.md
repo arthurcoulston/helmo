@@ -24,6 +24,18 @@ Every Helmo-family surface accepts `ROADMAP_LABEL`, `HELMO_LABEL`, then
 carrying distinct values refuse at startup rather than guessing. Adding a
 product does not add a fourth copy of any of this — it consumes `core`.
 
+`namesResolvedInstallation` is the one function behind both `--installation` and
+the `<id>@<installation>` reference qualifier, so the two cannot drift. It
+accepts a declared set of names for one installation rather than a single
+string: the resolved label, the `dev.helmo…` / `dev.roadmap…` an area's
+conventional home derives standing alone, and the home or store path.
+`VERSIONING.md` declares that set and its window. The legacy row matters
+because a supervised installation is named `dev.rev…` while the same home alone
+derives `dev.helmo…` — 45 references recorded in this estate are in the older
+spelling, and the alias is why they still resolve. `qualifiedRecordRef` only
+ever hands out the resolved label, so the set does not grow from use, and a
+qualifier outside it still refuses before any store is opened.
+
 Release selection reads both shapes: a historical three-component
 `rev`/`helmo`/`helmo-roadmap` set, so an installation can still inspect and
 roll back across the consolidation boundary, and a one-component `helmo` set,

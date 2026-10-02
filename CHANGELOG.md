@@ -30,6 +30,15 @@ moves, and neither store is migrated.
   Precedence selects the key when one is set; two accepted keys carrying
   distinct values refuse at startup rather than guessing.
 
+- **An installation answers to a declared set of names** (H-2630). One function
+  serves both `--installation` and the `<id>@<installation>` reference
+  qualifier, and it accepts the resolved label, the `dev.helmo…` /
+  `dev.roadmap…` a conventional home derives standing alone, and the home or
+  store path. `VERSIONING.md` declares the set and its two-release window.
+  45 references recorded in this estate are in the older spelling and resolve
+  again; a qualifier naming a genuinely different installation still refuses
+  before any store is opened.
+
 - **One product version with a declared compatibility surface** (H-2630).
   Every package and every shipped protocol surface reports `0.6.0`, and
   `VERSIONING.md` names what a major, minor and patch change mean: MCP tool

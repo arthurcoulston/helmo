@@ -4,6 +4,8 @@ import { appRequest } from '../../app/server.mjs';
 import { workHealth, workListening, workRequest, workSnapshot } from '../../work/dist/view.js';
 import { roadmapHealth, roadmapRequest, roadmapSnapshot } from '../../roadmap/dist/view.js';
 import { runtimeRequest, runtimeSnapshot } from '../../runtime/dist/view.js';
+import { loadRoster } from '../../runtime/dist/config.js';
+import { apiJson, JSON_HEADERS } from '../../core/dist/index.js';
 
 function at(request, prefix) {
   const url = request.url ?? '/';
@@ -18,6 +20,21 @@ function check(name, read) {
 }
 
 let origin = null;
+function teamSnapshot() {
+  const { loops } = loadRoster();
+  return { loops: Object.values(loops).map((loop) => ({ name: loop.seat ?? loop.name, state: 'configured', detail: loop.workstream, links: [{ label: 'Profile', href: `file://${loop.constitution}` }] })) };
+}
+function overviewSnapshot() {
+  const work=workSnapshot(), roadmap=roadmapSnapshot(), runtime=runtimeSnapshot();
+  return { records: [
+    { id:'work', title:'Work', state:`${work.records.length} records`, links:[{label:'Open Work',href:'/work'}] },
+    { id:'roadmap', title:'Roadmap', state:`${roadmap.projects.length} projects`, links:[{label:'Open Roadmap',href:'/roadmap'}] },
+    { id:'team', title:'Team', state:`${teamSnapshot().loops.length} configured`, links:[{label:'Open Team',href:'/team'}] },
+    { id:'runtime', title:'Runtime', state:runtime.supervisor_state, links:[{label:'Open Runtime',href:'/run'}] },
+    ...work.records,
+  ] };
+}
+const appDocuments={overview:overviewSnapshot,work:workSnapshot,roadmap:roadmapSnapshot,team:teamSnapshot,runtime:runtimeSnapshot};
 const running = await startAppServer(appConfig(), (request, response) => {
   try {
     if (request.url === '/health.json') {
@@ -30,8 +47,14 @@ const running = await startAppServer(appConfig(), (request, response) => {
     if (request.url === '/api/v1/work') return workRequest(request, response);
     if (request.url === '/api/v1/roadmap') return roadmapRequest(request, response);
     if (request.url === '/api/v1/runtime') return runtimeRequest(request, response);
+    if (request.url === '/api/v1/overview' || request.url === '/api/v1/team') {
+      const area=request.url.endsWith('/team')?'team':'overview';
+      response.writeHead(200,JSON_HEADERS);
+      response.end(apiJson(area,appDocuments[area]()));
+      return;
+    }
     const compatibilityPath = ['/work/', '/roadmap/', '/run/'].some((prefix) => request.url?.startsWith(prefix));
-    if (!compatibilityPath && request.url !== '/' && !request.url?.startsWith('/?') && appRequest(request, response, { work: workSnapshot, roadmap: roadmapSnapshot, runtime: runtimeSnapshot })) return;
+    if (!compatibilityPath && appRequest(request,response,appDocuments)) return;
     if (at(request, '/roadmap')) return roadmapRequest(request, response);
     if (at(request, '/run')) return runtimeRequest(request, response);
     if (at(request, '/work')) return workRequest(request, response);

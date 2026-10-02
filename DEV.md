@@ -38,6 +38,10 @@ handlers retain the answer routes and supply those JSON documents. The
 aggregate machine reading remains at
 `/health.json`. The product view entries remain executable compatibility
 surfaces; importing them never binds their old ports.
+Overview reads each product snapshot independently and summarizes them without
+joining their stores. Team projects only configured roster metadata and a link
+to each operator-owned constitution; profile contents, memory, doctrine,
+credentials, and crew history never enter the app document.
 
 `app-server.mjs` is the listener kernel under it: one app listener plus the
 installation's configured retired set, started as one lifecycle and closed as

@@ -2,14 +2,25 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { appPage, appRequest } from '../server.mjs';
 
-test('five-area shell marks each migrated direct route and its API', () => {
-  for (const [route, area, api] of [['/work','work','/api/v1/work'], ['/roadmap','roadmap','/api/v1/roadmap'], ['/run','runtime','/api/v1/runtime']]) {
+test('five-area shell marks every direct route and its API', () => {
+  for (const [route, area] of [['/','overview'], ['/work','work'], ['/roadmap','roadmap'], ['/team','team'], ['/run','runtime']]) {
     const html = appPage(route);
     assert.match(html, new RegExp(`>${area[0].toUpperCase()+area.slice(1)}</a>`));
-    assert.match(html, new RegExp(api));
-    assert.match(html, new RegExp(`<title>Helmo · ${area}</title>`));
+    assert.match(html, new RegExp(`/api/v1/${area}`));
+    assert.match(html, new RegExp(`<title>${area === 'overview' ? 'Helmo' : `Helmo · ${area}`}</title>`));
   }
   for (const label of ['Overview', 'Work', 'Roadmap', 'Team', 'Runtime']) assert.match(appPage('/work'), new RegExp(`>${label}</a>`));
+});
+
+test('team renders configured metadata and operator-owned links without their contents', () => {
+  const html=appPage('/team',{data:{loops:[{name:'builder',state:'configured',detail:'product',links:[{label:'Profile',href:'file:///operator/PROFILE.md'}]}]}});
+  assert.match(html,/>builder</); assert.match(html,/file:\/\/\/operator\/PROFILE\.md/); assert.doesNotMatch(html,/memory|doctrine|credential/i);
+});
+
+test('overview and empty states are explicit', () => {
+  assert.match(appPage('/',{data:{records:[{id:'work',title:'Work',state:'2 records'}]}}),/2 records/);
+  assert.match(appPage('/team',{data:{loops:[]}}),/No team records are configured/);
+  assert.match(appPage('/team'),/Could not read team/);
 });
 
 test('fixture-backed app request renders a real record', () => {

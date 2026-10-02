@@ -11,7 +11,7 @@ consolidation imported still carried that release's notes under "Unreleased";
 this is the published wording, which is two entries and one commit reference
 longer.
 
-## Unreleased — 0.7.0
+## v0.7.0 — 2026-10-02
 
 - **One command: `helmo`.** Every area is reachable through one front command —
   `helmo work`, `helmo roadmap`, `helmo run`, `helmo team`, `helmo release`,

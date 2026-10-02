@@ -72,7 +72,7 @@ test('every workspace package carries the product version', () => {
   const product = JSON.parse(readFileSync(new URL('package.json', root))).version;
   // Classified, not derived: a new package must be put on one side of the
   // core-dependency rule below, and a derived list would silently skip it.
-  assert.deepEqual([...PACKAGES].sort(), ['cli', 'core', 'roadmap', 'runtime', 'work']);
+  assert.deepEqual([...PACKAGES].sort(), ['app', 'cli', 'core', 'roadmap', 'runtime', 'work']);
   for (const name of PACKAGES) {
     const pkg = JSON.parse(readFileSync(new URL(`packages/${name}/package.json`, root)));
     assert.equal(pkg.version, product, `${name} version`);

@@ -5,7 +5,7 @@
 // zero dependencies, no build step beyond tsc.
 import { mkdirSync } from 'node:fs';
 import { createServer, IncomingMessage, ServerResponse } from 'node:http';
-import { ESTATE_TOKENS } from '@helmo/core';
+import { apiJson, ESTATE_TOKENS, JSON_HEADERS } from '@helmo/core';
 import { join } from 'node:path';
 import { AVATAR_MARKS, ESTATE_AVATARS } from './estate-avatars.generated.js';
 import { installationLine, requestedInstallation, requireInstallation } from './install.js';
@@ -586,8 +586,17 @@ export function roadmapHealth() {
   return { installation: store.installationIdentity(), store: dbPath };
 }
 
-export function roadmapRequest(_req: IncomingMessage, res: ServerResponse) {
+export function roadmapSnapshot() {
+  return { installation: store.installationIdentity(), projects: store.dumpState()['projects'] as Project[] };
+}
+
+export function roadmapRequest(req: IncomingMessage, res: ServerResponse) {
   try {
+    if (req.url === '/api/v1/roadmap') {
+      res.writeHead(200, JSON_HEADERS);
+      res.end(apiJson('roadmap', roadmapSnapshot()));
+      return;
+    }
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     res.end(page());
   } catch (e) {

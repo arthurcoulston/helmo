@@ -4,6 +4,7 @@
   "version": "0.7.0",
   "description": "Helmo workspace: work record, roadmap, runtime, and their shared core.",
   "workspaces": [
+    "packages/app",
     "packages/core",
     "packages/cli",
     "packages/roadmap",

@@ -6,6 +6,7 @@ internals, and a dev session reads this one first and then that one.
 
 | Area | Package | Name on npm/bin | Its context |
 | --- | --- | --- | --- |
+| App shell | `packages/app` | served by `helmo serve` | this file |
 | Work | `packages/work` | `helmo` | [DEV.md](packages/work/DEV.md) |
 | Roadmap | `packages/roadmap` | `helmo-roadmap` | [DEV.md](packages/roadmap/DEV.md) |
 | Runtime | `packages/runtime` | `rev` | [DEV.md](packages/runtime/DEV.md) |
@@ -30,8 +31,11 @@ remain unchanged compatibility surfaces; their schemas are compared byte for
 byte with the unified listing in the fixture test.
 
 `helmo serve` owns the one application listener. It imports each product's
-request handler into that process: Work at `/` and `/work`, Roadmap at
-`/roadmap`, Runtime at `/run`, and the aggregate machine reading at
+request handler into that process. The shared shell owns `/`, `/work`,
+`/roadmap`, `/team`, and `/run`; its migrated Work, Roadmap, and Runtime pages
+read `/api/v1/work`, `/api/v1/roadmap`, and `/api/v1/runtime`. The product
+handlers retain the answer routes and supply those JSON documents. The
+aggregate machine reading remains at
 `/health.json`. The product view entries remain executable compatibility
 surfaces; importing them never binds their old ports.
 

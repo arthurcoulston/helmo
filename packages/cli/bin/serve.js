@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { appConfig, startAppServer } from '../app-server.mjs';
-import { workHealth, workListening, workRequest } from '../../work/dist/view.js';
-import { roadmapHealth, roadmapRequest } from '../../roadmap/dist/view.js';
+import { appRequest } from '../../app/server.mjs';
+import { workHealth, workListening, workRequest, workSnapshot } from '../../work/dist/view.js';
+import { roadmapHealth, roadmapRequest, roadmapSnapshot } from '../../roadmap/dist/view.js';
 import { runtimeRequest, runtimeSnapshot } from '../../runtime/dist/view.js';
 
 function at(request, prefix) {
@@ -25,6 +26,11 @@ const running = await startAppServer(appConfig(), (request, response) => {
     response.end(JSON.stringify({ ok, checks }));
     return;
   }
+  if (request.url === '/api/v1/work') return workRequest(request, response);
+  if (request.url === '/api/v1/roadmap') return roadmapRequest(request, response);
+  if (request.url === '/api/v1/runtime') return runtimeRequest(request, response);
+  const compatibilityPath = ['/work/', '/roadmap/', '/run/'].some((prefix) => request.url?.startsWith(prefix));
+  if (!compatibilityPath && request.url !== '/' && !request.url?.startsWith('/?') && appRequest(request, response, { work: workSnapshot, roadmap: roadmapSnapshot, runtime: runtimeSnapshot })) return;
   if (at(request, '/roadmap')) return roadmapRequest(request, response);
   if (at(request, '/run')) return runtimeRequest(request, response);
   if (at(request, '/work')) return workRequest(request, response);

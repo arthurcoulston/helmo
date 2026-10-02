@@ -9,7 +9,7 @@
 import { randomBytes } from 'node:crypto';
 import { createServer, IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
-import { ESTATE_TOKENS } from '@helmo/core';
+import { apiJson, ESTATE_TOKENS, JSON_HEADERS } from '@helmo/core';
 import { actedRequest } from './acted.js';
 import { ANSWER_HEADER, answerRequest } from './answer.js';
 import { ESTATE_AVATARS } from './estate-avatars.generated.js';
@@ -1193,7 +1193,16 @@ export function workHealth() {
   return { installation: store.installationIdentity(), store: dbPath };
 }
 
+export function workSnapshot() {
+  return { installation: store.installationIdentity(), records: store.listTickets({ limit: -1 }) };
+}
+
 export function workRequest(req: IncomingMessage, res: ServerResponse) {
+  if (req.url === '/api/v1/work') {
+    res.writeHead(200, JSON_HEADERS);
+    res.end(apiJson('work', workSnapshot()));
+    return;
+  }
   // Two write routes now, and they stay two. A decision is answered; an
   // action is reported done. Collapsing them into one endpoint that branches
   // on its payload would put the free-text capability Ward removed (H-1053)

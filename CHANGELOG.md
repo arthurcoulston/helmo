@@ -11,7 +11,7 @@ consolidation imported still carried that release's notes under "Unreleased";
 this is the published wording, which is two entries and one commit reference
 longer.
 
-## Unreleased
+## v0.6.1 — 2026-10-02
 
 - The stable Rev service launcher now reads the selected release manifest and
   starts Runtime from either the consolidated one-component layout or the

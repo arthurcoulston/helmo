@@ -244,7 +244,7 @@ the limit — it is not a failed install.
 
 Deliver this, adapted to what you actually set up:
 
-> Helmo is installed and connected — version 0.6.0, one checkout at
+> Helmo is installed and connected — version 0.6.1, one checkout at
 > `<helmo-path>`.
 >
 > - **Work** (read-only): http://localhost:4400 — the "Awaiting you" section is

@@ -14,7 +14,7 @@ const thresholds = {
   staleWaitSeconds: 900,
 };
 
-const anomaly = { rateMultiple: 6, minUsd: 1.0, absPercent: 10 };
+const anomaly = { rateMultiple: 6, minUsd: 5.0, absPercent: 10 };
 
 const claude: RunChoice = { provider: 'claude', runtime: 'claude', model: 'claude-opus-5' };
 const codex: RunChoice = { provider: 'codex', runtime: 'codex', model: 'gpt-5.6-terra' };
@@ -112,6 +112,24 @@ describe('capacityDecide — genuine exhaustion (matrix 4)', () => {
       choices: [{ choice: codex, snapshot: credited, refreshed: false }],
       isLoopRun: true, staleIterations: 0, thresholds, nowMs: NOW,
     })).toEqual({ act: 'continue', on: codex });
+  });
+
+  it('keeps runaway detection independent when credits make capacity runnable', () => {
+    const credited = {
+      ...snap([100], [48]),
+      credit_capacity: {
+        has_credits: true, unlimited: false, balance: '123.45',
+        spend_control_reached: false, ordinary_usage_allowed: false,
+      },
+    };
+    expect(capacityDecide({
+      choices: [{ choice: codex, snapshot: credited, refreshed: false }],
+      isLoopRun: true, staleIterations: 0, thresholds, nowMs: NOW,
+    }).act).toBe('continue');
+    expect(anomalyDecide({
+      observedUsd: 5.17, meanUsd: 0.6, windowSize: 5,
+      planPointsUsed: 1, thresholds: anomaly,
+    }).act).toBe('trip');
   });
   it('waits out a reset inside the horizon', () => {
     const d = capacityDecide({
@@ -255,6 +273,14 @@ describe('anomalyDecide — a runaway is a slope, not a total (matrix 3)', () =>
 
   it('does not trip on a productive straight line', () => {
     expect(anomalyDecide({ observedUsd: 6.49, meanUsd: 5.8, windowSize: 5, planPointsUsed: 2, thresholds: anomaly }).act).toBe('ok');
+  });
+
+  it.each([
+    ['builder H-273', 1.71, 0.19],
+    ['cyber H-303', 2.30, 0.19],
+    ['cyber H-306', 2.55, 0.33],
+  ])('does not mistake the %s cheap-pass to build transition for a runaway', (_incident, observedUsd, meanUsd) => {
+    expect(anomalyDecide({ observedUsd, meanUsd, windowSize: 5, planPointsUsed: 1, thresholds: anomaly }).act).toBe('ok');
   });
 
   it('does not trip on a cache-heavy iteration, whatever its token count', () => {

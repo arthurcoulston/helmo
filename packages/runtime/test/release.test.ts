@@ -491,7 +491,9 @@ describe('describing a selection (H-2493)', () => {
 
 describe('the release commands (H-2493)', () => {
   function rev(home: string, args: string[], env: Record<string, string> = {}) {
-    writeFileSync(join(home, 'roster.toml'), '[global]\nhelmo_cli = "/tmp/helmo-cli.js"\nhelmo_mcp_server = "/tmp/helmo-server.js"\n');
+    // usage_poll_seconds = 0: `run` would otherwise read the operator's real
+    // keychain credential and hold the process on a live usage call (H-740).
+    writeFileSync(join(home, 'roster.toml'), '[global]\nhelmo_cli = "/tmp/helmo-cli.js"\nhelmo_mcp_server = "/tmp/helmo-server.js"\nusage_poll_seconds = 0\n');
     const inherited = { ...process.env };
     // A loop's absolute selection overrides REV_HOME, even in an unpinned test.
     for (const key of ['INSTALLATION_RELEASE', 'HELMO_INSTALLATION', 'REV_LABEL', 'HELMO_HOME', 'HELMO_DB', 'HELMO_LABEL', 'ROADMAP_HOME', 'ROADMAP_DB', 'ROADMAP_LABEL']) {

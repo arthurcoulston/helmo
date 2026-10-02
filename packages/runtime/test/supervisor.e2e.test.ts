@@ -41,6 +41,7 @@ poll_seconds = 1
 respawn_backoff_seconds = 1
 respawn_backoff_cap_seconds = 4
 min_uptime_seconds = ${minUptimeSeconds}
+usage_poll_seconds = 0
 ${extraGlobal}
 ${loopsToml}`,
   );

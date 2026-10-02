@@ -414,6 +414,39 @@ describe('atomic workflow admission (H-431)', () => {
     expect(s.getTicket(ticket.id).status).toBe('open');
   });
 
+  describe('a workflow-bound claim across launches (H-687)', () => {
+    const worker: Actor = { ...builder, session: 'rev:builder-a' };
+    function heldWorkflowClaim() {
+      const s = admissionStore();
+      const ticket = create(s, { workflow_attempt_id: 'attempt-1' }); triage(s, ticket.id);
+      s.recordWorkflowDecision({ id: 'pass-1', requirement_id: 'technical', manifest_id: 'manifest-a', verdict: 'pass', source: 'review:event-1' });
+      const first = s.launchClaim(worker, 'helmo-dev', builder.name, 'launch-1');
+      expect(first).toMatchObject({ claimed: true, ticket_id: ticket.id, launch_id: 'launch-1' });
+      return { s, ticket, admissionId: first.admission_id as string };
+    }
+
+    it('names the launch its admission belongs to, so the resumed launch can revalidate it', () => {
+      const { s, ticket, admissionId } = heldWorkflowClaim();
+      const resumed = s.launchClaim(worker, 'helmo-dev', builder.name, 'launch-2');
+      expect(resumed).toMatchObject({ resumed: true, ticket_id: ticket.id, launch_id: 'launch-2', admission_id: admissionId, admission_launch_id: 'launch-1' });
+      expect(s.revalidateLaunch(admissionId, resumed.admission_launch_id as string)).toMatchObject({ valid: true });
+      expect(() => s.revalidateLaunch(admissionId, 'launch-2')).toThrow(/does not match/);
+    });
+
+    it('returns a claim whose authority is gone to the human and frees the worker', () => {
+      const { s, ticket, admissionId } = heldWorkflowClaim();
+      s.quarantineLaunch(admissionId, 'launch-1', 'authority failed revalidation after model output');
+      const next = create(s); triage(s, next.id);
+      // The worker is not wedged on the held ticket: it draws the next one.
+      expect(s.launchClaim(worker, 'helmo-dev', builder.name, 'launch-2')).toMatchObject({ claimed: true, ticket_id: next.id });
+      expect(s.getTicket(ticket.id)).toMatchObject({ status: 'open', needs_human: true, assignee: builder.name });
+      expect(s.getTicket(ticket.id).sitting).toMatch(/lost its launch authority/);
+      // Withheld from every agent queue, and the old generation is fenced.
+      expect(s.listTickets({ ready: true, workstream: 'helmo-dev', caller: builder.name }).map((t) => t.id)).not.toContain(ticket.id);
+      expect(() => s.updateTicket({ ...worker, generation: 'launch-1' }, { ticket_id: ticket.id, note: 'late' })).toThrow(/stale_generation/);
+    });
+  });
+
   it('denies missing evidence, then issues one idempotent exact launch admission', () => {
     const s = admissionStore();
     const ticket = create(s, { workflow_attempt_id: 'attempt-1' }); triage(s, ticket.id);

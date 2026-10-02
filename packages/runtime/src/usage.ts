@@ -202,12 +202,24 @@ export function exhaustedLimit(s: UsageSnapshot | null, atPercent = 95): UsageLi
 
 export const USAGE_MAX_AGE_MS = 30 * 60 * 1000;
 
-/** Fresh, unexpired bars that apply to this model. A Fable-only cap must
+/** Whether a snapshot's bars are a read recent enough to act on. `stale` says
+ *  the LATEST poll failed; a failed poll keeps the last good `fetched_at`, so
+ *  age alone says how old the numbers are. One 429 must not erase a read the
+ *  window still covers (H-740) — that darkened whole loops for 15 minutes at a
+ *  time while their bars sat at half. A stale snapshot with no bars never had
+ *  a good read: its `fetched_at` is the failure's own time, not a read's. */
+export function lastGoodReadUsable(s: UsageSnapshot | null, now = Date.now(), maxAgeMs = USAGE_MAX_AGE_MS): boolean {
+  if (!s || !Array.isArray(s.limits) || (s.stale && !s.limits.length)) return false;
+  const age = now - Date.parse(s.fetched_at);
+  return Number.isFinite(age) && age >= -60_000 && age <= maxAgeMs;
+}
+
+/** Fresh, unexpired bars that apply to this model — fresh meaning the last
+ *  good read is inside the window, whether or not a later poll failed; the
+ *  `stale` flag rides along so callers that must not wait on it still see it. A Fable-only cap must
  *  never take Sonnet/Opus (or a small probe) out of service. */
 export function usageForModel(s: UsageSnapshot | null, model: string, now = Date.now()): UsageSnapshot | null {
-  if (!s || s.stale || !Array.isArray(s.limits)) return null;
-  const age = now - Date.parse(s.fetched_at);
-  if (!Number.isFinite(age) || age < -60_000 || age > USAGE_MAX_AGE_MS) return null;
+  if (!s || !lastGoodReadUsable(s, now)) return null;
   const tokens = model.toLowerCase().split(/[^a-z0-9]+/);
   const limits = s.limits.filter((l) => {
     if (!Number.isFinite(l.percent) || l.percent < 0 || !l.resets_at || Date.parse(l.resets_at) <= now || !Number.isFinite(Date.parse(l.resets_at))) return false;
@@ -223,7 +235,8 @@ export function usageForModel(s: UsageSnapshot | null, model: string, now = Date
 /** Spendable percentage points/hour until the binding reset. Percentages
  *  are plan allowance, not comparable token counts or API dollar estimates. */
 export function headroomRate(s: UsageSnapshot | null, model: string, atPercent = 95, now = Date.now()): number | null {
-  const fresh = usageForModel(s, model, now);
+  // Ranking runs only on a confirmed read (H-892); a kept one only admits.
+  const fresh = s?.stale ? null : usageForModel(s, model, now);
   if (!fresh || !fresh.limits.some((l) => l.kind.startsWith('weekly') || l.kind === 'seven_day' || l.label.includes('weekly'))) return null;
   if (exhaustedLimit(fresh, atPercent)) return 0;
   return Math.min(...fresh.limits.map((l) =>

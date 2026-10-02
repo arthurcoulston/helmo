@@ -290,7 +290,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   Event timestamps are preserved: rereading an old event never refreshes it.
   `rev usage [--poll]`, `rev status` and the view
   header read both. Every failure is soft — keep the last numbers, mark
-  stale, back off; nothing in rev may wait on a usage bar.
+  stale, back off; nothing in rev may wait on a usage bar. A failed poll keeps
+  the last good `fetched_at`, so `lastGoodReadUsable` judges by age: the kept
+  read admits a capacity `continue` until USAGE_MAX_AGE (H-740), but never
+  justifies a wait and never ranks routing headroom.
 - `ancestry.ts` — abandoned-tree detection (H-281). Every loop and the
   supervisor stamp their ancestor chain at start and self-terminate (loop:
   exit between iterations; supervisor: drain) when any link dies or is

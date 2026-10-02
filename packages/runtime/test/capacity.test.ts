@@ -251,8 +251,41 @@ describe('capacityDecide — stale or missing telemetry (matrix 5)', () => {
   it('treats a snapshot older than the freshness window as stale', () => {
     expect(snapshotStale(snap([10], [], 31 * 60_000), NOW)).toBe(true);
     expect(snapshotStale(snap([10], [], 60_000), NOW)).toBe(false);
-    expect(snapshotStale({ ...snap([10]), stale: true }, NOW)).toBe(true);
     expect(snapshotStale(null, NOW)).toBe(true);
+  });
+
+  it('keeps a good read across a failed poll until it ages out (H-740)', () => {
+    // A failed poll keeps the last good fetched_at and marks the file stale.
+    const kept = (msAgo: number) => ({ ...snap([51, 40], [3, 100], msAgo), stale: true, error: 'endpoint returned 429' });
+    expect(snapshotStale(kept(5 * 60_000), NOW)).toBe(false);
+    expect(snapshotStale(kept(31 * 60_000), NOW)).toBe(true);
+    // Never a good read: the failure stamped its own time and carried no bars.
+    expect(snapshotStale({ fetched_at: new Date(NOW).toISOString(), stale: true, limits: [] }, NOW)).toBe(true);
+  });
+
+  it('does not count a 429 after a recent good read toward the unreadable streak (H-740)', () => {
+    // The 2026-10-02 stall: streak spent, bars at 51/40, last poll a 429.
+    const kept = { ...snap([51, 40], [3, 100], 5 * 60_000), stale: true, error: 'endpoint returned 429' };
+    const d = capacityDecide({
+      choices: [{ choice: claude, snapshot: kept, refreshed: false }],
+      isLoopRun: true, staleIterations: 6, thresholds, nowMs: NOW,
+    });
+    expect(d).toEqual({ act: 'continue', on: claude });
+  });
+
+  it('never parks on out bars a failed poll could not confirm', () => {
+    const kept = { ...snap([97], [1], 5 * 60_000), stale: true, error: 'endpoint returned 429' };
+    const d = capacityDecide({
+      choices: [{ choice: claude, snapshot: kept, refreshed: true }],
+      isLoopRun: true, staleIterations: 0, thresholds, nowMs: NOW,
+    });
+    expect(d).toMatchObject({ act: 'continue_stale' });
+    // The same bars from a poll that succeeded are a real wait.
+    const fresh = capacityDecide({
+      choices: [{ choice: claude, snapshot: snap([97], [1], 5 * 60_000), refreshed: true }],
+      isLoopRun: true, staleIterations: 0, thresholds, nowMs: NOW,
+    });
+    expect(fresh).toMatchObject({ act: 'wait' });
   });
 
   it('never invents a percent — an unreadable bar is not an exhausted one', () => {

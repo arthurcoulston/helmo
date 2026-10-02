@@ -19,7 +19,7 @@
 // are. `headroomRate` in usage.ts already holds this line and nothing new may
 // cross it.
 import { BillingMode, RunChoice } from './types.js';
-import { hasSpendableCredits, usageLimitExhausted, UsageSnapshot, USAGE_MAX_AGE_MS } from './usage.js';
+import { hasSpendableCredits, lastGoodReadUsable, usageLimitExhausted, UsageSnapshot, USAGE_MAX_AGE_MS } from './usage.js';
 
 export type { BillingMode };
 
@@ -57,14 +57,13 @@ export function effectiveExhaustedPercent(t: CapacityThresholds, isLoopRun: bool
   return isLoopRun ? Math.max(0, t.exhaustedPercent - t.sharedReservePercent) : t.exhaustedPercent;
 }
 
-/** No snapshot, or one older than the poll's own freshness window, or one the
- *  reader marked stale because the fetch failed. Stale bars never justify a
- *  wait (`exhaustedLimit` already refuses that) and they never justify an
- *  invented number either — they get the bounded grace path below. */
+/** No snapshot, or no good read inside the poll's own freshness window. A
+ *  failed poll alone does not make it stale: the last good read still counts
+ *  until it ages out (H-740). Stale bars never justify a wait (`exhaustedLimit`
+ *  already refuses that) and they never justify an invented number either —
+ *  they get the bounded grace path below. */
 export function snapshotStale(s: UsageSnapshot | null, now: number, maxAgeMs = USAGE_MAX_AGE_MS): boolean {
-  if (!s || s.stale) return true;
-  const at = Date.parse(s.fetched_at);
-  return !Number.isFinite(at) || now - at > maxAgeMs;
+  return !lastGoodReadUsable(s, now, maxAgeMs);
 }
 
 function outBars(s: UsageSnapshot, atPercent: number) {
@@ -126,7 +125,11 @@ export function capacityDecide(c: {
   const out: ChoiceCapacity[] = [];
   for (const cc of c.choices) {
     if (snapshotStale(cc.snapshot, now)) stale.push(cc);
-    else if (outBars(cc.snapshot!, pct).length && !hasSpendableCredits(cc.snapshot)) out.push(cc);
+    else if (outBars(cc.snapshot!, pct).length && !hasSpendableCredits(cc.snapshot)) {
+      // A last good read kept across a failed poll may let a loop run, never
+      // park it: out bars the latest poll could not confirm take the grace path.
+      (cc.snapshot!.stale ? stale : out).push(cc);
+    }
     else available.push(cc);
   }
 

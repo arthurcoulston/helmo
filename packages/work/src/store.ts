@@ -1001,9 +1001,22 @@ export class Store {
   private refuseForeignExecution(actor: Actor, ticketId: string, what: string): void {
     this.refuseRetiredGeneration(actor);
     const claim = this.executionClaim(ticketId);
-    if (!claim || actor.kind !== 'agent') return;
-    if (actor.session === claim.session && actor.generation === claim.generation) return;
-    throw new HelmoError(`execution_claim_held ${JSON.stringify({ ticket_id: ticketId, session: claim.session, generation: claim.generation })}: ${what} belongs to the worker attempt holding this claim. Leave a note-only update to coordinate; nothing was written.`);
+    if (claim && actor.kind === 'agent' && (actor.session !== claim.session || actor.generation !== claim.generation)) {
+      throw new HelmoError(`execution_claim_held ${JSON.stringify({ ticket_id: ticketId, session: claim.session, generation: claim.generation })}: ${what} belongs to the worker attempt holding this claim. Leave a note-only update to coordinate; nothing was written.`);
+    }
+    this.refuseOutsideLaunch(actor, ticketId, what);
+  }
+
+  /** A supervised launch is bound to the one ticket it claimed (H-667). The
+   *  claim check above only guards tickets someone already holds, so without
+   *  this a bound session could take a still-open ticket outside its
+   *  allowlist and carry two claims on one generation. Notes, open child
+   *  filing and orchestrator or human routing stay available. */
+  private refuseOutsideLaunch(actor: Actor, ticketId: string | null, what: string): void {
+    if (actor.kind !== 'agent' || !actor.generation) return;
+    const bound = this.db.prepare('SELECT ticket_id FROM launch_claims WHERE launch_id = ?').get(actor.generation) as { ticket_id: string } | undefined;
+    if (!bound || bound.ticket_id === ticketId) return;
+    throw new HelmoError(`launch_assignment_conflict ${JSON.stringify({ generation: actor.generation, assigned_ticket_id: bound.ticket_id, ticket_id: ticketId })}: ${what} is outside the one ticket this launch claimed. Leave a note-only update, or file the work as an open ticket; nothing was written.`);
   }
 
   /** Resolve one launch receipt by both immutable identities. The expanded
@@ -2372,6 +2385,7 @@ export class Store {
     const sitting = parseSitting(input.needs_human, input.sitting_with);
     const status = input.status ?? 'open';
     if (status === 'in_progress') refuseUnmarkedDeskClaim(actor, Boolean(sitting?.needs_human));
+    if (status === 'in_progress') this.refuseOutsideLaunch(actor, null, 'Starting a new ticket');
     if (status === 'in_progress' && !input.assignee) input = { ...input, assignee: actor.name };
     // Workstream seat (H-1026): an unassigned filing is reserved to the
     // stream's seat at the door, so it is ready for that seat's loop from the

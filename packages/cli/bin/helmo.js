@@ -32,8 +32,9 @@ const GROUPS = {
     args: 'serve one dashboard in the foreground',
   },
   mcp: {
+    entry: 'work/dist/unified-server.js',
     products: { work: 'work/dist/server.js', roadmap: 'roadmap/dist/server.js' },
-    args: 'run one MCP server over stdio',
+    args: 'run the unified MCP server (or one compatibility surface) over stdio',
   },
 };
 
@@ -48,7 +49,7 @@ function usage() {
     'usage: helmo <group> [...]   (run helmo <group> --help for its own syntax)',
     '',
     ...Object.entries(GROUPS).map(([name, group]) => {
-      const takes = group.products ? `<${Object.keys(group.products).join('|')}>` : '<...>';
+      const takes = group.products ? (group.entry ? `[${Object.keys(group.products).join('|')}]` : `<${Object.keys(group.products).join('|')}>`) : '<...>';
       return `  ${`${name} ${takes}`.padEnd(26)}${group.args}`;
     }),
     '',
@@ -106,15 +107,17 @@ if (!group) {
 if (group.products) {
   const [product, ...productArgs] = rest;
   if (product === undefined) {
-    refuse(`helmo ${name} needs a product: ${Object.keys(group.products).join(' or ')}.`);
+    if (group.entry) await dispatch(group.entry, []);
+    else refuse(`helmo ${name} needs a product: ${Object.keys(group.products).join(' or ')}.`);
+  } else {
+    const entry = Object.hasOwn(group.products, product) ? group.products[product] : undefined;
+    if (!entry) {
+      refuse(
+        `helmo ${name} has no product '${product}'. It serves: ${Object.keys(group.products).join(', ')}.`,
+      );
+    }
+    await dispatch(entry, productArgs);
   }
-  const entry = Object.hasOwn(group.products, product) ? group.products[product] : undefined;
-  if (!entry) {
-    refuse(
-      `helmo ${name} has no product '${product}'. It serves: ${Object.keys(group.products).join(', ')}.`,
-    );
-  }
-  await dispatch(entry, productArgs);
 } else if (group.verb) {
   // `helmo` is the prefix of this group's own verb and of nothing else, so the
   // runtime is told separately where every OTHER verb lives: `helmo service

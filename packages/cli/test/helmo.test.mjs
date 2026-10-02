@@ -91,10 +91,10 @@ test('an unknown group refuses on stderr, names the groups, and prints nothing o
   assert.match(r.stderr, /work roadmap run team release service serve mcp/);
 });
 
-test('a group that serves several products refuses without one, and names them', () => {
-  const missing = run('helmo', ['mcp']);
+test('a group that requires a product refuses without one, and names them', () => {
+  const missing = run('helmo', ['serve']);
   assert.equal(missing.status, 2);
-  assert.match(missing.stderr, /needs a product: work or roadmap/);
+  assert.match(missing.stderr, /needs a product: work or roadmap or run/);
 
   const wrong = run('helmo', ['serve', 'runtime']);
   assert.equal(wrong.status, 2);
@@ -283,6 +283,16 @@ test('helmo mcp work starts the Helmo MCP server', async (t) => {
   const home = fixture(t);
   const { stderr, matched } = await started('helmo', ['mcp', 'work'], { HELMO_HOME: home }, /Helmo MCP \(stdio\)/);
   assert.ok(matched, `the server never announced itself: ${stderr}`);
+  assert.deepEqual(deprecationLines(stderr), []);
+});
+
+test('helmo mcp starts the unified Work and Roadmap MCP server', async (t) => {
+  const home = fixture(t);
+  const { stderr, matched } = await started(
+    'helmo', ['mcp'], { HELMO_HOME: home, ROADMAP_HOME: join(home, 'roadmap') }, /Roadmap —/,
+  );
+  assert.ok(matched, `the unified server never announced both stores: ${stderr}`);
+  assert.match(stderr, /Helmo MCP \(stdio\)/);
   assert.deepEqual(deprecationLines(stderr), []);
 });
 

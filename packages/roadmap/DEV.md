@@ -109,7 +109,9 @@ append-only event log, materialized state, `.immediate()` write transactions
   objective, and bet id into `references`, pairing the bare id with its
   installation-qualified form (`<id>@<installation>`), so existing fields stay
   compatible while an agent can carry an identity that cannot cross-resolve.
-- `server.ts` — MCP stdio entry. Store at `~/.helmo-roadmap/roadmap.db`
+- `server.ts` — Roadmap-only compatibility MCP stdio entry. The primary
+  `helmo mcp` entry in Work registers this package's same tool builder beside
+  Work's tools. Store at `~/.helmo-roadmap/roadmap.db`
   (`ROADMAP_HOME` or `ROADMAP_DB` overrides, and setting both to disagree is
   refused); identity from `ROADMAP_ACTOR`, falling back to
   `HELMO_ACTOR` so estates provisioned for Helmo need no second variable.

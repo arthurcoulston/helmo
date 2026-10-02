@@ -41,6 +41,7 @@
     "@helmo/core": "0.7.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "better-sqlite3": "^13.0.2",
+    "helmo-roadmap": "0.7.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

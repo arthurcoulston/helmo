@@ -78,7 +78,9 @@ node_modules/.bin/helmo --help
 
 `helmo` is the front door to every area: `helmo work`, `helmo roadmap`,
 `helmo run`, `helmo team`, `helmo release`, `helmo service`,
-`helmo serve <area>` and `helmo mcp <area>`. The older per-area binaries
+`helmo serve <area>` and `helmo mcp`. The unified MCP entry point serves both
+Work and Roadmap tools; `helmo mcp work` and `helmo mcp roadmap` retain the
+individual surfaces for compatibility. The older per-area binaries
 `helmo-cli`, `helmo-mcp`, `roadmap-mcp` and `helmo-view` still work and print
 what replaces them; `rev` is a permanent alias for `helmo run`.
 [COMPATIBILITY.md](COMPATIBILITY.md) has the dates, and the rest of this page

@@ -42,7 +42,12 @@ function compact(p: Project) {
   return { id: p.id, title: p.title, status: p.status, actual_usd: p.actual_usd, updated_at: p.updated_at };
 }
 
-export function buildServer(store: Store, envActor: Actor | null, install?: Installation): McpServer {
+export function buildServer(
+  store: Store,
+  envActor: Actor | null,
+  install?: Installation,
+  server = new McpServer({ name: 'helmo-roadmap', version: HELMO_VERSION }),
+): McpServer {
   const resolveActor = (override?: Actor): Actor => override ?? envActor ?? ({} as Actor);
   const identity = store.installationIdentity();
   // The installation references are minted from and checked against is the one
@@ -75,8 +80,6 @@ export function buildServer(store: Store, envActor: Actor | null, install?: Inst
    *  bare ids pass through, a qualifier naming this installation is dropped,
    *  one naming another refuses (H-2506). */
   const local = (ref: string): string => localRecordRef(ref, target);
-
-  const server = new McpServer({ name: 'helmo-roadmap', version: HELMO_VERSION });
 
   server.registerTool(
     'roadmap_add_project',

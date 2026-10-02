@@ -67,7 +67,7 @@ function compact(t: Ticket) {
   };
 }
 
-export function buildServer(store: Store, envActor: Actor | null): McpServer {
+export function buildServer(store: Store, envActor: Actor | null, server = new McpServer({ name: 'helmo', version: HELMO_VERSION })): McpServer {
   const resolveActor = (override?: Actor): Actor => writingActor(override, envActor);
 
   // The installation comes off the store rather than a second parameter, so
@@ -80,8 +80,6 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
    *  store: bare ids pass through, a qualifier naming this installation is
    *  dropped, one naming another refuses (H-2502). */
   const local = (ref: string): string => localRecordRef(ref, install);
-
-  const server = new McpServer({ name: 'helmo', version: HELMO_VERSION });
 
   server.registerTool(
     'helmo_create_ticket',

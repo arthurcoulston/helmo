@@ -24,6 +24,11 @@ is a row in that table, a line in `--help`, a row in
 [COMPATIBILITY.md](COMPATIBILITY.md) if it replaces a name, and a test that
 proves the target actually ran rather than that a path resolved.
 
+`helmo mcp` dispatches to Work's `unified-server`, which registers the existing
+Work and Roadmap tool builders on one SDK server. The per-area server entries
+remain unchanged compatibility surfaces; their schemas are compared byte for
+byte with the unified listing in the fixture test.
+
 The deprecating adapters for the old binary names live beside the area they
 front, in `packages/<area>/bin/`, and are what that area's `bin` entries point
 at. Before its documented UTC sunset each writes one line to stderr and imports

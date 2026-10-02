@@ -23,7 +23,8 @@ helmo <group> [...]      helmo --help lists every group
 | `helmo release <sub>` | release selection: status, upgrade, rollback, activate |
 | `helmo service <sub>` | the supervisor's service definition |
 | `helmo serve <work\|roadmap\|run>` | serve one dashboard in the foreground |
-| `helmo mcp <work\|roadmap>` | run one MCP server over stdio |
+| `helmo mcp` | run the unified Work and Roadmap MCP server over stdio |
+| `helmo mcp <work\|roadmap>` | run one compatibility MCP surface over stdio |
 
 `helmo` does no work of its own. It hands the rest of your command line to the
 entry point that has always done that work, so output, exit codes and refusals

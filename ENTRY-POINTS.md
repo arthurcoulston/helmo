@@ -24,7 +24,7 @@ that first; come here afterwards.
 
 Everything below is also reachable through `helmo`, the one command: `helmo
 work`, `helmo roadmap`, `helmo run`, `helmo serve <work|roadmap|run>`, `helmo
-mcp <work|roadmap>`, and `helmo release`, `helmo service` and `helmo team` for
+mcp` (both record surfaces; the per-area forms remain compatible), and `helmo release`, `helmo service` and `helmo team` for
 the runtime verbs this page uses most. `helmo --help` lists them.
 
 It does not shorten this checklist, and it adds nothing to repoint. The paths
@@ -202,8 +202,9 @@ envelope too, so a failure still says which installation failed:
 `running.dir` is the reading that proves a repointed path took: it is the
 directory the code *actually loaded from*, not the one you configured.
 
-The four MCP-and-view surfaces each print an installation line at startup. The
-stdio MCP servers print theirs on **stderr**, because stdout is the protocol
+The MCP-and-view surfaces each print an installation line at startup. The
+unified stdio server prints both store identities; all stdio MCP servers print
+on **stderr**, because stdout is the protocol
 channel — if you are looking for it in a client's logs, that is which stream to
 look in, and stdout carries nothing but protocol:
 

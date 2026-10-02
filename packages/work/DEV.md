@@ -318,7 +318,9 @@ Pinned releases accept both the historical three-component layout and C1's one
   owner before reopening preparation. The owner must be the current non-human
   caller or a non-human actor recorded active in the last seven days; otherwise
    the write refuses atomically and leaves the pending question intact.
-- `server.ts` — MCP stdio entry (local agents; thin wrapper over tools.ts).
+- `server.ts` — Work-only compatibility MCP stdio entry (local agents; thin wrapper over tools.ts).
+- `unified-server.ts` — the primary `helmo mcp` entry: opens both stores and
+  registers Work and Roadmap's unchanged tool builders on one stdio server.
 - `remote.ts` — MCP Streamable HTTP entry (H-116): same tools, for remote
   agents reaching Helmo through the crew-mcp worker (OAuth front door) over
   cloudflared. Binds 127.0.0.1:4401 (`HELMO_REMOTE_PORT`), refuses to start

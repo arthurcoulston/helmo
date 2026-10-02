@@ -13,6 +13,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Store } from '../../roadmap/dist/store.js';
 import { BIN, env, fixture, freePort, revHome, sentinel } from './installation.mjs';
@@ -138,6 +139,41 @@ test('the app answers its own port directly and renders the record a recorded UR
   assert.equal(response.status, 200);
   const html = await response.text();
   assert.match(html, new RegExp(ticket), `${ticket} is not in the page a #${ticket} bookmark lands on`);
+});
+
+test('a missing or invalid runtime roster returns 500 without killing the app', async (t) => {
+  const cases = [
+    ['missing', fixture(t), /roster\.toml/],
+    ['invalid', fixture(t), /share seat 'builder' and cwd/],
+  ];
+  writeFileSync(join(cases[1][1], 'roster.toml'), `[global]
+helmo_cli = "x"
+helmo_mcp_server = "y"
+[loops.builder]
+workstream = "w"
+cwd = "/tmp/shared"
+runtime = "mock"
+model = "m"
+constitution = "/tmp/PROFILE.md"
+[loops.builder-2]
+seat = "builder"
+workstream = "w"
+cwd = "/tmp/shared"
+runtime = "mock"
+model = "m"
+constitution = "/tmp/PROFILE.md"
+`);
+
+  for (const [name, REV_HOME, message] of cases) {
+    await t.test(name, async (t) => {
+      const homes = { HELMO_HOME: fixture(t), ROADMAP_HOME: fixture(t), REV_HOME };
+      const app = await startApp(t, homes);
+      const failed = await fetch(`${app.origin}/run`);
+      assert.equal(failed.status, 500);
+      assert.match(await failed.text(), message);
+      assert.equal((await fetch(`${app.origin}/work`)).status, 200, 'the app process did not remain available');
+    });
+  }
 });
 
 test('every retired port answers 301 to a location that answers 200 and renders its surface', async (t) => {

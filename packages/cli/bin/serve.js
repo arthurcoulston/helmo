@@ -19,24 +19,33 @@ function check(name, read) {
 
 let origin = null;
 const running = await startAppServer(appConfig(), (request, response) => {
-  if (request.url === '/health.json') {
-    const checks = [check('app', () => ({ origin })), check('work', workHealth), check('roadmap', roadmapHealth), check('runtime', runtimeSnapshot)];
-    const ok = checks.every((item) => item.ok);
-    response.writeHead(ok ? 200 : 503, { 'content-type': 'application/json; charset=utf-8' });
-    response.end(JSON.stringify({ ok, checks }));
-    return;
+  try {
+    if (request.url === '/health.json') {
+      const checks = [check('app', () => ({ origin })), check('work', workHealth), check('roadmap', roadmapHealth), check('runtime', runtimeSnapshot)];
+      const ok = checks.every((item) => item.ok);
+      response.writeHead(ok ? 200 : 503, { 'content-type': 'application/json; charset=utf-8' });
+      response.end(JSON.stringify({ ok, checks }));
+      return;
+    }
+    if (request.url === '/api/v1/work') return workRequest(request, response);
+    if (request.url === '/api/v1/roadmap') return roadmapRequest(request, response);
+    if (request.url === '/api/v1/runtime') return runtimeRequest(request, response);
+    const compatibilityPath = ['/work/', '/roadmap/', '/run/'].some((prefix) => request.url?.startsWith(prefix));
+    if (!compatibilityPath && request.url !== '/' && !request.url?.startsWith('/?') && appRequest(request, response, { work: workSnapshot, roadmap: roadmapSnapshot, runtime: runtimeSnapshot })) return;
+    if (at(request, '/roadmap')) return roadmapRequest(request, response);
+    if (at(request, '/run')) return runtimeRequest(request, response);
+    if (at(request, '/work')) return workRequest(request, response);
+    if (request.url === '/' || request.url?.startsWith('/?') || request.url === '/answer' || request.url === '/acted') return workRequest(request, response);
+    response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+    response.end('Unknown Helmo app route.\n');
+  } catch (error) {
+    if (!response.headersSent) {
+      response.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
+      response.end(`${error instanceof Error ? error.message : String(error)}\n`);
+    } else {
+      response.destroy(error instanceof Error ? error : undefined);
+    }
   }
-  if (request.url === '/api/v1/work') return workRequest(request, response);
-  if (request.url === '/api/v1/roadmap') return roadmapRequest(request, response);
-  if (request.url === '/api/v1/runtime') return runtimeRequest(request, response);
-  const compatibilityPath = ['/work/', '/roadmap/', '/run/'].some((prefix) => request.url?.startsWith(prefix));
-  if (!compatibilityPath && request.url !== '/' && !request.url?.startsWith('/?') && appRequest(request, response, { work: workSnapshot, roadmap: roadmapSnapshot, runtime: runtimeSnapshot })) return;
-  if (at(request, '/roadmap')) return roadmapRequest(request, response);
-  if (at(request, '/run')) return runtimeRequest(request, response);
-  if (at(request, '/work')) return workRequest(request, response);
-  if (request.url === '/' || request.url?.startsWith('/?') || request.url === '/answer' || request.url === '/acted') return workRequest(request, response);
-  response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
-  response.end('Unknown Helmo app route.\n');
 });
 origin = running.origin;
 workListening(Number(new URL(running.origin).port));

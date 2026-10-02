@@ -28,9 +28,10 @@ export function appRequest(request, response, documents = {}) {
   const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
   const pathname = url.pathname.length > 1 ? url.pathname.replace(/\/$/, '') : url.pathname;
   if (!['/', '/work', '/roadmap', '/run', '/team'].includes(pathname)) return false;
-  response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
   const area = pathname === '/run' ? 'runtime' : pathname === '/' ? 'work' : pathname.slice(1);
-  response.end(appPage(pathname, documents[area]?.()));
+  const document_ = documents[area]?.();
+  response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+  response.end(appPage(pathname, document_));
   return true;
 }
 import { ESTATE_TOKENS } from '../core/dist/index.js';

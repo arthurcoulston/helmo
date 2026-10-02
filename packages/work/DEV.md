@@ -64,6 +64,21 @@ Pinned releases accept both the historical three-component layout and C1's one
   shared rule, so a candidate released back to the queue cannot draw a second
   workflow permission under a new launch id. `--project` narrows selection to
   one scheduling lane.
+  The launch id is the claim's **generation**, and ownership is enforced, not
+  advised: siblings share the role name, so a name check alone let worker B
+  close A's ticket. `execution_claims` holds (ticket, session, generation);
+  only that exact attempt may change status, edit, hand off, return or record
+  completion. A same-name sibling, a legacy session with no generation, or an
+  agent `takeover` gets note-only; humans and orchestrators keep routing.
+  Leaving in_progress retires the generation in `retired_generations`, and
+  `append` refuses any write by a retired one. A replayed receipt whose claim
+  is no longer that generation's refuses (`launch_claim_stale`) rather than
+  re-authorizing dispatch. A new generation of the same session resumes the
+  worker's held ticket first (`resumed: true`), retiring the old generation so
+  an orphaned child is fenced; held work outside the requested scope refuses.
+  A server whose `HELMO_ACTOR` carries `generation` is supervised:
+  `writingActor` refuses caller-stated name/kind/session/generation that
+  conflict and inherits omitted ones; outside it a stated generation refuses.
   Explicitly named installations claim `meta.installation_name` atomically
   with their first event. Every writer, including a derived one, must match
   that claim; the path-derived `dev.helmo[.*]` name and shared `dev.rev[.*]`

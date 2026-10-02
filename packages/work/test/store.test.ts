@@ -299,6 +299,101 @@ describe('atomic workflow admission (H-431)', () => {
     expect(s.getTicket(other.id).status).toBe('open');
   });
 
+  describe('supervised execution ownership (H-574)', () => {
+    const workerA: Actor = { ...builder, session: 'rev:builder-a' };
+    const workerB: Actor = { ...builder, session: 'rev:builder-b' };
+    const genA: Actor = { ...workerA, generation: 'launch-a' };
+    const genB: Actor = { ...workerB, generation: 'launch-b' };
+
+    function twoClaims(s: Store) {
+      const a = create(s, { project: 'R-a' }); triage(s, a.id);
+      const b = create(s, { project: 'R-b' }); triage(s, b.id);
+      expect(s.launchClaim(workerA, 'helmo-dev', builder.name, 'launch-a')).toMatchObject({ ticket_id: a.id });
+      expect(s.launchClaim(workerB, 'helmo-dev', builder.name, 'launch-b')).toMatchObject({ ticket_id: b.id });
+      return { a, b };
+    }
+
+    it('refuses every execution write by a same-role sibling, and keeps the claim intact', () => {
+      const s = freshStore();
+      const { a } = twoClaims(s);
+      const before = s.getEvents(a.id).length;
+      for (const write of [
+        () => s.updateTicket(genB, { ticket_id: a.id, note: 'closing it', status: 'done' }),
+        () => s.updateTicket(genB, { ticket_id: a.id, note: 'passing it on', handoff_to: 'reviewer-loop' }),
+        () => s.updateTicket(genB, { ticket_id: a.id, note: 'retitle', title: 'Mine now' }),
+        () => s.updateTicket(genB, { ticket_id: a.id, note: 'taking it', status: 'in_progress', takeover: true }),
+        () => s.updateTicket(genB, { ticket_id: a.id, note: 'evidence', evidence: [{ kind: 'other', ref: 'x' }] }),
+        () => s.returnToHuman(genB, a.id, { situation: 's', question: 'q', recommendation: 'r' }),
+        () => s.recordProductCompletion(genB, { ticket_id: a.id, artifacts: [{ ref: `helmo@${'a'.repeat(40)}`, author: 'builder-loop' }], note: 'ready' }),
+        // a legacy session that merely chose the role name, even A's session
+        () => s.updateTicket(builder, { ticket_id: a.id, note: 'closing it', status: 'done' }),
+        () => s.updateTicket(workerA, { ticket_id: a.id, note: 'closing it', status: 'done' }),
+      ]) expect(write).toThrow(/execution_claim_held/);
+      expect(s.getEvents(a.id)).toHaveLength(before);
+      expect(s.getTicket(a.id)).toMatchObject({ status: 'in_progress', assignee: builder.name });
+
+      // Coordination still works, and the owner's own close is the positive control.
+      s.updateTicket(genB, { ticket_id: a.id, note: 'FYI the importer schema moved' });
+      expect(s.updateTicket(genA, { ticket_id: a.id, note: 'built', status: 'done', evidence: [{ kind: 'other', ref: 'x' }] }).ticket.status).toBe('done');
+    });
+
+    it('fences an ended generation from every write and refuses its historical receipt', () => {
+      const s = freshStore();
+      const { a, b } = twoClaims(s);
+      s.updateTicket(genA, { ticket_id: a.id, note: 'built', status: 'done', evidence: [{ kind: 'other', ref: 'x' }] });
+      expect(() => s.updateTicket(genA, { ticket_id: a.id, note: 'one more thing' })).toThrow(/stale_generation/);
+      expect(() => s.updateTicket(genA, { ticket_id: b.id, note: 'helping out' })).toThrow(/stale_generation/);
+      expect(() => create(s, { title: 'late child' })).not.toThrow();
+      expect(() => s.createTicket(genA, { title: 'late child', body: 'b', workstream: 'helmo-dev', type: 'build' })).toThrow(/stale_generation/);
+      expect(() => s.launchClaim(workerA, 'helmo-dev', builder.name, 'launch-a')).toThrow(/launch_claim_stale/);
+      // A fresh launch of the same worker is a new generation and works.
+      expect(s.launchClaim(workerA, 'helmo-dev', builder.name, 'launch-a2')).toEqual({ admitted: false, launch_id: 'launch-a2' });
+    });
+
+    it('resumes unfinished work with the same worker and retires the orphaned generation', () => {
+      const s = freshStore();
+      const { a } = twoClaims(s);
+      const other = create(s, { project: 'R-a' }); triage(s, other.id);
+      const resumed = s.launchClaim(workerA, 'helmo-dev', builder.name, 'launch-a2');
+      expect(resumed).toMatchObject({ claimed: true, resumed: true, ticket_id: a.id, launch_id: 'launch-a2' });
+      expect(s.getTicket(other.id).status).toBe('open');
+      // The previous child, still alive after its loop, is now fenced.
+      expect(() => s.updateTicket(genA, { ticket_id: a.id, note: 'late write', status: 'done' })).toThrow(/stale_generation/);
+      expect(() => s.launchClaim(workerA, 'helmo-dev', builder.name, 'launch-a')).toThrow(/launch_claim_stale/);
+      expect(s.launchClaim(workerA, 'helmo-dev', builder.name, 'launch-a2')).toEqual(resumed);
+      const genA2 = { ...workerA, generation: 'launch-a2' };
+      expect(s.updateTicket(genA2, { ticket_id: a.id, note: 'built', status: 'done', evidence: [{ kind: 'other', ref: 'x' }] }).ticket.status).toBe('done');
+    });
+
+    it('refuses to resume held work outside the requested scope', () => {
+      const s = freshStore();
+      twoClaims(s);
+      expect(() => s.launchClaim(workerA, 'helmo-dev', builder.name, 'launch-a2', 'R-b')).toThrow(/launch_claim_scope_conflict/);
+    });
+
+    it('lets the operator release claimed work, which ends the claim', () => {
+      const s = freshStore();
+      const { a } = twoClaims(s);
+      s.updateTicket(orch, { ticket_id: a.id, note: 'putting this down for the morning', status: 'open' });
+      expect(s.getTicket(a.id)).toMatchObject({ status: 'open', assignee: builder.name });
+      expect(() => s.updateTicket(genA, { ticket_id: a.id, note: 'still mine?' })).toThrow(/stale_generation/);
+    });
+
+    it('records a launch whose worker states a different generation as a conflict', () => {
+      const s = freshStore();
+      const t = create(s); triage(s, t.id);
+      expect(() => s.launchClaim(genB, 'helmo-dev', builder.name, 'launch-other')).toThrow(/supervised_identity_conflict/);
+      expect(s.getTicket(t.id).status).toBe('open');
+    });
+
+    it('leaves desk claims without a generation on the old rules', () => {
+      const s = freshStore();
+      const t = create(s); triage(s, t.id);
+      s.updateTicket(builder, { ticket_id: t.id, note: 'on it', status: 'in_progress' });
+      expect(s.updateTicket(builder, { ticket_id: t.id, note: 'done', status: 'done', evidence: [{ kind: 'other', ref: 'x' }] }).ticket.status).toBe('done');
+    });
+  });
+
   it('rolls back the claim when workflow admission is denied', () => {
     const s = admissionStore();
     const ticket = create(s, { workflow_attempt_id: 'attempt-1' }); triage(s, ticket.id);
@@ -314,7 +409,7 @@ describe('atomic workflow admission (H-431)', () => {
     const ticket = create(s, { workflow_attempt_id: 'attempt-1' }); triage(s, ticket.id);
     s.recordWorkflowDecision({ id: 'pass-1', requirement_id: 'technical', manifest_id: 'manifest-a', verdict: 'pass', source: 'review:event-1' });
     expect(s.launchClaim(builder, 'helmo-dev', builder.name, 'launch-one')).toMatchObject({ claimed: true, ticket_id: ticket.id });
-    s.updateTicket(builder, { ticket_id: ticket.id, note: 'released back to the queue', status: 'open' });
+    s.updateTicket({ ...builder, generation: 'launch-one' }, { ticket_id: ticket.id, note: 'released back to the queue', status: 'open' });
     expect(() => s.launchClaim(builder, 'helmo-dev', builder.name, 'launch-two')).toThrow(/"stale":\["launch"\]/);
     expect(s.getTicket(ticket.id).status).toBe('open');
   });

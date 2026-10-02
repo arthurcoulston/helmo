@@ -23,16 +23,20 @@ that first; come here afterwards.
 ## One command in front of all of it
 
 Everything below is also reachable through `helmo`, the one command: `helmo
-work`, `helmo roadmap`, `helmo run`, `helmo serve <work|roadmap|run>`, `helmo
+work`, `helmo roadmap`, `helmo run`, `helmo serve` (the one app; `helmo serve
+<work|roadmap|run>` still serves one dashboard each), `helmo
 mcp` (both record surfaces; the per-area forms remain compatible), and `helmo release`, `helmo service` and `helmo team` for
 the runtime verbs this page uses most. `helmo --help` lists them.
 
-It does not shorten this checklist, and it adds nothing to repoint. The paths
+It does not shorten this checklist. The paths
 below are what a roster, a plist or an MCP client names, and none of them has
 moved. What is changing is four old binary *names* — `helmo-cli`, `helmo-mcp`,
 `roadmap-mcp` and `helmo-view` — each of which still works and now says on
 stderr what replaces it and when it stops. The dates are in
 [COMPATIBILITY.md](COMPATIBILITY.md).
+
+The one thing the app adds to review is not a path but a pair of variables,
+and it is the first section below.
 
 ## One installation needs nothing here
 
@@ -49,6 +53,56 @@ installation is pinned to a release and another is not.
 Work it from the products outward, then from your own files inward. The last
 section is the one that catches people: the paths nothing in the release knows
 about are the paths you wrote yourself.
+
+### The app, and the ports it answers for
+
+One installation runs one `helmo serve` process. It has no path to repoint —
+`helmo` resolves its own entry from the release you selected — so what this
+section is about is the **two variables** that decide which ports it owns:
+
+```bash
+echo "${HELMO_APP_HOST:-127.0.0.1}:${HELMO_APP_PORT:-4400}"
+echo "${HELMO_LEGACY_LISTENERS:-(none — this installation retires no ports)}"
+```
+
+**What it should name.** `HELMO_APP_PORT` is this installation's app port, and
+`HELMO_LEGACY_LISTENERS` is the set of *its own* retired dashboard ports with
+the route each now answers for — `[{"port":4410,"route":"/roadmap"}]` and so
+on, as [INSTALLATIONS.md](INSTALLATIONS.md) sets out. It defaults empty, and
+that default is the one to leave alone on a second installation: a retired set
+copied from another installation's profile is one installation trying to bind
+the other's ports.
+
+**How you know it took.** Ask the app, on the port you configured:
+
+```bash
+curl -s "http://127.0.0.1:${HELMO_APP_PORT:-4400}/health.json" | head -c 400
+curl -sI "http://127.0.0.1:4410/" | grep -i '^location'
+```
+
+`/health.json` carries one check per surface the app actually serves — `app`,
+`work`, `roadmap`, `runtime` — and the whole document is `503` if any of them
+is unwell. It reports on **this process only**: the remote write surface on
+`:4401` is separately authenticated and is not in it, so a green reading here
+is not a statement about that service.
+
+The `location` line is the reading that catches a retired port you thought you
+configured. Three answers, and only one of them is good:
+
+- `Location: http://127.0.0.1:4400/roadmap/` — the listener is up and sends
+  callers to the route you meant. The absent fragment is deliberate: that is
+  what lets a browser reattach the `#R-39` from the URL someone bookmarked.
+- **`curl: (7) Failed to connect`** — nothing is listening, so the old URL does
+  not redirect, it fails. Every bookmark and every stored reference naming that
+  port is broken, and no route alias anywhere can fix it, because the fragment
+  never reaches a server. The fix is to configure the port.
+- A `Location` naming a host or port you did not configure means something
+  other than this app answered. The app builds `Location` from its own
+  configured host and port, never from the request's `Host` header.
+
+A port another process holds does not produce a half-started app: the whole
+start refuses, names `EADDRINUSE`, and closes the listeners it had already
+opened. A failed start is a log line to read, not a state to untangle.
 
 ### Rev
 

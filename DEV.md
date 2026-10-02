@@ -35,6 +35,26 @@ request handler into that process: Work at `/` and `/work`, Roadmap at
 `/health.json`. The product view entries remain executable compatibility
 surfaces; importing them never binds their old ports.
 
+`app-server.mjs` is the listener kernel under it: one app listener plus the
+installation's configured retired set, started as one lifecycle and closed as
+one. Its configuration is read at both ends — `appConfig` normalizes, and
+`startAppServer` validates what it is handed — so every normalizing step there
+has to be idempotent. The one that was not refused to start an installation
+that retired a port onto the app root, which is why `route('')` now means the
+root rather than a refusal.
+
+`test/app-acceptance.test.mjs` is the compatibility acceptance for all of it,
+and it drives the real `helmo serve` process: 301 and its `Location`, the
+destination answering 200 and rendering the named record, the bound port set
+read from the operating system rather than from the app's own account of
+itself, two installations whose colliding ids stay apart, and `SIGTERM`. The
+estate's numbers (`:4410`, `:4500`, `:4300`) are the *rows* of its fixture,
+rebased onto ephemeral ports: a test that bound 4410 would be fighting the
+installation it is proving. `test/installation.mjs` holds the disposable
+installation helpers and the one environment scrubber they all go through — a
+second, slightly different scrubber is how one test file quietly stops being
+isolated (H-2644).
+
 The deprecating adapters for the old binary names live beside the area they
 front, in `packages/<area>/bin/`, and are what that area's `bin` entries point
 at. Before its documented UTC sunset each writes one line to stderr and imports

@@ -116,6 +116,49 @@ a store path, for the same reason.) Write it with a space or an `=`; all three
 products take both, and all three assert on every command, reads included, so
 the flag is usable as a guard in a script.
 
+### The ports this installation serves, and the retired ones it answers for
+
+One installation runs **one app process**: `helmo serve`, on
+`HELMO_APP_HOST`/`HELMO_APP_PORT`, default `127.0.0.1:4400`. It serves the work
+record at `/`, the roadmap at `/roadmap`, the runtime at `/run`, and one
+machine reading at `/health.json`. The host must be a loopback address and
+startup refuses anything else — the app is a local surface, and the way to
+publish it is a reverse proxy you configured on purpose.
+
+A setup that reached a *separate* dashboard on its own port has that URL
+written into bookmarks, notes and records, and a hash fragment like `#R-39` is
+never sent to a server — so nothing downstream can rescue the URL once nothing
+is listening on the port. Each installation therefore configures its own
+**retired listener set**, and the one thing it must never do is inherit
+somebody else's:
+
+```bash
+export HELMO_LEGACY_LISTENERS='[{"port":4410,"route":"/roadmap"},
+                                {"port":4500,"route":"/run"},
+                                {"port":4300,"route":"/"}]'
+```
+
+- **It defaults empty.** A second installation that starts the same release
+  binds its app port and nothing else. Retiring a port is a thing the operator
+  who retired it says out loud, once, in that installation's environment.
+- **Each listener binds `127.0.0.1` and answers only `301`.** The `Location` is
+  built from this installation's configured app host and port plus the route,
+  and never from the request's `Host` header — a redirector that trusted `Host`
+  would forward a caller wherever the caller asked.
+- **`Location` carries no fragment**, which is what lets the browser reattach
+  the caller's own `#R-39` to the route it lands on.
+- **A port something else already holds refuses the whole start.** Not a
+  warning and not a partial start: every listener the attempt had opened is
+  closed again, and the port stays with its owner. That is the guard that keeps
+  one installation's retired set from taking a port from the other
+  installation, from an unrelated service, or from a product you also run.
+- **The app and its retired ports must be distinct**, and they all close
+  together on `SIGTERM`.
+
+`helmo serve work`, `helmo serve roadmap` and `helmo serve run` still start one
+dashboard each on its own port, unchanged. They are the compatibility
+surfaces; the app is what a new installation runs.
+
 ## Installing a selected release
 
 An installation can either run whatever code its entry points were started from

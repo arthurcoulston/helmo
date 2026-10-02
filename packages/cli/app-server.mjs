@@ -11,6 +11,10 @@ function port(value, name) {
 }
 
 function route(value, name) {
+  // Idempotent, because both ends of the configuration validate: appConfig
+  // normalizes the app root to '' and startAppServer checks what it is handed,
+  // so re-reading a normalized route must mean the root rather than refuse it.
+  if (value === '') return '';
   if (typeof value !== 'string' || !value.startsWith('/') || value.includes('?') || value.includes('#')) {
     throw new Error(`${name} must be an absolute path without a query or fragment`);
   }

@@ -8,13 +8,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { BIN, ROOT, env, fixture, revHome } from './installation.mjs';
 
-const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
-const BIN = join(ROOT, 'node_modules', '.bin');
 const VERSION = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
 // Two actors, because Helmo refuses a seat the claim of a ticket it filed
 // itself and nobody else has touched: the fixture files as the orchestrator
@@ -25,29 +22,10 @@ const FILER = JSON.stringify({ name: 'helmo-orchestrator', kind: 'orchestrator',
 const ACTOR = JSON.stringify({ name: 'mason', kind: 'agent', model: 'test', version: 'test', session: 'test' });
 const NOTICE = /COMPATIBILITY\.md/;
 
-// A loop runs these with its own installation in the environment, and an
-// inherited REV_HOME, HELMO_HOME or INSTALLATION_RELEASE would aim a test at
-// the live estate (H-2644). Every variable the products read is cleared here
-// and only the fixture's own values are put back.
-function env(extra = {}) {
-  const base = { ...process.env };
-  for (const key of Object.keys(base)) {
-    if (/^(HELMO|ROADMAP|REV|INSTALLATION)_/.test(key)) delete base[key];
-  }
-  delete base['REV_CLI'];
-  return { ...base, ...extra };
-}
-
 function run(bin, args, extra = {}) {
   const r = spawnSync(join(BIN, bin), args, { encoding: 'utf8', env: env(extra) });
   if (r.error) throw r.error;
   return r;
-}
-
-function fixture(t) {
-  const home = mkdtempSync(join(tmpdir(), 'helmo-front-'));
-  t.after(() => rmSync(home, { recursive: true, force: true }));
-  return home;
 }
 
 function atTime(t, iso) {
@@ -55,15 +33,6 @@ function atTime(t, iso) {
   const preload = join(home, 'clock.mjs');
   writeFileSync(preload, `Date.now = () => ${Date.parse(iso)};\n`);
   return { NODE_OPTIONS: `--import=${preload}` };
-}
-
-// Every runtime command loads the roster at module level, so a runtime
-// fixture is a home with one in it — the repository's own example, which is
-// what its refusal tells an operator to copy.
-function revHome(t) {
-  const home = fixture(t);
-  copyFileSync(join(ROOT, 'packages', 'runtime', 'examples', 'roster.toml'), join(home, 'roster.toml'));
-  return home;
 }
 
 function deprecationLines(stderr) {

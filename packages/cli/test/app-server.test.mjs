@@ -27,6 +27,19 @@ test('configuration is loopback-only and legacy listeners default empty', () => 
   assert.throws(() => appConfig({ HELMO_LEGACY_LISTENERS: 'nope' }), /must be JSON/);
 });
 
+test('the app root survives being read twice: appConfig normalizes it, startAppServer accepts it', async (t) => {
+  // Both ends validate, so '/' arrives at startAppServer as the '' that
+  // appConfig made of it. Refusing that spelling meant an installation could
+  // configure a retired port onto the app root and never start.
+  const redirect = await freePort();
+  const config = appConfig({ HELMO_APP_PORT: '0', HELMO_LEGACY_LISTENERS: `[{"port":${redirect},"route":"/"}]` });
+  assert.deepEqual(config.legacy, [{ port: redirect, route: '' }]);
+  const running = await startAppServer(config, (_request, response) => response.end('app'));
+  t.after(() => running.close());
+  const response = await fetch(`http://127.0.0.1:${redirect}/?whole=1`, { redirect: 'manual' });
+  assert.equal(response.headers.get('location'), `${running.origin}/?whole=1`);
+});
+
 test('redirects preserve path and query and ignore a poisoned Host header', async (t) => {
   const redirectPort = await freePort();
   const running = await startAppServer(

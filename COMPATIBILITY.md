@@ -75,9 +75,51 @@ binary is a service definition you installed yourself, and
 - **Every path inside `packages/*/dist/`** is unchanged and carries no notice.
   Those are the implementation, not an old name: a roster, a plist or an MCP
   client that names `packages/work/dist/server.js` keeps naming it.
-- **Ports, launchd labels, record ids, MCP tool names and argument keys** have
-  not moved. Nothing a configuration file, a plist, a bookmark or a loaded tool
-  schema names changes in this release.
+- **`localhost:4400` and its `#H-n` routes** are the app's own port and route.
+  A bookmark, a note or a ticket's evidence that names one resolves the same
+  record it always did.
+- **Record ids, MCP tool names and argument keys** have not moved. Nothing a
+  loaded tool schema or a stored reference names changes in this release.
+
+## The URLs that move, and the listener that keeps them working
+
+The three dashboards that had their own ports are now routes on the one app.
+A route alias is not the mechanism those URLs need: **a redirect requires
+something still listening on the port being redirected from**, and a hash
+fragment is never sent to a server at all — so once nothing binds 4410,
+`http://localhost:4410/#R-39` does not redirect, it fails to connect.
+
+So the app can bind them and answer 301. Which ports it binds is each
+installation's own configuration, and it defaults to none; the shape is in
+[INSTALLATIONS.md](INSTALLATIONS.md).
+
+| Old URL | New URL | Mechanism | Stops working after |
+|---|---|---|---|
+| `localhost:4400/#H-n` | identical | unchanged | — |
+| `localhost:4410/...` | `localhost:4400/roadmap/...` | 301 from a configured listener | 2027-04-01 |
+| `localhost:4500/...` | `localhost:4400/run/...` | 301, same mechanism | 2027-04-01 |
+| `localhost:4300/...` | `localhost:4400/...` | 301, same mechanism | 2027-04-01 |
+| `:4401` remote write surface | unchanged | separately authenticated, not in the app process | — |
+
+A fragment survives because the `Location` carries none: the browser reattaches
+the `#R-39` you typed to whatever route it lands on. A redirect that needed to
+*translate* a fragment would need a line of script on the landing page, and
+none of these do — the routes resolve the same ids.
+
+`:4300` was a landing page of links and a health reading, so it lands on the
+app's front page; the health reading it proxied is `/health.json`. A surface of
+its own, with the links and the roster in it, is the next chapter's work and
+not a promise this release makes.
+
+**Going back is unsetting one variable.** A port change needs a stated recovery
+path ([VERSIONING.md](VERSIONING.md)), and this one is cheap on purpose: clear
+`HELMO_LEGACY_LISTENERS`, restart the app, and start the per-dashboard
+compatibility surfaces again — `helmo serve roadmap` on `ROADMAP_VIEW_PORT`,
+`helmo serve run`, `helmo serve work`. They are unchanged and they still bind
+their own ports, which is what makes retiring one reversible rather than a
+one-way migration. No record, store or identity is touched either way: the
+retired set is process configuration and nothing reads it but the app at
+startup.
 
 ## Linking the commands after a first install
 

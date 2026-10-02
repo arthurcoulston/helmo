@@ -63,7 +63,10 @@ Pinned releases accept both the historical three-component layout and C1's one
   changed worker, session or scope refuses. Both commands admit through one
   shared rule, so a candidate released back to the queue cannot draw a second
   workflow permission under a new launch id. `--project` narrows selection to
-  one scheduling lane.
+  one scheduling lane; `--tickets` (H-671) to an exact allowlist, which is
+  what keeps two workers in the SAME project off each other's tickets. Every
+  readiness gate still applies inside it, and resuming held work outside it
+  refuses with `launch_claim_scope_conflict`.
   The launch id is the claim's **generation**, and ownership is enforced, not
   advised: siblings share the role name, so a name check alone let worker B
   close A's ticket. `execution_claims` holds (ticket, session, generation);

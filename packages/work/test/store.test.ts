@@ -299,6 +299,44 @@ describe('atomic workflow admission (H-431)', () => {
     expect(s.getTicket(other.id).status).toBe('open');
   });
 
+  it('gives two workers in ONE project only the tickets each allowlist names (H-671)', () => {
+    const s = freshStore();
+    const product = create(s, { project: 'R-31', priority: 2 }); triage(s, product.id);
+    const harness = create(s, { project: 'R-31', priority: 0 }); triage(s, harness.id);
+    const productWorker = { ...builder, session: 'rev:builder-product' };
+    const harnessWorker = { ...builder, session: 'rev:builder-harness' };
+    // The higher-priority harness ticket is first in the project queue; the
+    // product allowlist must still skip it.
+    const p = s.launchClaim(productWorker, 'helmo-dev', builder.name, 'launch-p', 'R-31', [product.id]);
+    expect(p).toMatchObject({ claimed: true, ticket_id: product.id, scope: { tickets: [product.id] } });
+    expect(s.getTicket(harness.id).status).toBe('open');
+    expect(s.launchClaim(harnessWorker, 'helmo-dev', builder.name, 'launch-h', 'R-31', [harness.id])).toMatchObject({ ticket_id: harness.id });
+    // A replay must name the same allowlist; a widened one is a different scope.
+    expect(s.launchClaim(productWorker, 'helmo-dev', builder.name, 'launch-p', 'R-31', [product.id])).toEqual(p);
+    expect(() => s.launchClaim(productWorker, 'helmo-dev', builder.name, 'launch-p', 'R-31', [product.id, harness.id])).toThrow(/different scope/);
+    // Resuming held work outside the allowlist refuses rather than dropping it.
+    expect(() => s.launchClaim(productWorker, 'helmo-dev', builder.name, 'launch-p2', 'R-31', [harness.id])).toThrow(/launch_claim_scope_conflict/);
+    expect(s.launchClaim(productWorker, 'helmo-dev', builder.name, 'launch-p2', 'R-31', [product.id])).toMatchObject({ resumed: true, ticket_id: product.id });
+  });
+
+  it('keeps every readiness gate inside an allowlist and refuses a malformed one', () => {
+    const s = freshStore();
+    const blocker = create(s); triage(s, blocker.id);
+    const blocked = create(s, { deps: [{ to: blocker.id, type: 'blocks' }] }); triage(s, blocked.id);
+    const dated = create(s, { not_before: '2999-01-01' }); triage(s, dated.id);
+    const held = create(s); triage(s, held.id);
+    s.updateTicket(orch, { ticket_id: held.id, note: 'held', capacity_hold: { reason: 'r', provenance: 'p', reconsider_when: 'w' } });
+    const untriaged = create(s);
+    const gated = [blocked.id, dated.id, held.id, untriaged.id];
+    expect(s.launchClaim(builder, 'helmo-dev', builder.name, 'launch-gated', undefined, gated)).toEqual({ admitted: false, launch_id: 'launch-gated' });
+    for (const id of gated) expect(s.getTicket(id).status).toBe('open');
+    // Positive control: the same call reaches a ready ticket once it is listed.
+    expect(s.launchClaim(builder, 'helmo-dev', builder.name, 'launch-ready', undefined, [...gated, blocker.id])).toMatchObject({ ticket_id: blocker.id });
+    for (const bad of [[], [''], [' H-1'], [blocker.id, blocker.id]]) {
+      expect(() => s.launchClaim(builder, 'helmo-dev', builder.name, `launch-bad-${bad.length}`, undefined, bad)).toThrow(/distinct exact ticket ids/);
+    }
+  });
+
   describe('supervised execution ownership (H-574)', () => {
     const workerA: Actor = { ...builder, session: 'rev:builder-a' };
     const workerB: Actor = { ...builder, session: 'rev:builder-b' };

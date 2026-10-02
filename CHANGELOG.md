@@ -1,13 +1,74 @@
 # Changelog
 
-## Unreleased
+Helmo is one product with one version number; what that number promises is in
+[VERSIONING.md](VERSIONING.md). `0.6.0` is the first consolidated version, and
+the notes below it are the three products' own published notes under their own
+numbering, carried over unchanged under the area each belonged to.
+
+Work's section is the text published as `helmo` **v0.5.0**, taken from the
+`helmo/v0.5.0` tag. The release was cut on its own branch, so the main line the
+consolidation imported still carried that release's notes under "Unreleased";
+this is the published wording, which is two entries and one commit reference
+longer.
+
+## Unreleased — 0.6.0
+
+The three products become one: one repository, one version, one set of
+documents, and one module for the mechanics all three were implementing
+separately. No entry point, port, service label, MCP tool or record identifier
+moves, and neither store is migrated.
+
+- **One repository, four workspace packages** (H-2630). `helmo`,
+  `helmo-roadmap` and `rev` are imported object-preserving into one tree as
+  `packages/work`, `packages/roadmap` and `packages/runtime`, beside a new
+  `packages/core`. Every commit, tag and recorded `repo@sha` from the three
+  histories still resolves.
+
+- **Installation identity, install and qualified references come from one
+  module** (H-2636). `@helmo/core` replaces three near-copies whose precedence
+  lists differed by one entry — the measured cause of an identity incident.
+  Precedence selects the key when one is set; two accepted keys carrying
+  distinct values refuse at startup rather than guessing.
+
+- **One product version with a declared compatibility surface** (H-2630).
+  Every package and every shipped protocol surface reports `0.6.0`, and
+  `VERSIONING.md` names what a major, minor and patch change mean: MCP tool
+  names and argument schemas, CLI subcommands and flags, the store schemas,
+  configuration and environment keys, service labels and default ports.
+  Everything else is internal.
+
+- **A release selection names one component** (H-2630). `rev release upgrade`
+  writes one `helmo` component and validates Work, Roadmap and Runtime
+  artifacts under it against the same clean commit. The historical
+  three-component layout stays readable, so an installation can still inspect
+  and roll back across the consolidation boundary; a partial, extended or mixed
+  manifest refuses rather than being guessed.
+
+- **The runtime cannot import the work record's store** (H-2639). The monorepo
+  makes that import available for the first time, so the boundary is asserted
+  in the build rather than left to a reviewer's memory.
+
+- **A root build refuses to write into a checkout an installation resolves
+  through** (H-2630). `npm run build` writes only in a directory carrying the
+  candidate marker, and never reads installation selections to assemble a
+  denylist.
+
+- **One of each product document** (H-2630). One `LICENSE`, `SECURITY.md`,
+  `THIRD_PARTY_NOTICES.md`, `CHANGELOG.md`, `AGENTS.md` and `README.md` at the
+  root, with `INSTALLATIONS.md`, `ENTRY-POINTS.md` and `ISOLATION-CHECKS.md` —
+  written for Rev but true of the family — now the product's. Each area keeps
+  its own `README.md` and `DEV.md`. One issue tracker serves all three.
+
+## Work — published as `helmo`
+
+### v0.5.0 — 2026-09-30
 
 One Helmo installation is now distinguishable from another: in what it is
 called, which store is its own, and which build is serving it. Alongside that,
 what an agent can ask a human for splits into three kinds, so a request to go
 and do something can no longer come back as permission to act.
 
-### Breaking changes
+#### Breaking changes
 
 - `needs_human` takes the one line the sitting needs, not `true` (H-1761).
   Marking a ticket for a sitting now says what the human does and roughly what
@@ -17,7 +78,7 @@ and do something can no longer come back as permission to act.
   shape to send instead. `helmo update --needs-human` now takes a value, and
   `--no-needs-human` clears.
 
-### Running more than one installation
+#### Running more than one installation
 
 - An installation has a name, and every entry point says which one it is about
   (H-2472, H-2474). `HELMO_HOME` names the installation and `HELMO_DB` names its
@@ -88,7 +149,16 @@ and do something can no longer come back as permission to act.
   reviewer's version: the isolation properties of a pair of installations, with
   the commands to re-derive each one against your own two.
 
-### Three kinds of request
+#### Three kinds of request
+
+- Recurring templates no longer appear as assigned work (H-440). They remain
+  visible through template-specific reads, but an assignee query now returns
+  only concrete tickets an agent can actually work.
+
+- Workflow decisions are admitted through a trusted, scoped record (H-430).
+  The writer identity comes from the Helmo runtime rather than caller input,
+  and each decision is bound to one requirement and one subject manifest;
+  revocation names the exact decision it replaces.
 
 - A completed action can no longer read as permission (H-2521). An agent asking
   the human to DO something and an agent asking permission to act itself both
@@ -134,7 +204,7 @@ and do something can no longer come back as permission to act.
   cards landed before the doors deliberately: had a door come first, a pending
   action would have reached a renderer that drew nothing for it.
 
-### Records and accounting
+#### Records and accounting
 
 - A field neither front door declares is refused instead of silently dropped
   (R-39 Q9, H-2421). The MCP surface was handed raw shapes, which the SDK wraps
@@ -225,7 +295,7 @@ and do something can no longer come back as permission to act.
   reaches it, so no workflow can exist in any store yet; this is groundwork,
   named here because it is in the store.
 
-### Operator and harness surfaces
+#### Operator and harness surfaces
 
 - A sitting the operator cannot reach yet is drawn as blocked work, not as work
   awaiting them (H-202). An open blocker, a future `not_before` or an active
@@ -297,7 +367,7 @@ and do something can no longer come back as permission to act.
   one, is now a readiness edge: it releases self-triage for the filing or for
   its recurring template, while subsequent notes stay inert.
 
-### Reliability and tests
+#### Reliability and tests
 
 - The release floor is measured against the served document, not the source
   (H-202). The view's other tests read `src/view.ts` as a string, which answers
@@ -335,7 +405,7 @@ and do something can no longer come back as permission to act.
 
 - The remote summon dispatch boundary is written down in `DEV.md`.
 
-### Not covered by this release
+#### Not covered by this release
 
 A reader deciding whether to take this version should know what it does not do.
 
@@ -366,7 +436,7 @@ A reader deciding whether to take this version should know what it does not do.
   surface. Nothing can create, run or read a workflow through the MCP tools or
   the CLI in this release.
 
-### Commit coverage
+#### Commit coverage
 
 Every commit after v0.4.0 and before this release record is represented above.
 This manifest makes that claim auditable without relying on ticket-title
@@ -382,13 +452,14 @@ conventions:
   `a70f560`, `53d5a3e`, `883c671`, `e7082bb`
 - `ef42dd2`, `697e89b`, `656a04c`, `71ae82d`, `305ab03`, `7113b0b`,
   `864c62c`, `7d887ed`, `d1e7c0a`, `246460f`
+- `3f9c61c`, `f8b5a1b`, `792f51a`
 
 The three merge commits carry no changes of their own: `f73727a` brought in
 `09929fa`, `5e449a8` brought in `6ca2373`, and `1211665` brought in `4f86ba4`.
 
-## v0.4.0 — 2026-09-15
+### v0.4.0 — 2026-09-15
 
-### Breaking changes
+#### Breaking changes
 
 - The standing notice is gone (H-1126). `helmo_set_notice` is no longer
   registered, and `helmo_list_tickets` no longer returns a `notice` field. The
@@ -416,7 +487,7 @@ The three merge commits carry no changes of their own: `f73727a` brought in
 The store keeps the `notice` and `goal` columns and their historical events, so
 a store written before this release still replays exactly. Nothing reads them.
 
-### Work routing and accounting
+#### Work routing and accounting
 
 - Hygiene can read the third accounting category (H-1166): `acct:direction`,
   `acct:security`, and `acct:estate` are a closed set of labels alongside a
@@ -428,14 +499,14 @@ a store written before this release still replays exactly. Nothing reads them.
 - Recurring templates are excluded from spend anomalies (H-1124): standing work
   has no spend of its own to be anomalous about.
 
-### Harness surfaces
+#### Harness surfaces
 
 - `wake-check` exposes ready edges (H-1098): `ready_ids` alongside
   `ready_count`, so a harness can see which work moved, not just how much.
 - A newly-ready cursor query (H-1097): `newly_ready_count` and `newly_ready_ids`
   since a sequence number, for an identified caller.
 
-### Operator surfaces
+#### Operator surfaces
 
 - The dashboard is phone-first (H-1063).
 - A decision is drawn before its context (H-1061), and the default record is
@@ -453,13 +524,13 @@ a store written before this release still replays exactly. Nothing reads them.
   STEERING strip quoting a goal. The alt text now describes what the image
   actually shows.
 
-### Reliability and tests
+#### Reliability and tests
 
 - Composed-Helmo contract coverage is restored (H-1086).
 - View tests isolate their ports (H-1093), and demo seeding is single-process
   with correct session stamping (H-1272, H-1099).
 
-### Commit coverage
+#### Commit coverage
 
 Every commit after v0.3.0 and before this release record is represented above.
 This manifest makes that claim auditable without relying on ticket-title
@@ -471,9 +542,9 @@ conventions:
   `eeea123`, `c67e903`, `8ca8a73`, `f6e063c`
 - `7c16ac5`, `a8f1722`
 
-## v0.3.0 — 2026-09-06
+### v0.3.0 — 2026-09-06
 
-### Work routing and stewardship
+#### Work routing and stewardship
 
 - Ready queues honor cross-workstream reservations, and released claims retain
   their assignee until explicitly returned to the pool (H-661, H-954).
@@ -497,7 +568,7 @@ conventions:
   is withheld from every agent ready queue, and is reported separately from
   questions waiting on an answer (H-1028).
 
-### Product and operator surfaces
+#### Product and operator surfaces
 
 - Product completion and independent acceptance are explicit, immutable-ref
   gates rather than implications of ticket status, including while a builder
@@ -521,7 +592,7 @@ conventions:
 - The vendored shadcn-derived design tokens carry their upstream MIT notice,
   and the package ships THIRD_PARTY_NOTICES.md (H-1007).
 
-### Reliability and record integrity
+#### Reliability and record integrity
 
 - Local and remote MCP entry points share one tool implementation; the remote
   endpoint authenticates every call and requires explicit actor identity
@@ -539,7 +610,7 @@ conventions:
 - The harness accounting queries take a session filter, so a metered loop
   session is not netted against desk work under the same actor name (H-878).
 
-### Commit coverage
+#### Commit coverage
 
 Every commit after v0.2.0 and before this final release record is represented
 above. This manifest makes that claim auditable without relying on ticket-title
@@ -557,10 +628,359 @@ conventions:
   `6ecc1e7`, `71f2bf4`, `fc41885`, `9279b00`
 - `ff819f6`, `bff1ba4`, `e9e6513`, `073983c`, `ed02a37`
 
-## v0.2.0 — 2026-08-06
+### v0.2.0 — 2026-08-06
 
 - H-90: the dashboard learns to answer — the one write a human may make
 - H-81: hygiene findings on closed tickets get a disposition surface
 - H-71: reject mangled tool-call writes at the door
 - H-61: silent_assignee — the seventh hygiene check, for reservations nobody will wake
 - H-11 follow-up: npm run demo — the README screenshot's board, reproducible
+
+## Roadmap — published as `helmo-roadmap`
+
+This is Helmo Roadmap's first published set of release notes. It is scoped to
+the independent-installations release and does not reconstruct what came before
+it; earlier history is in the git log.
+
+### v0.1.0 — 2026-09-30
+
+The roadmap can be installed more than once under one account. Each installation
+has a name that both entry points resolve and print, a store it alone writes, a
+build identity read off the code actually loaded, and record references that say
+which installation minted them and refuse one carried from another.
+
+#### An installation has a name, and both entry points say which
+
+- One resolver for both entry points (H-2472). `server.ts` and `view.ts` each
+  read `ROADMAP_DB` on their own, so the only thing that said which roadmap you
+  were talking to was a database path, and nothing printed it back.
+  `ROADMAP_HOME` names the installation and `ROADMAP_DB` names its store; either
+  alone determines the other, so every existing caller keeps working untouched,
+  and no variables at all still means `~/.helmo-roadmap/roadmap.db`. Both set and
+  disagreeing is refused before the store is opened, naming both candidates. The
+  name is shared rather than invented here: `ROADMAP_LABEL`, then `HELMO_LABEL`,
+  then the supervisor's `REV_LABEL`, then derived from the roadmap's own home —
+  so one installation has one name, whichever of the three products you ask.
+
+- Both entry points assert the installation they serve (H-2474). Each prints one
+  installation line at startup — the MCP server on stderr, because stdout is the
+  protocol channel — and `--installation <name|home|db>` on argv ASSERTS that
+  target rather than choosing it. Neither surface has a flag parser of its own,
+  so the assertion is read off argv directly and the check sits inside the
+  resolver, where neither can resolve a target and forget to verify it. A value
+  disagreeing with the environment refuses before the store is opened;
+  `ROADMAP_HOME`/`ROADMAP_DB` remain the only things that move the target. The
+  proof that the refusal comes first is a store file that does not appear.
+
+- An installation can be pinned to an immutable multi-product release set
+  (H-2454). Set `INSTALLATION_RELEASE` to the selection's `ADOPTED.json`;
+  resolution then verifies the selected Rev/Helmo/Roadmap commit set and refuses
+  code from another checkout.
+
+- A store belongs to the installation that first wrote it under a name (H-2488).
+  An explicitly named installation claims `installation_name` in the store's
+  `meta` table, atomically with its first event; a later write from a process
+  resolving a different name is refused, with nothing written. Reads stay
+  available and report the disagreement as UNCLEAR beside both names. This is
+  what catches a name INHERITED from elsewhere, which no flag can catch, because
+  nothing was typed wrong. A derived-only installation claims no name, leaving
+  existing single-store use exactly as it was.
+
+#### References that say whose they are
+
+- A cross-installation reference has one spelling, and the product accepts it
+  back (H-2506). The roadmap advertised a qualified form of its own —
+  `<label>:R-1`, a second idiom for the thing Helmo spells `R-1@<label>` — and
+  advertised it only: handed back to the very installation that minted it, it
+  answered "Project not found". So an agent that quoted the reference the
+  product gave it was told the record did not exist, and fell back to the bare
+  `R-1`, which resolves in whichever installation it happens to be talking to.
+  The spelling is now Helmo's, and the inbound half is the load-bearing one:
+  every `project_id`, `objective_id`, dep endpoint and charter item id is
+  resolved through the reference rules before it reaches the store, so a
+  reference carried from another installation refuses having read and written
+  nothing, rather than landing on an unrelated record of the same name. A bare
+  id keeps working: within one installation it is unambiguous. Every MCP result
+  collects the ids it returned into `references`, pairing each with its
+  qualified form.
+
+#### What is running
+
+- Every process answers for the code it loaded (H-2492). One reading is taken at
+  startup and compared afresh on every report: a rebuild beneath a live process
+  is `stale`, a source run or unreadable code is `unverifiable`, and the commit
+  named is always the loaded one. `postbuild` writes the stamp beside the
+  artifact. Every MCP result carries the installation and the build state.
+
+- The dashboard footer says which installation it is and which build is drawing
+  it. It said only the store path, which answers neither question; the startup
+  line already said both, and nobody reading a dashboard has the startup line.
+  It is read per render, so a view that stays up across a rebuild reports
+  `stale` rather than the artifact's newer commit.
+
+#### Documentation
+
+- The README says how to pin an installation to a release set (H-2454), and
+  points a multi-installation reader at `ENTRY-POINTS.md` in the Rev repo — the
+  checklist of every path to review when you add an installation or change which
+  release one runs (H-2517). `ISOLATION-CHECKS.md` in the same repo is the
+  reviewer's version, with the commands to re-derive each isolation property
+  against your own two installations.
+
+#### Not covered by this release
+
+- A derived-only installation — no `ROADMAP_LABEL`, no `HELMO_LABEL`, no
+  `REV_LABEL` — claims no durable name, so nothing at the store level
+  distinguishes it from another derived installation pointed at the same store.
+  That is deliberate, so single-install use is untouched, but it means the
+  store-level guard protects named installations only. If you run two, name them.
+
+- The store claims its name from the first explicitly named writer, so a store
+  with history from before this release carries no name until some named process
+  writes to it — and whichever named process writes first claims it, whatever it
+  is called. On an existing pair, write once from each installation under its
+  intended name and check the claim landed before relying on the guard.
+
+- What a process reports as running is a reading of the code it loaded, not a
+  guarantee about which commit produced it: a dirty-tree build is reported as
+  what it is.
+
+- A release change is taken at the next start. Restarting the MCP server or the
+  view is still a deliberate act.
+
+- The roadmap has no browser in its toolchain. Its shared presentation controls
+  assert their shape here and lean on Helmo's repo for the rendered behaviour.
+
+#### Commit coverage
+
+Every commit in this release is represented above. This manifest makes that
+claim auditable without relying on ticket-title conventions:
+
+- `b20a070`, `487a7f4`, `931e474`, `739dd29`, `c201e42`, `92e62cd`,
+  `91ba2d4`, `9af13c4`, `f04d504`, `f68d3cf`, `a5a508d`
+
+## Runtime — published as `rev`
+
+These notes start at v0.1.0, the independent-installations release. They do
+not reconstruct what came before it; earlier history is in the git log.
+
+### v0.2.0 — 2026-10-01
+
+A loop no longer spends a session the work record would refuse, and the pinned
+service path from v0.1.0 is safe to use: a pinned supervisor is recognised as
+running, and installing the service over an in-flight one waits rather than
+races.
+
+- Before a loop spends a session, Rev asks Helmo whether the seat may launch
+  at all, so a ticket bound to a workflow attempt is started only once its
+  requirements have passed and the admission is recorded in the same
+  transaction as the check. A refusal costs no session, is reported in the
+  loop's log, and is asked again after a restart rather than bypassed by one.
+  An explicit refusal holds a launch back. If admission is unavailable or
+  corrupt, workflow-bound work also fails closed while ordinary tickets keep
+  their prior launch behaviour (H-2561, H-472).
+- Pinned services now report their launcher-backed supervisor as live while
+  retaining exact command identity for loop drivers; status no longer mistakes
+  the real supervisor for a stale marker and risks starting a duplicate
+  (H-2560).
+- On macOS, service installation waits for the previous launchd job to release
+  its label before bootstrapping the replacement. If bootstrap fails, it
+  restores the previous definition and running job (H-2560).
+- Removal never pairs a Helmo home whose own name is already a conventional
+  roadmap home: the bounds for `.rev-roadmap-b` no longer claim
+  `.helmo-roadmap-b`, which belongs to the roadmap `-b` installation (H-2553).
+
+### v0.1.0 — 2026-09-30
+
+Two Rev installations can now run under one login without reaching into each
+other: each has a name, a service identity bound to its own home, a store it
+alone writes, and commands that say which one they are about and refuse to act
+on the other. A pinned installation also gains the two verbs it was missing —
+changing which release it runs, and going back.
+
+#### An installation has an identity
+
+- An installation's service identity is its resolved home, not a basename
+  (H-2452). The launchd label is also the plist filename and the
+  bootout/kickstart address, so it is the one name two installations under a
+  single account cannot share — and it used to be derived from the home's
+  basename, which left `/tmp/customer-a/.rev` and `/tmp/customer-b/.rev` both
+  answering to the same label. Redirecting `HOME` does not separate them:
+  launchd's namespace belongs to the uid. The label is now bound to the resolved
+  home path. A direct child of the ACCOUNT's home named `.rev` or
+  `.rev-<suffix>` keeps the label it was bootstrapped under, so existing
+  installs are untouched; anywhere else the label carries a readable part plus
+  eight hex characters of the path's digest. The account's home is read from the
+  password database rather than `$HOME`, because `$HOME` is something the plist
+  this code writes can set.
+
+- A service restarted with a daemon's bare environment resolves the identity it
+  was installed under (H-2452). The plist and the systemd unit now export
+  `REV_LABEL`, so a job the service manager brings back does not re-derive a
+  different name.
+
+- `install`, `uninstall` and `start` read the definition on disk and refuse when
+  its `REV_HOME` belongs to another installation, naming both homes and the way
+  out (H-2452). This is the case an explicit or INHERITED `REV_LABEL` can still
+  create — a shell carrying one installation's label aimed at another's home —
+  which no amount of care at the keyboard prevents, because nothing was typed
+  wrong. A definition with no `REV_HOME` reads as unowned, so an older install
+  stays upgradeable, and installing retires a definition left at this home's
+  previous label.
+
+- Every command says which installation it is about, and `--installation` makes
+  that an assertion (H-2473, H-2526). The target used to come from whatever
+  `REV_HOME`/`REV_LABEL` happened to be in the ambient environment, and nothing
+  printed it back. Reads (`status`, `usage`, `routing`, `service status`, the
+  bare-usage footer) now name their target, and so does each mutation's
+  confirmation, because that is where an operator looks to see what they just
+  did. `--installation <name|home>` ASSERTS that target and cannot redirect it:
+  a disagreement with the environment refuses, exit 1, naming both candidates.
+  `REV_HOME` moves the target; the flag says you meant it. The check runs once
+  before the command switch, so a read surface added later cannot forget it, and
+  `--installation=<value>` is recognised as well as the space-separated
+  spelling. The flag is therefore usable as a guard at the top of a script,
+  including on a read. `tail` and `session-spec` are exempt: their stdout is a
+  machine value a caller substitutes.
+
+#### What is running, and what built it
+
+- A build records which commit it came from (H-2442). `dist` is gitignored and
+  `rev redeploy` restarts without building, so the supervisor has always loaded
+  an artifact with no provenance: on one occasion `dist/cli.js` was built the
+  evening after the supervisor running it started, meaning the fleet was
+  executing code that no longer existed on disk. The stamp travels beside the
+  artifact rather than in a central log directory, because a file keyed by repo
+  basename cannot describe two installations of one repo. A dirty tree is
+  recorded, not refused — refusing would only produce builds with no record at
+  all.
+
+- The surfaces say what the fleet is RUNNING, separately from what is on disk
+  (H-2489). Every surface that could be asked "what is the fleet running" would
+  have read the build stamp, which on one day would have named a commit built at
+  06:40 to describe a process that started at 18:01 the evening before:
+  precise, healthy-looking, wrong. `build:` is the artifact; `running:` is what
+  the live process recorded when it loaded, and it never falls back to the
+  artifact's commit — on divergence that commit appears only as the thing nobody
+  is executing. `STALE` and `UNVERIFIABLE` are answers. What is compared is a
+  digest of the JavaScript in the directory, not the commit, because a dirty
+  tree's commit did not produce the artifact and two rebuilds of one commit
+  differ. `status`, `service status`, `/health.json` and the dashboard print
+  both, and `health.json` gains the installation it was never naming.
+
+#### Choosing and changing a release
+
+- An installation can be pinned to an immutable multi-product release set
+  (H-2454). `INSTALLATION_RELEASE` points at the selection's `ADOPTED.json`;
+  every entry point then verifies the selected Rev/Helmo/Roadmap commit set and
+  refuses code from another checkout.
+
+- `rev release status | upgrade <dir> | rollback` (H-2493). A pin was previously
+  moved only by a text editor: an upgrade was an unwitnessed edit, a half-written
+  selection bricked every command in the installation, and going back meant
+  finding and reinstalling old code. Now the whole set is verified before the
+  pointer moves — each product's `dist` holds JavaScript and its `BUILD.json`
+  names exactly the commit `RELEASE.json` does, built clean — and every fault is
+  reported at once rather than one per attempt. `MIGRATION.json` is required in
+  the release directory and is copied into the selection, so a one-way migration
+  refuses a rollback in its own words even after the release directory is gone.
+  The replacement is a same-directory temp file, fsync, rename, directory fsync,
+  and it retains the whole previous selection inside it, so a rollback is one
+  write rather than a reinstall.
+
+- A pinned service starts through the installation's own launcher (H-2511). A
+  service definition is written once and nothing rewrites it, so the path it
+  names is frozen at install time — and it used to be the `cli.js` of whatever
+  release was selected when the service was installed. After an upgrade, the job
+  the service manager brought back exec'd the release the installation had just
+  left, was stopped by the coherence check as an uncaught throw, and under
+  KeepAlive was brought back to fail again. A pinned installation's definition
+  now names `<REV_HOME>/service/launch.mjs`, which lives outside every release.
+  It reads the selection at START, sets `argv[1]` to the resolved `cli.js` and
+  imports it in this process, so signals, the exit timeout and the supervised
+  pid all still reach the service manager, and everything downstream is what it
+  would have been had the manager named that file directly. A release change is
+  therefore picked up by a restart, with no reinstall.
+
+- `rev release` and `rev install` are exempt from the pin check (H-2493,
+  H-2522). They are the two ways out of a broken selection and cannot sit behind
+  the fault. The exemption is in the module-level list as well as in each
+  command's own argument: it was in the argument alone, so `rev install remove`
+  threw inside the gate and never reached the declaration that it was exempt,
+  leaving a hand `rm -rf` as the only route out.
+
+#### Removing one installation's data
+
+- `rev install remove [--confirm]` (H-2512). Every other removal Rev has keeps
+  the records: `rev service uninstall` takes the definition and leaves the
+  store, the controls and the selection byte-for-byte, which is right, and which
+  left an operator with a hand `rm -rf` as the only way to delete an
+  installation — in a shell that may be carrying the other installation's
+  `REV_HOME`, with no product refusal in the way. This is a separate verb rather
+  than a flag on `service uninstall`, because the difference between keeping and
+  deleting every record must not be a word someone can miss. The plan prints
+  first and `--confirm` is a second act. The boundary is the directories the
+  installation owns, named: its Rev home and, for a home named the conventional
+  way, the Helmo family's homes beside it carrying the same suffix (`~/.rev-b`
+  with `~/.helmo-b`). A store in none of them is reported as left in place rather
+  than followed, whether or not anything has opened it yet. Naming them beats
+  trusting the directory they sit in, which under that layout is the whole
+  account home — so a roster copied from `~/.rev` to bootstrap `~/.rev-b` no
+  longer brings the first installation's store inside the second's boundary
+  (H-2544). A home named outside the convention keeps the enclosing directory,
+  which holds as far as that directory is one installation's. A standing service
+  definition or a live supervisor refuses, each naming the command that clears
+  it, and a `REV_HOME` containing the account's own home directory is refused
+  outright. Release directories are never touched.
+
+#### Documentation
+
+- `INSTALLATIONS.md` — the consumer's guide to running more than one
+  installation: what to set, what each refusal means, which versions form a set,
+  and the backup a one-way migration makes your only way back (H-2515, H-2516).
+- `ENTRY-POINTS.md` — every path to repoint when you add an installation or
+  change which release one runs, and the surface that tells you it took. It
+  covers the Helmo family standing without Rev as well (H-2517).
+- `ISOLATION-CHECKS.md` — the reviewer's checklist: seven isolation properties,
+  the commands to re-derive each against your own two installations, what to
+  observe, what our own run observed, and what is not proved.
+
+#### Reliability and tests
+
+- The prompt tests assert what the loop compiles, not what fits in the console
+  (H-2496). Nine tests read prompt text through the loop's bounded stdout tail.
+  The iteration prompt is one long line and has grown past that window, so the
+  `toContain` assertions were one clause away from red — and the `not.toContain`
+  ones were already a false green: a mutation putting a phrase at the head of the
+  prompt left the test passing, because the text was truncated away rather than
+  absent. The mocks now write the compiled prompt to a file and the assertions
+  read it from there.
+
+#### Not covered by this release
+
+- The service-definition guard is Rev's answer to an inherited label, and it
+  needs a definition to read. The Helmo family installs no service, so its
+  answer is a different mechanism — a durable name claimed in the store — and it
+  is subject to that mechanism's own limits, which Helmo's notes state.
+
+- What a process reports as RUNNING is a digest of the JavaScript it loaded, not
+  a commit. It can tell you the code changed under a live process; it cannot
+  tell you which commit a dirty-tree build came from.
+
+- A release change is taken at the next start. Nothing in this release moves a
+  running supervisor or a running loop onto new code; restarting is still a
+  deliberate act.
+
+- `rev install remove` deletes one installation's data. It is not a general
+  uninstaller: it leaves release directories alone, and it will not follow a
+  store that sits outside the installation home.
+
+#### Commit coverage
+
+Every commit in this release is represented above. This manifest makes that
+claim auditable without relying on ticket-title conventions:
+
+- `02ac9d6`, `5cbb31c`, `1d2dfdf`, `2d7bb6c`, `30ba160`, `60c8c8b`,
+  `ec33ba9`, `6be02c6`, `a36af04`, `9d00b5e`
+- `57e0b0b`, `4e3d6a8`, `a9ed409`, `12fb533`, `9055f6e`, `4a712d3`,
+  `a14a59b`, `817dc23`, `bb7b4a9`

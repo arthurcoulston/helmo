@@ -32,8 +32,8 @@ three entry points — `helmo-cli`, `helmo-mcp` and `helmo-view` — are each a 
 something in your setup names, and a running view or MCP server keeps the code
 it loaded until it restarts. The checklist of every path to review, and the
 surfaces that tell you what is actually running, is
-[ENTRY-POINTS.md](https://github.com/arthurcoulston/rev/blob/main/ENTRY-POINTS.md)
-in the Rev repo — it covers the Helmo family standing without Rev as well.
+[ENTRY-POINTS.md](../../ENTRY-POINTS.md) at the repository root — it
+covers the Helmo family standing without the runtime as well.
 
 Manual setup, if you prefer:
 
@@ -154,4 +154,4 @@ the work actually cost. Same genus, different optimization.
 
 ## License
 
-[MIT](LICENSE)
+[MIT](../../LICENSE)

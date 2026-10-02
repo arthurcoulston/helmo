@@ -39,5 +39,13 @@
     "roadmap-mcp": "dist/server.js",
     "roadmap-view": "dist/view.js",
     "roadmap-recovery": "dist/recovery.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/arthurcoulston/helmo.git"
+  },
+  "homepage": "https://github.com/arthurcoulston/helmo#readme",
+  "bugs": {
+    "url": "https://github.com/arthurcoulston/helmo/issues"
   }
 }

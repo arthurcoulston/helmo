@@ -5,7 +5,7 @@ that draw work from Helmo. Rev never reads ticket content; Helmo never
 manages a process. Product doc: `rev-product-description.md`.
 The accepted A01–A14 workflow launch proof and its exact cross-repository
 boundary are recorded in `WORKFLOW-GATE-VERIFICATION.md`.
-`INSTALLATIONS.md` is the consumer's account of install identity, pinned
+The root `INSTALLATIONS.md` is the consumer's account of install identity, pinned
 releases, upgrade, rollback and removal — what `install.ts`, `release.ts`,
 `remove.ts` and the service-definition section below look like from outside.
 It is a published promise: a change to any of those modules' behaviour is a

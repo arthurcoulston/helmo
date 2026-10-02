@@ -17,13 +17,13 @@ Rev at all:
 For an independent review of those guarantees, including a two-installation
 checklist and the public tests, see [ISOLATION-CHECKS.md](ISOLATION-CHECKS.md).
 
-- Helmo: [AGENT-INSTALL.md](https://github.com/arthurcoulston/helmo/blob/main/AGENT-INSTALL.md)
+- Work: [AGENT-INSTALL.md](packages/work/AGENT-INSTALL.md)
   — `HELMO_HOME` / `HELMO_DB`, `HELMO_LABEL`, `--installation <name|home|db>`,
   and qualified record references (`H-267@<label>`).
-- Roadmap: [AGENT-INSTALL.md](https://github.com/arthurcoulston/helmo-roadmap/blob/main/AGENT-INSTALL.md)
+- Roadmap: [AGENT-INSTALL.md](packages/roadmap/AGENT-INSTALL.md)
   — `ROADMAP_HOME` / `ROADMAP_DB`, `ROADMAP_LABEL`, the same
   `--installation` assertion.
-- Rev: [AGENT-INSTALL.md](AGENT-INSTALL.md) — `REV_HOME`, the roster, the
+- Runtime: [AGENT-INSTALL.md](packages/runtime/AGENT-INSTALL.md) — `REV_HOME`, the roster, the
   service.
 
 ## One installation needs nothing here

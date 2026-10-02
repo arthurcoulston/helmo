@@ -1,6 +1,7 @@
 # Third-party notices
 
-Helmo's vendored estate design tokens include values derived from shadcn/ui.
+Helmo's vendored estate design tokens — the copies carried by the Work,
+Roadmap and Runtime views — include values derived from shadcn/ui.
 
 ## shadcn/ui
 

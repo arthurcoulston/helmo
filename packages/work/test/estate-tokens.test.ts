@@ -25,7 +25,7 @@ describe('vendored estate tokens', () => {
   const haveSource = existsSync(SOURCE);
 
   it('retains the shadcn MIT notice beside the vendored copy', () => {
-    const notice = readFileSync(new URL('../THIRD_PARTY_NOTICES.md', import.meta.url), 'utf8');
+    const notice = readFileSync(new URL('../../../THIRD_PARTY_NOTICES.md', import.meta.url), 'utf8');
     expect(notice).toContain('Copyright (c) 2023 shadcn');
     expect(notice).toContain('The above copyright notice and this permission notice');
   });

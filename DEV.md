@@ -1,0 +1,82 @@
+# DEV — coding context for the Helmo repository
+
+One repository, three products and the module they share. This file is what
+holds across all of them; each area's own `DEV.md` is the context for its
+internals, and a dev session reads this one first and then that one.
+
+| Area | Package | Name on npm/bin | Its context |
+| --- | --- | --- | --- |
+| Work | `packages/work` | `helmo` | [DEV.md](packages/work/DEV.md) |
+| Roadmap | `packages/roadmap` | `helmo-roadmap` | [DEV.md](packages/roadmap/DEV.md) |
+| Runtime | `packages/runtime` | `rev` | [DEV.md](packages/runtime/DEV.md) |
+| Core | `packages/core` | `@helmo/core` | this file |
+
+## What `core` owns
+
+`@helmo/core` holds the mechanics all three products were implementing
+separately: installation identity and its precedence, install home resolution,
+qualified record references, config reading, the build stamp, and release
+selection. One documented precedence replaced three lists that differed by one
+entry, which is the measured cause of an identity incident (H-2424).
+
+Every Helmo-family surface accepts `ROADMAP_LABEL`, `HELMO_LABEL`, then
+`REV_LABEL`. Precedence picks the key when one is set; two accepted keys
+carrying distinct values refuse at startup rather than guessing. Adding a
+product does not add a fourth copy of any of this — it consumes `core`.
+
+Release selection reads both shapes: a historical three-component
+`rev`/`helmo`/`helmo-roadmap` set, so an installation can still inspect and
+roll back across the consolidation boundary, and a one-component `helmo` set,
+where the three products live at `packages/work`, `packages/roadmap` and
+`packages/runtime`. New selections are written one-component only, and a
+partial, extended or mixed manifest refuses rather than falling through to the
+legacy reader.
+
+## Boundaries the build enforces
+
+- **The runtime never reads the work record's store.** Runtime talks to Work
+  through its CLI and MCP surfaces, never its SQLite. The monorepo makes that
+  import available for the first time, so `packages/runtime` asserts it in
+  `prebuild` (`scripts/check-import-boundary.mjs`) and the build fails on a
+  violation. A rule a reviewer has to remember holds until the first busy week.
+- **A build writes only where it is marked to.** The root `npm run build`
+  refuses unless the root carries the build marker, so it can never write into
+  a release directory or a checkout an installation resolves through.
+  `scripts/build.mjs` and `scripts/build.test.mjs` are the whole of it.
+- **One version.** Every package carries the root version and depends on
+  `@helmo/core` at exactly that version; `scripts/build.test.mjs` asserts it.
+  What the number promises is [VERSIONING.md](VERSIONING.md), and a change to
+  the surfaces it names is a version decision, not an implementation detail.
+
+## Shared idiom
+
+All three products are built the same way, and a change that breaks the idiom
+in one of them is a defect in all three:
+
+- **Append-only event log, materialized state.** `rebuild()` is the invariant
+  and the tests enforce it: every side effect of a write lives in an `apply*`
+  function, or replay silently diverges.
+- **`.immediate()` write transactions**, never deferred.
+- **Actor provenance on every write**, recorded and checked as an assertion —
+  never authenticated. The stores record who claimed to write; they do not
+  verify real-world identity.
+- **The markup gate** at the door, rejecting mangled tool-call writes (H-71).
+- **Vendored estate design tokens** rather than a dependency on the private
+  estate repository. Each area carries its own generated copy; the drift tests
+  skip visibly when the estate source is absent, because a check that quietly
+  passes when its input is missing can never go red.
+
+## Documents
+
+Product-wide documents live at the root and exist once: `README.md`,
+`LICENSE`, `SECURITY.md`, `THIRD_PARTY_NOTICES.md`, `CHANGELOG.md`,
+`VERSIONING.md`, `AGENTS.md` (with `CLAUDE.md` as its shim), `INSTALLATIONS.md`,
+`ENTRY-POINTS.md`, `ISOLATION-CHECKS.md` and this file.
+`scripts/build.test.mjs` asserts that set is present and unduplicated — a
+second `LICENSE` or `SECURITY.md` inside a package is how three products drift
+back apart.
+
+Each area keeps its own `README.md`, `DEV.md`, `AGENT-INSTALL.md`, its product
+description, and its summoned-role file. `INSTALLATIONS.md` is a published
+promise: a change to install, release or removal behaviour is a change to that
+document in the same pass.

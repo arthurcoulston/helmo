@@ -25,8 +25,7 @@ entry points — `roadmap-mcp` and `roadmap-view` — are paths something in you
 setup names, and both migrate a store by opening it, so a view started from the
 wrong release matters as much as the server. The checklist of every path to
 review, and the surfaces that tell you what is actually running, is
-[ENTRY-POINTS.md](https://github.com/arthurcoulston/rev/blob/main/ENTRY-POINTS.md)
-in the Rev repo.
+[ENTRY-POINTS.md](../../ENTRY-POINTS.md) at the repository root.
 
 To run it yourself: requires Node.js and npm. No Helmo server, Crew
 checkout, or Estate checkout is needed to run this product. The SQLite
@@ -68,5 +67,5 @@ floor. Publication also requires the separate privacy/history and clean-setup
 review; 1.0 visual baselines and Scale operations are not claimed.
 
 The view is local and read-only. Back up the SQLite store before upgrades;
-keep backups private. See [SECURITY.md](SECURITY.md) for disclosure and
-[LICENSE](LICENSE) for the MIT terms.
+keep backups private. See [SECURITY.md](../../SECURITY.md) for disclosure and
+[LICENSE](../../LICENSE) for the MIT terms.

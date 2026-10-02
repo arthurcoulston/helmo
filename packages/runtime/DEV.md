@@ -508,10 +508,17 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   using only Helmo CLI-supported fields; project metadata is not passed because
   that CLI refuses fields which exist only on the MCP create surface.
   Attempt state contains no signup text and lives under state/supervisor; a
-  stale result is discarded on the Worker's 409. Before heartbeat or result,
-  the adapter re-reads that ticket and retains the lease only while it is open
-  or in progress; any other status discards the local attempt and result so the
-  Worker can recover it after lease expiry. There is no listener or
+  stale result is discarded on the Worker's 409. A staged result is delivered
+  whatever the ticket's status (H-654): staging then closing is the Builder's
+  ordinary sequence, and the close can land before the poll. Any other refusal
+  is logged with the Worker's error phrase (bounded by shape, never the raw
+  body); while the ticket is open or in progress the lease is renewed and the
+  result kept for retry, and once it is not, or before a heartbeat with nothing
+  staged, the adapter discards the local attempt. A discard is recorded,
+  identifiers only, in `intake-preparation-abandoned.json` (last 20), because
+  the Worker hands a live lease straight back to its owner: the next ticket for
+  that occurrence names the prior ticket, attempt and commit and the refusal,
+  so it reads as a resubmission rather than fresh preparation. There is no listener or
   second scheduler, and an installation declaring neither key is unchanged.
 - A human answer reopens a Helmo ticket with `resolution: resume` regardless
   of whether its operational choice was resume, hold, or investigate. The

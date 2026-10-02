@@ -91,6 +91,38 @@ export function intakePreparationPass(options: IntakeExecutorOptions): Promise<P
   return running;
 }
 
+// What a later assignment of the same occurrence must be told (H-654): the
+// Worker hands a live lease back to its owner, so an abandoned attempt returns
+// as a new ticket, and without this it reads as fresh preparation work.
+interface Abandoned { identity: string; attemptId: string; ticketId: string; artifactRef?: string; refused?: string }
+const KEPT_ABANDONED = 20;
+
+function abandonedFile(stateFile: string): string {
+  return join(dirname(stateFile), 'intake-preparation-abandoned.json');
+}
+
+function readAbandoned(stateFile: string): Abandoned[] {
+  try { return JSON.parse(readFileSync(abandonedFile(stateFile), 'utf8')) as Abandoned[]; } catch { return []; }
+}
+
+// The Worker's error is a closed set of short phrases; anything else is not printed.
+async function refusalReason(response: Response): Promise<string> {
+  const body = await response.json().catch(() => null) as { error?: unknown } | null;
+  const error = typeof body?.error === 'string' && /^[a-z][a-z ]{0,39}$/.test(body.error) ? `: ${body.error}` : '';
+  return `${response.status}${error}`;
+}
+
+function priorAttempts(stateFile: string, envelope: IntakeEnvelope): string {
+  const prior = readAbandoned(stateFile).filter((a) => a.identity === envelope.identity);
+  const lines = prior.map((a) => `${a.attemptId === envelope.attemptId ? 'This same attempt' : `Earlier attempt ${a.attemptId}`} `
+    + `was assigned to ${a.ticketId} and abandoned when that ticket closed`
+    + (a.artifactRef ? `; its result ${a.artifactRef} was ${a.refused ? `refused (${a.refused})` : 'never delivered'}` : ' without a result')
+    + '.');
+  if (prior.some((a) => a.artifactRef)) lines.push('Do not prepare again: fix what the refusal names, or rerun gp-rev intake result with the existing commit.');
+  else if (envelope.attemptCount > 1) lines.push(`This is attempt ${envelope.attemptCount} of this preparation.`);
+  return lines.length ? `${lines.join('\n')}\n` : '';
+}
+
 async function runPass(options: IntakeExecutorOptions): Promise<PassResult> {
   const request = options.request ?? fetch;
   const secret = (options.secret ?? keychainSecret)();
@@ -98,29 +130,37 @@ async function runPass(options: IntakeExecutorOptions): Promise<PassResult> {
   let active: Active | null = null;
   if (existsSync(options.stateFile)) active = JSON.parse(readFileSync(options.stateFile, 'utf8')) as Active;
   if (active) {
-    const assignmentStatus = await options.assignmentStatus(active.ticketId);
-    if (!['open', 'in_progress'].includes(assignmentStatus)) {
-      rmSync(options.stateFile, { force: true }); rmSync(options.resultFile, { force: true });
-      return 'abandoned';
-    }
     const owned = { ...executor, identity: active.identity, version: active.version, attemptId: active.attemptId };
+    const forget = () => { rmSync(options.stateFile, { force: true }); rmSync(options.resultFile, { force: true }); };
+    const abandon = (artifactRef?: string, refused?: string): PassResult => {
+      const entry: Abandoned = { identity: active!.identity, attemptId: active!.attemptId, ticketId: active!.ticketId, artifactRef, refused };
+      atomicJson(abandonedFile(options.stateFile), [...readAbandoned(options.stateFile), entry].slice(-KEPT_ABANDONED));
+      forget();
+      return 'abandoned';
+    };
+    const assignmentOpen = async () => ['open', 'in_progress'].includes(await options.assignmentStatus(active!.ticketId));
+    // A staged result is delivered whatever the ticket's status (H-654): staging
+    // then closing is the Builder's ordinary sequence, and the close can land
+    // before this poll does.
     if (existsSync(options.resultFile)) {
       const result = JSON.parse(readFileSync(options.resultFile, 'utf8')) as IntakeResult;
       const response = await signedPost(options.origin, 'result', { ...owned, ...result }, secret, request);
-      if (response.ok) {
-        rmSync(options.stateFile, { force: true }); rmSync(options.resultFile, { force: true });
-        return 'completed';
-      }
-      if (response.status === 409) {
-        rmSync(options.stateFile, { force: true }); rmSync(options.resultFile, { force: true });
-        return 'superseded';
-      }
-      throw new Error(`intake result refused (${response.status})`);
+      if (response.ok) { forget(); return 'completed'; }
+      if (response.status === 409) { forget(); return 'superseded'; }
+      const reason = await refusalReason(response);
+      if (!await assignmentOpen()) return abandon(result.artifactRef, reason);
+      // Nobody can repair the result once the lease lapses, so keep it while
+      // the ticket is open and say why it was refused (H-655).
+      const heartbeat = await signedPost(options.origin, 'heartbeat', owned, secret, request);
+      if (heartbeat.status === 409) { forget(); return 'superseded'; }
+      throw new Error(`intake result ${result.artifactRef} refused (${reason}); `
+        + (heartbeat.ok ? 'lease renewed, result kept for retry' : `heartbeat also refused (${await refusalReason(heartbeat)})`));
     }
+    if (!await assignmentOpen()) return abandon();
     const response = await signedPost(options.origin, 'heartbeat', owned, secret, request);
     if (response.ok) return 'heartbeat';
     if (response.status === 409) { rmSync(options.stateFile, { force: true }); return 'superseded'; }
-    throw new Error(`intake heartbeat refused (${response.status})`);
+    throw new Error(`intake heartbeat refused (${await refusalReason(response)})`);
   }
 
   const claimed = await signedPost(options.origin, 'claim', executor, secret, request);
@@ -136,7 +176,8 @@ async function runPass(options: IntakeExecutorOptions): Promise<PassResult> {
     writeFileSync(signup, envelope.signupDocument, { mode: 0o600 });
     const body = `Intake preparation ${envelope.identity} version ${envelope.version}, attempt ${envelope.attemptId}.\n`
       + `Verified signup ${envelope.signupSha256} is at clients/${envelope.orgSlug}/signup.md for project ${envelope.projectSlug} and booking ${envelope.bookingId}.\n`
-      + `Prepare and push the project artifacts, then run gp-rev intake result goodplumb@<40-hex-commit>; no client text belongs in this ticket.`;
+      + priorAttempts(options.stateFile, envelope)
+      + `Prepare and push the project artifacts, then run gp-rev intake result goodplumb@<40-hex-commit>; the supervisor delivers a staged result even after this ticket closes. No client text belongs in this ticket.`;
     const ticketId = await options.assign(body);
     const { signupDocument: _private, ...kept } = envelope;
     atomicJson(options.stateFile, { ...kept, ticketId });

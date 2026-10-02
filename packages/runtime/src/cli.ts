@@ -20,6 +20,7 @@ import { logEvent, pidAlive, processObservation, sClear, sGet, sHas, sPendingPid
 import { runFleet } from './supervisor.js';
 import { teamResume, teamStop } from './team-control.js';
 import { buildIntakeResult, recordIntakeResult } from './intake-preparation.js';
+import { commandName } from './command-name.js';
 
 const [cmd, ...rest] = process.argv.slice(2);
 // `--installation <name|home>` may follow any command: it asserts which
@@ -27,7 +28,6 @@ const [cmd, ...rest] = process.argv.slice(2);
 // than a redirect (H-2473, src/install.ts). Taken out of `rest` here so that
 // no command's own positional arguments have to know it might be there.
 const requestedInstall = takeInstallFlag(rest);
-const commandName = process.env['REV_COMMAND_NAME']?.trim() || 'rev';
 // Assert the name here, at the door, and nowhere else. It used to be an
 // argument each handler passed to `requireTarget`, which meant it held only on
 // the surfaces that write: the read surfaces — exactly where a script puts an

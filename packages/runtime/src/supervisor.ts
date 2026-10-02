@@ -27,6 +27,7 @@ import { completeActivation, deploymentFile } from './deployment.js';
 import { readSelection, selectionFile } from './release.js';
 import { target } from './install.js';
 import { intakePreparationPass } from './intake-preparation.js';
+import { commandName } from './command-name.js';
 
 const SUP = 'supervisor';
 
@@ -76,7 +77,7 @@ function agentResume(g: GlobalConfig, l: LoopConfig): { ticket: string; reason: 
 export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Promise<number> {
   const existing = occupiedPid(SUP);
   if (existing) {
-    throw new Error(`A supervisor is already running (PID ${existing}). Check: rev status`);
+    throw new Error(`A supervisor is already running (PID ${existing}). Check: ${commandName} status`);
   }
   if (sHas(SUP, 'RUNNING')) {
     // A previous supervisor died without cleanup (crash, power loss). Say so:
@@ -328,7 +329,7 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
     process.on('SIGINT', () => drain('SIGINT'));
 
     logEvent(SUP, 'fleet-start', `pid=${process.pid} loops=${Object.keys(loops).join(',')}`);
-    console.log(`rev: supervisor pid ${process.pid} — ${Object.keys(loops).length} loop(s) in the roster. Stop the machine: rev stop`);
+    console.log(`rev: supervisor pid ${process.pid} — ${Object.keys(loops).length} loop(s) in the roster. Stop the machine: ${commandName} stop`);
     if (landed) reportRedeployLanded(g, landed, process.pid);
     for (const cfg of Object.values(loops)) {
       const slot: Slot = { cfg, child: null, fd: null, startedAt: 0, restartStreak: 0, respawnAt: null, resumeTicket: null };
@@ -338,7 +339,7 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
         console.log(`rev: loop '${cfg.name}' already running outside the supervisor (pid ${foreign}) — leaving it alone; will adopt if it exits.`);
         logEvent(SUP, 'foreign', `loop=${cfg.name} pid=${foreign}`);
       } else if (halted(cfg.name)) {
-        console.log(`rev: loop '${cfg.name}' has a halt sentinel — will respawn when cleared (rev resume ${cfg.name}).`);
+        console.log(`rev: loop '${cfg.name}' has a halt sentinel — will respawn when cleared (${commandName} resume ${cfg.name}).`);
       } else {
         launch(slot);
       }

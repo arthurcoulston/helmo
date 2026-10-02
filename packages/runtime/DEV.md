@@ -711,7 +711,11 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   not a named worker). `bin/gp-rev.js` is the Good Plumb operator entrypoint:
   it fixes `REV_HOME` to `~/.rev-gp` before loading that same CLI, so every
   verb stays shared while neither a shell override nor remembered flag can
-  cross estates. Its displayed commands and roster source follow that name.
+  cross estates. `command-name.ts` resolves the invoked name once for every
+  caller-facing next command, including calls dispatched by the `helmo` front
+  command; installed binary paths, service labels and `rev:` process log
+  prefixes keep naming the actual runtime. Its displayed commands and roster
+  source follow that name.
 
 ## Commands
 

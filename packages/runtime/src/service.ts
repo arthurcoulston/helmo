@@ -12,6 +12,7 @@ import { homedir, userInfo } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { DEFAULT_DRAIN_GRACE_SECONDS, revHome, stateDir } from './config.js';
 import { processObservation } from './sentinels.js';
+import { commandName } from './command-name.js';
 
 export const LAUNCHD_EXIT_TIMEOUT_SECONDS = 60;
 
@@ -490,7 +491,7 @@ export function serviceInstall(): void {
     console.log(`Installed and started: ${file} (systemd user unit '${unit}').`);
   }
   retireLegacyService(kind, file);
-  console.log('Stop the machine gracefully with: rev stop  (a drained supervisor stays down until started again)');
+  console.log(`Stop the machine gracefully with: ${commandName} stop  (a drained supervisor stays down until started again)`);
 }
 
 export function serviceUninstall(): void {
@@ -522,7 +523,7 @@ export function serviceStart(): void {
   assertOwnService(kind, file, 'start');
   if (kind === 'launchd') launchctl('kickstart', `gui/${process.getuid!()}/${serviceLabel()}`);
   else systemctl('start', systemdUnitName());
-  console.log('Supervisor start requested — check: rev status');
+  console.log(`Supervisor start requested — check: ${commandName} status`);
 }
 
 /**

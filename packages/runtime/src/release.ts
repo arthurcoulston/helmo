@@ -56,6 +56,7 @@ import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, re
 import { basename, dirname, join, resolve } from 'node:path';
 import { digestOf, readStamp } from './build.js';
 import { deploymentFile, describeDeployment, recordSelection } from './deployment.js';
+import { commandName } from './command-name.js';
 
 /** The historical products in a pre-C1 release set. Kept so an installation
  *  can inspect and roll back to the release it was already running. */
@@ -134,7 +135,7 @@ export function readSelection(file: string): Selection | null {
     throw new ReleaseError(`${file} is not readable as a selection: ${e instanceof Error ? e.message : String(e)}`);
   }
   if (!parsed.release || !parsed.directory) {
-    throw new ReleaseError(`${file} names no release (it needs 'release' and 'directory'). Select one with: rev release upgrade <release directory>`);
+    throw new ReleaseError(`${file} names no release (it needs 'release' and 'directory'). Select one with: ${commandName} release upgrade <release directory>`);
   }
   return {
     ...parsed,
@@ -311,20 +312,20 @@ export function upgrade(file: string, dir: string): Change {
 export function rollback(file: string): Change {
   const current = readSelection(file);
   if (!current) {
-    throw new ReleaseError(`${file} names no selection, so there is nothing to roll back. Select a release with: rev release upgrade <release directory>`);
+    throw new ReleaseError(`${file} names no selection, so there is nothing to roll back. Select a release with: ${commandName} release upgrade <release directory>`);
   }
   const previous = current.previous;
   if (!previous) {
     throw new ReleaseError(
       `selection ${current.release} retains no previous release, so there is nothing to roll back to. `
       + 'A release this installation upgraded INTO retains the one it replaced; this one was selected directly. '
-      + 'Point at the release you want with: rev release upgrade <release directory>',
+      + `Point at the release you want with: ${commandName} release upgrade <release directory>`,
     );
   }
   if (!current.migration) {
     throw new ReleaseError(
       `selection ${current.release} was made before its migration declaration was recorded, so nothing here can say whether rolling back out of it is safe. `
-      + `Re-select it with 'rev release upgrade ${current.directory}', which records the declaration, and the rollback will then be answerable.`,
+      + `Re-select it with '${commandName} release upgrade ${current.directory}', which records the declaration, and the rollback will then be answerable.`,
     );
   }
   if (current.migration.rollback.supported === false) {
@@ -427,7 +428,7 @@ export function describe(file: string | null): string[] {
     return [
       'release: this installation is not pinned (INSTALLATION_RELEASE is unset).',
       '  It runs whatever code each entry point was started from. To pin it, set INSTALLATION_RELEASE to the',
-      '  selection file this installation should use, then: rev release upgrade <release directory>',
+      `  selection file this installation should use, then: ${commandName} release upgrade <release directory>`,
     ];
   }
   let selection: Selection | null;
@@ -441,7 +442,7 @@ export function describe(file: string | null): string[] {
   if (!selection) {
     const lines = selectionProblem
       ? [`release: UNREADABLE — ${selectionProblem}`, `  selection file: ${file}`]
-      : [`release: none selected yet (${file} does not exist).`, '  Select one with: rev release upgrade <release directory>'];
+      : [`release: none selected yet (${file} does not exist).`, `  Select one with: ${commandName} release upgrade <release directory>`];
     lines.push(...describeDeployment(deploymentFile(file), null));
     return lines;
   }
@@ -457,7 +458,7 @@ export function describe(file: string | null): string[] {
   }
   lines.push(`  data compatibility: ${selection.migration ? migrationLine(selection.migration) : 'undeclared (selected before it was recorded)'}`);
   lines.push(selection.previous
-    ? `  previous: ${selection.previous.release} (${selection.previous.directory}) — go back with: rev release rollback`
+    ? `  previous: ${selection.previous.release} (${selection.previous.directory}) — go back with: ${commandName} release rollback`
     : '  previous: none retained — nothing to roll back to');
   lines.push(...describeDeployment(deploymentFile(file), selection));
   return lines;

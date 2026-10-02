@@ -33,6 +33,7 @@ import { basename, dirname, join, resolve, sep } from 'node:path';
 import { revHome } from './config.js';
 import { GlobalConfig } from './types.js';
 import { occupiedPid } from './sentinels.js';
+import { commandName } from './command-name.js';
 import { conventionalTail, serviceFile } from './service.js';
 
 /** One path the removal has an opinion about, and what it is in plain terms. */
@@ -197,7 +198,7 @@ function blockage(plan: Removal, rev: string): string | null {
   const { file } = serviceFile();
   if (existsSync(file)) {
     return `installation ${plan.label} still has a service definition at ${file}, so a service manager would keep bringing back a supervisor whose home this removes. `
-      + 'Take it first with: rev service uninstall  (that stops the job and keeps every record; this command is the one that deletes them).';
+      + `Take it first with: ${commandName} service uninstall  (that stops the job and keeps every record; this command is the one that deletes them).`;
   }
 
   // Only when there is a home to read it in. `occupiedPid` reads the marker
@@ -207,7 +208,7 @@ function blockage(plan: Removal, rev: string): string | null {
   const pid = existsSync(rev) ? occupiedPid('supervisor') : null;
   if (pid) {
     return `installation ${plan.label}'s supervisor is running (pid ${pid}), and a removal under a live supervisor is a half removal: `
-      + 'it writes state back into a home being deleted. Drain it first with: rev stop';
+      + `it writes state back into a home being deleted. Drain it first with: ${commandName} stop`;
   }
   return null;
 }

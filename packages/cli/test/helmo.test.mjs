@@ -182,6 +182,22 @@ test('a runtime group stands in for its verb, and the verb it stands for is reac
   assert.match(wrong.stderr, /^usage: helmo release <status \| upgrade/m);
 });
 
+test('a runtime refusal names the command the caller actually typed', (t) => {
+  const home = revHome(t);
+  const release = join(home, 'release.json');
+  const underHelmo = run('helmo', ['release', 'rollback'], { REV_HOME: home, INSTALLATION_RELEASE: release });
+  const underRev = spawnSync(process.execPath, [join(ROOT, 'packages', 'runtime', 'dist', 'cli.js'), 'release', 'rollback'], {
+    encoding: 'utf8',
+    env: env({ REV_HOME: home, INSTALLATION_RELEASE: release }),
+  });
+
+  assert.notEqual(underHelmo.status, 0);
+  assert.match(underHelmo.stderr, /Select a release with: helmo release upgrade <release directory>/);
+  assert.doesNotMatch(underHelmo.stderr, /Select a release with: rev release upgrade/);
+  assert.notEqual(underRev.status, 0);
+  assert.match(underRev.stderr, /Select a release with: rev release upgrade <release directory>/);
+});
+
 // The two long-lived surfaces: assert they actually start under the new
 // spelling, rather than that a path resolved.
 function started(bin, args, extra, marker) {

@@ -16,6 +16,7 @@ import { ancestryBroken, ancestryStamp } from './ancestry.js';
 import { runSession } from './shim.js';
 import { GlobalConfig, LoopConfig, RunChoice } from './types.js';
 import { recordLaunchAdmission, recordLaunchDispatch, recordLaunchIntent, settleLaunch, unsettledLaunches } from './launch-journal.js';
+import { commandName } from './command-name.js';
 
 const sleep = (s: number) => new Promise((r) => setTimeout(r, s * 1000));
 
@@ -89,7 +90,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
 
   const existing = occupiedPid(l.name);
   if (existing) {
-    throw new Error(`A '${l.name}' loop is already running (PID ${existing}). Check: rev status`);
+    throw new Error(`A '${l.name}' loop is already running (PID ${existing}). Check: ${commandName} status`);
   }
   sSet(l.name, 'RUNNING', runningStamp());
   sClear(l.name, 'SEAT_HELD');
@@ -105,7 +106,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
 
   const cycle = l.choices.map((c) => `${c.provider}/${c.model}`).join(' ⇄ ');
   console.log(`rev: loop '${l.name}' | ${scopeLabel(l)} | ${cycle} | cwd ${l.cwd}`);
-  console.log(`rev: state ${dir} — stop it with: rev stop ${l.name}`);
+  console.log(`rev: state ${dir} — stop it with: ${commandName} stop ${l.name}`);
   logEvent(l.name, 'loop-start', `pid=${process.pid} count=${opts.count ?? 0}`);
 
   // A prior process that died after admission left an ambiguous boundary.
@@ -504,7 +505,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     // draw sets for returning to the human is exactly where a loop decides to
     // ask. One clause, at the point of the decision (doctrine agent-context §9).
     const deploy =
-      `A change you land that needs the Rev fleet restarted to take effect is yours to deploy, never a question for the human: run 'rev redeploy --ticket <id> --reason "<why>"' (node $REV_CLI redeploy ... if rev is not on your PATH) and it lands after your iteration ends. `;
+      `A change you land that needs the Rev fleet restarted to take effect is yours to deploy, never a question for the human: run '${commandName} redeploy --ticket <id> --reason "<why>"' (node $REV_CLI redeploy ... if ${commandName} is not on your PATH) and it lands after your iteration ends. `;
     const prompt =
       `This is a Rev loop iteration, not a summon; AGENTS.md's summon clause does not apply; the queue is the work. ` +
       `Loop iteration ${i} for agent '${l.name}'. Working directory: ${l.cwd}. ` +

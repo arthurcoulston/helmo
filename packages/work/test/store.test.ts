@@ -319,6 +319,18 @@ describe('atomic workflow admission (H-431)', () => {
     expect(s.launchClaim(productWorker, 'helmo-dev', builder.name, 'launch-p2', 'R-31', [product.id])).toMatchObject({ resumed: true, ticket_id: product.id });
   });
 
+  it('keeps a worker with no allowlist off the tickets its siblings\' allowlists own (H-671)', () => {
+    const s = freshStore();
+    const lane = create(s, { project: 'R-31', priority: 0 }); triage(s, lane.id);
+    const general = create(s, { project: 'R-31', priority: 2 }); triage(s, general.id);
+    const role = { ...builder, session: 'rev:builder' };
+    const r = s.launchClaim(role, 'helmo-dev', builder.name, 'launch-r', undefined, undefined, [lane.id]);
+    expect(r).toMatchObject({ ticket_id: general.id, scope: { exclude_tickets: [lane.id] } });
+    expect(s.getTicket(lane.id).status).toBe('open');
+    expect(() => s.launchClaim(role, 'helmo-dev', builder.name, 'launch-r2', undefined, undefined, [general.id])).toThrow(/launch_claim_scope_conflict/);
+    expect(() => s.launchClaim(role, 'helmo-dev', builder.name, 'launch-x', undefined, [general.id], [lane.id])).toThrow(/not both/);
+  });
+
   it('keeps every readiness gate inside an allowlist and refuses a malformed one', () => {
     const s = freshStore();
     const blocker = create(s); triage(s, blocker.id);

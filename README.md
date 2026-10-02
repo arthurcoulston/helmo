@@ -46,6 +46,7 @@ Manual setup, if you prefer:
 git clone <this repository>
 cd helmo
 npm ci
+npm run prepare:cold
 npm run build
 npm test
 ```
@@ -55,7 +56,9 @@ fresh temporary databases. Node.js 20 or newer. A few design-source drift
 comparisons report **skipped** when the private estate source is absent; the
 vendored copies are still tested.
 
-The root build writes only into a checkout carrying a build marker — refusing
+`npm run prepare:cold` marks a fresh git checkout as writable and refuses an
+export or assembled release tree. The root build writes only into a checkout
+carrying that ignored build marker — refusing
 in any release directory and any checkout an installation resolves through, so
 a build can never overwrite the code a running view or supervisor loads. It is
 a deliberate speed bump that makes the choice explicit, not an authentication

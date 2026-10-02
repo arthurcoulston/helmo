@@ -17,16 +17,9 @@
    one of these was before. The same source tree therefore resolves to the
    same place inside the workspace and as a lone clone.
 
-   THAT IS A STATEMENT ABOUT PATHS AND NOTHING ELSE. A lone clone of any one
-   product no longer INSTALLS: all three now depend on `@helmo/core`, at
-   `0.0.0-c1-candidate`, which is published nowhere and resolves only through
-   the workspace link, so `npm install` in a clone of the runtime, the work
-   record or the roadmap fails before any of its scripts run — the runtime's
-   `prebuild` import-boundary guard among them. It fails closed, not open, but
-   it fails. What a release of one repository holding three products IS, and
-   how `@helmo/core` reaches a consumer outside this workspace, is C1's
-   build-containment decision, recorded on H-2647 and owned by H-2630. Do not
-   read this file as evidence that it has been settled.
+   THAT IS A STATEMENT ABOUT PATHS AND NOTHING ELSE. The workspace is the
+   distribution unit: all three products consume @helmo/core through the root
+   workspace, and a release selection points at that one repository.
 
    Plain .mjs on purpose. `scripts/*.mjs` run before anything is compiled —
    one of them is `prebuild` — and `dist/` is not checked in, so a helper they

@@ -13,12 +13,12 @@ public store/CLI implementation; they are not restated as Rev policy.
 ## Commands and result
 
 ```text
-cd /Users/arthurcoulston/projects/helmo
+cd /path/to/helmo
 npx vitest run test/store.test.ts -t 'durable workflow model|trusted scoped workflow decisions|atomic workflow admission|workflow invalidation and quarantine|workflow outcomes and retry recovery'
 expected: all workflow definition, authority, admission, invalidation and retry cases pass
 observed: 1 file passed; 31 passed, 188 skipped
 
-cd /Users/arthurcoulston/projects/rev
+cd /path/to/rev
 npx vitest run test/loop.e2e.test.ts -t 'workflow-bound|exactly admitted|ready candidate changes|direct restart|replayed after restart|SIGKILL|ordinary work against|fails closed only'
 expected: all launch, denial, restart, replay, kill and compatibility cases pass
 observed: 1 file passed; 10 passed, 37 skipped

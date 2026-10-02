@@ -2,7 +2,7 @@
   "name": "helmo-workspace",
   "private": true,
   "version": "0.6.0",
-  "description": "C1 unification candidate (H-2630). Not published; rebuilt by crew:projects/r39/consolidation/c1/import.mjs.",
+  "description": "Helmo workspace: work record, roadmap, runtime, and their shared core.",
   "workspaces": [
     "packages/core",
     "packages/work",
@@ -10,7 +10,13 @@
     "packages/runtime"
   ],
   "scripts": {
+    "prepare:cold": "node scripts/prepare-build.mjs",
     "build": "node scripts/build.mjs",
     "test": "node --test scripts/build.test.mjs && npm run test --workspaces --if-present"
+  },
+  "publish": {
+    "cold": {
+      "scripts": ["prepare:cold", "build", "test"]
+    }
   }
 }

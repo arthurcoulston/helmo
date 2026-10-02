@@ -3,12 +3,12 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { assertBuildRoot, MARKER } from './build.mjs';
+import { assertBuildRoot, MARKER, MARKER_TEXT } from './build.mjs';
 
-test('allows the marked C1 candidate', () => {
+test('allows a marked writable checkout', () => {
   const root = mkdtempSync(join(tmpdir(), 'helmo-build-'));
   try {
-    writeFileSync(join(root, MARKER), 'C1 unification candidate (H-2630).\n');
+    writeFileSync(join(root, MARKER), `${MARKER_TEXT}\n`);
     assert.doesNotThrow(() => assertBuildRoot(root));
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -28,7 +28,7 @@ test('refuses a marker with unrelated contents', () => {
   const root = mkdtempSync(join(tmpdir(), 'helmo-build-'));
   try {
     writeFileSync(join(root, MARKER), 'not this candidate\n');
-    assert.throws(() => assertBuildRoot(root), /is not the C1 candidate marker/);
+    assert.throws(() => assertBuildRoot(root), /is not the Helmo build marker/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

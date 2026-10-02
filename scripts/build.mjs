@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const MARKER = '.helmo-candidate';
-const MARKER_TEXT = 'C1 unification candidate (H-2630).';
+export const MARKER_TEXT = 'Helmo writable build checkout.';
 
 export function assertBuildRoot(root) {
   const marker = join(root, MARKER);
@@ -15,7 +15,7 @@ export function assertBuildRoot(root) {
     throw new Error(`refusing to build: ${root} does not carry ${MARKER}`);
   }
   if (!contents.startsWith(MARKER_TEXT)) {
-    throw new Error(`refusing to build: ${marker} is not the C1 candidate marker`);
+    throw new Error(`refusing to build: ${marker} is not the Helmo build marker`);
   }
 }
 

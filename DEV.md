@@ -29,6 +29,12 @@ Work and Roadmap tool builders on one SDK server. The per-area server entries
 remain unchanged compatibility surfaces; their schemas are compared byte for
 byte with the unified listing in the fixture test.
 
+`helmo serve` owns the one application listener. It imports each product's
+request handler into that process: Work at `/` and `/work`, Roadmap at
+`/roadmap`, Runtime at `/run`, and the aggregate machine reading at
+`/health.json`. The product view entries remain executable compatibility
+surfaces; importing them never binds their old ports.
+
 The deprecating adapters for the old binary names live beside the area they
 front, in `packages/<area>/bin/`, and are what that area's `bin` entries point
 at. Before its documented UTC sunset each writes one line to stderr and imports

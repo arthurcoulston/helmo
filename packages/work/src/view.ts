@@ -7,7 +7,7 @@
 // exists when HELMO_OPERATOR names the human (deliberate config); every other
 // element remains disclosure toggles and evidence hyperlinks.
 import { randomBytes } from 'node:crypto';
-import { createServer } from 'node:http';
+import { createServer, IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { ESTATE_TOKENS } from '@helmo/core';
 import { actedRequest } from './acted.js';
@@ -1189,7 +1189,11 @@ document.addEventListener('click', async (e) => {
 });
 `;
 
-const server = createServer((req, res) => {
+export function workHealth() {
+  return { installation: store.installationIdentity(), store: dbPath };
+}
+
+export function workRequest(req: IncomingMessage, res: ServerResponse) {
   // Two write routes now, and they stay two. A decision is answered; an
   // action is reported done. Collapsing them into one endpoint that branches
   // on its payload would put the free-text capability Ward removed (H-1053)
@@ -1230,8 +1234,15 @@ const server = createServer((req, res) => {
     res.writeHead(500, { 'content-type': 'text/plain' });
     res.end(String(e instanceof Error ? (e.stack ?? e.message) : e));
   }
-});
+}
 
+export function workListening(boundPort: number) {
+  sameOrigin.add(`http://127.0.0.1:${boundPort}`);
+  sameOrigin.add(`http://localhost:${boundPort}`);
+}
+
+if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+const server = createServer(workRequest);
 server.listen(port, host, () => {
   const address = server.address();
   const boundPort = typeof address === 'object' && address ? address.port : port;
@@ -1240,3 +1251,4 @@ server.listen(port, host, () => {
   process.send?.({ type: 'helmo-view-ready', port: boundPort });
   console.log(`Helmo view: http://localhost:${boundPort} — ${installationLine(install, store.installationIdentity())}${operator ? ` — answers enabled for ${operator}` : ' (read-only; set HELMO_OPERATOR to answer)'}`);
 });
+}

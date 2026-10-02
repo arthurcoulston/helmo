@@ -1,10 +1,39 @@
 #!/usr/bin/env node
 import { appConfig, startAppServer } from '../app-server.mjs';
+import { workHealth, workListening, workRequest } from '../../work/dist/view.js';
+import { roadmapHealth, roadmapRequest } from '../../roadmap/dist/view.js';
+import { runtimeRequest, runtimeSnapshot } from '../../runtime/dist/view.js';
 
-const running = await startAppServer(appConfig(), (_request, response) => {
+function at(request, prefix) {
+  const url = request.url ?? '/';
+  if (url !== prefix && !url.startsWith(`${prefix}/`) && !url.startsWith(`${prefix}?`)) return false;
+  request.url = url.slice(prefix.length) || '/';
+  return true;
+}
+
+function check(name, read) {
+  try { return { name, ok: true, detail: read() }; }
+  catch (error) { return { name, ok: false, error: error instanceof Error ? error.message : String(error) }; }
+}
+
+let origin = null;
+const running = await startAppServer(appConfig(), (request, response) => {
+  if (request.url === '/health.json') {
+    const checks = [check('app', () => ({ origin })), check('work', workHealth), check('roadmap', roadmapHealth), check('runtime', runtimeSnapshot)];
+    const ok = checks.every((item) => item.ok);
+    response.writeHead(ok ? 200 : 503, { 'content-type': 'application/json; charset=utf-8' });
+    response.end(JSON.stringify({ ok, checks }));
+    return;
+  }
+  if (at(request, '/roadmap')) return roadmapRequest(request, response);
+  if (at(request, '/run')) return runtimeRequest(request, response);
+  if (at(request, '/work')) return workRequest(request, response);
+  if (request.url === '/' || request.url?.startsWith('/?') || request.url === '/answer' || request.url === '/acted') return workRequest(request, response);
   response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
-  response.end('No Helmo app routes are installed yet.\n');
+  response.end('Unknown Helmo app route.\n');
 });
+origin = running.origin;
+workListening(Number(new URL(running.origin).port));
 
 let stopping = false;
 async function stop() {

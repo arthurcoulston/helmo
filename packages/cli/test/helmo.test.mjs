@@ -319,9 +319,47 @@ test('helmo serve work serves the Helmo view', async (t) => {
   assert.deepEqual(deprecationLines(stdout), [], 'the new name must not print a notice on stdout');
 });
 
-test('bare helmo serve starts the one app listener', async () => {
+test('bare helmo serve starts the one app listener', async (t) => {
+  const work = fixture(t);
+  const roadmap = fixture(t);
+  const runtime = revHome(t);
   const { stdout, stderr, matched } = await started(
-    'helmo', ['serve'], { HELMO_APP_PORT: '0' }, /Helmo app:/,
+    'helmo', ['serve'], { HELMO_HOME: work, ROADMAP_HOME: roadmap, REV_HOME: runtime, HELMO_APP_PORT: '0' }, /Helmo app:/,
   );
   assert.ok(matched, `the app never announced itself: ${stdout}${stderr}`);
+});
+
+test('the app listener serves every product and aggregate health', async (t) => {
+  const work = fixture(t);
+  const roadmap = fixture(t);
+  const runtime = revHome(t);
+  const child = spawn(join(BIN, 'helmo'), ['serve'], {
+    env: env({ HELMO_HOME: work, ROADMAP_HOME: roadmap, REV_HOME: runtime, HELMO_APP_PORT: '0' }),
+  });
+  t.after(() => child.kill('SIGKILL'));
+  const origin = await new Promise((resolve, reject) => {
+    let output = '';
+    const timer = setTimeout(() => reject(new Error(`the app never started: ${output}`)), 10_000);
+    child.stdout.on('data', (chunk) => {
+      output += chunk;
+      const match = output.match(/Helmo app: (http:\/\/[^\s]+)/);
+      if (!match) return;
+      clearTimeout(timer);
+      resolve(match[1]);
+    });
+    child.stderr.on('data', (chunk) => { output += chunk; });
+    child.on('error', reject);
+  });
+
+  for (const [path, title] of [['/', '<title>Helmo</title>'], ['/roadmap', '<title>Roadmap</title>'], ['/run', '<title>Rev</title>']]) {
+    const response = await fetch(`${origin}${path}`);
+    assert.equal(response.status, 200, path);
+    assert.match(await response.text(), new RegExp(title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), path);
+  }
+  const health = await fetch(`${origin}/health.json`);
+  assert.equal(health.status, 200);
+  const body = await health.json();
+  assert.equal(body.ok, true);
+  assert.deepEqual(body.checks.map((item) => item.name), ['app', 'work', 'roadmap', 'runtime']);
+  assert.equal((await fetch(`${origin}/missing`)).status, 404);
 });

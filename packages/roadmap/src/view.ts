@@ -4,7 +4,7 @@
 // expanded; everything below it collapsed, in derived rank order. One file,
 // zero dependencies, no build step beyond tsc.
 import { mkdirSync } from 'node:fs';
-import { createServer } from 'node:http';
+import { createServer, IncomingMessage, ServerResponse } from 'node:http';
 import { ESTATE_TOKENS } from '@helmo/core';
 import { join } from 'node:path';
 import { AVATAR_MARKS, ESTATE_AVATARS } from './estate-avatars.generated.js';
@@ -582,7 +582,11 @@ setInterval(() => {
 }, 5000);
 `;
 
-createServer((req, res) => {
+export function roadmapHealth() {
+  return { installation: store.installationIdentity(), store: dbPath };
+}
+
+export function roadmapRequest(_req: IncomingMessage, res: ServerResponse) {
   try {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     res.end(page());
@@ -590,4 +594,8 @@ createServer((req, res) => {
     res.writeHead(500, { 'content-type': 'text/plain' });
     res.end(String(e));
   }
-}).listen(port, host, () => console.log(`Roadmap view: http://localhost:${port} — ${installationLine(install, store.installationIdentity())}`));
+}
+
+if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+  createServer(roadmapRequest).listen(port, host, () => console.log(`Roadmap view: http://localhost:${port} — ${installationLine(install, store.installationIdentity())}`));
+}

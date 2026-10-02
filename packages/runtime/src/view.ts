@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Deliberately plain read-only dashboard: the machine at a glance.
 // Helm shows the work; this shows the loops that do it.
-import { createServer } from 'node:http';
+import { createServer, IncomingMessage, ServerResponse } from 'node:http';
 import { apiJson, ESTATE_TOKENS, JSON_HEADERS } from '@helmo/core';
 import { AVATAR_MARKS, ESTATE_AVATARS } from './estate-avatars.generated.js';
 import { LOCAL_HOSTNAMES, REACH_SCRIPT, reachLink } from './reach.js';
@@ -180,7 +180,7 @@ function provenanceSeverity(): string {
   return (['view', 'supervisor'] as const).some((w) => running(w)?.state === 'stale') ? 'warning' : '';
 }
 
-function runtimeSnapshot() {
+export function runtimeSnapshot() {
   const { loops } = loadRoster();
   const supervisor = processObservation('supervisor');
   return {
@@ -202,7 +202,7 @@ function runtimeSnapshot() {
   };
 }
 
-createServer((req, res) => {
+export function runtimeRequest(req: IncomingMessage, res: ServerResponse) {
   // Machine-readable snapshot for aggregators (the estate health page, H-627).
   // Rev owns loop-state truth — sentinel precedence and pid identity (H-154)
   // — so consumers read this instead of re-deriving it from the markers.
@@ -318,4 +318,8 @@ ${ESTATE_TOKENS}
   <script>${REACH_SCRIPT}</script>
   <script>${VIEW_REFRESH_SCRIPT}</script>
   </body></html>`);
-}).listen(port, host, () => console.log(`Rev view (read-only): http://localhost:${port} — home: ${revHome()}`));
+}
+
+if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+  createServer(runtimeRequest).listen(port, host, () => console.log(`Rev view (read-only): http://localhost:${port} — home: ${revHome()}`));
+}

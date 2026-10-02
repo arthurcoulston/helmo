@@ -412,6 +412,7 @@ describe('a pinned installation starts through its own launcher', () => {
   it.each([
     ['unreadable', () => { release('current'); return select('{ not json'); }, /release selection .* is unreadable/],
     ['naming no release', () => { release('current'); return select({}); }, /names no release/],
+    ['with a non-string directory', () => { release('current'); return select({ release: 'current', directory: 42 }); }, /names no release/],
     ['naming a release that holds no rev', () => {
       const dir = join(root, 'release', 'gone');
       mkdirSync(dir, { recursive: true });

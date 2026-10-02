@@ -76,7 +76,8 @@ try {
 } catch (e) {
   refuse(\`its release selection \${file} is unreadable (\${e.message}). Repair it with: rev release upgrade <release directory>\`);
 }
-if (!selection.release || !selection.directory) {
+if (typeof selection.release !== 'string' || !selection.release.trim()
+  || typeof selection.directory !== 'string' || !selection.directory.trim()) {
   refuse(\`its release selection \${file} names no release (it needs 'release' and 'directory'). Repair it with: rev release upgrade <release directory>\`);
 }
 const releaseDir = resolve(dirname(file), selection.directory);

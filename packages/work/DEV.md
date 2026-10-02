@@ -144,8 +144,9 @@ Pinned releases accept both the historical three-component layout and C1's one
   to DECIDE something, to DO something, or to sit down with an agent. It could
   not tell them apart, and the confusion was in the field as well as the prose
   — `parseSitting` asked for "what the human does", which is an action's line,
-  while the desk-claim guard below reads the same flag as "the human is
-  present", so H-2164 carries a sitting line saying no sitting is needed.
+  while the desk-claim guard (since removed, below) read the same flag as "the
+  human is present", so H-2164 carries a sitting line saying no sitting is
+  needed.
   An action sits on the `awaiting_human` axis, because a pending request with
   the claim released is what that status means. The one stored request column
   carries `kind`; a request without one reads as the decision it was, so no
@@ -177,12 +178,16 @@ Pinned releases accept both the historical three-component layout and C1's one
   and update expose `sitting_with` beside `needs_human`; the decision door tells
   an asker whose question has no form-actionable recommendation to name that
   sitting and agent instead.
-  Desk claim guard (H-1056): an agent actor with no `session` may file and
-  update work but cannot claim an unmarked ticket, including by creating it
-  `in_progress`; if it needs a ticket, the build belongs to a loop. Marking an
-  open ticket `needs_human` in a separate update is the explicit sitting path.
-  Remote MCP callers deliberately have no machine identity or session, so the
-  same rule treats remote steering as desk work rather than a loop bypass.
+  Attended claims: an agent actor with no `session` — a desk session, a
+  remote MCP caller — claims, or creates work `in_progress`, through the same
+  path as a loop, under its true identity. The desk-claim guard (H-1056) that
+  refused this unless the ticket was marked `needs_human` is removed: it made
+  operator-directed work fake a loop session or assert a sitting it did not
+  need. Every other claim rule still applies unchanged — reservation and
+  holder, self-triage, capacity holds, pending human requests, workflow
+  admission — and blockers and date gates still keep the work out of every
+  ready queue. Absence of a session only means the claim carries no worker
+  generation to fence later writes with.
   Ready routing rule (H-661): in a
   caller's ready queue a workstream filter scopes only the unassigned pool —
   a ticket assigned to the caller is ready wherever it lives. ANDing the

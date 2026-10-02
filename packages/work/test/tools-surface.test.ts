@@ -69,6 +69,17 @@ describe('trusted workflow decision door (H-430)', () => {
 });
 
 describe('explicit human request doors (R-42 I11/I13)', () => {
+  it('does not expose the release-handoff writer through generic MCP tools', async () => {
+    const store = new Store(':memory:');
+    const client = await connect(store);
+    const tools = (await client.listTools()).tools;
+    expect(tools.map((tool) => tool.name)).not.toContain('helmo_record_release_handoff');
+    const update = tools.find((tool) => tool.name === 'helmo_update_ticket')!;
+    expect(update.inputSchema['properties']).not.toHaveProperty('release_handoff');
+    await client.close();
+    store.close();
+  });
+
   it('creates and reports an action without turning it into a decision', async () => {
     const store = new Store(':memory:');
     store.setWorkstream(orch, { name: 'estate-ui', seat: 'mason' });

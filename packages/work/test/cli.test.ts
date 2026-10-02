@@ -129,6 +129,38 @@ describe('explicit human request commands (R-42 I13)', () => {
   });
 });
 
+describe('the bounded release-handoff command', () => {
+  it('records the handoff and sitting atomically from one JSON record', () => {
+    const proof: Actor = { name: 'proof', kind: 'agent', model: 'gpt-6', version: '1' };
+    const ward: Actor = { name: 'ward', kind: 'agent', model: 'gpt-6', version: '1' };
+    const s = new Store(dbPath);
+    const clearance = s.createTicket(orch, {
+      title: 'Clear the release', body: 'Independent security clearance.', workstream: 'security', type: 'review', assignee: 'ward',
+    });
+    const ref = `crew@${'a'.repeat(40)}`;
+    s.recordProductCompletion(writer, { ticket_id: ticket, artifacts: [{ ref, author: writer.name }], note: 'candidate' });
+    const technical = s.recordAcceptanceVerdict(proof, { ticket_id: ticket, refs: [ref], verdict: 'pass', note: 'passes' });
+    s.recordProductCompletion(writer, { ticket_id: clearance.id, artifacts: [{ ref, author: writer.name }], note: 'candidate' });
+    const security = s.recordAcceptanceVerdict(ward, { ticket_id: clearance.id, refs: [ref], verdict: 'pass', note: 'clear' });
+    s.close();
+
+    const record = {
+      manifest_sha256: 'b'.repeat(64), manifest: { refs: [ref] },
+      technical_ticket: ticket, technical_completion_seq: technical.completion!.seq,
+      technical_verdict_seq: technical.verdict!.seq, technical_reviewer: proof.name,
+      clearance_ticket: clearance.id, clearance_completion_seq: security.completion!.seq,
+      clearance_verdict_seq: security.verdict!.seq, clearance_reviewer: ward.name,
+      gate_receipt: { path: '/tmp/gate.json', sha256: 'c'.repeat(64) },
+      publisher_receipt: { path: '/tmp/publish.json', sha256: 'd'.repeat(64) },
+      decision: 'Ten minutes deciding whether to carry the named material release risk.',
+      why_human: 'A material risk exception is reserved to Arthur.', sitting_with: 'mason',
+    };
+    const r = cli('release-handoff', '--ticket', ticket, '--record', JSON.stringify(record));
+    expect(r.status, r.stderr).toBe(0);
+    expect(read()).toMatchObject({ needs_human: true, sitting_with: 'mason', release_handoff: { current: true } });
+  });
+});
+
 // H-1830. A verdict is the write that lets reviewed work through, and Helmo's
 // actor is caller-supplied on a store file the user can write. Ward's daily
 // sweep replays every verdict recorded in ward's name so a forged PASS is seen

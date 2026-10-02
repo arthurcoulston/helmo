@@ -5,7 +5,7 @@
 // The binary is `helmo-cli`, matching its siblings `helmo-mcp` and `helmo-view`.
 import { installationRef, requireInstallation } from './install.js';
 import { localRecordRef } from './reference.js';
-import { Store } from './store.js';
+import { Store, type ReleaseHandoffInput } from './store.js';
 import { Actor, DepType, HelmoError, writingActor } from './types.js';
 
 const args = process.argv.slice(2);
@@ -43,6 +43,7 @@ const COMMAND_FLAGS: Record<string, readonly string[]> = {
   'product-complete': ['ticket', 'artifacts', 'note'],
   'acceptance-verdict': ['ticket', 'refs', 'verdict', 'note'],
   'acceptance-check': ['ticket', 'refs'],
+  'release-handoff': ['ticket', 'record'],
   create: ['title', 'body', 'workstream', 'type', 'priority', 'status', 'assignee', 'dep', 'dep-type', 'schedule', 'not-before', 'needs-human', 'sitting-with', 'workflow-attempt'],
   update: ['ticket', 'note', 'status', 'evidence-kind', 'evidence-ref', 'confidence', 'uncertainty-note', 'blast-radius', 'tokens', 'cost-usd', 'handoff-to', 'not-before', 'needs-human', 'sitting-with', 'no-needs-human', 'takeover', 'body-append', 'body-old', 'body-new'],
   return: ['ticket', 'situation', 'question', 'options', 'recommendation', 'if-unanswered'],
@@ -325,6 +326,14 @@ try {
       if (acceptance.state !== 'accepted') process.exitCode = 1;
       break;
     }
+    case 'release-handoff': {
+      const record = JSON.parse(req('record')) as Record<string, unknown>;
+      out(store.recordReleaseHandoff(actor(), {
+        ...record,
+        ticket_id: ticketRef('ticket'),
+      } as ReleaseHandoffInput));
+      break;
+    }
     case 'launch-admit': {
       out(store.launchAdmission(req('workstream'), req('assignee'), req('launch-id')));
       break;
@@ -435,6 +444,7 @@ try {
   product-complete --ticket H-n --artifacts '[{"ref":"repo@<40hex>","author":"name"}]' --note N
   acceptance-verdict --ticket H-n --refs '["repo@<40hex>"]' --verdict pass|fail --note N
   acceptance-check --ticket H-n [--refs '["repo@<40hex>"]'] (exit 0 only for independent acceptance of that manifest)
+  release-handoff --ticket H-n --record '{...}'                (atomic evidence-bound release sitting; publishing handoff tool only)
   answers        --since-seq N [--session S]                    (answers recorded since a cursor, + max_seq; --session dashboard for the sweep's replay)
   verdicts       --since-seq N [--actor A] [--workstream W]     (acceptance verdicts recorded since a cursor, + max_seq; the sweep's forged-PASS replay)
   hygiene                                                      (deterministic record checks, read-only)

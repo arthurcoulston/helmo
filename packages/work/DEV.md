@@ -244,7 +244,9 @@ Pinned releases accept both the historical three-component layout and C1's one
   projection stale. A current handoff is an actionable sitting. A stale one is
   withheld from the operator section, returned to agent-ready routing, and
   shown as blocked with the event that moved. Generic `needs_human` behavior is
-  unchanged. Caller identities and authors are
+  unchanged. The atomic writer is the CLI's `release-handoff` command; Crew's
+  checked publishing handoff is its only caller. Generic MCP create/update
+  schemas expose no release-handoff field. Caller identities and authors are
   provenance assertions, not authenticated identities. Body edits have two
   preserving modes alongside deliberate whole-field replacement:
   `body_append` adds exact text, while `body_patch` replaces one unique literal

@@ -411,6 +411,7 @@ describe('a pinned installation starts through its own launcher', () => {
   // frozen definition produced.
   it.each([
     ['unreadable', () => { release('current'); return select('{ not json'); }, /release selection .* is unreadable/],
+    ['null', () => { release('current'); return select('null'); }, /names no release/],
     ['naming no release', () => { release('current'); return select({}); }, /names no release/],
     ['with a non-string directory', () => { release('current'); return select({ release: 'current', directory: 42 }); }, /names no release/],
     ['naming a release that holds no rev', () => {

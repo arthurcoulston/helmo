@@ -66,7 +66,9 @@ Pinned releases accept both the historical three-component layout and C1's one
   one scheduling lane; `--tickets` (H-671) to an exact allowlist, which is
   what keeps two workers in the SAME project off each other's tickets. Every
   readiness gate still applies inside it, and resuming held work outside it
-  refuses with `launch_claim_scope_conflict`.
+  refuses with `launch_claim_scope_conflict`. `--exclude-tickets` is the
+  complement, for the role's worker with no allowlist: the tickets its
+  siblings' allowlists own. A claim takes one or the other, never both.
   The launch id is the claim's **generation**, and ownership is enforced, not
   advised: siblings share the role name, so a name check alone let worker B
   close A's ticket. `execution_claims` holds (ticket, session, generation);

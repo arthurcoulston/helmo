@@ -107,6 +107,7 @@ export interface ListFilter {
   workstream?: string;
   project?: string;
   ids?: string[]; // exact ticket allowlist (H-671)
+  exclude_ids?: string[]; // tickets other workers' allowlists own (H-671)
   assignee?: string;
   type?: string;
   priority_max?: number;
@@ -848,14 +849,20 @@ export class Store {
    *
    * `tickets` is an exact allowlist (H-671): two workers of one role in the
    * SAME project draw disjoint work only when each names the tickets it may
-   * take, because a shared project tag alone lets either claim the other's. */
-  launchClaim(actor: Actor, workstream: string, assignee: string, launchId: string, project?: string, tickets?: string[]): Record<string, unknown> {
+   * take, because a shared project tag alone lets either claim the other's.
+   * `excludeTickets` is its complement for a worker with no allowlist: the
+   * tickets its siblings' allowlists own, which it must leave to them. */
+  launchClaim(actor: Actor, workstream: string, assignee: string, launchId: string, project?: string, tickets?: string[], excludeTickets?: string[]): Record<string, unknown> {
     validateActor(actor);
     if (!workstream.trim() || !assignee.trim() || !launchId.trim()) throw new HelmoError('launch-claim requires exact non-empty workstream, assignee, and launch-id values.');
-    if (tickets && (!tickets.length || tickets.some((t) => !t.trim() || t !== t.trim()) || new Set(tickets).size !== tickets.length)) {
-      throw new HelmoError('launch-claim tickets must be a non-empty list of distinct exact ticket ids.');
+    for (const list of [tickets, excludeTickets]) {
+      if (list && (!list.length || list.some((t) => !t.trim() || t !== t.trim()) || new Set(list).size !== list.length)) {
+        throw new HelmoError('launch-claim tickets must be a non-empty list of distinct exact ticket ids.');
+      }
     }
+    if (tickets && excludeTickets) throw new HelmoError('launch-claim takes an allowlist or an exclusion, not both.');
     const allow = tickets ? [...tickets].sort() : undefined;
+    const deny = excludeTickets ? [...excludeTickets].sort() : undefined;
     if (actor.name !== assignee || actor.kind !== 'agent' || !actor.session?.trim()) {
       throw new HelmoError('launch-claim must be written by the exact accountable agent with a supervised worker session.');
     }
@@ -866,7 +873,7 @@ export class Store {
     }
     const worker: Actor = { ...actor, generation: launchId };
     return this.db.transaction(() => {
-      const exact = { workstream, assignee, launch_id: launchId, session: actor.session, project: project ?? null, ...(allow ? { tickets: allow } : {}) };
+      const exact = { workstream, assignee, launch_id: launchId, session: actor.session, project: project ?? null, ...(allow ? { tickets: allow } : {}), ...(deny ? { exclude_tickets: deny } : {}) };
       const priorClaim = this.db.prepare('SELECT ticket_id, claim FROM launch_claims WHERE launch_id = ?').get(launchId) as
         { ticket_id: string; claim: string } | undefined;
       if (priorClaim) {
@@ -882,9 +889,9 @@ export class Store {
         return prior;
       }
       this.refuseRetiredGeneration(worker);
-      const resumed = this.resumeExecution(worker, workstream, assignee, launchId, project, allow);
+      const resumed = this.resumeExecution(worker, workstream, assignee, launchId, project, allow, deny);
       if (resumed) return resumed;
-      const ticket = this.listTickets({ ready: true, workstream, caller: assignee, project, ids: allow, limit: 1 })[0];
+      const ticket = this.listTickets({ ready: true, workstream, caller: assignee, project, ids: allow, exclude_ids: deny, limit: 1 })[0];
       if (!ticket) return { admitted: false, launch_id: launchId };
       const admissionId = this.admitLaunch(ticket.id, ticket.workflow_attempt_id, launchId);
       this.updateTicket(worker, { ticket_id: ticket.id, status: 'in_progress', note: `Claimed atomically for supervised launch ${launchId}.` });
@@ -907,13 +914,13 @@ export class Store {
    *  ends the claim instead of refusing every later launch of this worker:
    *  the ticket goes back to the human, withheld from agent queues, because
    *  an attempt whose launch admission is spent cannot be admitted again. */
-  private resumeExecution(worker: Actor, workstream: string, assignee: string, launchId: string, project?: string, tickets?: string[]): Record<string, unknown> | null {
+  private resumeExecution(worker: Actor, workstream: string, assignee: string, launchId: string, project?: string, tickets?: string[], exclude?: string[]): Record<string, unknown> | null {
     const held = this.db.prepare(`SELECT c.ticket_id, c.generation FROM execution_claims c JOIN tickets t ON t.id = c.ticket_id
       WHERE c.session = ? AND t.status = 'in_progress' AND t.assignee = ? ORDER BY c.created_at, c.ticket_id LIMIT 1`)
       .get(worker.session, assignee) as { ticket_id: string; generation: string } | undefined;
     if (!held) return null;
     const t = this.getTicket(held.ticket_id);
-    if (t.workstream !== workstream || (project !== undefined && t.project !== project) || (tickets && !tickets.includes(t.id))) {
+    if (t.workstream !== workstream || (project !== undefined && t.project !== project) || (tickets && !tickets.includes(t.id)) || exclude?.includes(t.id)) {
       throw new HelmoError(`launch_claim_scope_conflict ${JSON.stringify({ launch_id: launchId, held_ticket_id: t.id, workstream: t.workstream, project: t.project })}`);
     }
     let admission: { id: string; launch_id: string } | undefined;
@@ -953,7 +960,7 @@ export class Store {
     const receipt = {
       admitted: true, claimed: true, resumed: true, ticket_id: t.id, workflow_attempt_id: t.workflow_attempt_id ?? null, admission_id: admissionId, launch_id: launchId,
       admission_launch_id: admission?.launch_id ?? null,
-      scope: { workstream, assignee, launch_id: launchId, session: worker.session, project: project ?? null, ...(tickets ? { tickets } : {}) },
+      scope: { workstream, assignee, launch_id: launchId, session: worker.session, project: project ?? null, ...(tickets ? { tickets } : {}), ...(exclude ? { exclude_tickets: exclude } : {}) },
     };
     this.db.prepare('INSERT INTO launch_claims (launch_id, ticket_id, claim, created_at) VALUES (?, ?, ?, ?)').run(launchId, t.id, JSON.stringify(receipt), ts);
     return receipt;
@@ -1282,6 +1289,7 @@ export class Store {
     if (filter.workstream && !routedReady) { clauses.push('workstream = ?'); params.push(filter.workstream); }
     if (filter.project) { clauses.push('project = ?'); params.push(filter.project); }
     if (filter.ids) { clauses.push(`id IN (${filter.ids.map(() => '?').join(', ')})`); params.push(...filter.ids); }
+    if (filter.exclude_ids?.length) { clauses.push(`id NOT IN (${filter.exclude_ids.map(() => '?').join(', ')})`); params.push(...filter.exclude_ids); }
     if (filter.assignee) {
       clauses.push('assignee = ?');
       params.push(filter.assignee);

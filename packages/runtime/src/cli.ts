@@ -20,7 +20,7 @@ import { logEvent, pidAlive, processObservation, sClear, sGet, sHas, sPendingPid
 import { runFleet } from './supervisor.js';
 import { teamResume, teamStop } from './team-control.js';
 import { buildIntakeResult, recordIntakeResult } from './intake-preparation.js';
-import { commandName } from './command-name.js';
+import { commandName, runCommand } from './command-name.js';
 
 const [cmd, ...rest] = process.argv.slice(2);
 // `--installation <name|home>` may follow any command: it asserts which
@@ -58,8 +58,8 @@ if (!UNPINNED.includes(cmd ?? '')) {
     // stack trace from inside the check named neither escape, so it said one.
     console.error(
       `${e instanceof Error ? e.message : String(e)}\n`
-      + `Read what broke with: ${commandName} release status  (then ${commandName} release upgrade <release directory>)\n`
-      + `Or take this installation's records away entirely with: ${commandName} install remove`,
+      + `Read what broke with: ${runCommand} release status  (then ${runCommand} release upgrade <release directory>)\n`
+      + `Or take this installation's records away entirely with: ${runCommand} install remove`,
     );
     process.exit(1);
   }
@@ -98,7 +98,8 @@ function takeFlag(args: string[], name: string): string | undefined {
   return joined ? args.splice(i, 1)[0]!.slice(name.length + 3) : args.splice(i, 2)[1] ?? '';
 }
 
-const rosterSource = commandName === 'rev' ? '~/.rev/roster.toml (REV_HOME to override)' : '~/.rev-gp/roster.toml (fixed by gp-rev)';
+// Only gp-rev fixes the home it reads; every other name takes REV_HOME.
+const rosterSource = commandName === 'gp-rev' ? '~/.rev-gp/roster.toml (fixed by gp-rev)' : '~/.rev/roster.toml (REV_HOME to override)';
 
 function cliActor(): { label: string; human: boolean } {
   for (const key of ['REV_ACTOR', 'HELMO_ACTOR']) {
@@ -438,7 +439,7 @@ switch (cmd) {
     }
     const act = { install: serviceInstall, uninstall: serviceUninstall, start: serviceStart }[verb ?? ''];
     if (!act) {
-      console.error(`usage: ${commandName} service <install|uninstall|start|status>  (stop the machine with: ${commandName} stop)`);
+      console.error(`usage: ${commandName} service <install|uninstall|start|status>  (stop the machine with: ${runCommand} stop)`);
       process.exit(1);
     }
     console.log(targetLine(requireTarget(`${commandName} service ${verb}`)));
@@ -510,9 +511,9 @@ switch (cmd) {
         if (!selection) throw new ReleaseError(`${file} names no selected release to activate`);
         if (!existsSync(serviceFile().file)) throw new ReleaseError(`no service is installed at ${serviceFile().file}; install the stable launcher before activation`);
         const stale = stalePinnedService();
-        if (stale) throw new ReleaseError(`the installed service ${stale.file} names ${stale.program} inside a release; run '${commandName} service install' once so activation can restart through the stable launcher`);
+        if (stale) throw new ReleaseError(`the installed service ${stale.file} names ${stale.program} inside a release; run '${runCommand} service install' once so activation can restart through the stable launcher`);
         const sup = pidAlive('supervisor');
-        if (!sup) throw new ReleaseError(`no supervisor is running; use '${commandName} service start' and verify it before activating a later selection`);
+        if (!sup) throw new ReleaseError(`no supervisor is running; use '${runCommand} service start' and verify it before activating a later selection`);
         if (readRedeploy()) throw new ReleaseError('a supervisor redeploy is already pending; wait for it to land before activating a release');
         const record = beginActivation(deploymentFile(file), selection, target('unchecked').label);
         requestRedeploy({ by: cliActor().label, reason: `activate selected release ${selection.release}`, requested_at: record.updated_at });
@@ -529,7 +530,7 @@ switch (cmd) {
       console.log(`data compatibility: ${migrationLine(change.migration)}`);
       console.log(
         'Nothing was restarted: a running process keeps the code it loaded, and takes this release when it next starts '
-        + `(${commandName} redeploy, or ${commandName} service start). Check with: ${commandName} status`,
+        + `(${runCommand} redeploy, or ${runCommand} service start). Check with: ${runCommand} status`,
       );
       // ...which is only true if the service definition resolves the selection
       // at start. One installed before H-2511 names a cli.js frozen inside the
@@ -540,7 +541,7 @@ switch (cmd) {
         console.log(
           `WARNING: the installed service definition ${stale.file} names ${stale.program}, which is inside a release directory, `
           + `so a restart would bring back the release this installation has just left and refuse to run. `
-          + `Run '${commandName} service install' once to make restarts follow the selection.`,
+          + `Run '${runCommand} service install' once to make restarts follow the selection.`,
         );
       }
     } catch (e) {

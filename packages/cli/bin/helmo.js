@@ -68,7 +68,7 @@ function refuse(message) {
   process.exit(2);
 }
 
-async function dispatch(entry, argv, commandName) {
+async function dispatch(entry, argv, commandName, runCommand) {
   const target = fileURLToPath(new URL(entry, PACKAGES));
   if (!existsSync(target)) {
     refuse(
@@ -80,6 +80,10 @@ async function dispatch(entry, argv, commandName) {
   // had the caller named it.
   process.argv = [process.argv[0], target, ...argv];
   if (commandName) process.env['REV_COMMAND_NAME'] = commandName;
+  // Decided on every path rather than inherited: a value left over from an
+  // outer invocation would spell verbs for a command this caller did not run.
+  if (runCommand) process.env['REV_RUN_COMMAND'] = runCommand;
+  else delete process.env['REV_RUN_COMMAND'];
   await import(pathToFileURL(target).href);
 }
 
@@ -112,7 +116,11 @@ if (group.products) {
   }
   await dispatch(entry, productArgs);
 } else if (group.verb) {
-  await dispatch(group.entry, [group.verb, ...rest], 'helmo');
+  // `helmo` is the prefix of this group's own verb and of nothing else, so the
+  // runtime is told separately where every OTHER verb lives: `helmo service
+  // install` has to point at `helmo run stop`, because `helmo stop` is not a
+  // command (H-2727).
+  await dispatch(group.entry, [group.verb, ...rest], 'helmo', 'helmo run');
 } else {
   await dispatch(group.entry, rest, group.commandName);
 }

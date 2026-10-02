@@ -2,7 +2,7 @@ import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, re
 import { basename, dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import type { Selection } from './release.js';
-import { commandName } from './command-name.js';
+import { runCommand } from './command-name.js';
 
 export type DeploymentPhase = 'built' | 'published' | 'selected' | 'activating' | 'running' | 'failed' | 'rolled_back';
 
@@ -105,7 +105,7 @@ export function beginActivation(file: string, selection: Selection, installation
     format: 1, installation, phase: 'activating', release: selection.release, directory: selection.directory,
     components: Object.fromEntries(Object.entries(selection.components).map(([name, component]) => [name, component.commit])),
     updated_at: new Date().toISOString(), attempt,
-    recovery: `Wait for the bounded supervisor drain. If no replacement supervisor returns, run ${commandName} service start; ${commandName} release status preserves the failed attempt and selected release.`,
+    recovery: `Wait for the bounded supervisor drain. If no replacement supervisor returns, run ${runCommand} service start; ${runCommand} release status preserves the failed attempt and selected release.`,
   };
   writeDeployment(file, record);
   return record;
@@ -123,7 +123,7 @@ export function completeActivation(file: string, selection: Selection, installat
   };
   const record: DeploymentRecord = {
     ...previous, phase: 'running', updated_at: observed, processes: [processEvidence], required_processes: ['supervisor'],
-    recovery: `This release is running. To recover, select the retained release with ${commandName} release rollback, then run ${commandName} release activate.`,
+    recovery: `This release is running. To recover, select the retained release with ${runCommand} release rollback, then run ${runCommand} release activate.`,
   };
   writeDeployment(file, record);
   const readback = readDeployment(file);
@@ -137,7 +137,7 @@ export function failActivation(file: string, detail: string): DeploymentRecord |
   if (!previous || previous.phase !== 'activating') return null;
   const record: DeploymentRecord = {
     ...previous, phase: 'failed', updated_at: new Date().toISOString(), detail,
-    recovery: `The selected release remains selected. Start it with ${commandName} service start; if it will not stay up, inspect ${commandName} release status and roll back before activating again.`,
+    recovery: `The selected release remains selected. Start it with ${runCommand} service start; if it will not stay up, inspect ${runCommand} release status and roll back before activating again.`,
   };
   writeDeployment(file, record);
   return record;

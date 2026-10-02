@@ -220,6 +220,32 @@ test('a runtime refusal names the command the caller actually typed', (t) => {
   assert.match(underRev.stderr, /Select a release with: rev release upgrade <release directory>/);
 });
 
+test('a verb group names every OTHER verb under the runtime group', (t) => {
+  const home = revHome(t);
+
+  // `helmo` is the prefix of the invoked group's verb and of nothing else: a
+  // message that named `helmo stop` would be naming a command that does not
+  // exist, which is what shipped in 0.7.0 (H-2727).
+  const underHelmo = run('helmo', ['service', 'bogus'], { REV_HOME: home });
+  assert.equal(underHelmo.status, 1);
+  assert.match(underHelmo.stderr, /^usage: helmo service <install\|uninstall\|start\|status>  \(stop the machine with: helmo run stop\)$/m);
+
+  // And the spelling it offers is reachable, while the one it used to offer is
+  // refused by the front command.
+  assert.match(run('helmo', ['stop'], { REV_HOME: home }).stderr, /unknown group 'stop'/);
+  const reached = run('helmo', ['run', 'stop'], { REV_HOME: home });
+  assert.doesNotMatch(reached.stderr, /unknown group/);
+  assert.match(reached.stderr, /Stop a single loop with: helmo run stop <loop>/);
+
+  // Under rev nothing moved: the name the caller typed spells every verb, so
+  // the estate's own output is unchanged.
+  const underRev = spawnSync(process.execPath, [join(ROOT, 'packages', 'runtime', 'dist', 'cli.js'), 'service', 'bogus'], {
+    encoding: 'utf8',
+    env: env({ REV_HOME: home }),
+  });
+  assert.match(underRev.stderr, /\(stop the machine with: rev stop\)$/m);
+});
+
 // The two long-lived surfaces: assert they actually start under the new
 // spelling, rather than that a path resolved.
 function started(bin, args, extra, marker) {

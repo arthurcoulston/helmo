@@ -9,7 +9,7 @@ import { processObservation, sHas } from './sentinels.js';
 import { GlobalConfig, LoopConfig } from './types.js';
 import type { LaunchReceipt } from './launch-journal.js';
 import { HELMO_VERSION } from '@helmo/core';
-import { commandName } from './command-name.js';
+import { runCommand } from './command-name.js';
 
 export interface WakeCheck {
   max_seq: number;
@@ -578,8 +578,8 @@ export function redeployFailed(g: GlobalConfig, r: { by: string; reason: string;
     '--body',
     `Rev drained the fleet to activate a fix, and no supervisor returned: ${detail}.\n\n` +
       `Asked for by ${r.by}${r.ticket ? ` while working ${r.ticket}` : ''} — ${r.reason}.\n\n` +
-      `Nothing is drawing work until a supervisor is running. Check: ${commandName} status, then the supervisor's events.log ` +
-      `and the service log; start the machine with '${commandName} service start' (or '${commandName} run').`,
+      `Nothing is drawing work until a supervisor is running. Check: ${runCommand} status, then the supervisor's events.log ` +
+      `and the service log; start the machine with '${runCommand} service start' (or '${runCommand} run').`,
     '--workstream', g.escalation_workstream,
     '--type', 'ops',
     '--priority', '0',
@@ -588,7 +588,7 @@ export function redeployFailed(g: GlobalConfig, r: { by: string; reason: string;
     'return', '--ticket', created.id,
     '--situation', `The fleet drained to redeploy${r.ticket ? ` for ${r.ticket}` : ''} and no supervisor came back: ${detail}. Every loop is down.`,
     '--question', 'Start the machine by hand, or is the new build broken?',
-    '--recommendation', `start it — '${commandName} service start' brings the supervisor back; if it exits again, the build that was deployed is the suspect`,
+    '--recommendation', `start it — '${runCommand} service start' brings the supervisor back; if it exits again, the build that was deployed is the suspect`,
     '--if-unanswered', 'No loop draws any work until a supervisor is running.',
   ], revActor());
 }
@@ -604,7 +604,7 @@ export function escalateBlocked(g: GlobalConfig, l: LoopConfig, reason: string, 
       '--title', escalationTitle(l),
       '--body',
       `Rev halted loop '${l.name}' (${scopeLabel(l)}). Reason: ${reason}.\n\nState dir: ${stateDir} (events.log has the trace; console tail below).` +
-      (investigator ? `\n\nInvestigate the trace. If this is a false alarm, add evidence kind 'other' with this exact ref and leave the ticket in progress while Rev proves the restart (do not clear a sentinel yourself):\nrev:false_alarm:${encodeURIComponent(reason)}` : `\nTo resume after fixing: remove the BLOCKED sentinel and run \`${commandName} run ${l.name}\`.`) +
+      (investigator ? `\n\nInvestigate the trace. If this is a false alarm, add evidence kind 'other' with this exact ref and leave the ticket in progress while Rev proves the restart (do not clear a sentinel yourself):\nrev:false_alarm:${encodeURIComponent(reason)}` : `\nTo resume after fixing: remove the BLOCKED sentinel and run \`${runCommand} run ${l.name}\`.`) +
       `\n\nLast session output:\n${outputTail.slice(-1500)}`,
       '--workstream', g.escalation_workstream,
       '--type', 'ops',

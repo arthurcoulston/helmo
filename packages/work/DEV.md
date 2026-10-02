@@ -8,8 +8,9 @@ orchestrator meetings and the read-only view. Product intent:
 ## Architecture (src/, ~1.5k lines, zero-dependency philosophy)
 
 Shared installation and qualified-reference mechanics live in `packages/core`.
-Every Helmo-family surface accepts `ROADMAP_LABEL`, `HELMO_LABEL`, then
-`REV_LABEL`; multiple set keys must carry the same value or startup refuses.
+Every Helmo-family surface accepts canonical `HELMO_INSTALLATION`, then legacy
+`ROADMAP_LABEL`, `HELMO_LABEL`, and `REV_LABEL`; multiple set keys must carry
+the same value or startup refuses.
 Pinned releases accept both the historical three-component layout and C1's one
 `helmo` checkout, where this product lives at `packages/work`.
 

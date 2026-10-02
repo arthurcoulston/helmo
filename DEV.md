@@ -46,8 +46,8 @@ leaves the `/health.json` compatibility surface unchanged. One documented
 precedence replaced three lists that differed by one entry, which is the
 measured cause of an identity incident (H-2424).
 
-Every Helmo-family surface accepts `ROADMAP_LABEL`, `HELMO_LABEL`, then
-`REV_LABEL`. Precedence picks the key when one is set; two accepted keys
+Every Helmo-family surface accepts canonical `HELMO_INSTALLATION`, followed by
+the legacy `ROADMAP_LABEL`, `HELMO_LABEL`, and `REV_LABEL`. Precedence picks the key when one is set; two accepted keys
 carrying distinct values refuse at startup rather than guessing. Adding a
 product does not add a fourth copy of any of this — it consumes `core`.
 

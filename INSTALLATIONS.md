@@ -20,12 +20,14 @@ checklist and the public tests, see [ISOLATION-CHECKS.md](ISOLATION-CHECKS.md).
 [AGENT-INSTALL.md](AGENT-INSTALL.md) stands a first installation up across all
 three areas. Each area's own install identity and targeting:
 
-- Work — `HELMO_HOME` / `HELMO_DB`, `HELMO_LABEL`,
+- Work — `HELMO_HOME` / `HELMO_DB`, `HELMO_INSTALLATION` (with
+  `HELMO_LABEL`, `ROADMAP_LABEL`, and `REV_LABEL` accepted during the
+  compatibility window),
   `--installation <name|home|db>`, and qualified record references
   (`H-267@<label>`).
-- Roadmap — `ROADMAP_HOME` / `ROADMAP_DB`, `ROADMAP_LABEL`, the same
-  `--installation` assertion.
-- Runtime — `REV_HOME`, the roster, the service.
+- Roadmap — `ROADMAP_HOME` / `ROADMAP_DB`, `HELMO_INSTALLATION`, and the same
+  legacy keys and `--installation` assertion.
+- Runtime — `REV_HOME`, `HELMO_INSTALLATION`, the roster, and the service.
 
 ## One installation needs nothing here
 
@@ -55,10 +57,13 @@ stdout is a machine value a caller substitutes, and both already carry the home.
 
 **How the name is resolved.** In order:
 
-- `REV_LABEL`, when it is set. Rev's own service install writes it into the
+- `HELMO_INSTALLATION`, when it is set. Rev's own service install writes it into the
   service environment, so a job a service manager brings back with a bare
   environment resolves the identity it was installed under instead of
   re-deriving a different one.
+- Otherwise the legacy `ROADMAP_LABEL`, `HELMO_LABEL`, and `REV_LABEL` keys are
+  accepted through the two-release compatibility window. If multiple accepted
+  keys are set, they must agree or startup refuses.
 - Otherwise it is derived from the resolved Rev home. A **conventional home** —
   a direct child of the account's home directory named `.rev` or `.rev-<suffix>`
   — keeps the label it is already bootstrapped under: `~/.rev` → `dev.rev`,
@@ -88,7 +93,7 @@ the uid, not to `$HOME`, so two installations under one account share one
 bootout and kickstart address no matter where their definition files live.
 
 A Helmo-family installation standing without Rev names itself the same way
-through `HELMO_LABEL` (and `ROADMAP_LABEL` for the roadmap), which is why those
+through `HELMO_INSTALLATION` (with the legacy product keys still accepted), which is why those
 products can be installed independently and still answer the same question.
 
 **`installation: UNCLEAR`.** Rev refuses to claim a name it cannot stand behind.

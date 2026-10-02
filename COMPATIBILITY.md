@@ -8,6 +8,12 @@ an old one can be moved on a schedule rather than discovered broken.
 What a version number promises is in [VERSIONING.md](VERSIONING.md); the paths
 your own setup names are in [ENTRY-POINTS.md](ENTRY-POINTS.md).
 
+Installation identity is now written as `HELMO_INSTALLATION`. Existing
+`HELMO_LABEL`, `ROADMAP_LABEL`, and `REV_LABEL` settings remain accepted for
+the two-release window in [VERSIONING.md](VERSIONING.md); if more than one is
+set, every value must agree. Newly installed services write only the canonical
+key.
+
 ## The one command
 
 ```

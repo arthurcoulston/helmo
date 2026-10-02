@@ -122,7 +122,7 @@ const TOKEN = randomBytes(16).toString('hex');
  *  a case that did not strip them would be testing the estate's installation. */
 function spawnEnv(vars: Record<string, string>): NodeJS.ProcessEnv {
   const base = { ...process.env };
-  for (const k of ['HELMO_DB', 'HELMO_HOME', 'HELMO_LABEL', 'REV_LABEL', 'HELMO_OPERATOR']) delete base[k];
+  for (const k of ['HELMO_DB', 'HELMO_HOME', 'HELMO_INSTALLATION', 'HELMO_LABEL', 'REV_LABEL', 'HELMO_OPERATOR']) delete base[k];
   return { ...base, HELMO_REMOTE_TOKEN: TOKEN, ...vars };
 }
 

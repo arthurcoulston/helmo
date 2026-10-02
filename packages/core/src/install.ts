@@ -4,20 +4,25 @@ import { basename, dirname, join, resolve, sep } from 'node:path';
 
 /** Shared precedence for every Helmo-family entry point. Earlier keys win only
  * when all set keys agree; distinct values refuse. */
-export const IDENTITY_KEYS = ['ROADMAP_LABEL', 'HELMO_LABEL', 'REV_LABEL'] as const;
+export const IDENTITY_KEYS = ['HELMO_INSTALLATION', 'ROADMAP_LABEL', 'HELMO_LABEL', 'REV_LABEL'] as const;
 export type IdentitySource = typeof IDENTITY_KEYS[number] | 'derived';
 export interface Installation { label: string; home: string; db: string; source: IdentitySource; release: string | null }
 export interface InstallationConfig { homeKey: string; dbKey: string; defaultHome: string; defaultDb: string; derivedPrefix: 'dev.helmo' | 'dev.roadmap'; homePattern: RegExp; stripPattern: RegExp; release(env: NodeJS.ProcessEnv): string | null }
 export class InstallationError extends Error {}
+
+export function explicitInstallationIdentity(env: NodeJS.ProcessEnv = process.env): { label: string; source: IdentitySource } | null {
+  const set = IDENTITY_KEYS.flatMap((key) => env[key]?.trim() ? [{ key, value: env[key]!.trim() }] : []);
+  if (new Set(set.map(({ value }) => value)).size > 1) throw new InstallationError(`Installation identity keys disagree — ${set.map(({ key, value }) => `${key}=${value}`).join(', ')}. Set one value across the accepted keys or unset the extras.`);
+  return set[0] ? { label: set[0].value, source: set[0].key } : null;
+}
 
 export function resolveInstallation(c: InstallationConfig, env: NodeJS.ProcessEnv = process.env): Installation {
   const homeVar = env[c.homeKey]?.trim(); const dbVar = env[c.dbKey]?.trim();
   const home = homeVar ? resolve(homeVar) : dbVar ? dirname(resolve(dbVar)) : join(homedir(), c.defaultHome);
   const db = dbVar ? resolve(dbVar) : join(home, c.defaultDb);
   if (homeVar && dbVar && !within(home, db)) throw new InstallationError(`${c.homeKey} and ${c.dbKey} name different installations — ${c.homeKey}=${home} but ${c.dbKey}=${db}, which is not inside it. Unset one: ${c.homeKey} alone uses ${join(home, c.defaultDb)}, ${c.dbKey} alone treats ${dirname(db)} as the installation home.`);
-  const set = IDENTITY_KEYS.flatMap((key) => env[key]?.trim() ? [{ key, value: env[key]!.trim() }] : []);
-  if (new Set(set.map(({ value }) => value)).size > 1) throw new InstallationError(`Installation identity keys disagree — ${set.map(({ key, value }) => `${key}=${value}`).join(', ')}. Set one value across the accepted keys or unset the extras.`);
-  return { label: set[0]?.value ?? derivedLabel(c, home), home, db, source: set[0]?.key ?? 'derived', release: c.release(env) };
+  const identity = explicitInstallationIdentity(env);
+  return { label: identity?.label ?? derivedLabel(c, home), home, db, source: identity?.source ?? 'derived', release: c.release(env) };
 }
 export function requireResolvedInstallation(c: InstallationConfig, env: NodeJS.ProcessEnv = process.env, report: (message: string) => never = plainExit, requested?: string): Installation {
   try { const i = resolveInstallation(c, env); const problem = mismatch(c, i, requested); if (problem) throw new InstallationError(problem); return i; }

@@ -13,6 +13,10 @@ longer.
 
 ## Unreleased — 0.7.0
 
+- **One installation key.** `HELMO_INSTALLATION` is the canonical identity for
+  Work, Roadmap, and Runtime. Existing `HELMO_LABEL`, `ROADMAP_LABEL`, and
+  `REV_LABEL` settings remain accepted during the documented two-release
+  window, and conflicting values still refuse instead of choosing a target.
 - **One command: `helmo`.** Every area is reachable through one front command —
   `helmo work`, `helmo roadmap`, `helmo run`, `helmo team`, `helmo release`,
   `helmo service`, `helmo serve <area>` and `helmo mcp <area>`. It does no work

@@ -130,7 +130,7 @@ describe('a live surface asked after a rebuild says STALE (H-2490)', () => {
 
   const env = (vars: Record<string, string>): NodeJS.ProcessEnv => {
     const base = { ...process.env };
-    for (const k of ['HELMO_DB', 'HELMO_HOME', 'HELMO_LABEL', 'REV_LABEL', 'HELMO_OPERATOR']) delete base[k];
+    for (const k of ['HELMO_DB', 'HELMO_HOME', 'HELMO_INSTALLATION', 'HELMO_LABEL', 'REV_LABEL', 'HELMO_OPERATOR']) delete base[k];
     return { ...base, ...vars };
   };
   const stamp = (commit: string) =>

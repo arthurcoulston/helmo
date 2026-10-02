@@ -10,7 +10,7 @@ process.env.REV_COMMAND_NAME = 'gp-rev';
 // every session Rev spawns carries the supervisor's copy — would otherwise
 // name the installation that started the session rather than the one this
 // command operates, and H-2473 would refuse every mutation it was asked for.
-delete process.env.REV_LABEL;
+for (const key of ['HELMO_INSTALLATION', 'ROADMAP_LABEL', 'HELMO_LABEL', 'REV_LABEL']) delete process.env[key];
 if (process.env.REV_TEST_SOURCE === '1') {
   await import('tsx/esm');
   await import('../src/cli.ts');

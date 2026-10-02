@@ -94,7 +94,7 @@ const ENTRIES = ['src/server.ts', 'src/view.ts'] as const;
  *  case that did not strip them would be testing the estate's installation. */
 function spawnEnv(vars: Record<string, string>): NodeJS.ProcessEnv {
   const base = { ...process.env };
-  for (const k of ['ROADMAP_DB', 'ROADMAP_HOME', 'ROADMAP_LABEL', 'HELMO_LABEL', 'REV_LABEL']) delete base[k];
+  for (const k of ['ROADMAP_DB', 'ROADMAP_HOME', 'HELMO_INSTALLATION', 'ROADMAP_LABEL', 'HELMO_LABEL', 'REV_LABEL']) delete base[k];
   return { ...base, ...vars };
 }
 

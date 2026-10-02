@@ -88,14 +88,18 @@ describe('service unit generation', () => {
 // home must keep 'dev.rev' — the personal install is already bootstrapped
 // under that name, and its own plist exports REV_HOME=~/.rev back to it.
 describe('service identity follows the Rev home', () => {
-  const saved = { home: process.env['REV_HOME'], label: process.env['REV_LABEL'] };
+  const saved = { home: process.env['REV_HOME'], installation: process.env['HELMO_INSTALLATION'], label: process.env['REV_LABEL'] };
   const set = (home?: string, label?: string) => {
     if (home === undefined) delete process.env['REV_HOME'];
     else process.env['REV_HOME'] = home;
     if (label === undefined) delete process.env['REV_LABEL'];
     else process.env['REV_LABEL'] = label;
   };
-  afterEach(() => set(saved.home, saved.label));
+  afterEach(() => {
+    set(saved.home, saved.label);
+    if (saved.installation === undefined) delete process.env['HELMO_INSTALLATION'];
+    else process.env['HELMO_INSTALLATION'] = saved.installation;
+  });
 
   it('unset home and the default home both stay dev.rev', () => {
     set(undefined);
@@ -118,6 +122,14 @@ describe('service identity follows the Rev home', () => {
     set(join(homedir(), '.rev-gp'), 'dev.rev.second');
     expect(serviceLabel()).toBe('dev.rev.second');
     expect(systemdUnitName()).toBe('rev-second');
+  });
+  it('HELMO_INSTALLATION is canonical while matching legacy keys remain accepted', () => {
+    process.env['HELMO_INSTALLATION'] = 'dev.rev.canonical';
+    process.env['REV_LABEL'] = 'dev.rev.canonical';
+    expect(serviceLabel()).toBe('dev.rev.canonical');
+    process.env['REV_LABEL'] = 'dev.rev.other';
+    expect(() => serviceLabel()).toThrow(/identity keys disagree/);
+    delete process.env['HELMO_INSTALLATION'];
   });
   it('the default unit name is plain rev', () => {
     set(undefined);
@@ -180,12 +192,14 @@ describe('service identity follows the Rev home', () => {
 describe('the installed definition carries the identity it was installed under', () => {
   it('launchd: the label is in the environment, not only in the Label key', () => {
     const p = launchdPlist('/node', '/cli.js', { label: 'dev.rev.customer-a', home: '/tmp/customer-a/.rev', path: '/p', logPath: '/l' });
-    expect(p).toContain('<key>REV_LABEL</key><string>dev.rev.customer-a</string>');
+    expect(p).toContain('<key>HELMO_INSTALLATION</key><string>dev.rev.customer-a</string>');
+    expect(p).not.toContain('<key>REV_LABEL</key>');
     expect(p).toContain('<key>Label</key><string>dev.rev.customer-a</string>');
   });
   it('systemd: the same', () => {
     const u = systemdUnit('/node', '/cli.js', { home: '/tmp/customer-a/.rev', path: '/p', label: 'dev.rev.customer-a' });
-    expect(u).toContain('Environment=REV_LABEL=dev.rev.customer-a');
+    expect(u).toContain('Environment=HELMO_INSTALLATION=dev.rev.customer-a');
+    expect(u).not.toContain('Environment=REV_LABEL=');
   });
   it('a command run inside that environment resolves the label the job holds', () => {
     const saved = { home: process.env['REV_HOME'], label: process.env['REV_LABEL'] };

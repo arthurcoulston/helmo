@@ -5,7 +5,7 @@ import { installation as roadmapInstallation } from '../../roadmap/src/install.j
 import { qualifiedRecordRef as roadmapRef } from '../../roadmap/src/reference.js';
 
 describe('family identity parity (T2.b)', () => {
-  for (const key of ['ROADMAP_LABEL', 'HELMO_LABEL', 'REV_LABEL'] as const) {
+  for (const key of ['HELMO_INSTALLATION', 'ROADMAP_LABEL', 'HELMO_LABEL', 'REV_LABEL'] as const) {
     it(`uses ${key} identically at both product entry points`, () => {
       const env = { [key]: 'estate.c1' } as NodeJS.ProcessEnv;
       const work = workInstallation(env);
@@ -18,7 +18,7 @@ describe('family identity parity (T2.b)', () => {
   }
 
   it('accepts repeated agreement and refuses any distinct accepted value', () => {
-    const agreed = { ROADMAP_LABEL: 'estate.c1', HELMO_LABEL: 'estate.c1', REV_LABEL: 'estate.c1' };
+    const agreed = { HELMO_INSTALLATION: 'estate.c1', ROADMAP_LABEL: 'estate.c1', HELMO_LABEL: 'estate.c1', REV_LABEL: 'estate.c1' };
     expect(workInstallation(agreed).label).toBe('estate.c1');
     expect(roadmapInstallation(agreed).label).toBe('estate.c1');
     const conflict = { ...agreed, REV_LABEL: 'estate.other' };

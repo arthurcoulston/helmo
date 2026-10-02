@@ -477,7 +477,7 @@ describe('the release commands (H-2493)', () => {
     writeFileSync(join(home, 'roster.toml'), '[global]\nhelmo_cli = "/tmp/helmo-cli.js"\nhelmo_mcp_server = "/tmp/helmo-server.js"\n');
     const inherited = { ...process.env };
     // A loop's absolute selection overrides REV_HOME, even in an unpinned test.
-    for (const key of ['INSTALLATION_RELEASE', 'REV_LABEL', 'HELMO_HOME', 'HELMO_DB', 'HELMO_LABEL', 'ROADMAP_HOME', 'ROADMAP_DB', 'ROADMAP_LABEL']) {
+    for (const key of ['INSTALLATION_RELEASE', 'HELMO_INSTALLATION', 'REV_LABEL', 'HELMO_HOME', 'HELMO_DB', 'HELMO_LABEL', 'ROADMAP_HOME', 'ROADMAP_DB', 'ROADMAP_LABEL']) {
       delete inherited[key];
     }
     return spawnSync(process.execPath, ['--import', 'tsx', REV_CLI, ...args], {

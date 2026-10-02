@@ -1,6 +1,7 @@
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { explicitInstallationIdentity } from '@helmo/core';
 import type { Selection } from './release.js';
 import { runCommand } from './command-name.js';
 
@@ -87,7 +88,7 @@ export function recordSelection(file: string, selection: Selection, phase: 'sele
   const previous = (() => { try { return readDeployment(file); } catch { return null; } })();
   writeDeployment(file, {
     format: 1,
-    installation: selection.install ?? process.env['REV_LABEL']?.trim() ?? process.env['REV_HOME']?.trim() ?? 'unrecorded',
+    installation: selection.install ?? explicitInstallationIdentity(process.env)?.label ?? process.env['REV_HOME']?.trim() ?? 'unrecorded',
     phase,
     release: selection.release,
     directory: selection.directory,

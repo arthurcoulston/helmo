@@ -528,8 +528,8 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
     that is `serviceFile()`, and it must stay that way, because it is also what
     lets a test fixture contain a write.
   - The input is `resolve()`d, not `realpath`ed: a home reached through a
-    symlink is a second identity, and `REV_LABEL` is the override for that.
-  `REV_LABEL` overrides the derivation outright, and **`serviceInstall` writes it
+    symlink is a second identity, and `HELMO_INSTALLATION` is the override for that.
+  `HELMO_INSTALLATION` overrides the derivation outright, and **`serviceInstall` writes it
   into the service environment** (plist `EnvironmentVariables`, systemd
   `Environment=`), so a job restarted with the bare environment a service
   manager gives daemons resolves the identity it was installed under rather than
@@ -537,7 +537,7 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   `systemdUnit` and `installLaunchd` rather than a module constant, so the plist
   a call writes and the job it boots out can never disagree.
   **Ownership before a destructive act.** The derivation can no longer collide,
-  but an operator can still point two installs at one explicit `REV_LABEL`, and
+  but an operator can still point two installs at one explicit `HELMO_INSTALLATION`, and
   then the label says nothing about who a service belongs to. `install`,
   `uninstall` and `start` therefore read the definition already on disk and
   refuse when its `REV_HOME` is a different installation's (`definedHome()`,

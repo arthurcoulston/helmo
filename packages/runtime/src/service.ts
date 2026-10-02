@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
+import { explicitInstallationIdentity } from '@helmo/core';
 import { DEFAULT_DRAIN_GRACE_SECONDS, revHome, stateDir } from './config.js';
 import { processObservation } from './sentinels.js';
 import { runCommand } from './command-name.js';
@@ -60,7 +61,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const who = process.env.REV_LABEL?.trim() || process.env.REV_HOME?.trim() || 'this installation';
+const who = process.env.HELMO_INSTALLATION?.trim() || process.env.REV_LABEL?.trim() || process.env.REV_HOME?.trim() || 'this installation';
 const refuse = (why) => {
   console.error(\`rev: \${who} cannot start: \${why}\`);
   process.exit(1);
@@ -150,12 +151,12 @@ export function writeLauncher(): string {
 // (H-2210's own trap, one level up). $HOME still decides WHERE the definition
 // file is written — that is `serviceFile()`, and it must stay that way.
 //
-// REV_LABEL overrides the derivation outright, and `serviceInstall` writes it
+// HELMO_INSTALLATION overrides the derivation outright, and `serviceInstall` writes it
 // into the service environment so the running job resolves the same identity
 // its operator installed.
 export function serviceLabel(): string {
-  const explicit = process.env['REV_LABEL']?.trim();
-  if (explicit) return explicit;
+  const explicit = explicitInstallationIdentity(process.env);
+  if (explicit) return explicit.label;
   const home = resolve(revHome());
   const suffix = labelSuffix(basename(home));
   if (isConventionalHome(home)) return suffix ? `dev.rev.${suffix}` : 'dev.rev';
@@ -222,7 +223,7 @@ function accountHome(): string {
 // Eight hex characters of the resolved path. Long enough that two installs on
 // one machine will not collide, short enough to read back off a label. The
 // input is `resolve()`d and not `realpath`ed, so a home reached through a
-// symlink is a second identity — REV_LABEL is the override when that is not
+// symlink is a second identity — HELMO_INSTALLATION is the override when that is not
 // what you meant.
 function homeDigest(home: string): string {
   return createHash('sha256').update(home).digest('hex').slice(0, 8);
@@ -268,7 +269,7 @@ export function launchdPlist(
          whose home moved — would run under one name and address another
          (H-2452). Every command run from inside the service now resolves the
          same label the job holds. -->
-    <key>REV_LABEL</key><string>${xml(opts.label)}</string>
+    <key>HELMO_INSTALLATION</key><string>${xml(opts.label)}</string>
     ${opts.release ? `<key>INSTALLATION_RELEASE</key><string>${xml(opts.release)}</string>` : ''}
   </dict>
   <key>StandardOutPath</key><string>${xml(opts.logPath)}</string>
@@ -300,7 +301,7 @@ TimeoutStopSec=${DEFAULT_DRAIN_GRACE_SECONDS + 60}
 Environment=PATH=${opts.path}
 Environment=REV_HOME=${opts.home}
 # The installed identity, for the reason the plist carries it (H-2452).
-Environment=REV_LABEL=${opts.label}
+Environment=HELMO_INSTALLATION=${opts.label}
 ${opts.release ? `Environment=INSTALLATION_RELEASE=${opts.release}` : ''}
 
 [Install]

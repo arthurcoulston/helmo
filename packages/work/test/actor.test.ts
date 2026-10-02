@@ -238,7 +238,7 @@ describe('a supervised worker cannot shed or borrow its binding (H-574)', () => 
     store.close();
     const cli = (env: Actor, ...extra: string[]) => spawnSync(
       process.execPath,
-      ['node_modules/.bin/tsx', 'src/cli.ts', 'update', '--ticket', id, '--note', 'closing', '--status', 'done', ...extra],
+      ['--import', 'tsx', 'src/cli.ts', 'update', '--ticket', id, '--note', 'closing', '--status', 'done', ...extra],
       { cwd: new URL('..', import.meta.url).pathname, env: { ...process.env, HELMO_DB: dbPath, HELMO_ACTOR: JSON.stringify(env) }, encoding: 'utf8' },
     );
     const spoof = cli(boundB, '--actor', JSON.stringify({ ...stated, session: 'rev:builder-a', generation: 'launch-a' }));

@@ -404,7 +404,7 @@ describe('launch-admit stays the harness call it was (H-574)', () => {
   const worker: Actor = { ...writer, session: 'rev:builder-loop' };
 
   function as(actor: Actor, ...argv: string[]) {
-    const r = spawnSync(process.execPath, ['node_modules/.bin/tsx', 'src/cli.ts', ...argv], {
+    const r = spawnSync(process.execPath, ['--import', 'tsx', 'src/cli.ts', ...argv], {
       cwd: new URL('..', import.meta.url).pathname,
       env: { ...process.env, HELMO_DB: dbPath, HELMO_ACTOR: JSON.stringify(actor) },
       encoding: 'utf8',

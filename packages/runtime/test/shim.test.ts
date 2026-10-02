@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { codexArgs, codexFailureLine, codexMcpArg, notionalCost, parseCodexEvents, runSession, sessionEnv, sessionSpec, systemPrompt, tomlString } from '../src/shim.js';
+import { codexArgs, codexFailureLine, codexMcpArg, notionalCost, parseCodexEvents, runSession, sessionEnv, sessionSpec, spawnSession, systemPrompt, tomlString } from '../src/shim.js';
 import type { GlobalConfig, LoopConfig } from '../src/types.js';
 import { parse } from 'smol-toml';
 import { execFileSync, spawn } from 'node:child_process';
@@ -55,6 +55,43 @@ describe('parseCodexEvents (H-479)', () => {
     expect(parseCodexEvents('Reading additional input from stdin...\n' + EVENTS).turnCompleted).toBe(true);
     expect(parseCodexEvents('').turnCompleted).toBe(false);
   });
+
+  it('distinguishes a malformed/truncated event from harmless non-JSON chatter', () => {
+    const run = parseCodexEvents('Reading additional input from stdin...\n{"type":"turn.completed"');
+    expect(run.malformedEvents).toBe(1);
+    expect(codexFailureLine(0, run)).toContain('malformed/truncated events: 1');
+  });
+});
+
+describe('streamed child output (H-387)', () => {
+  it('retains harmless output beyond spawnSync\'s former 32 MiB ceiling', async () => {
+    const result = await spawnSession(process.execPath, ['-e', "process.stdout.write('x'.repeat(34*1024*1024))"], { cwd: '/tmp', env: process.env });
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    expect(result.overflow).toBeUndefined();
+    expect(result.stdout.length).toBe(34 * 1024 * 1024);
+  }, 15_000);
+
+  it('reports an actual missing executable as ENOENT', async () => {
+    const result = await spawnSession('/definitely/not/a/rev-command', [], { cwd: '/tmp', env: process.env });
+    expect(result.error?.code).toBe('ENOENT');
+  });
+
+  it('keeps child exit failure distinct from launch failure', async () => {
+    const result = await spawnSession(process.execPath, ['-e', 'process.exit(23)'], { cwd: '/tmp', env: process.env });
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(23);
+  });
+
+  it.each(['stdout', 'stderr'] as const)('bounds %s overflow and terminates the child', async (stream) => {
+    const script = `const b=Buffer.alloc(1024*1024); for(let i=0;i<129;i++) process.${stream}.write(b); setInterval(()=>{},1000)`;
+    const result = await spawnSession(process.execPath, ['-e', script], { cwd: '/tmp', env: process.env });
+    expect(result.error).toBeUndefined();
+    expect(result.overflow).toBe(stream);
+    expect(Buffer.byteLength(result[stream])).toBeLessThanOrEqual(128 * 1024 * 1024);
+    expect(result.signal).toBe('SIGTERM');
+    expect(() => process.kill(result.pid!, 0)).toThrow();
+  }, 30_000);
 });
 
 describe('notionalCost (H-479)', () => {
@@ -73,7 +110,7 @@ describe('notionalCost (H-479)', () => {
 });
 
 describe('selected runtime metering (H-1903)', () => {
-  it.each([false, true])('records Claude under a Codex-default rotating loop (is_error=%s)', (isError) => {
+  it.each([false, true])('records Claude under a Codex-default rotating loop (is_error=%s)', async (isError) => {
     const home = mkdtempSync(join(tmpdir(), 'rev-runtime-'));
     const bin = join(home, 'bin');
     const constitution = join(home, 'PROFILE.md');
@@ -87,7 +124,7 @@ describe('selected runtime metering (H-1903)', () => {
     process.env['REV_HOME'] = home;
     try {
       const loop = { name: 'rotating', runtime: 'codex', model: 'm', version: '0', cwd: home, constitution } as LoopConfig;
-      const result = runSession({ helmo_mcp_server: '/tmp/helmo.mjs' } as GlobalConfig, loop, 'prompt', 'claude-model', { runtime: 'claude' });
+      const result = await runSession({ helmo_mcp_server: '/tmp/helmo.mjs' } as GlobalConfig, loop, 'prompt', 'claude-model', { runtime: 'claude' });
       expect(result.rc).toBe(isError ? 1 : 0);
       expect(readFileSync(join(home, 'token-log'), 'utf8')).toContain('runtime=claude model=claude-model');
     } finally {
@@ -98,7 +135,7 @@ describe('selected runtime metering (H-1903)', () => {
 });
 
 describe('a journaled session names its process group (H-685)', () => {
-  it('writes the group id the CLI runs in before the CLI starts, and a CLI it cannot find is apparatus', () => {
+  it('writes the group id the CLI runs in before the CLI starts, and a CLI it cannot find is apparatus', async () => {
     const home = mkdtempSync(join(tmpdir(), 'rev-group-'));
     const bin = join(home, 'bin');
     const constitution = join(home, 'PROFILE.md');
@@ -112,13 +149,13 @@ describe('a journaled session names its process group (H-685)', () => {
       const loop = { name: 'w1', seat: 'builder', runtime: 'claude', model: 'm', version: '0', cwd: home, constitution } as LoopConfig;
       const groupFile = join(home, 'launch.group');
       process.env['PATH'] = `${bin}:${before.PATH}`;
-      expect(runSession({ helmo_mcp_server: '/tmp/helmo.mjs' } as GlobalConfig, loop, 'prompt', 'm', undefined, 'rev:w1:1:1:1', groupFile).rc).toBe(0);
+      expect((await runSession({ helmo_mcp_server: '/tmp/helmo.mjs' } as GlobalConfig, loop, 'prompt', 'm', undefined, 'rev:w1:1:1:1', groupFile)).rc).toBe(0);
       const written = readFileSync(groupFile, 'utf8').trim();
       expect(written).toMatch(/^\d+$/);
       expect(readFileSync(join(home, 'cli-group'), 'utf8').trim()).toBe(written);
 
       process.env['PATH'] = '/usr/bin:/bin';
-      const missing = runSession({ helmo_mcp_server: '/tmp/helmo.mjs' } as GlobalConfig, loop, 'prompt', 'm', undefined, 'rev:w1:1:1:2', join(home, 'second.group'));
+      const missing = await runSession({ helmo_mcp_server: '/tmp/helmo.mjs' } as GlobalConfig, loop, 'prompt', 'm', undefined, 'rev:w1:1:1:2', join(home, 'second.group'));
       expect(missing).toMatchObject({ rc: 78, cls: 'apparatus' });
       expect(missing.outputTail).toMatch(/^claude CLI not runnable: .*claude/);
     } finally {
@@ -130,7 +167,7 @@ describe('a journaled session names its process group (H-685)', () => {
 describe('pool worker launch generation (H-574)', () => {
   // The Helmo MCP server is the session's only write path, so the generation
   // must reach the config the model CLI is actually handed, not just the mock.
-  it('a Claude session\'s Helmo identity carries the launch generation, and an unbound one carries none', () => {
+  it('a Claude session\'s Helmo identity carries the launch generation, and an unbound one carries none', async () => {
     const home = mkdtempSync(join(tmpdir(), 'rev-generation-'));
     const bin = join(home, 'bin');
     const constitution = join(home, 'PROFILE.md');
@@ -145,10 +182,10 @@ describe('pool worker launch generation (H-574)', () => {
       const loop = { name: 'w1', seat: 'builder', runtime: 'claude', model: 'm', version: '0', cwd: home, constitution } as LoopConfig;
       const actor = (c: string) => JSON.parse((JSON.parse(readFileSync(join(home, `mcp-${c}.json`), 'utf8')) as { mcpServers: { helmo: { env: { HELMO_ACTOR: string } } } }).mcpServers.helmo.env.HELMO_ACTOR) as Record<string, unknown>;
       process.env['REV_GEN_CASE'] = 'bound';
-      expect(runSession({ helmo_mcp_server: '/tmp/helmo.mjs' } as GlobalConfig, loop, 'prompt', 'm', undefined, 'rev:w1:1:1:1').rc).toBe(0);
+      expect((await runSession({ helmo_mcp_server: '/tmp/helmo.mjs' } as GlobalConfig, loop, 'prompt', 'm', undefined, 'rev:w1:1:1:1')).rc).toBe(0);
       expect(actor('bound')).toMatchObject({ name: 'builder', session: 'rev:w1', generation: 'rev:w1:1:1:1' });
       process.env['REV_GEN_CASE'] = 'unbound';
-      expect(runSession({ helmo_mcp_server: '/tmp/helmo.mjs' } as GlobalConfig, loop, 'prompt', 'm').rc).toBe(0);
+      expect((await runSession({ helmo_mcp_server: '/tmp/helmo.mjs' } as GlobalConfig, loop, 'prompt', 'm')).rc).toBe(0);
       expect(actor('unbound')).not.toHaveProperty('generation');
     } finally {
       for (const [k, v] of Object.entries(before)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
@@ -214,7 +251,7 @@ describe('codexArgs (H-520)', () => {
 // what this asserts. Drop `detached` from the shim's spawn options and the
 // session dies mid-run, the marker is never written, and the alarm rings.
 describe('session process group (H-467)', () => {
-  it('sweeps background children after a completed iteration (H-1013)', () => {
+  it('sweeps background children after a completed iteration (H-1013)', async () => {
     const home = mkdtempSync(join(tmpdir(), 'rev-grp-'));
     const pidFile = join(home, 'background-pid');
     const loop = {
@@ -222,7 +259,7 @@ describe('session process group (H-467)', () => {
       mock_cmd: `sleep 30 >/dev/null 2>&1 & echo $! > ${pidFile}`,
     } as LoopConfig;
 
-    const res = runSession({} as GlobalConfig, loop, 'prompt');
+    const res = await runSession({} as GlobalConfig, loop, 'prompt');
     expect(res.rc, res.outputTail).toBe(0);
     const pid = Number(execFileSync('cat', [pidFile], { encoding: 'utf8' }).trim());
     expect(() => process.kill(pid, 0)).toThrow();
@@ -236,7 +273,7 @@ describe('session process group (H-467)', () => {
     writeFileSync(
       file,
       `import { runSession } from ${JSON.stringify(join(import.meta.dirname, '..', 'src', 'shim.ts'))};\n` +
-        `runSession({}, { name: 'grouptest', runtime: 'mock', model: 'm', version: '0', cwd: '/tmp',\n` +
+        `await runSession({}, { name: 'grouptest', runtime: 'mock', model: 'm', version: '0', cwd: '/tmp',\n` +
         `  mock_cmd: 'echo started > ${started}; sleep 2; echo closed > ${marker}' }, 'prompt');\n`,
     );
 
@@ -288,7 +325,7 @@ describe('session git identity (H-787)', () => {
     expect(env['PATH']).toBe(process.env['PATH']); // still the cleaned parent env
   });
 
-  it('a real session commit carries the seat as committer and the human as author', () => {
+  it('a real session commit carries the seat as committer and the human as author', async () => {
     const repo = mkdtempSync(join(tmpdir(), 'rev-git-'));
     const git = (...a: string[]) => execFileSync('git', a, { cwd: repo, encoding: 'utf8' }).trim();
     git('init', '-q');
@@ -296,7 +333,7 @@ describe('session git identity (H-787)', () => {
     git('config', 'user.email', 'operator@example.test');
     writeFileSync(join(repo, 'f.txt'), 'work\n');
 
-    const res = runSession({} as GlobalConfig, { ...loop, cwd: repo, mock_cmd: 'git add -A && git commit -q -m "session work"' }, 'prompt');
+    const res = await runSession({} as GlobalConfig, { ...loop, cwd: repo, mock_cmd: 'git add -A && git commit -q -m "session work"' }, 'prompt');
     expect(res.rc, res.outputTail).toBe(0);
 
     const [an, ae, cn, ce] = git('log', '-1', '--format=%an%x00%ae%x00%cn%x00%ce').split('\x00');

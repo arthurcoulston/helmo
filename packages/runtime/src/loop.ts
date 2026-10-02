@@ -713,7 +713,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       await sleep(g.poll_seconds);
       continue;
     }
-    const res = runSession(g, l, prompt, model, run, claimedTicket ? journaledLaunchId ?? undefined : undefined, journaledLaunchId ? launchGroupFile(l.name, journaledLaunchId) : undefined);
+    const res = await runSession(g, l, prompt, model, run, claimedTicket ? journaledLaunchId ?? undefined : undefined, journaledLaunchId ? launchGroupFile(l.name, journaledLaunchId) : undefined);
     let launchTrusted = true;
 
     // A session that ended short of ok on a pool claim is not quarantined

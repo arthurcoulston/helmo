@@ -2,7 +2,7 @@
 // Contract: run one non-interactive session in the loop's cwd; return the exit
 // code classified per the ladder (0 clean / 75 transient / 78 apparatus),
 // token accounting when the runtime reports it, and the output tail.
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync, rmSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -51,7 +51,7 @@ export function sessionEnv(l: LoopConfig): NodeJS.ProcessEnv {
 
 // `generation` is a pool worker's launch id (H-574): the session's Helmo
 // identity carries it, so its writes bind to the claim this launch holds.
-export function runSession(g: GlobalConfig, l: LoopConfig, iterationPrompt: string, model = l.model, choice?: RunChoice, generation?: string, groupFile?: string): SessionResult {
+export async function runSession(g: GlobalConfig, l: LoopConfig, iterationPrompt: string, model = l.model, choice?: RunChoice, generation?: string, groupFile?: string): Promise<SessionResult> {
   const runtime = choice?.runtime ?? l.runtime;
   // Apparatus pre-flight, fail closed: never launch a half-instructed agent.
   if (runtime !== 'mock') {
@@ -72,6 +72,57 @@ export function runSession(g: GlobalConfig, l: LoopConfig, iterationPrompt: stri
     default:
       return { rc: 78, cls: 'apparatus', outputTail: `unsupported runtime '${runtime as string}' — add a shim branch` };
   }
+}
+
+const SESSION_OUTPUT_CAP = 128 * 1024 * 1024;
+
+interface ChildOutput {
+  status: number | null;
+  signal: NodeJS.Signals | null;
+  stdout: string;
+  stderr: string;
+  error?: NodeJS.ErrnoException;
+  overflow?: 'stdout' | 'stderr';
+  pid?: number;
+}
+
+/** Stream a session so Node never applies spawnSync's fixed pipe buffer. The
+ * retained wire response is still bounded: crossing the cap terminates the
+ * session and is reported as resource exhaustion, never as ENOENT and never
+ * retried (a partially executed agent session is not replayable). */
+export function spawnSession(
+  command: string,
+  args: string[],
+  opts: { cwd: string; env: NodeJS.ProcessEnv; input?: string },
+): Promise<ChildOutput> {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, { cwd: opts.cwd, env: opts.env, stdio: ['pipe', 'pipe', 'pipe'], ...SESSION_GROUP });
+    const out: Buffer[] = [];
+    const err: Buffer[] = [];
+    let outBytes = 0;
+    let errBytes = 0;
+    let overflow: ChildOutput['overflow'];
+    let launchError: NodeJS.ErrnoException | undefined;
+    const retain = (which: 'stdout' | 'stderr', chunk: Buffer) => {
+      if (overflow) return;
+      const next = (which === 'stdout' ? outBytes : errBytes) + chunk.length;
+      if (next > SESSION_OUTPUT_CAP) {
+        overflow = which;
+        try { process.kill(-child.pid!, 'SIGTERM'); } catch { /* already gone */ }
+        return;
+      }
+      if (which === 'stdout') { outBytes = next; out.push(chunk); } else { errBytes = next; err.push(chunk); }
+    };
+    child.stdout.on('data', (b: Buffer) => retain('stdout', b));
+    child.stderr.on('data', (b: Buffer) => retain('stderr', b));
+    child.on('error', (e: NodeJS.ErrnoException) => { launchError = e; });
+    child.on('close', (status, signal) => resolve({
+      status, signal, overflow, error: launchError, pid: child.pid,
+      stdout: Buffer.concat(out).toString('utf8'),
+      stderr: Buffer.concat(err).toString('utf8'),
+    }));
+    if (opts.input !== undefined) child.stdin.end(opts.input); else child.stdin.end();
+  });
 }
 
 // Sessions get exactly the roster's MCP surface: Helm (with this loop's actor
@@ -272,7 +323,7 @@ export function sessionSpec(
   };
 }
 
-function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string, model: string, generation?: string, groupFile?: string): SessionResult {
+async function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string, model: string, generation?: string, groupFile?: string): Promise<SessionResult> {
   const scratch = mkdtempSync(join(tmpdir(), 'rev-'));
   try {
     const mcpConfig = writeMcpConfig(g, l, scratch, model, generation);
@@ -281,20 +332,25 @@ function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string, model: string
       systemFile = join(scratch, 'system.md');
       writeFileSync(systemFile, systemPrompt(l));
     }
-    const res = spawnSync(
-      ...sessionArgv('claude', [
+    const [command, args] = sessionArgv('claude', [
         '-p', prompt,
         '--model', model,
         '--append-system-prompt-file', systemFile,
         '--strict-mcp-config', '--mcp-config', mcpConfig,
         '--dangerously-skip-permissions',
         '--output-format', 'json',
-      ], groupFile),
-      { cwd: l.cwd, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, env: sessionEnv(l), stdio: ['ignore', 'pipe', 'pipe'], ...SESSION_GROUP },
-    );
+      ], groupFile);
+    const res = await spawnSession(command, args, { cwd: l.cwd, env: sessionEnv(l) });
     endSessionGroup(res.pid);
     const claudeUnrunnable = unrunnable(res, groupFile);
-    if (claudeUnrunnable !== null) return { rc: 78, cls: 'apparatus', outputTail: `claude CLI not runnable: ${claudeUnrunnable}` };
+    if (claudeUnrunnable !== null) return {
+      rc: 78,
+      cls: 'apparatus',
+      outputTail: res.error
+        ? `claude CLI launch ${res.error.code ?? 'failed'}: ${claudeUnrunnable}`
+        : `claude CLI not runnable: ${claudeUnrunnable}`,
+    };
+    if (res.overflow) return { rc: 78, cls: 'apparatus', outputTail: `claude output resource limit: ${res.overflow} exceeded ${SESSION_OUTPUT_CAP} bytes` };
     const stdout = res.stdout ?? '';
     let tokens: number | undefined, cost: number | undefined, tail = stdout;
     try {
@@ -328,8 +384,9 @@ function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string, model: string
         logTokens(l, model, tokens, cost, 'claude');
         return { rc: 1, cls: 'failure', tokens, cost_usd: cost, outputTail: tail.slice(-4000) };
       }
-    } catch {
-      /* non-JSON output: keep raw tail */
+    } catch (e) {
+      logTokens(l, model, tokens, cost, 'claude');
+      return { rc: 78, cls: 'apparatus', outputTail: `claude returned malformed or truncated JSON: ${String(e).slice(0, 500)}\n${stdout.slice(-3500)}` };
     }
     logTokens(l, model, tokens, cost, 'claude');
     const rc = res.status ?? 1;
@@ -347,15 +404,17 @@ export interface CodexRun {
   usage?: { input: number; cached: number; output: number };
   turnCompleted: boolean;             // codex can exit 0 without finishing a turn — never trust rc alone
   failure?: string;                   // turn.failed / error message, when one arrived
+  malformedEvents: number;            // JSON-looking lines that were truncated or invalid
 }
 
 export function parseCodexEvents(stdout: string): CodexRun {
-  const run: CodexRun = { tail: '', turnCompleted: false };
+  const run: CodexRun = { tail: '', turnCompleted: false, malformedEvents: 0 };
   for (const line of stdout.split('\n')) {
     let e: Record<string, unknown>;
     try {
       e = JSON.parse(line) as Record<string, unknown>;
     } catch {
+      if (line.trimStart().startsWith('{')) run.malformedEvents++;
       continue;
     }
     const type = String(e['type'] ?? '');
@@ -421,29 +480,36 @@ export function codexArgs(model: string, mcpArg: string, config?: Record<string,
  *  completed, and codex's own error event when there was one. */
 export function codexFailureLine(status: number | null, run: CodexRun): string {
   return `rev: codex failed — exit ${status ?? 'none'}, turn ${run.turnCompleted ? 'completed' : 'not completed'}` +
-    (run.failure ? `, error event: ${run.failure.slice(0, 500)}` : '') + '\n';
+    (run.failure ? `, error event: ${run.failure.slice(0, 500)}` : '') +
+    (run.malformedEvents ? `, malformed/truncated events: ${run.malformedEvents}` : '') + '\n';
 }
 
-function runCodex(g: GlobalConfig, l: LoopConfig, prompt: string, model: string, choice?: RunChoice, generation?: string, groupFile?: string): SessionResult {
+async function runCodex(g: GlobalConfig, l: LoopConfig, prompt: string, model: string, choice?: RunChoice, generation?: string, groupFile?: string): Promise<SessionResult> {
   // Same contract as runClaude, codex's way: prompt via stdin (a constitution
   // in argv is world-readable via ps and bumps into argv limits), MCP via the
   // whole-table -c override, results from the --json event stream. Approvals
   // and sandbox off matches the claude posture — one permission story per
   // fleet, whichever CLI runs the iteration.
-  const res = spawnSync(
-    ...sessionArgv('codex', codexArgs(model, codexMcpArg(mcpServers(g, l, model, undefined, generation)), choice?.config), groupFile),
+  const [command, args] = sessionArgv('codex', codexArgs(model, codexMcpArg(mcpServers(g, l, model, undefined, generation)), choice?.config), groupFile);
+  const res = await spawnSession(
+    command,
+    args,
     {
       cwd: l.cwd,
-      encoding: 'utf8',
-      maxBuffer: 32 * 1024 * 1024,
       env: sessionEnv(l),
       input: `${systemPrompt(l)}\n\n--- Iteration prompt ---\n\n${prompt}`,
-      ...SESSION_GROUP,
     },
   );
   endSessionGroup(res.pid);
   const codexUnrunnable = unrunnable(res, groupFile);
-  if (codexUnrunnable !== null) return { rc: 78, cls: 'apparatus', outputTail: `codex CLI not runnable: ${codexUnrunnable}` };
+  if (codexUnrunnable !== null) return {
+    rc: 78,
+    cls: 'apparatus',
+    outputTail: res.error
+      ? `codex CLI launch ${res.error.code ?? 'failed'}: ${codexUnrunnable}`
+      : `codex CLI not runnable: ${codexUnrunnable}`,
+  };
+  if (res.overflow) return { rc: 78, cls: 'apparatus', outputTail: `codex output resource limit: ${res.overflow} exceeded ${SESSION_OUTPUT_CAP} bytes` };
   const run = parseCodexEvents(res.stdout ?? '');
   const tokens = run.usage ? run.usage.input + run.usage.output : undefined;
   const cost = run.usage ? notionalCost(run.usage, choice?.prices?.[model]) : undefined;

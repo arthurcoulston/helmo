@@ -17,8 +17,8 @@ const VERSION = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).ver
 // itself and nobody else has touched: the fixture files as the orchestrator
 // and writes as the seat.
 const FILER = JSON.stringify({ name: 'helmo-orchestrator', kind: 'orchestrator', model: 'test', version: 'test' });
-// The seat carries a session stamp: an agent claiming without one is a desk
-// claim, which Helmo refuses (refuseUnmarkedDeskClaim).
+// This compatibility fixture keeps a session stamp to model its historical
+// loop caller; attended agents may now claim without one through the same API.
 const ACTOR = JSON.stringify({ name: 'mason', kind: 'agent', model: 'test', version: 'test', session: 'test' });
 const NOTICE = /COMPATIBILITY\.md/;
 

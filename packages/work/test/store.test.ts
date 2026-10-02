@@ -866,17 +866,16 @@ describe('mangled tool-call writes rejected at the door (H-71)', () => {
 });
 
 describe('claiming', () => {
-  it('refuses an unmarked desk claim without changing the ticket', () => {
+  it('allows an attended agent to claim an unmarked ticket without a worker session', () => {
     const s = freshStore();
     const desk = { ...builder, session: undefined };
     const t = create(s, { assignee: desk.name });
     triage(s, t.id);
-    const before = s.getEvents(t.id);
-    expect(() => s.updateTicket(desk, { ticket_id: t.id, note: 'starting at the desk', status: 'in_progress' })).toThrow(/not meeting work.*leave the ticket for a loop/i);
-    expect(s.getTicket(t.id)).toMatchObject({ status: 'open', assignee: desk.name });
-    expect(s.getEvents(t.id)).toEqual(before);
+    s.updateTicket(desk, { ticket_id: t.id, note: 'The operator directed this work; starting it.', status: 'in_progress' });
+    expect(s.getTicket(t.id)).toMatchObject({ status: 'in_progress', assignee: desk.name, needs_human: false });
+    expect(s.seatHolds(desk.name)[0]?.claim_actor).toEqual(desk);
   });
-  it('allows a desk claim when the ticket is marked for a human sitting', () => {
+  it('still allows a desk claim when the ticket is marked for a human sitting', () => {
     const s = freshStore();
     const desk = { ...builder, session: undefined };
     const t = create(s, { assignee: desk.name, needs_human: 'Sit with Arthur and walk the migration together.' });
@@ -2124,13 +2123,14 @@ describe('triage rule enforced on claims (H-56)', () => {
     expect(t.status).toBe('in_progress');
     expect(t.assignee).toBe('builder-loop');
   });
-  it('a desk may file open work but cannot create it already in progress', () => {
+  it('an attended agent may file open work or start directed work immediately', () => {
     const s = freshStore();
     const desk = { ...builder, session: undefined };
     const open = s.createTicket(desk, { title: 'Desk design', body: 'A bounded handoff for the loop.', workstream: 'helmo-dev', type: 'build' });
     expect(open.status).toBe('open');
-    expect(() => s.createTicket(desk, { title: 'Desk build', body: 'Work started at the desk.', workstream: 'helmo-dev', type: 'build', status: 'in_progress' })).toThrow(/not meeting work.*leave the ticket for a loop/i);
-    expect(s.listTickets({ limit: 100 })).toHaveLength(1);
+    const started = s.createTicket(desk, { title: 'Desk build', body: 'Operator-directed work started at the desk.', workstream: 'helmo-dev', type: 'build', status: 'in_progress' });
+    expect(started).toMatchObject({ status: 'in_progress', assignee: desk.name, needs_human: false });
+    expect(s.listTickets({ limit: 100 })).toHaveLength(2);
   });
   it('an orchestrator may claim its own filing — it is the second pair of eyes', () => {
     const s = freshStore();

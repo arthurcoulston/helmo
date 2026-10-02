@@ -2,8 +2,8 @@
 // Deliberately plain read-only dashboard: the machine at a glance.
 // Helm shows the work; this shows the loops that do it.
 import { createServer } from 'node:http';
+import { apiJson, ESTATE_TOKENS, JSON_HEADERS } from '@helmo/core';
 import { AVATAR_MARKS, ESTATE_AVATARS } from './estate-avatars.generated.js';
-import { ESTATE_TOKENS } from './estate-tokens.generated.js';
 import { LOCAL_HOSTNAMES, REACH_SCRIPT, reachLink } from './reach.js';
 import { readCodexUsage, readUsage, usageLine, worstSeverity } from './usage.js';
 import { existsSync, readFileSync } from 'node:fs';
@@ -180,35 +180,36 @@ function provenanceSeverity(): string {
   return (['view', 'supervisor'] as const).some((w) => running(w)?.state === 'stale') ? 'warning' : '';
 }
 
+function runtimeSnapshot() {
+  const { loops } = loadRoster();
+  const supervisor = processObservation('supervisor');
+  return {
+    supervisor: supervisor.pid,
+    supervisor_state: supervisor.state,
+    installation: INSTALL,
+    build: buildReport(snapshot()),
+    running: { view: running('view'), supervisor: running('supervisor') },
+    loops: Object.values(loops).map((l) => {
+      const st = state(l.name);
+      const reason = st === 'IDLE'
+        ? sGet(l.name, 'IDLE')?.split('\n')[1]
+        : st === 'SEAT_HELD' ? sGet(l.name, 'SEAT_HELD')?.split('\n')[0]
+        : st === 'BLOCKED' ? blockedSummary(l.name)
+        : st === 'WEDGED' ? sGet(l.name, st)?.split('\n')[0] : undefined;
+      return { name: l.name, state: st, workstream: l.workstream, ...(reason ? { reason } : {}) };
+    }),
+    usage: { claude: readUsage(), codex: readCodexUsage() },
+  };
+}
+
 createServer((req, res) => {
   // Machine-readable snapshot for aggregators (the estate health page, H-627).
   // Rev owns loop-state truth — sentinel precedence and pid identity (H-154)
   // — so consumers read this instead of re-deriving it from the markers.
-  if (req.url === '/health.json') {
-    const { loops } = loadRoster();
-    const supervisor = processObservation('supervisor');
-    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify({
-      supervisor: supervisor.pid,
-      supervisor_state: supervisor.state,
-      // Existing keys are untouched; these are additive (H-2489). `build`
-      // describes the artifact on disk, `running` what each live process
-      // loaded — an aggregator that conflates them reports a version nobody
-      // is executing.
-      installation: INSTALL,
-      build: buildReport(snapshot()),
-      running: { view: running('view'), supervisor: running('supervisor') },
-      loops: Object.values(loops).map((l) => {
-        const st = state(l.name);
-        const reason = st === 'IDLE'
-          ? sGet(l.name, 'IDLE')?.split('\n')[1]
-          : st === 'SEAT_HELD' ? sGet(l.name, 'SEAT_HELD')?.split('\n')[0]
-          : st === 'BLOCKED' ? blockedSummary(l.name)
-          : st === 'WEDGED' ? sGet(l.name, st)?.split('\n')[0] : undefined;
-        return { name: l.name, state: st, workstream: l.workstream, ...(reason ? { reason } : {}) };
-      }),
-      usage: { claude: readUsage(), codex: readCodexUsage() },
-    }));
+  if (req.url === '/health.json' || req.url === '/api/v1/runtime') {
+    const data = runtimeSnapshot();
+    res.writeHead(200, JSON_HEADERS);
+    res.end(req.url === '/health.json' ? JSON.stringify(data) : apiJson('runtime', data));
     return;
   }
   const { loops } = loadRoster();

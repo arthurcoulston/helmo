@@ -897,9 +897,9 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
 
 ## The estate design tokens (R-11 H-714)
 
-`src/estate-tokens.generated.ts` is a **vendored copy** of the estate shell's
+`../core/src/estate-tokens.generated.ts` is the **one vendored copy** of the estate shell's
 `tokens/estate-tokens.css` — the source of the visual system every estate
-surface shares. `scripts/vendor-estate-tokens.mjs` refreshes it (also
+surface shares. `npm run vendor:tokens` refreshes it through core (also
 `--check`); `test/estate-tokens.test.ts` fails on drift.
 
 Vendoring, not importing, is the point: rev is published standalone, so a clone

@@ -9,13 +9,13 @@
 import { randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
+import { ESTATE_TOKENS } from '@helmo/core';
 import { actedRequest } from './acted.js';
 import { ANSWER_HEADER, answerRequest } from './answer.js';
 import { ESTATE_AVATARS } from './estate-avatars.generated.js';
 import { loaded, running } from './build.js';
 import { installationLine, requestedInstallation, requireInstallation } from './install.js';
 import { actionFingerprint, ask, CLOSED_TAIL, markFor, recordTickets } from './presentation.js';
-import { ESTATE_TOKENS } from './estate-tokens.generated.js';
 import { Store } from './store.js';
 import { HygieneFinding } from './store.js';
 import { Actor, ActorKind, HelmoError, Ticket, HelmoEvent, TicketProgress } from './types.js';

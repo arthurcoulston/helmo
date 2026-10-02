@@ -2,11 +2,11 @@
 /* Vendors the estate's design tokens into src/estate-tokens.generated.ts
    (R-11 H-714).
 
-   Rev is published standalone and its view is a single zero-dependency file,
-   so it cannot import a stylesheet from a sibling repo at runtime and cannot
-   grow a CSS build step. Vendoring is the whole seam: a copy of the token file
-   is checked in as a TypeScript string, the view inlines it, and a clone with
-   no estate checkout anywhere near it builds and runs unchanged.
+   Helmo is published standalone, so it cannot
+   import a stylesheet from a sibling repo at runtime and cannot grow a CSS
+   build step. Vendoring is the whole seam: a copy of the token file is
+   checked in as a TypeScript string, the view inlines it, and a clone with no
+   estate checkout anywhere near it builds and runs unchanged.
 
    The copy is verbatim. Nothing here rewrites selectors or values — the
    estate's generator already emits the shape a page with no theme switch
@@ -60,7 +60,7 @@ export function render(css) {
     '// shadcn-derived values retain their MIT notice in THIRD_PARTY_NOTICES.md.',
     '//',
     '// The estate shell is the source of the visual system every estate surface',
-    '// shares (R-11); rev consumes it as a copy so it stays publishable alone.',
+    '// shares (R-11); Helmo consumes it as a copy so it stays publishable alone.',
     '',
     'export const ESTATE_TOKENS = `',
     css.trimEnd(),

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 const view = readFileSync(new URL('../src/view.ts', import.meta.url), 'utf8');
-const tokens = readFileSync(new URL('../src/estate-tokens.generated.ts', import.meta.url), 'utf8');
+const tokens = readFileSync(new URL('../../core/src/estate-tokens.generated.ts', import.meta.url), 'utf8');
 const css = view.slice(view.indexOf('const CSS = `'), view.indexOf('const JS = `'));
 const js = view.slice(view.indexOf('const JS = `'));
 

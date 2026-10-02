@@ -129,6 +129,15 @@ describe('view idle reasons (H-954)', () => {
     ]);
   });
 
+  it('serves the same snapshot in the versioned application API envelope', async () => {
+    const response = await request('/api/v1/runtime');
+    const body = await response.json() as { api: string; area: string; data: { loops: unknown[] } };
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(body.api).toBe('helmo/v1');
+    expect(body.area).toBe('runtime');
+    expect(body.data.loops).toHaveLength(4);
+  });
+
   it('distinguishes the held seat in rev status', () => {
     const output = execFileSync('npx', ['tsx', CLI, 'status'], {
       cwd: join(import.meta.dirname, '..'),

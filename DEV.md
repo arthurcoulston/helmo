@@ -39,9 +39,12 @@ Nothing about the implementation moves.
 
 `@helmo/core` holds the mechanics all three products were implementing
 separately: installation identity and its precedence, install home resolution,
-qualified record references, config reading, the build stamp, and release
-selection. One documented precedence replaced three lists that differed by one
-entry, which is the measured cause of an identity incident (H-2424).
+qualified record references, config reading, the build stamp, release
+selection, and the versioned application JSON envelope. Area packages supply
+the data; Runtime's additive `/api/v1/runtime` route is the first consumer and
+leaves the `/health.json` compatibility surface unchanged. One documented
+precedence replaced three lists that differed by one entry, which is the
+measured cause of an identity incident (H-2424).
 
 Every Helmo-family surface accepts `ROADMAP_LABEL`, `HELMO_LABEL`, then
 `REV_LABEL`. Precedence picks the key when one is set; two accepted keys
@@ -99,10 +102,10 @@ in one of them is a defect in all three:
   never authenticated. The stores record who claimed to write; they do not
   verify real-world identity.
 - **The markup gate** at the door, rejecting mangled tool-call writes (H-71).
-- **Vendored estate design tokens** rather than a dependency on the private
-  estate repository. Each area carries its own generated copy; the drift tests
-  skip visibly when the estate source is absent, because a check that quietly
-  passes when its input is missing can never go red.
+- **One vendored estate design-token source** in `core`, rather than a runtime
+  dependency on the private estate repository. Every view imports that public
+  copy; the drift tests skip visibly when the estate source is absent, because
+  a check that quietly passes when its input is missing can never go red.
 
 ## Documents
 

@@ -19,7 +19,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
-import { SOURCE, VENDORED, render } from '../scripts/vendor-estate-tokens.mjs';
+import { SOURCE, VENDORED, render } from '../../core/scripts/vendor-estate-tokens.mjs';
 
 const view = () => readFileSync(new URL('../src/view.ts', import.meta.url), 'utf8');
 

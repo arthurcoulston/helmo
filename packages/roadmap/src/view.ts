@@ -5,10 +5,10 @@
 // zero dependencies, no build step beyond tsc.
 import { mkdirSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { ESTATE_TOKENS } from '@helmo/core';
 import { join } from 'node:path';
 import { AVATAR_MARKS, ESTATE_AVATARS } from './estate-avatars.generated.js';
 import { installationLine, requestedInstallation, requireInstallation } from './install.js';
-import { ESTATE_TOKENS } from './estate-tokens.generated.js';
 import { Store } from './store.js';
 import { ActorKind, Claim, Project, Ranked, RoadmapEvent } from './types.js';
 import { loaded, running } from './build.js';

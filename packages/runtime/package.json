@@ -8,7 +8,7 @@
     "prebuild": "node scripts/check-import-boundary.mjs",
     "build": "tsc",
     "view": "tsx src/view.ts",
-    "vendor:tokens": "node scripts/vendor-estate-tokens.mjs",
+    "vendor:tokens": "npm run vendor:tokens --workspace @helmo/core --",
     "vendor:avatars": "node scripts/vendor-estate-avatars.mjs",
     "vendor:reach": "node scripts/vendor-estate-reach.mjs",
     "postbuild": "node scripts/stamp-build.mjs"

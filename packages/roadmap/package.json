@@ -8,7 +8,7 @@
     "postbuild": "node scripts/stamp-build.mjs",
     "view": "tsx src/view.ts",
     "mcp": "tsx src/server.ts",
-    "vendor:tokens": "node scripts/vendor-estate-tokens.mjs",
+    "vendor:tokens": "npm run vendor:tokens --workspace @helmo/core --",
     "vendor:avatars": "node scripts/vendor-estate-avatars.mjs"
   },
   "keywords": [

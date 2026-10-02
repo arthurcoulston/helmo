@@ -28,8 +28,9 @@ const GROUPS = {
   release: { entry: RUNTIME_CLI, verb: 'release', args: 'release selection: status, upgrade, rollback, activate' },
   service: { entry: RUNTIME_CLI, verb: 'service', args: "the supervisor's service definition" },
   serve: {
+    entry: 'cli/bin/serve.js',
     products: { work: 'work/dist/view.js', roadmap: 'roadmap/dist/view.js', run: 'runtime/dist/view.js' },
-    args: 'serve one dashboard in the foreground',
+    args: 'serve the Helmo app (or one compatibility dashboard) in the foreground',
   },
   mcp: {
     entry: 'work/dist/unified-server.js',

@@ -91,11 +91,7 @@ test('an unknown group refuses on stderr, names the groups, and prints nothing o
   assert.match(r.stderr, /work roadmap run team release service serve mcp/);
 });
 
-test('a group that requires a product refuses without one, and names them', () => {
-  const missing = run('helmo', ['serve']);
-  assert.equal(missing.status, 2);
-  assert.match(missing.stderr, /needs a product: work or roadmap or run/);
-
+test('a compatibility dashboard name must be one the app fronts', () => {
   const wrong = run('helmo', ['serve', 'runtime']);
   assert.equal(wrong.status, 2);
   assert.match(wrong.stderr, /no product 'runtime'.*work, roadmap, run/);
@@ -321,4 +317,11 @@ test('helmo serve work serves the Helmo view', async (t) => {
   const { stdout, stderr, matched } = await started('helmo', ['serve', 'work'], { HELMO_HOME: home, HELMO_VIEW_PORT: '0' }, /Helmo view:/);
   assert.ok(matched, `the view never announced itself: ${stdout}${stderr}`);
   assert.deepEqual(deprecationLines(stdout), [], 'the new name must not print a notice on stdout');
+});
+
+test('bare helmo serve starts the one app listener', async () => {
+  const { stdout, stderr, matched } = await started(
+    'helmo', ['serve'], { HELMO_APP_PORT: '0' }, /Helmo app:/,
+  );
+  assert.ok(matched, `the app never announced itself: ${stdout}${stderr}`);
 });

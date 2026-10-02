@@ -76,6 +76,12 @@ Pinned releases accept both the historical three-component layout and C1's one
   re-authorizing dispatch. A new generation of the same session resumes the
   worker's held ticket first (`resumed: true`), retiring the old generation so
   an orphaned child is fenced; held work outside the requested scope refuses.
+  A workflow-bound resume revalidates the admission its first launch consumed
+  and names that launch as `admission_launch_id`, the pair the harness
+  revalidates and quarantines by (H-687). If that authority no longer holds,
+  the claim ends and the ticket goes open with `needs_human`, and the worker
+  draws its next ticket: a spent launch admission cannot be admitted again,
+  so refusing would wedge the worker on it forever.
   A server whose `HELMO_ACTOR` carries `generation` is supervised:
   `writingActor` refuses caller-stated name/kind/session/generation that
   conflict and inherits omitted ones; outside it a stated generation refuses.

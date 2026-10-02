@@ -892,7 +892,12 @@ export class Store {
    *  its loop cannot write after the hand-forward. A held ticket outside the
    *  requested scope refuses rather than being dropped or kept alongside a
    *  second claim. Workflow-bound work keeps the permission its original
-   *  launch consumed, revalidated now rather than reused blind. */
+   *  launch consumed, revalidated now rather than reused blind. Its receipt
+   *  names that original launch as admission_launch_id, the pair the harness
+   *  revalidates and quarantines by (H-687). Authority that no longer holds
+   *  ends the claim instead of refusing every later launch of this worker:
+   *  the ticket goes back to the human, withheld from agent queues, because
+   *  an attempt whose launch admission is spent cannot be admitted again. */
   private resumeExecution(worker: Actor, workstream: string, assignee: string, launchId: string, project?: string): Record<string, unknown> | null {
     const held = this.db.prepare(`SELECT c.ticket_id, c.generation FROM execution_claims c JOIN tickets t ON t.id = c.ticket_id
       WHERE c.session = ? AND t.status = 'in_progress' AND t.assignee = ? ORDER BY c.created_at, c.ticket_id LIMIT 1`)
@@ -902,15 +907,34 @@ export class Store {
     if (t.workstream !== workstream || (project !== undefined && t.project !== project)) {
       throw new HelmoError(`launch_claim_scope_conflict ${JSON.stringify({ launch_id: launchId, held_ticket_id: t.id, workstream: t.workstream, project: t.project })}`);
     }
-    let admissionId: string | null = null;
+    let admission: { id: string; launch_id: string } | undefined;
     if (t.workflow_attempt_id) {
       const prior = this.db.prepare("SELECT admission FROM workflow_admissions WHERE attempt_id = ? AND json_extract(admission, '$.operation') = 'launch' ORDER BY rowid DESC LIMIT 1")
         .get(t.workflow_attempt_id) as { admission: string } | undefined;
-      const admission = prior ? JSON.parse(prior.admission) as { id: string; launch_id: string } : undefined;
-      if (!admission) throw new HelmoError(`workflow_admission_denied ${JSON.stringify({ ticket_id: t.id, attempt_id: t.workflow_attempt_id, missing: ['launch'], stale: [], failed: [] })}`);
-      this.revalidateLaunch(admission.id, admission.launch_id);
-      admissionId = admission.id;
+      admission = prior ? JSON.parse(prior.admission) as { id: string; launch_id: string } : undefined;
+      let denied: string | null = admission ? null
+        : `workflow_admission_denied ${JSON.stringify({ ticket_id: t.id, attempt_id: t.workflow_attempt_id, missing: ['launch'], stale: [], failed: [] })}`;
+      if (admission) {
+        try { this.revalidateLaunch(admission.id, admission.launch_id); }
+        catch (e) {
+          if (!(e instanceof HelmoError) || !e.message.startsWith('workflow_admission_denied')) throw e;
+          denied = e.message;
+        }
+      }
+      if (denied) {
+        const ts = now();
+        this.endExecution(t.id, `resume_denied:${launchId}`, ts);
+        const sitting = `Workflow attempt ${t.workflow_attempt_id} lost its launch authority while worker ${worker.session} held ${t.id}; decide whether to record its outcome and retry it.`;
+        const payload = {
+          diffs: { status: { from: t.status, to: 'open' }, needs_human: { from: t.needs_human, to: true }, sitting: { from: t.sitting, to: sitting } },
+          note: `Supervised launch ${launchId} could not resume this claim: ${denied}. Generation ${held.generation} retired; returned for a human decision.`,
+        };
+        this.append(ts, t.id, 'updated', worker, payload);
+        this.applyUpdated(ts, t.id, payload);
+        return null;
+      }
     }
+    const admissionId = admission?.id ?? null;
     const ts = now();
     this.retireGeneration(held.generation, t.id, `resumed_by:${launchId}`, ts);
     this.db.prepare('UPDATE execution_claims SET generation = ?, created_at = ? WHERE ticket_id = ?').run(launchId, ts, t.id);
@@ -919,6 +943,7 @@ export class Store {
     this.applyUpdated(ts, t.id, payload);
     const receipt = {
       admitted: true, claimed: true, resumed: true, ticket_id: t.id, workflow_attempt_id: t.workflow_attempt_id ?? null, admission_id: admissionId, launch_id: launchId,
+      admission_launch_id: admission?.launch_id ?? null,
       scope: { workstream, assignee, launch_id: launchId, session: worker.session, project: project ?? null },
     };
     this.db.prepare('INSERT INTO launch_claims (launch_id, ticket_id, claim, created_at) VALUES (?, ?, ?, ?)').run(launchId, t.id, JSON.stringify(receipt), ts);

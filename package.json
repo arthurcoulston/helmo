@@ -1,10 +1,11 @@
 {
   "name": "helmo-workspace",
   "private": true,
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "Helmo workspace: work record, roadmap, runtime, and their shared core.",
   "workspaces": [
     "packages/core",
+    "packages/cli",
     "packages/work",
     "packages/roadmap",
     "packages/runtime"

@@ -10,6 +10,24 @@ internals, and a dev session reads this one first and then that one.
 | Roadmap | `packages/roadmap` | `helmo-roadmap` | [DEV.md](packages/roadmap/DEV.md) |
 | Runtime | `packages/runtime` | `rev` | [DEV.md](packages/runtime/DEV.md) |
 | Core | `packages/core` | `@helmo/core` | this file |
+| Front command | `packages/cli` | `helmo` | this file |
+
+## What `packages/cli` owns
+
+`packages/cli` is the whole of `helmo`: one table of groups, and a dispatch that
+sets `process.argv` and imports the target area's own entry module — runtime
+re-execs itself through `argv[1]`, so the target must see the path it would have
+seen had the caller named it. It has no dependencies and no build step, and it
+should keep neither: it resolves its siblings by path, so a group whose package
+is not built refuses by name instead of failing to load a module. Adding a group
+is a row in that table, a line in `--help`, a row in
+[COMPATIBILITY.md](COMPATIBILITY.md) if it replaces a name, and a test that
+proves the target actually ran rather than that a path resolved.
+
+The deprecating adapters for the old binary names live beside the area they
+front, in `packages/<area>/bin/`, and are what that area's `bin` entries point
+at. Each writes one line to stderr and then imports the unchanged `dist` entry;
+nothing about the implementation moves.
 
 ## What `core` owns
 
@@ -54,8 +72,8 @@ legacy reader.
 - **A build writes only where it is marked to.** The root `npm run build`
   refuses unless the root carries the build marker, so it can never write into
   a release directory or a checkout an installation resolves through.
-  The root `npm test` likewise refuses before workspace tests unless all four
-  packages carry their expected build artifacts. `scripts/build.mjs`,
+  The root `npm test` likewise refuses before workspace tests unless the four
+  built packages carry their expected build artifacts. `scripts/build.mjs`,
   `scripts/assert-built.mjs` and `scripts/build.test.mjs` are the whole of it.
 - **One version.** Every package carries the root version and depends on
   `@helmo/core` at exactly that version; `scripts/build.test.mjs` asserts it.
@@ -85,7 +103,8 @@ in one of them is a defect in all three:
 Product-wide documents live at the root and exist once: `README.md`,
 `LICENSE`, `SECURITY.md`, `THIRD_PARTY_NOTICES.md`, `CHANGELOG.md`,
 `VERSIONING.md`, `AGENTS.md` (with `CLAUDE.md` as its shim), `AGENT-INSTALL.md`,
-`INSTALLATIONS.md`, `ENTRY-POINTS.md`, `ISOLATION-CHECKS.md` and this file.
+`INSTALLATIONS.md`, `ENTRY-POINTS.md`, `ISOLATION-CHECKS.md`,
+`COMPATIBILITY.md` and this file.
 `scripts/build.test.mjs` asserts that set is present and unduplicated — a
 second `LICENSE` or `SECURITY.md` inside a package is how three products drift
 back apart.

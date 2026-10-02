@@ -20,6 +20,20 @@ It is the companion to [INSTALLATIONS.md](INSTALLATIONS.md), which covers what
 an installation is, and how to install, upgrade, roll back and remove one. Do
 that first; come here afterwards.
 
+## One command in front of all of it
+
+Everything below is also reachable through `helmo`, the one command: `helmo
+work`, `helmo roadmap`, `helmo run`, `helmo serve <work|roadmap|run>`, `helmo
+mcp <work|roadmap>`, and `helmo release`, `helmo service` and `helmo team` for
+the runtime verbs this page uses most. `helmo --help` lists them.
+
+It does not shorten this checklist, and it adds nothing to repoint. The paths
+below are what a roster, a plist or an MCP client names, and none of them has
+moved. What is changing is four old binary *names* — `helmo-cli`, `helmo-mcp`,
+`roadmap-mcp` and `helmo-view` — each of which still works and now says on
+stderr what replaces it and when it stops. The dates are in
+[COMPATIBILITY.md](COMPATIBILITY.md).
+
 ## One installation needs nothing here
 
 If you run one installation of each product, from one checkout, with no release
@@ -96,8 +110,10 @@ Three entry points, one per binary — `helmo-cli` (`dist/cli.js`), the stdio MC
 server `helmo-mcp` (`dist/server.js`), and the view `helmo-view`
 (`dist/view.js`) — plus the remote surface if you run one.
 
-Under a selected release each is `<release>/helmo/dist/<file>`. Review every
-place that names one: Rev's roster (above), your agent and editor MCP
+Under a selected release each is `<release>/helmo/dist/<file>`. Those paths are
+the implementation and carry no deprecation notice; it is the binary *names*
+`helmo-cli`, `helmo-mcp` and `helmo-view` that are leaving, on the dates in
+[COMPATIBILITY.md](COMPATIBILITY.md). Review every place that names one: Rev's roster (above), your agent and editor MCP
 configuration, wrapper scripts, and any service definitions you wrote yourself.
 
 `HELMO_HOME` and `HELMO_DB` are a pair, and **either one alone determines the

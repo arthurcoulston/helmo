@@ -69,6 +69,20 @@ otherwise it compiles from source, which needs a C toolchain and Python ≥ 3.8
 PATH is the usual culprit — on macOS, `PYTHON=/usr/bin/python3 npm install`
 fixes it.
 
+## The one command
+
+```
+node_modules/.bin/helmo --help
+```
+
+`helmo` is the front door to every area: `helmo work`, `helmo roadmap`,
+`helmo run`, `helmo team`, `helmo release`, `helmo service`,
+`helmo serve <area>` and `helmo mcp <area>`. The older per-area binaries
+`helmo-cli`, `helmo-mcp`, `roadmap-mcp` and `helmo-view` still work and print
+what replaces them; `rev` is a permanent alias for `helmo run`.
+[COMPATIBILITY.md](COMPATIBILITY.md) has the dates, and the rest of this page
+names the `packages/*/dist` paths that have not moved.
+
 ## Running more than one installation
 
 One installation needs none of this. For more than one, or to change which
@@ -123,7 +137,7 @@ records your answers. For the running machine, *"summon the watch officer"* →
 
 ```
 npm run build       # every package, in dependency order
-npm test            # all four packages, including the invariant that every
+npm test            # every package, including the invariant that every
                     # record rebuilds exactly from its event log
 ```
 

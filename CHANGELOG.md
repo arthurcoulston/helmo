@@ -11,6 +11,24 @@ consolidation imported still carried that release's notes under "Unreleased";
 this is the published wording, which is two entries and one commit reference
 longer.
 
+## Unreleased — 0.7.0
+
+- **One command: `helmo`.** Every area is reachable through one front command —
+  `helmo work`, `helmo roadmap`, `helmo run`, `helmo team`, `helmo release`,
+  `helmo service`, `helmo serve <area>` and `helmo mcp <area>`. It does no work
+  of its own: it hands your command line to the entry point that always did
+  that work, so output, exit codes and refusals are that entry point's own.
+- **The old binary names still work, and say they are leaving.** `helmo-cli`,
+  `helmo-mcp`, `roadmap-mcp` and `helmo-view` each print one line on stderr
+  naming their replacement and the date they stop, with stdout untouched —
+  `helmo-cli` still prints exactly one JSON object. `rev` is a permanent alias
+  for `helmo run` and prints nothing. The dates are in the new
+  [COMPATIBILITY.md](COMPATIBILITY.md), which also covers repointing an
+  existing checkout's `node_modules/.bin` links.
+- No port, launchd label, record identifier, MCP tool name or argument key
+  moves, and neither store is migrated. Nothing a configuration file, a plist,
+  a bookmark or a loaded tool schema names changes.
+
 ## v0.6.1 — 2026-10-02
 
 - The stable Rev service launcher now reads the selected release manifest and

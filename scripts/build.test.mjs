@@ -70,11 +70,26 @@ test('refuses a checkout missing one build artifact', () => {
 test('every workspace package carries the product version', () => {
   const root = new URL('../', import.meta.url);
   const product = JSON.parse(readFileSync(new URL('package.json', root))).version;
-  for (const name of ['core', 'work', 'roadmap', 'runtime']) {
+  // Classified, not derived: a new package must be put on one side of the
+  // core-dependency rule below, and a derived list would silently skip it.
+  assert.deepEqual([...PACKAGES].sort(), ['cli', 'core', 'roadmap', 'runtime', 'work']);
+  for (const name of PACKAGES) {
     const pkg = JSON.parse(readFileSync(new URL(`packages/${name}/package.json`, root)));
     assert.equal(pkg.version, product, `${name} version`);
-    if (name !== 'core') assert.equal(pkg.dependencies['@helmo/core'], product, `${name} core dependency`);
+    if (CORE_DEPENDENTS.includes(name)) {
+      assert.equal(pkg.dependencies['@helmo/core'], product, `${name} core dependency`);
+    }
   }
+});
+
+// The front command is the one package that depends on nothing. It resolves its
+// siblings by path so that a group whose package is absent refuses by name
+// rather than failing to load a module, and a dependency here would be the
+// first thing to break that.
+test('the front command depends on nothing', () => {
+  const pkg = JSON.parse(readFileSync(new URL('packages/cli/package.json', ROOT)));
+  assert.equal(pkg.dependencies, undefined);
+  assert.equal(pkg.bin.helmo, 'bin/helmo.js');
 });
 
 // The cut is the one place the version number has to agree with prose. A
@@ -107,13 +122,16 @@ const PRODUCT_DOCS = [
   'README.md', 'LICENSE', 'SECURITY.md', 'THIRD_PARTY_NOTICES.md', 'CHANGELOG.md',
   'VERSIONING.md', 'AGENTS.md', 'CLAUDE.md', 'DEV.md',
   'AGENT-INSTALL.md', 'INSTALLATIONS.md', 'ENTRY-POINTS.md', 'ISOLATION-CHECKS.md',
+  'COMPATIBILITY.md',
 ];
 
 // The two each area keeps as its own: its front page and its coding context.
 const AREA_DOCS = ['README.md', 'DEV.md'];
 
-const PACKAGES = ['core', 'work', 'roadmap', 'runtime'];
 const ROOT = new URL('../', import.meta.url);
+const PACKAGES = JSON.parse(readFileSync(new URL('package.json', ROOT)))
+  .workspaces.map((workspace) => workspace.replace(/^packages\//, ''));
+const CORE_DEPENDENTS = ['work', 'roadmap', 'runtime'];
 
 test('every product-wide document exists once, at the root', () => {
   for (const doc of PRODUCT_DOCS) {

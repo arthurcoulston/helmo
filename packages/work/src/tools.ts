@@ -432,6 +432,29 @@ Workstream-level findings have no ticket_id and cannot be disposed.`,
   );
 
   server.registerTool(
+    'helmo_withdraw_human_return',
+    {
+      description:
+        `Withdraw a mistaken pending human escalation without fabricating an answer, completed action, or approval. This is an agent/orchestrator correction, not consent: it appends a withdrawal event, preserves prior answers and every independent hold, clears only the pending question or action, and returns the ticket to an explicit recovery owner. Pass the fingerprint of the request you actually inspected; if a human answered, completed the action, or the request changed concurrently, the withdrawal is refused. Use only when the request itself was erroneous and preparation can resume. A live recovery owner is mandatory: it must be the non-human caller or an agent/orchestrator that wrote to Helmo within the last 7 days. If none is available, leave the request intact and coordinate rather than making the work ownerless.`,
+      inputSchema: strict({
+        ticket_id: z.string(),
+        question_fingerprint: z.string(),
+        recovery_owner: z.string(),
+        reason: z.string(),
+        actor: actorSchema,
+      }),
+    },
+    async ({ ticket_id, question_fingerprint, recovery_owner, reason, actor }) => {
+      try {
+        const t = store.withdrawHumanReturn(resolveActor(actor as Actor | undefined), local(ticket_id), question_fingerprint, recovery_owner, reason);
+        return ok({ ticket: compact(t), correction: 'return_withdrawn', human_answer_recorded: false });
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
+
+  server.registerTool(
     'helmo_answer_ticket',
     {
       description:

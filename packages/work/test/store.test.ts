@@ -941,6 +941,99 @@ describe('return to human / answer', () => {
     expect(s.returnToHuman(builder, create(s).id, q).status).toBe('awaiting_human');
   });
 
+  it('withdraws only the inspected ask to an explicit recovery owner without inventing consent (H-391)', () => {
+    const s = freshStore();
+    const t = create(s, { assignee: 'tester' });
+    const asked = s.returnToHuman(builder, t.id, q);
+    const fingerprint = questionFingerprint(asked.question!);
+    const recovered = s.withdrawHumanReturn(orch, t.id, fingerprint, orch.name, 'The team can finish the preparation before asking Arthur.');
+    expect(recovered.status).toBe('open');
+    expect(recovered.assignee).toBe(orch.name);
+    expect(recovered.question).toBeNull();
+    expect(s.lastAnswer(t.id)).toBeNull();
+    const event = s.getEvents(t.id).find((e) => e.event_type === 'return_withdrawn')!;
+    expect(event.payload).toMatchObject({ recovery_owner: orch.name, outcome_owner: 'tester', question_fingerprint: fingerprint });
+    s.rebuild();
+    expect(s.getTicket(t.id)).toMatchObject({ status: 'open', assignee: orch.name, question: null });
+  });
+
+  it('withdraws an inspected action without recording completion or consent (H-503)', () => {
+    const s = freshStore();
+    const t = create(s, { assignee: 'builder-loop' });
+    const asked = s.requestAction(builder, t.id, {
+      situation: 'The team incorrectly classified a supported contribution as sovereign.',
+      action: 'Carry the patch to another estate.',
+      why_human: 'The team believed only Arthur could cross the boundary.',
+      if_unanswered: 'Preparation remains stranded.',
+    });
+    const fingerprint = actionFingerprint(asked.action!);
+    const recovered = s.withdrawHumanReturn(builder, t.id, fingerprint, builder.name, 'The classification was corrected; team preparation resumes.');
+    expect(recovered).toMatchObject({ status: 'open', assignee: builder.name, question: null, action: null });
+    expect(s.lastAnswer(t.id)).toBeNull();
+    expect(s.actedRequests(t.id).size).toBe(0);
+    expect(s.getEvents(t.id).find((e) => e.event_type === 'return_withdrawn')?.payload).toMatchObject({ question_fingerprint: fingerprint });
+    expect(() => s.withdrawHumanReturn(builder, t.id, fingerprint, builder.name, 'Stale retry.')).toThrow(/no longer asking/);
+  });
+
+  it('lets a concurrent real answer win and refuses ownerless or stale withdrawal (H-391)', () => {
+    const s = freshStore();
+    const t = create(s);
+    const asked = s.returnToHuman(builder, t.id, q);
+    const fingerprint = questionFingerprint(asked.question!);
+    expect(() => s.withdrawHumanReturn(orch, t.id, fingerprint, '', 'Team-solvable.')).toThrow(/recovery_owner/);
+    s.answerTicket({ name: 'arthur', kind: 'human' }, t.id, { answer: 'Pay it.', resolution: 'resume' }, fingerprint);
+    expect(() => s.withdrawHumanReturn(orch, t.id, fingerprint, orch.name, 'Team-solvable.')).toThrow(/no longer asking/);
+    expect(s.lastAnswer(t.id)?.answer).toBe('Pay it.');
+    expect(s.getEvents(t.id).some((e) => e.event_type === 'return_withdrawn')).toBe(false);
+  });
+
+  it('preserves independent holds while removing only the mistaken question (H-391)', () => {
+    const s = freshStore();
+    const t = create(s);
+    s.updateTicket(builder, { ticket_id: t.id, note: 'hold', capacity_hold: { reason: 'budget', provenance: 'H-1', reconsider_when: 'budget changes' } });
+    const asked = s.returnToHuman(builder, t.id, q);
+    const recovered = s.withdrawHumanReturn(orch, t.id, questionFingerprint(asked.question!), orch.name, 'Preparation remains team-owned.');
+    expect(recovered.capacity_hold).toMatchObject({ reason: 'budget', provenance: 'H-1' });
+    expect(s.listTickets({ ready: true, caller: 'orchestrator' }).map((x) => x.id)).not.toContain(t.id);
+  });
+
+  it('leaves the question intact when the named recovery owner is unavailable (H-391)', () => {
+    const s = freshStore();
+    const t = create(s);
+    const asked = s.returnToHuman(builder, t.id, q);
+    const fingerprint = questionFingerprint(asked.question!);
+    expect(() => s.withdrawHumanReturn(orch, t.id, fingerprint, 'nonexistent-seat', 'Preparation remains team-owned.')).toThrow(/not an available agent or orchestrator/);
+    expect(s.getTicket(t.id)).toMatchObject({ status: 'awaiting_human', assignee: null, question: asked.question });
+    expect(s.getEvents(t.id).some((e) => e.event_type === 'return_withdrawn')).toBe(false);
+  });
+
+  it('recognizes recent non-human activity despite a later same-name human event (H-391)', () => {
+    const s = freshStore();
+    const t = create(s);
+    const asked = s.returnToHuman(builder, t.id, q);
+    const collision = create(s);
+    const collisionAsk = s.returnToHuman(builder, collision.id, q);
+    s.answerTicket({ name: builder.name, kind: 'human' }, collision.id, { answer: 'Handled separately.', resolution: 'resume' }, questionFingerprint(collisionAsk.question!));
+
+    const recovered = s.withdrawHumanReturn(orch, t.id, questionFingerprint(asked.question!), builder.name, 'Preparation remains team-owned.');
+    expect(recovered).toMatchObject({ status: 'open', assignee: builder.name, question: null });
+  });
+
+  it('refuses a recovery owner that has been silent beyond the live-seat window (H-391)', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2030-01-01T00:00:00.000Z'));
+      const s = freshStore();
+      const t = create(s);
+      vi.setSystemTime(new Date('2030-01-09T00:00:00.000Z'));
+      const asked = s.returnToHuman(orch, t.id, q);
+      expect(() => s.withdrawHumanReturn(orch, t.id, questionFingerprint(asked.question!), builder.name, 'Preparation remains team-owned.')).toThrow(/last 7 days/);
+      expect(s.getTicket(t.id).status).toBe('awaiting_human');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('answersSince replays answers from a cursor and can narrow to one session (H-936)', () => {
     const s = freshStore();
     const dash: Actor = { name: 'arthur', kind: 'human', session: 'dashboard' };

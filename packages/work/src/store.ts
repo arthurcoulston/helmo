@@ -2647,11 +2647,50 @@ export class Store {
         );
       }
       const ts = now();
-      this.append(ts, t.id, 'returned', actor, stored as unknown as Record<string, unknown>);
+      this.append(ts, t.id, 'returned', actor, { ...stored, outcome_owner: t.assignee } as unknown as Record<string, unknown>);
       this.db
         .prepare("UPDATE tickets SET status = 'awaiting_human', assignee = NULL, question = ?, updated_at = ? WHERE id = ?")
         .run(JSON.stringify(stored), ts, t.id);
       return this.getTicket(t.id);
+    }).immediate();
+  }
+
+  withdrawHumanReturn(actor: Actor, ticketId: string, expectQuestion: string, recoveryOwner: string, reason: string): Ticket {
+    validateActor(actor);
+    if (actor.kind === 'human') throw new HelmoError('A human decision is recorded with helmo_answer_ticket, not as an agent withdrawal.');
+    if (!expectQuestion?.trim()) throw new HelmoError('question_fingerprint is required so a stale withdrawal cannot replace a newer ask.');
+    if (!recoveryOwner?.trim()) throw new HelmoError('recovery_owner is required: do not withdraw work unless a live coordinator can receive it.');
+    if (!reason?.trim()) throw new HelmoError('reason is required: record why the ask was mistaken and what preparation resumes.');
+    rejectSwallowedMarkup({ recovery_owner: recoveryOwner, reason });
+    return this.db.transaction(() => {
+      const cur = this.getTicket(ticketId);
+      const pendingFingerprint = cur.question ? questionFingerprint(cur.question) : cur.action ? actionFingerprint(cur.action) : null;
+      if (cur.status !== 'awaiting_human' || pendingFingerprint !== expectQuestion) {
+        throw new HelmoError(`${cur.id} is no longer asking the expected question or action — reload before withdrawing it; a real answer, completed action, or replacement request wins.`);
+      }
+      const owner = recoveryOwner.trim();
+      const cutoff = new Date(Date.now() - SILENT_ASSIGNEE_HOURS * 3_600_000).toISOString();
+      const recentOwnerEvent = this.db.prepare(
+        `SELECT 1 AS found FROM events
+         WHERE json_extract(actor, '$.name') = ?
+           AND json_extract(actor, '$.kind') != 'human'
+           AND ts >= ?
+         ORDER BY seq DESC LIMIT 1`,
+      ).get(owner, cutoff) as { found: number } | undefined;
+      const callerIsOwner = actor.name === owner && actor.kind !== 'human';
+      const ownerIsLive = Boolean(recentOwnerEvent);
+      if (!callerIsOwner && !ownerIsLive) {
+        throw new HelmoError(`recovery_owner '${owner}' is not an available agent or orchestrator: it has no non-human Helmo activity in the last ${SILENT_ASSIGNEE_HOURS / 24} days. Leave the question intact until a live owner can receive the work.`);
+      }
+      const returned = this.db.prepare("SELECT payload FROM events WHERE ticket_id = ? AND event_type = 'returned' ORDER BY seq DESC LIMIT 1").get(cur.id) as { payload: string } | undefined;
+      const outcomeOwner = returned ? (JSON.parse(returned.payload)['outcome_owner'] as string | null | undefined) ?? null : null;
+      const ts = now();
+      this.append(ts, cur.id, 'return_withdrawn', actor, {
+        question_fingerprint: expectQuestion, reason, recovery_owner: owner, outcome_owner: outcomeOwner,
+      });
+      this.db.prepare("UPDATE tickets SET status = 'open', assignee = ?, question = NULL, updated_at = ? WHERE id = ?")
+        .run(owner, ts, cur.id);
+      return this.getTicket(cur.id);
     }).immediate();
   }
 
@@ -2874,11 +2913,13 @@ export class Store {
           case 'updated':
             this.applyUpdated(ev.ts, ev.ticket_id, ev.payload);
             break;
-          case 'returned':
+          case 'returned': {
+            const { outcome_owner: _outcomeOwner, ...request } = ev.payload;
             this.db
               .prepare("UPDATE tickets SET status = 'awaiting_human', assignee = NULL, question = ?, updated_at = ? WHERE id = ?")
-              .run(JSON.stringify(ev.payload), ev.ts, ev.ticket_id);
+              .run(JSON.stringify(request), ev.ts, ev.ticket_id);
             break;
+          }
           case 'answered': {
             const res = (ev.payload['resolution'] as string) ?? 'resume';
             if (res === 'resume') {
@@ -2894,6 +2935,10 @@ export class Store {
           case 'acted':
             this.db.prepare("UPDATE tickets SET status = 'open', assignee = ?, question = NULL, updated_at = ? WHERE id = ?")
               .run(ev.payload['assignee'] ?? null, ev.ts, ev.ticket_id);
+            break;
+          case 'return_withdrawn':
+            this.db.prepare("UPDATE tickets SET status = 'open', assignee = ?, question = NULL, updated_at = ? WHERE id = ?")
+              .run(ev.payload['recovery_owner'], ev.ts, ev.ticket_id);
             break;
           case 'spend':
             this.applySpend(ev.ticket_id, ev.payload);

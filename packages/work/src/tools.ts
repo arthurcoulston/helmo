@@ -17,6 +17,7 @@ const actorSchema = z
     model: z.string().optional(),
     version: z.string().optional(),
     session: z.string().optional(),
+    generation: z.string().optional(),
   })
   .optional()
   .describe('Who is writing. Omit only when HELMO_ACTOR in the server environment already names you exactly (loops get accurate per-agent env). Interactive sessions: the env identity is a static placeholder that cannot know your name or model — pass your true identity on every write: {name: your crew name, kind: "agent", model: your exact model ID, version: your harness version, e.g. "claude-code-" + output of `claude --version`}. Writes without a truthful complete identity are rejected.');

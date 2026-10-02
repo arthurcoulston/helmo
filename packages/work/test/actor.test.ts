@@ -120,3 +120,84 @@ describe('hygiene through the MCP surface (H-758)', () => {
     store.close();
   });
 });
+
+// A supervised parallel worker's environment binds role, worker and launch
+// generation (H-574). Its siblings share the role name, so the H-687 rule that
+// lets a desk caller restate its session would let B write as A.
+describe('a supervised worker cannot shed or borrow its binding (H-574)', () => {
+  const boundA: Actor = { ...seat, session: 'rev:builder-a', generation: 'launch-a' };
+  const boundB: Actor = { ...seat, session: 'rev:builder-b', generation: 'launch-b' };
+
+  it('refuses conflicting identity fields and inherits omitted ones', () => {
+    expect(() => writingActor({ ...stated, session: 'rev:builder-a' }, boundB)).toThrow(/supervised_identity_conflict/);
+    expect(() => writingActor({ ...stated, session: 'rev:builder-b', generation: 'launch-a' }, boundB)).toThrow(/supervised_identity_conflict/);
+    expect(() => writingActor({ ...stated, name: 'reviewer-loop' }, boundB)).toThrow(/supervised_identity_conflict/);
+    expect(writingActor(stated, boundB)).toEqual({ ...boundB, model: stated.model, version: stated.version });
+    expect(writingActor(undefined, boundB)).toEqual(boundB);
+  });
+
+  it('refuses a generation stated outside a supervised environment', () => {
+    expect(() => writingActor({ ...stated, generation: 'launch-a' }, seat)).toThrow(/generation is bound/);
+  });
+
+  it('through the MCP tools: B cannot close, complete or impersonate A, and A can', async () => {
+    const store = new Store(':memory:');
+    const id = ticketToClaim(store);
+    store.launchClaim({ ...boundA, generation: undefined }, 'helmo-dev', 'builder-loop', 'launch-a');
+    const connect = async (env: Actor) => {
+      const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+      const client = new Client({ name: 'test-agent', version: '0' });
+      await Promise.all([buildServer(store, env).connect(serverSide), client.connect(clientSide)]);
+      return client;
+    };
+    const b = await connect(boundB);
+    const before = store.getEvents(id).length;
+    const attempts: [string, Record<string, unknown>][] = [
+      ['helmo_update_ticket', { ticket_id: id, note: 'closing', status: 'done' }],
+      ['helmo_update_ticket', { ticket_id: id, note: 'closing', status: 'done', actor: stated }],
+      ['helmo_update_ticket', { ticket_id: id, note: 'closing', status: 'done', actor: { ...stated, session: 'rev:builder-a' } }],
+      ['helmo_update_ticket', { ticket_id: id, note: 'closing', status: 'done', actor: { ...stated, session: 'rev:builder-a', generation: 'launch-a' } }],
+      ['helmo_update_ticket', { ticket_id: id, note: 'passing it on', handoff_to: 'reviewer-loop' }],
+      ['helmo_record_product_completion', { ticket_id: id, note: 'ready', artifacts: [{ ref: `helmo@${'a'.repeat(40)}`, author: 'builder-loop' }] }],
+    ];
+    for (const [name, args] of attempts) {
+      const r = await b.callTool({ name, arguments: args });
+      expect(r.isError, `${name} ${JSON.stringify(args)}`).toBe(true);
+      expect(JSON.stringify(r)).toMatch(/execution_claim_held|supervised_identity_conflict/);
+    }
+    expect(store.getEvents(id)).toHaveLength(before);
+    expect(store.getTicket(id).status).toBe('in_progress');
+
+    const a = await connect(boundA);
+    const done = await a.callTool({ name: 'helmo_update_ticket', arguments: { ticket_id: id, note: 'built', status: 'done', evidence: [{ kind: 'other', ref: 'x' }], actor: stated } });
+    expect(done.isError).toBeFalsy();
+    expect(store.getEvents(id).at(-1)?.actor).toEqual({ ...boundA, model: stated.model, version: stated.version });
+    const late = await a.callTool({ name: 'helmo_update_ticket', arguments: { ticket_id: id, note: 'one more thing' } });
+    expect(JSON.stringify(late)).toMatch(/stale_generation/);
+    await a.close(); await b.close();
+    store.close();
+  });
+
+  it('through the CLI: a bound environment refuses a borrowed session', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'helmo-bound-'));
+    const dbPath = join(dir, 'helmo.db');
+    const store = new Store(dbPath);
+    const id = ticketToClaim(store);
+    store.launchClaim({ ...boundA, generation: undefined }, 'helmo-dev', 'builder-loop', 'launch-a');
+    store.close();
+    const cli = (env: Actor, ...extra: string[]) => spawnSync(
+      process.execPath,
+      ['node_modules/.bin/tsx', 'src/cli.ts', 'update', '--ticket', id, '--note', 'closing', '--status', 'done', ...extra],
+      { cwd: new URL('..', import.meta.url).pathname, env: { ...process.env, HELMO_DB: dbPath, HELMO_ACTOR: JSON.stringify(env) }, encoding: 'utf8' },
+    );
+    const spoof = cli(boundB, '--actor', JSON.stringify({ ...stated, session: 'rev:builder-a', generation: 'launch-a' }));
+    expect(spoof.status).toBe(1);
+    expect(spoof.stderr).toMatch(/supervised_identity_conflict/);
+    const sibling = cli(boundB);
+    expect(sibling.status).toBe(1);
+    expect(sibling.stderr).toMatch(/execution_claim_held/);
+    const owner = cli(boundA);
+    expect(owner.status, owner.stderr).toBe(0);
+    rmSync(dir, { recursive: true, force: true });
+  });
+});

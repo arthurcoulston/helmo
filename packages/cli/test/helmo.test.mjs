@@ -151,7 +151,16 @@ test('usage under the front command names the front command, and rev stays rev',
 
   // Row 14: rev is a permanent alias, not an adapter. It keeps its own name in
   // its own usage, because it is named in loop prompts that regenerate.
-  const underRev = run('rev', [], { REV_HOME: revHome(t) });
+  //
+  // Invoked at its own path rather than through node_modules/.bin: npm skips
+  // linking a bin whose target does not exist yet, so after the documented
+  // cold install (npm ci, then build) `rev` is linked only by a second
+  // install. The adapters above are committed source files and link on the
+  // first one.
+  const underRev = spawnSync(process.execPath, [join(ROOT, 'packages', 'runtime', 'dist', 'cli.js')], {
+    encoding: 'utf8',
+    env: env({ REV_HOME: revHome(t) }),
+  });
   assert.match(underRev.stderr, /^usage: rev <command>/m);
   assert.deepEqual(deprecationLines(underRev.stderr), []);
 });

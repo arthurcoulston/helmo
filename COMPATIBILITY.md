@@ -72,6 +72,22 @@ binary is a service definition you installed yourself, and
   not moved. Nothing a configuration file, a plist, a bookmark or a loaded tool
   schema names changes in this release.
 
+## Linking the commands after a first install
+
+`npm` links a package's command only if the file it points at already exists,
+and four of Helmo's commands point at built output. So after the documented
+cold install — `npm ci`, then `npm run build` — `helmo` and the adapters are on
+hand, and `rev`, `roadmap-view` and `roadmap-recovery` are not. One more
+`npm install` after the build links them:
+
+```bash
+npm ci && npm run prepare:cold && npm run build
+npm install          # links rev, roadmap-view and roadmap-recovery
+```
+
+Nothing is broken without it: every command is also reachable through `helmo`,
+and each one's own path under `packages/*/dist` works as it always did.
+
 ## Upgrading a checkout in place
 
 `npm install` does not repoint a `node_modules/.bin` link that already exists,

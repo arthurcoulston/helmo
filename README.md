@@ -47,6 +47,7 @@ cd helmo
 npm ci
 npm run prepare:cold
 npm run build
+npm install        # links the commands that point at built output
 npm test
 ```
 

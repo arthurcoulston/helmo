@@ -19,6 +19,9 @@ export interface Actor {
   model?: string;
   version?: string;
   session?: string;
+  /** The one supervised launch this write belongs to (H-574). Only a trusted
+   *  server environment sets it; see writingActor. */
+  generation?: string;
 }
 
 /** Who to record as the writer, given what the caller passed and what the
@@ -32,9 +35,28 @@ export interface Actor {
  *  finished work as another live session and stood the seat down for 24 hours
  *  (H-687). A caller that states its own session keeps it. */
 export function writingActor(override: Actor | undefined, env: Actor | null): Actor {
+  if (env?.generation) return boundActor(override, env);
+  if (override?.generation) throw new HelmoError('generation is bound by a supervised server environment; a caller cannot state one.');
   if (!override) return env ?? ({} as Actor);
   if (override.session || !env?.session) return override;
   return { ...override, session: env.session };
+}
+
+/** A supervised parallel worker's environment binds role, worker and launch
+ *  generation (H-574). Sibling workers share the role name, so a caller able
+ *  to restate its session or generation could write as its sibling; the stamp
+ *  that H-687 lets a desk caller restate is here the authority itself.
+ *  Conflicting fields refuse rather than being silently corrected, so a
+ *  spoof is visible; omitted ones inherit, so ownership cannot be shed by
+ *  leaving them out. Model and version stay the caller's to state. */
+function boundActor(override: Actor | undefined, env: Actor): Actor {
+  if (!override) return env;
+  for (const field of ['name', 'kind', 'session', 'generation'] as const) {
+    if (override[field] !== undefined && override[field] !== env[field]) {
+      throw new HelmoError(`supervised_identity_conflict: this server is bound to ${field} "${env[field]}"; the caller stated "${override[field]}". Omit ${field} to write as the bound worker.`);
+    }
+  }
+  return { ...env, ...(override.model ? { model: override.model } : {}), ...(override.version ? { version: override.version } : {}) };
 }
 
 export interface Evidence {

@@ -106,6 +106,8 @@ export interface ListFilter {
   status?: Status;
   workstream?: string;
   project?: string;
+  ids?: string[]; // exact ticket allowlist (H-671)
+  exclude_ids?: string[]; // tickets other workers' allowlists own (H-671)
   assignee?: string;
   type?: string;
   priority_max?: number;
@@ -237,6 +239,17 @@ CREATE TABLE IF NOT EXISTS workflow_decisions (
 CREATE TABLE IF NOT EXISTS workflow_admissions (
   id TEXT PRIMARY KEY, attempt_id TEXT NOT NULL, admission TEXT NOT NULL, created_at TEXT NOT NULL,
   FOREIGN KEY (attempt_id) REFERENCES workflow_attempts(id)
+);
+CREATE TABLE IF NOT EXISTS launch_claims (
+  launch_id TEXT PRIMARY KEY, ticket_id TEXT NOT NULL, claim TEXT NOT NULL, created_at TEXT NOT NULL,
+  FOREIGN KEY (ticket_id) REFERENCES tickets(id)
+);
+CREATE TABLE IF NOT EXISTS execution_claims (
+  ticket_id TEXT PRIMARY KEY, session TEXT NOT NULL, generation TEXT NOT NULL, created_at TEXT NOT NULL,
+  FOREIGN KEY (ticket_id) REFERENCES tickets(id)
+);
+CREATE TABLE IF NOT EXISTS retired_generations (
+  generation TEXT PRIMARY KEY, ticket_id TEXT, reason TEXT NOT NULL, retired_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS workflow_invalidations (
   id INTEGER PRIMARY KEY AUTOINCREMENT, attempt_id TEXT NOT NULL, reason TEXT NOT NULL,
@@ -803,17 +816,207 @@ export class Store {
     return this.db.transaction(() => {
       const ticket = this.listTickets({ ready: true, workstream, caller: assignee, limit: 1 })[0];
       if (!ticket) return { admitted: false, launch_id: launchId };
-      if (!ticket.workflow_attempt_id) return { admitted: true, ticket_id: ticket.id, workflow_attempt_id: null, admission_id: null, launch_id: launchId };
-      const prior = this.db.prepare("SELECT admission FROM workflow_admissions WHERE attempt_id = ? AND json_extract(admission, '$.operation') = 'launch' ORDER BY rowid DESC LIMIT 1")
-        .get(ticket.workflow_attempt_id) as { admission: string } | undefined;
-      if (prior) {
-        const admission = JSON.parse(prior.admission) as Record<string, unknown>;
-        if (admission.launch_id === launchId) return { admitted: true, ticket_id: ticket.id, workflow_attempt_id: ticket.workflow_attempt_id, admission_id: admission.id, launch_id: launchId };
-        throw new HelmoError(`workflow_admission_denied ${JSON.stringify({ ticket_id: ticket.id, attempt_id: ticket.workflow_attempt_id, missing: [], stale: ['launch'], failed: [] })}`);
-      }
-      const admission = this.admitWorkflow(ticket.id, ticket.workflow_attempt_id, 'launch', launchId);
-      return { admitted: true, ticket_id: ticket.id, workflow_attempt_id: ticket.workflow_attempt_id, admission_id: admission.id, launch_id: launchId };
+      const admissionId = this.admitLaunch(ticket.id, ticket.workflow_attempt_id, launchId);
+      return { admitted: true, ticket_id: ticket.id, workflow_attempt_id: ticket.workflow_attempt_id ?? null, admission_id: admissionId, launch_id: launchId };
     }).immediate();
+  }
+
+  /** The workflow permission one launch consumes, shared by launch-admit and
+   * launch-claim so the two commands cannot drift apart on the gate itself.
+   * An attempt already admitted under a DIFFERENT launch id is stale, not a
+   * second permission: without that, a candidate released back to the queue
+   * could mint a fresh launch admission per attempt. Returns null when there
+   * is no attempt to gate. */
+  private admitLaunch(ticketId: string, attemptId: string | null | undefined, launchId: string): string | null {
+    if (!attemptId) return null;
+    const prior = this.db.prepare("SELECT admission FROM workflow_admissions WHERE attempt_id = ? AND json_extract(admission, '$.operation') = 'launch' ORDER BY rowid DESC LIMIT 1")
+      .get(attemptId) as { admission: string } | undefined;
+    if (prior) {
+      const admission = JSON.parse(prior.admission) as Record<string, unknown>;
+      if (admission.launch_id === launchId) return admission.id as string;
+      throw new HelmoError(`workflow_admission_denied ${JSON.stringify({ ticket_id: ticketId, attempt_id: attemptId, missing: [], stale: ['launch'], failed: [] })}`);
+    }
+    return this.admitWorkflow(ticketId, attemptId, 'launch', launchId).id as string;
+  }
+
+  /** Atomically select, workflow-admit, and exclusively claim one launch. This
+   * is a SEPARATE command from launch-admit, not a widening of it: parallel
+   * workers on one accountable seat need selection and claim to commit
+   * together, while a harness that admits and lets the model session claim
+   * later keeps the read-only admission it was built against. Folding the two
+   * back together breaks every installed caller, because this one must be
+   * written BY the worker — launch-admit is written by the harness.
+   *
+   * `tickets` is an exact allowlist (H-671): two workers of one role in the
+   * SAME project draw disjoint work only when each names the tickets it may
+   * take, because a shared project tag alone lets either claim the other's.
+   * `excludeTickets` is its complement for a worker with no allowlist: the
+   * tickets its siblings' allowlists own, which it must leave to them. */
+  launchClaim(actor: Actor, workstream: string, assignee: string, launchId: string, project?: string, tickets?: string[], excludeTickets?: string[]): Record<string, unknown> {
+    validateActor(actor);
+    if (!workstream.trim() || !assignee.trim() || !launchId.trim()) throw new HelmoError('launch-claim requires exact non-empty workstream, assignee, and launch-id values.');
+    for (const list of [tickets, excludeTickets]) {
+      if (list && (!list.length || list.some((t) => !t.trim() || t !== t.trim()) || new Set(list).size !== list.length)) {
+        throw new HelmoError('launch-claim tickets must be a non-empty list of distinct exact ticket ids.');
+      }
+    }
+    if (tickets && excludeTickets) throw new HelmoError('launch-claim takes an allowlist or an exclusion, not both.');
+    const allow = tickets ? [...tickets].sort() : undefined;
+    const deny = excludeTickets ? [...excludeTickets].sort() : undefined;
+    if (actor.name !== assignee || actor.kind !== 'agent' || !actor.session?.trim()) {
+      throw new HelmoError('launch-claim must be written by the exact accountable agent with a supervised worker session.');
+    }
+    // The launch id IS the generation: one attempt, one id. A bound worker
+    // naming a different one is a spoof or a stale process, not a new launch.
+    if (actor.generation !== undefined && actor.generation !== launchId) {
+      throw new HelmoError(`supervised_identity_conflict: launch ${launchId} was requested by generation "${actor.generation}".`);
+    }
+    const worker: Actor = { ...actor, generation: launchId };
+    return this.db.transaction(() => {
+      const exact = { workstream, assignee, launch_id: launchId, session: actor.session, project: project ?? null, ...(allow ? { tickets: allow } : {}), ...(deny ? { exclude_tickets: deny } : {}) };
+      const priorClaim = this.db.prepare('SELECT ticket_id, claim FROM launch_claims WHERE launch_id = ?').get(launchId) as
+        { ticket_id: string; claim: string } | undefined;
+      if (priorClaim) {
+        const prior = JSON.parse(priorClaim.claim) as Record<string, unknown>;
+        if (JSON.stringify(prior.scope) !== JSON.stringify(exact)) throw new HelmoError(`Launch ${launchId} was replayed with different scope or worker identity.`);
+        // A receipt is evidence of what was granted, not permission now: the
+        // claim may since have been closed, released or resumed by a later
+        // generation, and dispatching on it would run a second execution.
+        const current = this.executionClaim(priorClaim.ticket_id);
+        if (current?.generation !== launchId || current.session !== actor.session) {
+          throw new HelmoError(`launch_claim_stale ${JSON.stringify({ launch_id: launchId, ticket_id: priorClaim.ticket_id })}`);
+        }
+        return prior;
+      }
+      this.refuseRetiredGeneration(worker);
+      const resumed = this.resumeExecution(worker, workstream, assignee, launchId, project, allow, deny);
+      if (resumed) return resumed;
+      const ticket = this.listTickets({ ready: true, workstream, caller: assignee, project, ids: allow, exclude_ids: deny, limit: 1 })[0];
+      if (!ticket) return { admitted: false, launch_id: launchId };
+      const admissionId = this.admitLaunch(ticket.id, ticket.workflow_attempt_id, launchId);
+      this.updateTicket(worker, { ticket_id: ticket.id, status: 'in_progress', note: `Claimed atomically for supervised launch ${launchId}.` });
+      const receipt = { admitted: true, claimed: true, ticket_id: ticket.id, workflow_attempt_id: ticket.workflow_attempt_id ?? null, admission_id: admissionId, launch_id: launchId, scope: exact };
+      this.db.prepare('INSERT INTO launch_claims (launch_id, ticket_id, claim, created_at) VALUES (?, ?, ?, ?)')
+        .run(launchId, ticket.id, JSON.stringify(receipt), now());
+      return receipt;
+    }).immediate();
+  }
+
+  /** Unfinished work stays with the worker that holds it (H-574): its next
+   *  generation takes the claim over before any new selection, and the old
+   *  generation is retired in the same transaction, so a child that outlived
+   *  its loop cannot write after the hand-forward. A held ticket outside the
+   *  requested scope refuses rather than being dropped or kept alongside a
+   *  second claim. Workflow-bound work keeps the permission its original
+   *  launch consumed, revalidated now rather than reused blind. Its receipt
+   *  names that original launch as admission_launch_id, the pair the harness
+   *  revalidates and quarantines by (H-687). Authority that no longer holds
+   *  ends the claim instead of refusing every later launch of this worker:
+   *  the ticket goes back to the human, withheld from agent queues, because
+   *  an attempt whose launch admission is spent cannot be admitted again. */
+  private resumeExecution(worker: Actor, workstream: string, assignee: string, launchId: string, project?: string, tickets?: string[], exclude?: string[]): Record<string, unknown> | null {
+    const held = this.db.prepare(`SELECT c.ticket_id, c.generation FROM execution_claims c JOIN tickets t ON t.id = c.ticket_id
+      WHERE c.session = ? AND t.status = 'in_progress' AND t.assignee = ? ORDER BY c.created_at, c.ticket_id LIMIT 1`)
+      .get(worker.session, assignee) as { ticket_id: string; generation: string } | undefined;
+    if (!held) return null;
+    const t = this.getTicket(held.ticket_id);
+    if (t.workstream !== workstream || (project !== undefined && t.project !== project) || (tickets && !tickets.includes(t.id)) || exclude?.includes(t.id)) {
+      throw new HelmoError(`launch_claim_scope_conflict ${JSON.stringify({ launch_id: launchId, held_ticket_id: t.id, workstream: t.workstream, project: t.project })}`);
+    }
+    let admission: { id: string; launch_id: string } | undefined;
+    if (t.workflow_attempt_id) {
+      const prior = this.db.prepare("SELECT admission FROM workflow_admissions WHERE attempt_id = ? AND json_extract(admission, '$.operation') = 'launch' ORDER BY rowid DESC LIMIT 1")
+        .get(t.workflow_attempt_id) as { admission: string } | undefined;
+      admission = prior ? JSON.parse(prior.admission) as { id: string; launch_id: string } : undefined;
+      let denied: string | null = admission ? null
+        : `workflow_admission_denied ${JSON.stringify({ ticket_id: t.id, attempt_id: t.workflow_attempt_id, missing: ['launch'], stale: [], failed: [] })}`;
+      if (admission) {
+        try { this.revalidateLaunch(admission.id, admission.launch_id); }
+        catch (e) {
+          if (!(e instanceof HelmoError) || !e.message.startsWith('workflow_admission_denied')) throw e;
+          denied = e.message;
+        }
+      }
+      if (denied) {
+        const ts = now();
+        this.endExecution(t.id, `resume_denied:${launchId}`, ts);
+        const sitting = `Workflow attempt ${t.workflow_attempt_id} lost its launch authority while worker ${worker.session} held ${t.id}; decide whether to record its outcome and retry it.`;
+        const payload = {
+          diffs: { status: { from: t.status, to: 'open' }, needs_human: { from: t.needs_human, to: true }, sitting: { from: t.sitting, to: sitting } },
+          note: `Supervised launch ${launchId} could not resume this claim: ${denied}. Generation ${held.generation} retired; returned for a human decision.`,
+        };
+        this.append(ts, t.id, 'updated', worker, payload);
+        this.applyUpdated(ts, t.id, payload);
+        return null;
+      }
+    }
+    const admissionId = admission?.id ?? null;
+    const ts = now();
+    this.retireGeneration(held.generation, t.id, `resumed_by:${launchId}`, ts);
+    this.db.prepare('UPDATE execution_claims SET generation = ?, created_at = ? WHERE ticket_id = ?').run(launchId, ts, t.id);
+    const payload = { diffs: {}, note: `Resumed by supervised launch ${launchId}; generation ${held.generation} retired.` };
+    this.append(ts, t.id, 'updated', worker, payload);
+    this.applyUpdated(ts, t.id, payload);
+    const receipt = {
+      admitted: true, claimed: true, resumed: true, ticket_id: t.id, workflow_attempt_id: t.workflow_attempt_id ?? null, admission_id: admissionId, launch_id: launchId,
+      admission_launch_id: admission?.launch_id ?? null,
+      scope: { workstream, assignee, launch_id: launchId, session: worker.session, project: project ?? null, ...(tickets ? { tickets } : {}), ...(exclude ? { exclude_tickets: exclude } : {}) },
+    };
+    this.db.prepare('INSERT INTO launch_claims (launch_id, ticket_id, claim, created_at) VALUES (?, ?, ?, ?)').run(launchId, t.id, JSON.stringify(receipt), ts);
+    return receipt;
+  }
+
+  private executionClaim(ticketId: string): { session: string; generation: string } | undefined {
+    return this.db.prepare('SELECT session, generation FROM execution_claims WHERE ticket_id = ?').get(ticketId) as
+      { session: string; generation: string } | undefined;
+  }
+
+  private retireGeneration(generation: string, ticketId: string, reason: string, ts: string): void {
+    this.db.prepare('INSERT OR IGNORE INTO retired_generations (generation, ticket_id, reason, retired_at) VALUES (?, ?, ?, ?)').run(generation, ticketId, reason, ts);
+  }
+
+  /** End a ticket's execution claim and retire its generation, inside the
+   *  write transaction that moves the ticket off in_progress. */
+  private endExecution(ticketId: string, reason: string, ts: string): void {
+    const claim = this.executionClaim(ticketId);
+    if (!claim) return;
+    this.retireGeneration(claim.generation, ticketId, reason, ts);
+    this.db.prepare('DELETE FROM execution_claims WHERE ticket_id = ?').run(ticketId);
+  }
+
+  /** An attempt that has ended cannot write again, notes included: its
+   *  successor or the operator now speaks for the work. */
+  private refuseRetiredGeneration(actor: Actor): void {
+    if (!actor.generation) return;
+    const row = this.db.prepare('SELECT ticket_id, reason FROM retired_generations WHERE generation = ?').get(actor.generation) as
+      { ticket_id: string | null; reason: string } | undefined;
+    if (row) throw new HelmoError(`stale_generation ${JSON.stringify({ generation: actor.generation, ticket_id: row.ticket_id, reason: row.reason })}: this launch has ended; nothing was written.`);
+  }
+
+  /** Execution belongs to the one worker attempt holding the claim. A sibling
+   *  sharing the role name, a legacy session that merely chose that name, or
+   *  another agent may leave a coordination note but not move, edit, hand off
+   *  or complete the work. Humans and orchestrators keep authorized routing;
+   *  their change ends the claim like any other. */
+  private refuseForeignExecution(actor: Actor, ticketId: string, what: string): void {
+    this.refuseRetiredGeneration(actor);
+    const claim = this.executionClaim(ticketId);
+    if (claim && actor.kind === 'agent' && (actor.session !== claim.session || actor.generation !== claim.generation)) {
+      throw new HelmoError(`execution_claim_held ${JSON.stringify({ ticket_id: ticketId, session: claim.session, generation: claim.generation })}: ${what} belongs to the worker attempt holding this claim. Leave a note-only update to coordinate; nothing was written.`);
+    }
+    this.refuseOutsideLaunch(actor, ticketId, what);
+  }
+
+  /** A supervised launch is bound to the one ticket it claimed (H-667). The
+   *  claim check above only guards tickets someone already holds, so without
+   *  this a bound session could take a still-open ticket outside its
+   *  allowlist and carry two claims on one generation. Notes, open child
+   *  filing and orchestrator or human routing stay available. */
+  private refuseOutsideLaunch(actor: Actor, ticketId: string | null, what: string): void {
+    if (actor.kind !== 'agent' || !actor.generation) return;
+    const bound = this.db.prepare('SELECT ticket_id FROM launch_claims WHERE launch_id = ?').get(actor.generation) as { ticket_id: string } | undefined;
+    if (!bound || bound.ticket_id === ticketId) return;
+    throw new HelmoError(`launch_assignment_conflict ${JSON.stringify({ generation: actor.generation, assigned_ticket_id: bound.ticket_id, ticket_id: ticketId })}: ${what} is outside the one ticket this launch claimed. Leave a note-only update, or file the work as an open ticket; nothing was written.`);
   }
 
   /** Resolve one launch receipt by both immutable identities. The expanded
@@ -1098,6 +1301,8 @@ export class Store {
     const routedReady = filter.ready && filter.caller && filter.workstream;
     if (filter.workstream && !routedReady) { clauses.push('workstream = ?'); params.push(filter.workstream); }
     if (filter.project) { clauses.push('project = ?'); params.push(filter.project); }
+    if (filter.ids) { clauses.push(`id IN (${filter.ids.map(() => '?').join(', ')})`); params.push(...filter.ids); }
+    if (filter.exclude_ids?.length) { clauses.push(`id NOT IN (${filter.exclude_ids.map(() => '?').join(', ')})`); params.push(...filter.exclude_ids); }
     if (filter.assignee) {
       clauses.push('assignee = ?');
       params.push(filter.assignee);
@@ -2027,6 +2232,7 @@ export class Store {
     if (!input.note?.trim()) throw new HelmoError('note is required on product completion: say what is ready for independent review.');
     rejectSwallowedMarkup({ note: input.note });
     const artifacts = normalizeArtifacts(input.artifacts);
+    this.refuseForeignExecution(actor, input.ticket_id, 'Recording completion');
     return this.db.transaction(() => {
       const seq = this.append(now(), input.ticket_id, 'product_completed', actor, { artifacts, note: input.note });
       this.invalidateReleaseHandoffs(input.ticket_id, `product completion moved at event ${seq}`);
@@ -2042,6 +2248,7 @@ export class Store {
     this.getTicket(input.ticket_id);
     if (!input.note?.trim()) throw new HelmoError('note is required on an acceptance verdict: say what the review established.');
     if (input.verdict !== 'pass' && input.verdict !== 'fail') throw new HelmoError('verdict must be "pass" or "fail".');
+    this.refuseRetiredGeneration(actor);
     rejectSwallowedMarkup({ note: input.note });
     const current = this.productAcceptance(input.ticket_id);
     if (!current.completion) throw new HelmoError(`${input.ticket_id} has no product completion to review. Record immutable refs and authors first.`);
@@ -2175,6 +2382,7 @@ export class Store {
     const sitting = parseSitting(input.needs_human, input.sitting_with);
     const status = input.status ?? 'open';
     if (status === 'in_progress') refuseUnmarkedDeskClaim(actor, Boolean(sitting?.needs_human));
+    if (status === 'in_progress') this.refuseOutsideLaunch(actor, null, 'Starting a new ticket');
     if (status === 'in_progress' && !input.assignee) input = { ...input, assignee: actor.name };
     // Workstream seat (H-1026): an unassigned filing is reserved to the
     // stream's seat at the door, so it is ready for that seat's loop from the
@@ -2223,6 +2431,9 @@ export class Store {
         this.applyLinked(id, d.to, d.type, true);
       }
       if (status === 'in_progress' && input.workflow_attempt_id) this.admitWorkflow(id, input.workflow_attempt_id, 'create_in_progress');
+      if (status === 'in_progress' && actor.generation && actor.session) {
+        this.db.prepare('INSERT INTO execution_claims (ticket_id, session, generation, created_at) VALUES (?, ?, ?, ?)').run(id, actor.session, actor.generation, ts);
+      }
       return this.getTicket(id);
     }).immediate();
   }
@@ -2250,6 +2461,8 @@ export class Store {
     const suppliedKeys = Object.entries(input)
       .filter(([, value]) => value !== undefined)
       .map(([key]) => key);
+    this.refuseRetiredGeneration(actor);
+    if (suppliedKeys.some((key) => key !== 'ticket_id' && key !== 'note')) this.refuseForeignExecution(actor, t.id, 'This change');
 
     const bodyModes = [input.body, input.body_append, input.body_patch].filter((v) => v !== undefined).length;
     if (bodyModes > 1) {
@@ -2474,7 +2687,14 @@ export class Store {
       if (input.handoff_to !== undefined) payload['handoff_to'] = input.handoff_to;
       this.append(ts, t.id, 'updated', actor, payload);
       this.applyUpdated(ts, t.id, payload);
-      return { ticket: this.getTicket(t.id), warnings };
+      const after = this.getTicket(t.id);
+      if (after.status !== 'in_progress' || (diffs['assignee'] && t.status === 'in_progress')) {
+        this.endExecution(t.id, input.handoff_to !== undefined ? 'handoff' : `status:${after.status}`, ts);
+      }
+      if (after.status === 'in_progress' && t.status !== 'in_progress' && actor.generation && actor.session) {
+        this.db.prepare('INSERT OR REPLACE INTO execution_claims (ticket_id, session, generation, created_at) VALUES (?, ?, ?, ?)').run(t.id, actor.session, actor.generation, ts);
+      }
+      return { ticket: after, warnings };
     }).immediate();
   }
 
@@ -2575,6 +2795,7 @@ export class Store {
   returnToHuman(actor: Actor, ticketId: string, q: QuestionInput): Ticket {
     validateActor(actor);
     const t = this.getTicket(ticketId);
+    this.refuseForeignExecution(actor, t.id, 'Returning this work to the human');
     if (t.status !== 'open' && t.status !== 'in_progress') {
       throw new HelmoError(`${t.id} is ${t.status}; only open or in_progress tickets can be returned to the human.`);
     }
@@ -2651,6 +2872,7 @@ export class Store {
       this.db
         .prepare("UPDATE tickets SET status = 'awaiting_human', assignee = NULL, question = ?, updated_at = ? WHERE id = ?")
         .run(JSON.stringify(stored), ts, t.id);
+      this.endExecution(t.id, 'returned_to_human', ts);
       return this.getTicket(t.id);
     }).immediate();
   }
@@ -2714,6 +2936,7 @@ export class Store {
   requestAction(actor: Actor, ticketId: string, r: ActionRequest): Ticket {
     validateActor(actor);
     const t = this.getTicket(ticketId);
+    this.refuseForeignExecution(actor, t.id, 'Returning this work to the human');
     if (t.status !== 'open' && t.status !== 'in_progress') {
       throw new HelmoError(`${t.id} is ${t.status}; only open or in_progress tickets can be handed an action for the human.`);
     }
@@ -2746,6 +2969,7 @@ export class Store {
       this.db
         .prepare("UPDATE tickets SET status = 'awaiting_human', assignee = NULL, question = ?, updated_at = ? WHERE id = ?")
         .run(JSON.stringify(stored), ts, t.id);
+      this.endExecution(t.id, 'returned_to_human', ts);
       return this.getTicket(t.id);
     }).immediate();
   }
@@ -2986,6 +3210,9 @@ export class Store {
 
   private append(ts: string, ticketId: string, type: string, actor: Actor, payload: Record<string, unknown>): number {
     this.assertInstallationForWrite();
+    // Every write path ends here, so an ended launch is fenced even on a
+    // route that has no reason of its own to check (H-574).
+    this.refuseRetiredGeneration(actor);
     const result = this.db
       .prepare('INSERT INTO events (ts, ticket_id, event_type, actor, payload) VALUES (?, ?, ?, ?, ?)')
       .run(ts, ticketId, type, JSON.stringify(actor), JSON.stringify(payload));

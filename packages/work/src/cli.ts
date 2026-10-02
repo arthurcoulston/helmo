@@ -23,6 +23,7 @@ const COMMAND_FLAGS: Record<string, readonly string[]> = {
   'wake-check': ['since-seq', 'workstream', 'assignee'],
   'seat-check': ['assignee'],
   'launch-admit': ['workstream', 'assignee', 'launch-id'],
+  'launch-claim': ['workstream', 'assignee', 'launch-id', 'project', 'tickets', 'exclude-tickets'],
   'launch-receipt': ['admission-id', 'launch-id'],
   'launch-revalidate': ['admission-id', 'launch-id'],
   'launch-quarantine': ['admission-id', 'launch-id', 'reason'],
@@ -338,6 +339,10 @@ try {
       out(store.launchAdmission(req('workstream'), req('assignee'), req('launch-id')));
       break;
     }
+    case 'launch-claim': {
+      out(store.launchClaim(actor(), req('workstream'), req('assignee'), req('launch-id'), flag('project'), flag('tickets')?.split(','), flag('exclude-tickets')?.split(',')));
+      break;
+    }
     case 'launch-receipt': {
       out(store.launchReceipt(req('admission-id'), req('launch-id')));
       break;
@@ -429,6 +434,7 @@ try {
   wake-check     --workstream W --assignee A --since-seq N     (read-only harness poll)
   seat-check     --assignee A                                  (in_progress holds in a name + claiming actor; rev's same-seat guard)
   launch-admit   --workstream W --assignee A --launch-id ID     (atomic next-candidate workflow admission; read-only for ordinary tickets)
+  launch-claim   --workstream W --assignee A --launch-id ID [--project P] [--tickets H-1,H-2 | --exclude-tickets H-3] (same admission AND an exclusive claim, written by the worker itself; --tickets is an exact allowlist, --exclude-tickets its complement)
   launch-receipt --admission-id ID --launch-id ID                (read exact immutable launch authority and captured evidence)
   launch-revalidate --admission-id ID --launch-id ID             (atomically fail closed unless captured authority still stands)
   launch-quarantine --admission-id ID --launch-id ID --reason R  (idempotently quarantine one interrupted or invalid launch)

@@ -51,6 +51,45 @@ Pinned releases accept both the historical three-component layout and C1's one
   corrupt, superseded, or revoked evidence fails closed. H-433 makes terminal
   outcomes mutually exclusive and idempotent, and permits only rejected or quarantined attempts
   to create a new evidence-bound successor which must pass fresh admission.
+  H-574 adds `launch-claim` for parallel workers on one accountable seat: the
+  same admission plus an exclusive ticket claim and a durable per-launch
+  receipt, committed together, so two workers sharing a seat cannot select the
+  same candidate. It is a separate command rather than a widening of
+  `launch-admit` because it must be written BY the worker — the exact
+  accountable agent name with a supervised session — while `launch-admit` is
+  written by the harness under its own identity; an installed harness calling a
+  claiming `launch-admit` is refused, which Rev reads as a denied launch for
+  every workflow-bound candidate. Exact replay returns the stored receipt; a
+  changed worker, session or scope refuses. Both commands admit through one
+  shared rule, so a candidate released back to the queue cannot draw a second
+  workflow permission under a new launch id. `--project` narrows selection to
+  one scheduling lane; `--tickets` (H-671) to an exact allowlist, which is
+  what keeps two workers in the SAME project off each other's tickets. Every
+  readiness gate still applies inside it, and resuming held work outside it
+  refuses with `launch_claim_scope_conflict`. `--exclude-tickets` is the
+  complement, for the role's worker with no allowlist: the tickets its
+  siblings' allowlists own. A claim takes one or the other, never both.
+  The launch id is the claim's **generation**, and ownership is enforced, not
+  advised: siblings share the role name, so a name check alone let worker B
+  close A's ticket. `execution_claims` holds (ticket, session, generation);
+  only that exact attempt may change status, edit, hand off, return or record
+  completion. A same-name sibling, a legacy session with no generation, or an
+  agent `takeover` gets note-only; humans and orchestrators keep routing.
+  Leaving in_progress retires the generation in `retired_generations`, and
+  `append` refuses any write by a retired one. A replayed receipt whose claim
+  is no longer that generation's refuses (`launch_claim_stale`) rather than
+  re-authorizing dispatch. A new generation of the same session resumes the
+  worker's held ticket first (`resumed: true`), retiring the old generation so
+  an orphaned child is fenced; held work outside the requested scope refuses.
+  A workflow-bound resume revalidates the admission its first launch consumed
+  and names that launch as `admission_launch_id`, the pair the harness
+  revalidates and quarantines by (H-687). If that authority no longer holds,
+  the claim ends and the ticket goes open with `needs_human`, and the worker
+  draws its next ticket: a spent launch admission cannot be admitted again,
+  so refusing would wedge the worker on it forever.
+  A server whose `HELMO_ACTOR` carries `generation` is supervised:
+  `writingActor` refuses caller-stated name/kind/session/generation that
+  conflict and inherits omitted ones; outside it a stated generation refuses.
   Explicitly named installations claim `meta.installation_name` atomically
   with their first event. Every writer, including a derived one, must match
   that claim; the path-derived `dev.helmo[.*]` name and shared `dev.rev[.*]`

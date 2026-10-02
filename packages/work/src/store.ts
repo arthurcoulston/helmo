@@ -5,7 +5,7 @@ import { actionFingerprint, questionFingerprint } from './presentation.js';
 import { parseSchedule } from './schedule.js';
 import {
   ActionReport, ActionRequest, Actor, ActorKind, ACTOR_KINDS, Answer, AnswerEvent, BlastRadius, BLAST_RADII, CapacityHold, Confidence, Dep, DepType, Evidence,
-  HelmoError, HelmoEvent, HumanRequest, Notice, ProductAcceptance, ProductArtifact, Question, QuestionInput, Status, Ticket, TicketProgress, VerdictEvent, Workstream, WorkstreamInfo,
+  HelmoError, HelmoEvent, HumanRequest, Notice, ProductAcceptance, ProductArtifact, Question, QuestionInput, ReleaseHandoff, Status, Ticket, TicketProgress, VerdictEvent, Workstream, WorkstreamInfo,
 } from './types.js';
 
 const STALE_CLAIM_HOURS = 24;
@@ -36,6 +36,7 @@ const ACCOUNTING_LABELS = new Set(['acct:direction', 'acct:security', 'acct:esta
 // demand to route work he had deliberately parked (H-2556).
 const EXECUTABLE_HOLD = "(capacity_hold IS NULL OR json_extract(capacity_hold, '$.release.until') > ?)";
 const EXECUTABLE_DATE = '(not_before IS NULL OR not_before <= ?)';
+const HUMAN_WITHHOLD = "(needs_human = 1 AND (release_handoff IS NULL OR json_extract(release_handoff, '$.current') = 1))";
 
 function refuseUnmarkedDeskClaim(actor: Actor, needsHuman: boolean): void {
   if (actor.kind !== 'agent' || actor.session || needsHuman) return;
@@ -94,6 +95,10 @@ export interface UpdateInput {
   sitting_with?: string; // the agent to sit with; '' clears it
   capacity_hold?: CapacityHold | null; // null releases the deliberate hold
 }
+
+export type ReleaseHandoffInput = Omit<ReleaseHandoff, 'seq' | 'ts' | 'actor' | 'current' | 'stale_reason'> & {
+  ticket_id: string;
+};
 
 export interface ListFilter {
   ready?: boolean;
@@ -160,6 +165,7 @@ CREATE TABLE IF NOT EXISTS tickets (
   sitting_with   TEXT,
   capacity_hold  TEXT,
   workflow_attempt_id TEXT,
+  release_handoff TEXT,
   created_at     TEXT NOT NULL,
   updated_at     TEXT NOT NULL,
   closed_at      TEXT
@@ -482,6 +488,11 @@ export class Store {
     }
     try {
       this.db.exec('ALTER TABLE tickets ADD COLUMN workflow_attempt_id TEXT');
+    } catch {
+      /* column already exists */
+    }
+    try {
+      this.db.exec('ALTER TABLE tickets ADD COLUMN release_handoff TEXT');
     } catch {
       /* column already exists */
     }
@@ -1101,7 +1112,7 @@ export class Store {
     if (filter.ready) {
       clauses.push("status = 'open'");
       clauses.push('schedule IS NULL'); // templates are standing work, never claimable
-      clauses.push('needs_human = 0');
+      clauses.push(`NOT ${HUMAN_WITHHOLD}`);
       // Date gate (H-732): work that genuinely cannot start until a date is
       // withheld rather than offered. Shouting it in the body was the only
       // tool available, and it cost every reader a full ticket read to learn
@@ -1195,7 +1206,7 @@ export class Store {
     // the reader check both for the same ticket.
     const rows = this.db
       .prepare(
-        `SELECT id FROM tickets WHERE status = 'open' AND schedule IS NULL AND needs_human = 0
+        `SELECT id FROM tickets WHERE status = 'open' AND schedule IS NULL AND NOT ${HUMAN_WITHHOLD}
            AND ${EXECUTABLE_DATE} AND ${EXECUTABLE_HOLD} AND (assignee IS NULL OR assignee = ?)
          ORDER BY priority ASC, created_at ASC`,
       )
@@ -1211,7 +1222,7 @@ export class Store {
     const rows = this.db
       .prepare(
         `SELECT id, not_before FROM tickets
-         WHERE status = 'open' AND schedule IS NULL AND needs_human = 0 AND not_before > ?
+         WHERE status = 'open' AND schedule IS NULL AND NOT ${HUMAN_WITHHOLD} AND not_before > ?
            AND (assignee IS NULL OR assignee = ?)
          ORDER BY not_before ASC, priority ASC`,
       )
@@ -1225,7 +1236,7 @@ export class Store {
     const rows = this.db
       .prepare(
         `SELECT id, capacity_hold FROM tickets
-         WHERE status = 'open' AND schedule IS NULL AND needs_human = 0 AND capacity_hold IS NOT NULL
+         WHERE status = 'open' AND schedule IS NULL AND NOT ${HUMAN_WITHHOLD} AND capacity_hold IS NOT NULL
            AND (json_extract(capacity_hold, '$.release.until') IS NULL OR json_extract(capacity_hold, '$.release.until') <= ?)
            AND (assignee IS NULL OR assignee = ?)
          ORDER BY priority ASC, created_at ASC`,
@@ -1238,7 +1249,7 @@ export class Store {
   withHumanPending(caller: string): string[] {
     const rows = this.db.prepare(
       `SELECT id FROM tickets
-       WHERE status = 'open' AND schedule IS NULL AND needs_human = 1
+       WHERE status = 'open' AND schedule IS NULL AND ${HUMAN_WITHHOLD}
          AND ${EXECUTABLE_HOLD}
          AND (assignee IS NULL OR assignee = ?)
        ORDER BY priority ASC, created_at ASC`,
@@ -1290,7 +1301,7 @@ export class Store {
     for (const r of this.db
       .prepare(
         `SELECT id, assignee, created_at FROM tickets
-         WHERE status = 'open' AND schedule IS NULL AND needs_human = 0
+         WHERE status = 'open' AND schedule IS NULL AND NOT ${HUMAN_WITHHOLD}
            AND ${EXECUTABLE_DATE}
            AND ${EXECUTABLE_HOLD}
          ORDER BY priority ASC, created_at ASC`,
@@ -1397,7 +1408,7 @@ export class Store {
         `SELECT t.id, t.assignee,
                 (SELECT MAX(ts) FROM events WHERE json_extract(actor, '$.name') = t.assignee) AS last
          FROM tickets t
-         WHERE t.status = 'open' AND t.assignee IS NOT NULL AND t.schedule IS NULL AND t.needs_human = 0
+         WHERE t.status = 'open' AND t.assignee IS NOT NULL AND t.schedule IS NULL AND NOT ${HUMAN_WITHHOLD}
            AND EXISTS (SELECT 1 FROM events e WHERE e.ts >= ?
                        AND json_extract(e.actor, '$.name') NOT IN (t.assignee, 'helmo-scheduler'))
          GROUP BY t.id HAVING last IS NULL OR last < ?`,
@@ -1429,7 +1440,7 @@ export class Store {
     for (const r of this.db
       .prepare(
         `SELECT t.workstream, COUNT(*) AS n FROM tickets t
-         WHERE t.status = 'open' AND t.assignee IS NULL AND t.schedule IS NULL AND t.needs_human = 0
+         WHERE t.status = 'open' AND t.assignee IS NULL AND t.schedule IS NULL AND NOT ${HUMAN_WITHHOLD}
            AND ${EXECUTABLE_DATE}
            AND ${EXECUTABLE_HOLD}
            AND NOT EXISTS (SELECT 1 FROM workstreams w WHERE w.name = t.workstream AND w.seat IS NOT NULL)
@@ -1456,7 +1467,7 @@ export class Store {
     for (const r of this.db
       .prepare(
         `SELECT t.id, t.workstream, t.labels FROM tickets t
-         WHERE t.status = 'open' AND t.schedule IS NULL AND t.needs_human = 0
+         WHERE t.status = 'open' AND t.schedule IS NULL AND NOT ${HUMAN_WITHHOLD}
            AND (t.project IS NULL OR trim(t.project) = '')
            AND ${EXECUTABLE_DATE}
            AND ${EXECUTABLE_HOLD}
@@ -2017,7 +2028,8 @@ export class Store {
     rejectSwallowedMarkup({ note: input.note });
     const artifacts = normalizeArtifacts(input.artifacts);
     return this.db.transaction(() => {
-      this.append(now(), input.ticket_id, 'product_completed', actor, { artifacts, note: input.note });
+      const seq = this.append(now(), input.ticket_id, 'product_completed', actor, { artifacts, note: input.note });
+      this.invalidateReleaseHandoffs(input.ticket_id, `product completion moved at event ${seq}`);
       return this.productAcceptance(input.ticket_id);
     }).immediate();
   }
@@ -2042,8 +2054,46 @@ export class Store {
       throw new HelmoError(`Actor "${actor.name}" recorded this completion or is named as an artifact author and cannot accept it. Hand the exact refs to a non-author reviewer.`);
     }
     return this.db.transaction(() => {
-      this.append(now(), input.ticket_id, 'acceptance_verdict', actor, { refs, verdict: input.verdict, note: input.note });
+      const seq = this.append(now(), input.ticket_id, 'acceptance_verdict', actor, { refs, verdict: input.verdict, note: input.note });
+      this.invalidateReleaseHandoffs(input.ticket_id, `acceptance verdict moved at event ${seq}`);
       return this.productAcceptance(input.ticket_id);
+    }).immediate();
+  }
+
+  /** Record one evidence-bound invitation and make it the ticket's actionable
+   * sitting in the same transaction. The publishing command performs the
+   * external receipt checks; this boundary closes the race by requiring the
+   * exact acceptance events it observed still to be current. */
+  recordReleaseHandoff(actor: Actor, input: ReleaseHandoffInput): ReleaseHandoff {
+    validateActor(actor);
+    const ticket = this.getTicket(input.ticket_id);
+    if (ticket.status !== 'open') throw new HelmoError('A release handoff can only be recorded on an open ticket.');
+    if (input.technical_ticket !== input.ticket_id) throw new HelmoError('The release ticket must also be the technical-acceptance ticket.');
+    if (input.clearance_ticket === input.technical_ticket) throw new HelmoError('Ward clearance must live on a separate ticket.');
+    if (!/^[a-f0-9]{64}$/.test(input.manifest_sha256)) throw new HelmoError('manifest_sha256 must be a lowercase SHA-256 digest.');
+    for (const [name, receipt] of [['gate', input.gate_receipt], ['publisher', input.publisher_receipt]] as const) {
+      if (!receipt?.path?.trim() || !/^[a-f0-9]{64}$/.test(receipt.sha256)) throw new HelmoError(`${name} receipt requires a path and lowercase SHA-256 digest.`);
+    }
+    if (!input.why_human?.trim()) throw new HelmoError('why_human is required: name the authority boundary that makes this release need Arthur.');
+    const sitting = parseSitting(input.decision, input.sitting_with);
+    if (!sitting?.needs_human) throw new HelmoError('A release handoff requires the exact human-only decision and the agent to sit with.');
+    rejectSwallowedMarkup({ decision: input.decision, why_human: input.why_human });
+
+    return this.db.transaction(() => {
+      const check = (kind: 'technical' | 'clearance', ticketId: string, completionSeq: number, verdictSeq: number, reviewer: string) => {
+        const acceptance = this.productAcceptance(ticketId);
+        if (acceptance.state !== 'accepted' || acceptance.completion?.seq !== completionSeq || acceptance.verdict?.seq !== verdictSeq || acceptance.verdict.actor.name !== reviewer) {
+          throw new HelmoError(`${kind} acceptance moved before the handoff could be recorded. Re-run preparation against the current events.`);
+        }
+      };
+      check('technical', input.technical_ticket, input.technical_completion_seq, input.technical_verdict_seq, input.technical_reviewer);
+      check('clearance', input.clearance_ticket, input.clearance_completion_seq, input.clearance_verdict_seq, input.clearance_reviewer);
+      if (input.technical_reviewer === input.clearance_reviewer) throw new HelmoError('Technical acceptance and Ward clearance require different reviewers.');
+      const ts = now();
+      const { ticket_id: _ticketId, ...payload } = input;
+      const seq = this.append(ts, input.ticket_id, 'release_handoff_recorded', actor, payload);
+      this.applyReleaseHandoff(ts, input.ticket_id, actor, payload, seq);
+      return this.getTicket(input.ticket_id).release_handoff!;
     }).immediate();
   }
 
@@ -2809,6 +2859,15 @@ export class Store {
           case 'notice_set':
             this.applyNoticeSet(ev.ts, ev.payload);
             break;
+          case 'product_completed':
+            this.invalidateReleaseHandoffs(ev.ticket_id, `product completion moved at event ${ev.seq}`);
+            break;
+          case 'acceptance_verdict':
+            this.invalidateReleaseHandoffs(ev.ticket_id, `acceptance verdict moved at event ${ev.seq}`);
+            break;
+          case 'release_handoff_recorded':
+            this.applyReleaseHandoff(ev.ts, ev.ticket_id, ev.actor, ev.payload, ev.seq);
+            break;
           case 'created':
             this.applyCreated(ev.ts, ev.payload);
             break;
@@ -2925,11 +2984,12 @@ export class Store {
     return `H-${n}`;
   }
 
-  private append(ts: string, ticketId: string, type: string, actor: Actor, payload: Record<string, unknown>): void {
+  private append(ts: string, ticketId: string, type: string, actor: Actor, payload: Record<string, unknown>): number {
     this.assertInstallationForWrite();
-    this.db
+    const result = this.db
       .prepare('INSERT INTO events (ts, ticket_id, event_type, actor, payload) VALUES (?, ?, ?, ?, ?)')
       .run(ts, ticketId, type, JSON.stringify(actor), JSON.stringify(payload));
+    return Number(result.lastInsertRowid);
   }
 
   private assertInstallationForWrite(): void {
@@ -2947,6 +3007,30 @@ export class Store {
 
   private workstreamSeat(name: string): string | null {
     return this.getWorkstreamInfo(name).seat ?? null;
+  }
+
+  private applyReleaseHandoff(ts: string, ticketId: string, actor: Actor, payload: Record<string, unknown>, seq: number): void {
+    const projection: ReleaseHandoff = {
+      ...(payload as unknown as Omit<ReleaseHandoff, 'seq' | 'ts' | 'actor' | 'current' | 'stale_reason'>),
+      seq, ts, actor, current: true, stale_reason: null,
+    };
+    this.db.prepare(
+      `UPDATE tickets SET release_handoff = ?, needs_human = 1, sitting = ?, sitting_with = ?, updated_at = ? WHERE id = ?`,
+    ).run(JSON.stringify(projection), projection.decision, projection.sitting_with, ts, ticketId);
+  }
+
+  private invalidateReleaseHandoffs(acceptanceTicket: string, reason: string): void {
+    const rows = this.db.prepare(
+      `SELECT id, release_handoff FROM tickets
+       WHERE release_handoff IS NOT NULL AND json_extract(release_handoff, '$.current') = 1
+         AND (json_extract(release_handoff, '$.technical_ticket') = ? OR json_extract(release_handoff, '$.clearance_ticket') = ?)`,
+    ).all(acceptanceTicket, acceptanceTicket) as { id: string; release_handoff: string }[];
+    for (const row of rows) {
+      const handoff = JSON.parse(row.release_handoff) as ReleaseHandoff;
+      handoff.current = false;
+      handoff.stale_reason = reason;
+      this.db.prepare('UPDATE tickets SET release_handoff = ? WHERE id = ?').run(JSON.stringify(handoff), row.id);
+    }
   }
 
   private applyCreated(ts: string, p: Record<string, unknown>): void {
@@ -3079,6 +3163,7 @@ function rowToTicket(row: Record<string, unknown>): Ticket {
     evidence: JSON.parse(row['evidence'] as string),
     ...splitRequest(row['question'] as string | null),
     capacity_hold: row['capacity_hold'] ? JSON.parse(row['capacity_hold'] as string) : null,
+    release_handoff: row['release_handoff'] ? JSON.parse(row['release_handoff'] as string) : null,
     needs_human: Boolean(row['needs_human']),
     sitting: (row['sitting'] as string | null) ?? null,
     sitting_with: (row['sitting_with'] as string | null) ?? null,

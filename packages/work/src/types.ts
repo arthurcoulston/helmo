@@ -86,6 +86,37 @@ export interface ProductAcceptance {
   verdicts: AcceptanceVerdict[];
 }
 
+export interface ReleaseHandoffReceipt {
+  path: string;
+  sha256: string;
+}
+
+/** The latest immutable release handoff projected onto its release ticket.
+ * Later completion or verdict events make the projection stale without
+ * rewriting the event that recorded what was offered. */
+export interface ReleaseHandoff {
+  seq: number;
+  ts: string;
+  actor: Actor;
+  manifest_sha256: string;
+  manifest: Record<string, unknown>;
+  technical_ticket: string;
+  technical_completion_seq: number;
+  technical_verdict_seq: number;
+  technical_reviewer: string;
+  clearance_ticket: string;
+  clearance_completion_seq: number;
+  clearance_verdict_seq: number;
+  clearance_reviewer: string;
+  gate_receipt: ReleaseHandoffReceipt;
+  publisher_receipt: ReleaseHandoffReceipt;
+  decision: string;
+  why_human: string;
+  sitting_with: string;
+  current: boolean;
+  stale_reason: string | null;
+}
+
 export interface TicketProgress {
   at: string;
   note: string;
@@ -222,6 +253,7 @@ export interface Ticket {
   needs_human: boolean; // open work requiring a sitting with the operator; withheld from agent queues
   sitting: string | null; // what that sitting needs from the operator, in one line (H-1761)
   sitting_with: string | null; // the agent to sit with; a prose line cannot be asked which one (R-42 I13)
+  release_handoff: ReleaseHandoff | null; // explicit release invitation; stale records return to agents
   capacity_hold: CapacityHold | null; // deliberate spending hold; visible, never ready or directly claimable
   workflow_attempt_id: string | null; // immutable workflow obligation; null preserves ordinary ticket semantics
   created_at: string;
@@ -249,7 +281,7 @@ export interface Dep {
   type: DepType;
 }
 
-export type EventType = 'created' | 'updated' | 'returned' | 'answered' | 'linked' | 'unlinked' | 'spend' | 'workstream_set' | 'workstream_renamed' | 'hygiene_disposed' | 'notice_set' | 'product_completed' | 'acceptance_verdict' | 'acted';
+export type EventType = 'created' | 'updated' | 'returned' | 'answered' | 'linked' | 'unlinked' | 'spend' | 'workstream_set' | 'workstream_renamed' | 'hygiene_disposed' | 'notice_set' | 'product_completed' | 'acceptance_verdict' | 'release_handoff_recorded' | 'acted';
 
 /** The standing notice: a one-line current priority with its provenance,
  *  riding along on every ticket-queue response the way workstream steering

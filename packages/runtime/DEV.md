@@ -472,6 +472,9 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   definition names that:
   - It resolves the selection at **start**, so a release change is picked up by
     a restart with no reinstall — which is exactly what the upgrade says.
+    Resolution follows the selected directory's `RELEASE.json`: the unified
+    `helmo` component names `helmo/packages/runtime/dist/cli.js`, while the
+    legacy three-component shape names `rev/dist/cli.js`.
   - It hands over **in the same process** (`process.argv[1] = cli; await
     import(...)`), so the manager's signals, its exit timeout and the pid it
     supervises all reach the supervisor itself, and everything downstream — the

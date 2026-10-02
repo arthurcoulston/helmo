@@ -320,10 +320,18 @@ describe('a pinned installation starts through its own launcher', () => {
   /** A release directory whose rev prints back the argv and cwd it was given,
    *  plus the selection file pointing at it — the smallest thing the launcher
    *  has to resolve and hand over to. */
-  const release = (id: string, cli = 'console.log(JSON.stringify({ argv: process.argv, release: process.env.INSTALLATION_RELEASE }));') => {
+  const release = (id: string, shape: 'unified' | 'legacy' = 'legacy', cli = 'console.log(JSON.stringify({ argv: process.argv, release: process.env.INSTALLATION_RELEASE }));') => {
     const dir = join(root, 'release', id);
-    mkdirSync(join(dir, 'rev', 'dist'), { recursive: true });
-    writeFileSync(join(dir, 'rev', 'dist', 'cli.js'), cli);
+    const runtime = shape === 'unified'
+      ? join(dir, 'helmo', 'packages', 'runtime')
+      : join(dir, 'rev');
+    mkdirSync(join(runtime, 'dist'), { recursive: true });
+    writeFileSync(join(runtime, 'dist', 'cli.js'), cli);
+    writeFileSync(join(dir, 'RELEASE.json'), JSON.stringify({
+      commits: shape === 'unified'
+        ? { helmo: 'a'.repeat(40) }
+        : { rev: 'a'.repeat(40), helmo: 'b'.repeat(40), 'helmo-roadmap': 'c'.repeat(40) },
+    }));
     return dir;
   };
   const select = (contents: unknown) => {
@@ -376,6 +384,16 @@ describe('a pinned installation starts through its own launcher', () => {
     expect(after.argv[1]).toBe(join(root, 'release', 'next', 'rev', 'dist', 'cli.js'));
   });
 
+  it.each([
+    ['unified', join('helmo', 'packages', 'runtime', 'dist', 'cli.js')],
+    ['legacy', join('rev', 'dist', 'cli.js')],
+  ] as const)('resolves the %s manifest shape to its runtime', (shape, expected) => {
+    release('current', shape);
+    const file = select({ release: 'current', directory: join(root, 'release', 'current') });
+    const out = JSON.parse(start(['status'], { INSTALLATION_RELEASE: file }).stdout);
+    expect(out.argv[1]).toBe(join(root, 'release', 'current', expected));
+  });
+
   // argv[1] is what the supervisor spawns loop drivers with, what the shim
   // exports as REV_CLI, and what the sentinels record as a command line. It has
   // to be the resolved cli.js, so that a fleet started through the launcher is
@@ -394,7 +412,12 @@ describe('a pinned installation starts through its own launcher', () => {
   it.each([
     ['unreadable', () => { release('current'); return select('{ not json'); }, /release selection .* is unreadable/],
     ['naming no release', () => { release('current'); return select({}); }, /names no release/],
-    ['naming a release that holds no rev', () => select({ release: 'gone', directory: join(root, 'release', 'gone') }), /release gone holds no rev to start/],
+    ['naming a release that holds no rev', () => {
+      const dir = join(root, 'release', 'gone');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'RELEASE.json'), JSON.stringify({ commits: { rev: 'a'.repeat(40), helmo: 'b'.repeat(40), 'helmo-roadmap': 'c'.repeat(40) } }));
+      return select({ release: 'gone', directory: dir });
+    }, /release gone holds no rev to start/],
   ])('refuses legibly when the selection is %s', (_what, setup, expected) => {
     const file = (setup as () => string)();
     const refused = start(['status'], { INSTALLATION_RELEASE: file });

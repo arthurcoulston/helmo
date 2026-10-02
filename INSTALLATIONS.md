@@ -195,6 +195,9 @@ definition names *that* file rather than a `cli.js` inside a release directory.
 The launcher resolves the selection at start and hands over in the same process,
 which has two consequences worth knowing:
 
+- It reads the selected directory's `RELEASE.json`: a one-component release
+  starts `helmo/packages/runtime/dist/cli.js`, while a historical
+  three-component release starts `rev/dist/cli.js`.
 - A release change is picked up by a **restart**, with no reinstall. That is
   exactly what the upgrade's own output promises.
 - The service manager's signals, its exit timeout and the pid it supervises all

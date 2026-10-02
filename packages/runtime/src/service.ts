@@ -79,7 +79,22 @@ try {
 if (!selection.release || !selection.directory) {
   refuse(\`its release selection \${file} names no release (it needs 'release' and 'directory'). Repair it with: rev release upgrade <release directory>\`);
 }
-const cli = join(resolve(dirname(file), selection.directory), 'rev', 'dist', 'cli.js');
+const releaseDir = resolve(dirname(file), selection.directory);
+let commits;
+try {
+  commits = JSON.parse(readFileSync(join(releaseDir, 'RELEASE.json'), 'utf8')).commits;
+} catch (e) {
+  refuse(\`release \${selection.release} has no readable RELEASE.json (\${e.message}). Select a release that does: rev release upgrade <release directory>\`);
+}
+const names = commits && typeof commits === 'object' ? Object.keys(commits).sort() : [];
+const unified = names.length === 1 && names[0] === 'helmo';
+const legacy = names.length === 3 && ['helmo', 'helmo-roadmap', 'rev'].every((name) => names.includes(name));
+if (!unified && !legacy) {
+  refuse(\`release \${selection.release} has an unsupported component set (\${names.join(', ') || 'none'}). Select a coherent release: rev release upgrade <release directory>\`);
+}
+const cli = unified
+  ? join(releaseDir, 'helmo', 'packages', 'runtime', 'dist', 'cli.js')
+  : join(releaseDir, 'rev', 'dist', 'cli.js');
 if (!existsSync(cli)) {
   refuse(\`release \${selection.release} holds no rev to start at \${cli}. Select a release that does: rev release upgrade <release directory>\`);
 }

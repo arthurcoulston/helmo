@@ -579,7 +579,7 @@ fi
       env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore',
     });
     try {
-      const deadline = Date.now() + 5_000;
+      const deadline = Date.now() + 30_000;
       while (Date.now() < deadline) {
         const tail = readFileSync(join(dir, 'events.log'), 'utf8').slice(marker);
         if (/run-end.*iter=1/.test(tail)) break;

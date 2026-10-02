@@ -61,7 +61,7 @@ function compact(t: Ticket) {
     ...(t.schedule ? { schedule: t.schedule } : {}),
     ...(t.not_before ? { not_before: t.not_before } : {}),
     ...(t.workflow_attempt_id ? { workflow_attempt_id: t.workflow_attempt_id } : {}),
-    ...(t.needs_human && (!t.release_handoff || t.release_handoff.current) ? { needs_human: t.sitting ?? true } : {}),
+    ...(t.needs_human ? { needs_human: t.sitting ?? true } : {}),
     ...(t.release_handoff ? { release_handoff: t.release_handoff } : {}),
     ...(t.capacity_hold ? { capacity_hold: t.capacity_hold } : {}),
   };

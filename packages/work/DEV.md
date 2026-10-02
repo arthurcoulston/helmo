@@ -280,10 +280,16 @@ Pinned releases accept both the historical three-component layout and C1's one
   operator uses the separate `release_handoff_recorded` event. Its ticket
   projection binds the manifest and receipts to exact technical and clearance
   completion/verdict sequences; any later completion or verdict makes the
-  projection stale. A current handoff is an actionable sitting. A stale one is
-  withheld from the operator section, returned to agent-ready routing, and
-  shown as blocked with the event that moved. Generic `needs_human` behavior is
-  unchanged. The atomic writer is the CLI's `release-handoff` command; Crew's
+  projection stale and clears the sitting it created. A generic clear does the
+  same at its own event; a later generic sitting is ordinary actionable work,
+  even though the stale receipt remains visible. A current handoff is an
+  actionable sitting whose card reads its immutable decision and seat rather
+  than mutable generic fields. A stale one with no later sitting is withheld
+  from the operator section, returned to agent-ready routing, and shown as
+  blocked with the event that moved. The store door also requires one of the
+  four named authority-exception prefixes and exact equality between manifest
+  refs and the technical completion refs. The atomic writer is the CLI's
+  `release-handoff` command; Crew's
   checked publishing handoff is its only caller. Generic MCP create/update
   schemas expose no release-handoff field. Caller identities and authors are
   provenance assertions, not authenticated identities. Body edits have two

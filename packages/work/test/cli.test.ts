@@ -153,7 +153,7 @@ describe('the bounded release-handoff command', () => {
       gate_receipt: { path: '/tmp/gate.json', sha256: 'c'.repeat(64) },
       publisher_receipt: { path: '/tmp/publish.json', sha256: 'd'.repeat(64) },
       decision: 'Ten minutes deciding whether to carry the named material release risk.',
-      why_human: 'A material risk exception is reserved to Arthur.', sitting_with: 'mason',
+      why_human: 'material_risk_exception: A material risk exception is reserved to Arthur.', sitting_with: 'mason',
     };
     const r = cli('release-handoff', '--ticket', ticket, '--record', JSON.stringify(record));
     expect(r.status, r.stderr).toBe(0);

@@ -294,11 +294,11 @@ function held(t: Ticket): boolean {
  *  sitting it could not reach, and he could not tell it from work he could
  *  actually pick up. */
 function impeded(t: Ticket): boolean {
-  return store.isBlocked(t.id) || gated(t) || held(t) || t.release_handoff?.current === false;
+  return store.isBlocked(t.id) || gated(t) || held(t) || (t.release_handoff?.current === false && !t.needs_human);
 }
 
 function actionableSitting(t: Ticket): boolean {
-  return t.needs_human && (!t.release_handoff || t.release_handoff.current);
+  return t.needs_human;
 }
 
 function blockedBy(t: Ticket): string[] {
@@ -471,15 +471,17 @@ function actionCard(t: Ticket): string {
 function sittingCard(t: Ticket): string {
   const waits = blockedBy(t);
   const release = t.release_handoff?.current ? t.release_handoff : null;
+  const sittingWith = release?.sitting_with ?? t.sitting_with;
+  const decision = release?.decision ?? t.sitting;
   return `<article class="scard" id="${esc(t.id)}" data-ticket="${esc(t.id)}">
     <header>${ref(t.id)} ${title(t.title, 'qtitle')} ${kindChip(
       'sits',
-      `${release ? '🚢 Release decision' : '🪑 Needs a sitting'}${t.sitting_with ? ` — with ${actor(t.sitting_with)}` : ''}`,
+      `${release ? '🚢 Release decision' : '🪑 Needs a sitting'}${sittingWith ? ` — with ${actor(sittingWith)}` : ''}`,
     )}
       ${prioBadge(t)} ${waits.length ? `<span class="badge serious">⛔ waits on ${esc(waits.join(', '))}</span>` : ''} ${blastBadge(t)}
       <span class="meta">${esc(t.workstream)}${t.project ? ` · ${esc(t.project)}` : ''} · marked ${esc(rel(t.updated_at))}</span></header>
     <p class="question"><span class="decision-label sits">You do, together</span>${
-      t.sitting ? esc(t.sitting) : '<span class="missing">no line recorded — open the ticket to see what this sitting needs</span>'
+      decision ? esc(decision) : '<span class="missing">no line recorded — open the ticket to see what this sitting needs</span>'
     }</p>
     ${release ? `<p class="rec"><span class="decision-label why">Your decision because</span>${esc(release.why_human)}</p>` : ''}
     ${progressLine(t)}

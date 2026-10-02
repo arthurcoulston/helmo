@@ -43,7 +43,7 @@ function handoff(s: Store) {
     gate_receipt: { path: '/tmp/gate.json', sha256: digest('b') },
     publisher_receipt: { path: '/tmp/publisher.json', sha256: digest('c') },
     decision: 'Ten minutes deciding whether to make this repository public.',
-    why_human: 'First public exposure is outside standing publication authority.',
+    why_human: 'first_publication: First public exposure is outside standing publication authority.',
     sitting_with: 'mason',
   });
   return { technical, clearance, release };
@@ -93,9 +93,100 @@ describe('immutable release handoffs', () => {
       gate_receipt: { path: '/tmp/gate.json', sha256: digest('b') },
       publisher_receipt: { path: '/tmp/publisher.json', sha256: digest('c') },
       decision: 'Ten minutes deciding whether to make this repository public.',
-      why_human: 'First public exposure is outside standing publication authority.', sitting_with: 'mason',
+      why_human: 'first_publication: First public exposure is outside standing publication authority.', sitting_with: 'mason',
     })).toThrow(/acceptance moved/);
     expect(s.getEvents(technical.ticket.id).filter((e) => e.event_type === 'release_handoff_recorded')).toHaveLength(0);
+  });
+
+  it('refuses generic authority prose and a manifest whose refs differ from technical acceptance', () => {
+    const s = new Store(':memory:');
+    const technical = accepted(s, 'Release Helmo', proof);
+    const clearance = accepted(s, 'Clear Helmo release', ward);
+    const input = {
+      ticket_id: technical.ticket.id,
+      manifest_sha256: digest('a'), manifest: { refs: [ref('a')] },
+      technical_ticket: technical.ticket.id, technical_completion_seq: technical.completion.seq,
+      technical_verdict_seq: technical.verdict.seq, technical_reviewer: 'proof',
+      clearance_ticket: clearance.ticket.id, clearance_completion_seq: clearance.completion.seq,
+      clearance_verdict_seq: clearance.verdict.seq, clearance_reviewer: 'ward',
+      gate_receipt: { path: '/tmp/gate.json', sha256: digest('b') },
+      publisher_receipt: { path: '/tmp/publisher.json', sha256: digest('c') },
+      decision: 'Ten minutes deciding whether to make this repository public.',
+      why_human: 'approval', sitting_with: 'mason',
+    };
+    expect(() => s.recordReleaseHandoff(mason, input)).toThrow(/concrete authority exception/);
+    expect(() => s.recordReleaseHandoff(mason, {
+      ...input,
+      manifest: { refs: [ref('b')] },
+      why_human: 'first_publication: First public exposure is reserved to Arthur.',
+    })).toThrow(/Manifest refs do not match the technical completion exactly/);
+  });
+
+  it('withdraws a current handoff on a generic clear and permits a later ordinary sitting', () => {
+    const s = new Store(':memory:');
+    const { technical } = handoff(s);
+    s.updateTicket(mason, { ticket_id: technical.ticket.id, note: 'Withdrawing the sitting.', needs_human: false });
+    expect(s.getTicket(technical.ticket.id)).toMatchObject({
+      needs_human: false,
+      release_handoff: { current: false, stale_reason: expect.stringMatching(/sitting cleared at event \d+/) },
+    });
+    expect(s.listTickets({ ready: true, caller: 'mason', workstream: 'estate-ui', limit: 20 })).toContainEqual(
+      expect.objectContaining({ id: technical.ticket.id }),
+    );
+
+    s.updateTicket(mason, {
+      ticket_id: technical.ticket.id,
+      note: 'A design sitting is now needed.',
+      needs_human: 'Twenty minutes comparing the two navigation treatments.',
+      sitting_with: 'gauge',
+    });
+    expect(s.withHumanPending('mason')).toContain(technical.ticket.id);
+    expect(s.listTickets({ ready: true, caller: 'mason', workstream: 'estate-ui', limit: 20 })).not.toContainEqual(
+      expect.objectContaining({ id: technical.ticket.id }),
+    );
+    const before = s.dumpState();
+    s.rebuild();
+    expect(s.dumpState()).toEqual(before);
+  });
+});
+
+describe('served current release handoff', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'helmo-current-release-handoff-'));
+  const db = join(dir, 'helmo.db');
+  let view: ChildProcess | null = null;
+
+  afterAll(() => { view?.kill(); rmSync(dir, { recursive: true, force: true }); });
+
+  it('renders the immutable decision and seat after a generic update tries to reword them', async () => {
+    const seed = new Store(db);
+    const { technical } = handoff(seed);
+    seed.updateTicket(mason, {
+      ticket_id: technical.ticket.id,
+      note: 'A generic update tries to replace the live card.',
+      needs_human: 'Twenty minutes choosing a colour with Arthur.',
+      sitting_with: 'herald',
+    });
+    seed.close();
+    view = spawn(process.execPath, ['--import', 'tsx', 'src/view.ts'], {
+      cwd: new URL('..', import.meta.url).pathname,
+      env: { ...process.env, HELMO_DB: db, HELMO_VIEW_PORT: '0', HELMO_VIEW_HOST: '127.0.0.1' },
+      stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+    });
+    const port = await new Promise<number>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('view did not start')), 15_000);
+      view!.once('error', reject);
+      view!.once('exit', (code) => reject(new Error(`view exited (${code})`)));
+      view!.on('message', (message) => {
+        if (message && typeof message === 'object' && 'type' in message && message.type === 'helmo-view-ready') {
+          clearTimeout(timer); resolve((message as { port: number }).port);
+        }
+      });
+    });
+    const html = await (await fetch(`http://127.0.0.1:${port}/?section=awaiting`)).text();
+    expect(html).toContain('Ten minutes deciding whether to make this repository public.');
+    expect(html).toMatch(/Release decision — with <span class="actor">.*?mason<\/span>/s);
+    expect(html).not.toContain('choosing a colour');
+    expect(html).not.toMatch(/Release decision — with <span class="actor">.*?herald<\/span>/s);
   });
 });
 

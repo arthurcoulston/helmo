@@ -36,7 +36,8 @@ const ACCOUNTING_LABELS = new Set(['acct:direction', 'acct:security', 'acct:esta
 // demand to route work he had deliberately parked (H-2556).
 const EXECUTABLE_HOLD = "(capacity_hold IS NULL OR json_extract(capacity_hold, '$.release.until') > ?)";
 const EXECUTABLE_DATE = '(not_before IS NULL OR not_before <= ?)';
-const HUMAN_WITHHOLD = "(needs_human = 1 AND (release_handoff IS NULL OR json_extract(release_handoff, '$.current') = 1))";
+const HUMAN_WITHHOLD = '(needs_human = 1)';
+const RELEASE_AUTHORITY_EXCEPTION = /^(first_publication|visibility_change|history_rewrite|material_risk_exception):\s+\S/;
 
 function refuseUnmarkedDeskClaim(actor: Actor, needsHuman: boolean): void {
   if (actor.kind !== 'agent' || actor.session || needsHuman) return;
@@ -945,8 +946,8 @@ export class Store {
           diffs: { status: { from: t.status, to: 'open' }, needs_human: { from: t.needs_human, to: true }, sitting: { from: t.sitting, to: sitting } },
           note: `Supervised launch ${launchId} could not resume this claim: ${denied}. Generation ${held.generation} retired; returned for a human decision.`,
         };
-        this.append(ts, t.id, 'updated', worker, payload);
-        this.applyUpdated(ts, t.id, payload);
+        const seq = this.append(ts, t.id, 'updated', worker, payload);
+        this.applyUpdated(ts, t.id, payload, seq);
         return null;
       }
     }
@@ -955,8 +956,8 @@ export class Store {
     this.retireGeneration(held.generation, t.id, `resumed_by:${launchId}`, ts);
     this.db.prepare('UPDATE execution_claims SET generation = ?, created_at = ? WHERE ticket_id = ?').run(launchId, ts, t.id);
     const payload = { diffs: {}, note: `Resumed by supervised launch ${launchId}; generation ${held.generation} retired.` };
-    this.append(ts, t.id, 'updated', worker, payload);
-    this.applyUpdated(ts, t.id, payload);
+    const seq = this.append(ts, t.id, 'updated', worker, payload);
+    this.applyUpdated(ts, t.id, payload, seq);
     const receipt = {
       admitted: true, claimed: true, resumed: true, ticket_id: t.id, workflow_attempt_id: t.workflow_attempt_id ?? null, admission_id: admissionId, launch_id: launchId,
       admission_launch_id: admission?.launch_id ?? null,
@@ -2284,7 +2285,9 @@ export class Store {
     for (const [name, receipt] of [['gate', input.gate_receipt], ['publisher', input.publisher_receipt]] as const) {
       if (!receipt?.path?.trim() || !/^[a-f0-9]{64}$/.test(receipt.sha256)) throw new HelmoError(`${name} receipt requires a path and lowercase SHA-256 digest.`);
     }
-    if (!input.why_human?.trim()) throw new HelmoError('why_human is required: name the authority boundary that makes this release need Arthur.');
+    if (!RELEASE_AUTHORITY_EXCEPTION.test(input.why_human?.trim() ?? '')) {
+      throw new HelmoError('why_human must start with a concrete authority exception: first_publication, visibility_change, history_rewrite, or material_risk_exception.');
+    }
     const sitting = parseSitting(input.decision, input.sitting_with);
     if (!sitting?.needs_human) throw new HelmoError('A release handoff requires the exact human-only decision and the agent to sit with.');
     rejectSwallowedMarkup({ decision: input.decision, why_human: input.why_human });
@@ -2295,10 +2298,18 @@ export class Store {
         if (acceptance.state !== 'accepted' || acceptance.completion?.seq !== completionSeq || acceptance.verdict?.seq !== verdictSeq || acceptance.verdict.actor.name !== reviewer) {
           throw new HelmoError(`${kind} acceptance moved before the handoff could be recorded. Re-run preparation against the current events.`);
         }
+        return acceptance;
       };
-      check('technical', input.technical_ticket, input.technical_completion_seq, input.technical_verdict_seq, input.technical_reviewer);
+      const technical = check('technical', input.technical_ticket, input.technical_completion_seq, input.technical_verdict_seq, input.technical_reviewer);
       check('clearance', input.clearance_ticket, input.clearance_completion_seq, input.clearance_verdict_seq, input.clearance_reviewer);
       if (input.technical_reviewer === input.clearance_reviewer) throw new HelmoError('Technical acceptance and Ward clearance require different reviewers.');
+      const manifestRefs = Array.isArray(input.manifest?.['refs']) && input.manifest['refs'].every((ref) => typeof ref === 'string')
+        ? normalizeRefs(input.manifest['refs'] as string[])
+        : null;
+      const completionRefs = technical.completion!.artifacts.map((artifact) => artifact.ref).sort();
+      if (!manifestRefs || JSON.stringify(manifestRefs) !== JSON.stringify(completionRefs)) {
+        throw new HelmoError(`Manifest refs do not match the technical completion exactly. Expected ${JSON.stringify(completionRefs)}; got ${JSON.stringify(manifestRefs)}.`);
+      }
       const ts = now();
       const { ticket_id: _ticketId, ...payload } = input;
       const seq = this.append(ts, input.ticket_id, 'release_handoff_recorded', actor, payload);
@@ -2688,8 +2699,8 @@ export class Store {
       if (input.cost_usd) payload['cost_usd'] = input.cost_usd;
       if (input.takeover) payload['takeover'] = true;
       if (input.handoff_to !== undefined) payload['handoff_to'] = input.handoff_to;
-      this.append(ts, t.id, 'updated', actor, payload);
-      this.applyUpdated(ts, t.id, payload);
+      const seq = this.append(ts, t.id, 'updated', actor, payload);
+      this.applyUpdated(ts, t.id, payload, seq);
       const after = this.getTicket(t.id);
       if (after.status !== 'in_progress' || (diffs['assignee'] && t.status === 'in_progress')) {
         this.endExecution(t.id, input.handoff_to !== undefined ? 'handoff' : `status:${after.status}`, ts);
@@ -3138,7 +3149,7 @@ export class Store {
             this.applyCreated(ev.ts, ev.payload);
             break;
           case 'updated':
-            this.applyUpdated(ev.ts, ev.ticket_id, ev.payload);
+            this.applyUpdated(ev.ts, ev.ticket_id, ev.payload, ev.seq);
             break;
           case 'returned': {
             const { outcome_owner: _outcomeOwner, ...request } = ev.payload;
@@ -3304,7 +3315,8 @@ export class Store {
       const handoff = JSON.parse(row.release_handoff) as ReleaseHandoff;
       handoff.current = false;
       handoff.stale_reason = reason;
-      this.db.prepare('UPDATE tickets SET release_handoff = ? WHERE id = ?').run(JSON.stringify(handoff), row.id);
+      this.db.prepare('UPDATE tickets SET release_handoff = ?, needs_human = 0, sitting = NULL, sitting_with = NULL WHERE id = ?')
+        .run(JSON.stringify(handoff), row.id);
     }
   }
 
@@ -3322,7 +3334,7 @@ export class Store {
       );
   }
 
-  private applyUpdated(ts: string, id: string, payload: Record<string, unknown>): void {
+  private applyUpdated(ts: string, id: string, payload: Record<string, unknown>, seq?: number): void {
     const diffs = (payload['diffs'] ?? {}) as Record<string, { from: unknown; to: unknown }>;
     const sets: string[] = ['updated_at = ?'];
     const params: unknown[] = [ts];
@@ -3346,6 +3358,17 @@ export class Store {
     if (cost) { sets.push('cost_usd_total = cost_usd_total + ?'); params.push(cost); }
     params.push(id);
     this.db.prepare(`UPDATE tickets SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+    if (diffs['needs_human']?.to === false && seq !== undefined) {
+      const row = this.db.prepare('SELECT release_handoff FROM tickets WHERE id = ?').get(id) as { release_handoff: string | null } | undefined;
+      if (row?.release_handoff) {
+        const handoff = JSON.parse(row.release_handoff) as ReleaseHandoff;
+        if (handoff.current) {
+          handoff.current = false;
+          handoff.stale_reason = `sitting cleared at event ${seq}`;
+          this.db.prepare('UPDATE tickets SET release_handoff = ? WHERE id = ?').run(JSON.stringify(handoff), id);
+        }
+      }
+    }
   }
 
   private applySpend(id: string, payload: Record<string, unknown>): void {

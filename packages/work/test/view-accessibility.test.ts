@@ -59,8 +59,8 @@ describe('view accessibility', () => {
     expect(bodyOf('sittingCard')).toMatch(/kindChip\(\s*'sits'/);
     expect(bodyOf('unreadableCard')).toMatch(/kindChip\(\s*'unreadable'/);
     // Named from the field and never scraped out of the prose line.
-    expect(bodyOf('sittingCard')).toContain('t.sitting_with ?');
-    expect(bodyOf('sittingCard')).toContain('actor(t.sitting_with)');
+    expect(bodyOf('sittingCard')).toContain('release?.sitting_with ?? t.sitting_with');
+    expect(bodyOf('sittingCard')).toContain('actor(sittingWith)');
     for (const [cls, hue] of [['decides', 'warning'], ['acts', 'serious'], ['sits', 'link'], ['unreadable', 'critical']]) {
       expect(view, `the ${cls} chip has no hue of its own`).toContain(`.kind.${cls} { color: var(--${hue}); }`);
     }

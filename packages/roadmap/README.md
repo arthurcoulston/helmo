@@ -13,7 +13,7 @@ with the product is [CHARTER-TEMPLATE.md](CHARTER-TEMPLATE.md).
 
 **Agent-led install is the primary path.** Tell your agent: *"I want to use
 Helmo Roadmap — install it and set it up."* and point it at
-[AGENT-INSTALL.md](AGENT-INSTALL.md). It runs the install end to end and
+the product's [AGENT-INSTALL.md](../../AGENT-INSTALL.md). It runs the install end to end and
 returns your view link and getting-started instructions.
 
 For an immutable multi-product installation, set `INSTALLATION_RELEASE` to

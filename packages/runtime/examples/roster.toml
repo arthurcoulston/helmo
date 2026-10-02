@@ -6,10 +6,10 @@
 # session can do" in the README before adding one.
 
 [global]
-# Paths to your Helm checkout's built CLI and MCP server (required).
-helmo_cli = "/path/to/helm/dist/cli.js"
-helmo_mcp_server = "/path/to/helm/dist/server.js"
-# helmo_db = "/custom/path/helm.db"   # optional; default ~/.helm/helm.db
+# Paths to the Work area's built CLI and MCP server (required).
+helmo_cli = "/path/to/helmo/packages/work/dist/cli.js"
+helmo_mcp_server = "/path/to/helmo/packages/work/dist/server.js"
+# helmo_db = "/custom/path/helmo.db"  # optional; default ~/.helmo/helmo.db
 # poll_seconds = 60                  # idle wake-poll interval
 # iteration_ceiling = 2000           # safety stop for unbounded runs
 # fail_cap = 2                       # consecutive failures before BLOCKED

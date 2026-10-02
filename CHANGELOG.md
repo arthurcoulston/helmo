@@ -59,6 +59,13 @@ moves, and neither store is migrated.
   written for Rev but true of the family — now the product's. Each area keeps
   its own `README.md` and `DEV.md`. One issue tracker serves all three.
 
+- **One agent-led install** (H-2630). The three `AGENT-INSTALL.md` guides become
+  one at the root: one clone, one `npm ci && npm run prepare:cold && npm run
+  build && npm test`, then the areas the operator asked for turned on in order.
+  The three guides each named their own clone URL and their own build, which no
+  longer describes how this product is obtained; `scripts/build.test.mjs` now
+  holds the install guide to the same one-at-the-root invariant as the licence.
+
 ## Work — published as `helmo`
 
 ### v0.5.0 — 2026-09-30

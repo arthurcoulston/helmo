@@ -70,13 +70,15 @@ in one of them is a defect in all three:
 
 Product-wide documents live at the root and exist once: `README.md`,
 `LICENSE`, `SECURITY.md`, `THIRD_PARTY_NOTICES.md`, `CHANGELOG.md`,
-`VERSIONING.md`, `AGENTS.md` (with `CLAUDE.md` as its shim), `INSTALLATIONS.md`,
-`ENTRY-POINTS.md`, `ISOLATION-CHECKS.md` and this file.
+`VERSIONING.md`, `AGENTS.md` (with `CLAUDE.md` as its shim), `AGENT-INSTALL.md`,
+`INSTALLATIONS.md`, `ENTRY-POINTS.md`, `ISOLATION-CHECKS.md` and this file.
 `scripts/build.test.mjs` asserts that set is present and unduplicated — a
 second `LICENSE` or `SECURITY.md` inside a package is how three products drift
 back apart.
 
-Each area keeps its own `README.md`, `DEV.md`, `AGENT-INSTALL.md`, its product
-description, and its summoned-role file. `INSTALLATIONS.md` is a published
+Each area keeps its own `README.md`, `DEV.md`, its product description, and its
+summoned-role file. The install guide is NOT among them: one product installs
+once, and three guides each naming their own clone URL is the same drift as
+three licences. `INSTALLATIONS.md` is a published
 promise: a change to install, release or removal behaviour is a change to that
 document in the same pass.

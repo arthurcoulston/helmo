@@ -34,16 +34,15 @@ claimed.
 ## Install
 
 **Agent-led install is the primary path.** Tell your agent: *"I want to use
-Helmo — install it and set it up."* and point it at the install guide for the
-area you want: [Work](packages/work/AGENT-INSTALL.md),
-[Roadmap](packages/roadmap/AGENT-INSTALL.md),
-[Runtime](packages/runtime/AGENT-INSTALL.md). Each runs end to end and returns
-your links and getting-started instructions.
+Helmo — install it and set it up."* and point it at
+[AGENT-INSTALL.md](AGENT-INSTALL.md) — one guide for the one product. It runs
+end to end, turns on the areas you asked for, and returns your links and
+getting-started instructions.
 
 Manual setup, if you prefer:
 
 ```
-git clone <this repository>
+git clone https://github.com/arthurcoulston/helmo.git
 cd helmo
 npm ci
 npm run prepare:cold

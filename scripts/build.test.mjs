@@ -52,7 +52,7 @@ test('every workspace package carries the product version', () => {
 const PRODUCT_DOCS = [
   'README.md', 'LICENSE', 'SECURITY.md', 'THIRD_PARTY_NOTICES.md', 'CHANGELOG.md',
   'VERSIONING.md', 'AGENTS.md', 'CLAUDE.md', 'DEV.md',
-  'INSTALLATIONS.md', 'ENTRY-POINTS.md', 'ISOLATION-CHECKS.md',
+  'AGENT-INSTALL.md', 'INSTALLATIONS.md', 'ENTRY-POINTS.md', 'ISOLATION-CHECKS.md',
 ];
 
 // The two each area keeps as its own: its front page and its coding context.

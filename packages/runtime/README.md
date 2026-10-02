@@ -7,7 +7,7 @@ meters their spend, and files a ticket into Helmo's awaiting-human queue when th
 a decision.
 
 - Product & architecture: [rev-product-description.md](rev-product-description.md)
-- Agent-led install (the primary path): [AGENT-INSTALL.md](AGENT-INSTALL.md)
+- Agent-led install (the primary path): [AGENT-INSTALL.md](../../AGENT-INSTALL.md)
 - Existing-installation upgrade: [Rev 0.2.0 runbook](UPGRADE-0.2.0.md) — exact
   published refs, compatibility review, isolated preparation, activation and recovery.
 - Running more than one installation, and changing which release one runs:
@@ -99,6 +99,6 @@ as a package of this workspace, by the name its own package.json declares, and o
 independent of the test setting and are always explicit as `helmo_cli` and `helmo_mcp_server` in
 the instance roster.
 
-See [AGENT-INSTALL.md](AGENT-INSTALL.md) for the full install and mock-loop verification. Security
+See [AGENT-INSTALL.md](../../AGENT-INSTALL.md) for the full install and mock-loop verification. Security
 issues should follow [SECURITY.md](../../SECURITY.md). Rev is available under the
 [MIT License](../../LICENSE).

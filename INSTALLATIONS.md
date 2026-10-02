@@ -17,21 +17,22 @@ Rev at all:
 For an independent review of those guarantees, including a two-installation
 checklist and the public tests, see [ISOLATION-CHECKS.md](ISOLATION-CHECKS.md).
 
-- Work: [AGENT-INSTALL.md](packages/work/AGENT-INSTALL.md)
-  — `HELMO_HOME` / `HELMO_DB`, `HELMO_LABEL`, `--installation <name|home|db>`,
-  and qualified record references (`H-267@<label>`).
-- Roadmap: [AGENT-INSTALL.md](packages/roadmap/AGENT-INSTALL.md)
-  — `ROADMAP_HOME` / `ROADMAP_DB`, `ROADMAP_LABEL`, the same
+[AGENT-INSTALL.md](AGENT-INSTALL.md) stands a first installation up across all
+three areas. Each area's own install identity and targeting:
+
+- Work — `HELMO_HOME` / `HELMO_DB`, `HELMO_LABEL`,
+  `--installation <name|home|db>`, and qualified record references
+  (`H-267@<label>`).
+- Roadmap — `ROADMAP_HOME` / `ROADMAP_DB`, `ROADMAP_LABEL`, the same
   `--installation` assertion.
-- Runtime: [AGENT-INSTALL.md](packages/runtime/AGENT-INSTALL.md) — `REV_HOME`, the roster, the
-  service.
+- Runtime — `REV_HOME`, the roster, the service.
 
 ## One installation needs nothing here
 
 The single-installation path is unchanged, and it is still the primary one. A
 bare `~/.rev`, `~/.helmo` and `~/.helmo-roadmap`, with no release selected and
-no new variable set, keeps working exactly as it did: the agent-led installs in
-the three `AGENT-INSTALL.md` documents above remain the way to stand a first
+no new variable set, keeps working exactly as it did: the agent-led install in
+[AGENT-INSTALL.md](AGENT-INSTALL.md) remains the way to stand a first
 installation up, and everything in the rest of this file is opt-in.
 
 Nothing below changes a default. If you run one installation and are happy

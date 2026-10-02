@@ -143,7 +143,7 @@ append-only event log, materialized state, `.immediate()` write transactions
   estate design tokens and crew avatar sprite; add `-- --check` to fail on
   drift instead. See below.
 - View: `node dist/view.js`; restart after rebuilding.
-- `AGENT-INSTALL.md` is the agent-led install path a stranger's agent follows
+- The root `AGENT-INSTALL.md` is the agent-led install path a stranger's agent follows
   (H-1386). It states the two estate drift tests as expected skips — if that
   pair ever changes, it changes there too, or an installer reads a skip we no
   longer ship as a failure.

@@ -178,6 +178,57 @@ describe('a supervised worker cannot shed or borrow its binding (H-574)', () => 
     store.close();
   });
 
+  // H-667: the claim check guarded only tickets someone already held, so a
+  // bound session could take a still-open ticket outside its allowlist.
+  it('through the MCP tools: a launch stays on the one ticket it claimed', async () => {
+    const store = new Store(':memory:');
+    const [own, open, sibling] = [ticketToClaim(store), ticketToClaim(store), ticketToClaim(store)];
+    store.launchClaim({ ...boundA, generation: undefined }, 'helmo-dev', 'builder-loop', 'launch-a', undefined, [own]);
+    store.launchClaim({ ...boundB, generation: undefined }, 'helmo-dev', 'builder-loop', 'launch-b', undefined, [sibling]);
+    const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+    const a = new Client({ name: 'test-agent', version: '0' });
+    await Promise.all([buildServer(store, boundA).connect(serverSide), a.connect(clientSide)]);
+    const call = (name: string, args: Record<string, unknown>) => a.callTool({ name, arguments: args });
+
+    expect((await call('helmo_update_ticket', { ticket_id: own, note: 'progress', body_append: 'Halfway.' })).isError).toBeFalsy();
+    const openBefore = store.getEvents(open).length;
+    const refusals: [string, Record<string, unknown>, RegExp][] = [
+      ['helmo_update_ticket', { ticket_id: open, note: 'taking it', status: 'in_progress' }, /launch_assignment_conflict/],
+      ['helmo_update_ticket', { ticket_id: open, note: 'taking it', status: 'in_progress', actor: stated }, /launch_assignment_conflict/],
+      ['helmo_update_ticket', { ticket_id: open, note: 'editing', priority: 0 }, /launch_assignment_conflict/],
+      ['helmo_update_ticket', { ticket_id: open, note: 'passing it on', handoff_to: 'reviewer-loop' }, /launch_assignment_conflict/],
+      ['helmo_record_product_completion', { ticket_id: open, note: 'ready', artifacts: [{ ref: `helmo@${'a'.repeat(40)}`, author: 'builder-loop' }] }, /launch_assignment_conflict/],
+      ['helmo_update_ticket', { ticket_id: sibling, note: 'closing', status: 'done' }, /execution_claim_held/],
+    ];
+    for (const [name, args, refusal] of refusals) {
+      const r = await call(name, args);
+      expect(r.isError, `${name} ${JSON.stringify(args)}`).toBe(true);
+      expect(JSON.stringify(r)).toMatch(refusal);
+    }
+    expect(store.getEvents(open)).toHaveLength(openBefore);
+    expect(store.getTicket(open).status).toBe('open');
+    expect(store.getTicket(sibling).status).toBe('in_progress');
+
+    const started = await call('helmo_create_ticket', { title: 'Side work', body: 'Found while building.', workstream: 'helmo-dev', type: 'build', status: 'in_progress' });
+    expect(JSON.stringify(started)).toMatch(/launch_assignment_conflict/);
+    expect(store.listTickets({ status: 'in_progress' }).map((t) => t.id).sort()).toEqual([own, sibling].sort());
+    // Coordination stays open: a note elsewhere, and an open child for the pool.
+    expect((await call('helmo_update_ticket', { ticket_id: open, note: 'A saw this needs the schema first' })).isError).toBeFalsy();
+    const child = await call('helmo_create_ticket', { title: 'Side work', body: 'Found while building.', workstream: 'helmo-dev', type: 'build' });
+    expect(child.isError).toBeFalsy();
+
+    // Ending and resuming keeps the fence: the successor is bound to the same
+    // ticket, and the old generation cannot write at all.
+    store.launchClaim({ ...boundA, generation: undefined }, 'helmo-dev', 'builder-loop', 'launch-a2', undefined, [own]);
+    const old = await call('helmo_update_ticket', { ticket_id: own, note: 'late', body_append: 'Late.' });
+    expect(JSON.stringify(old)).toMatch(/stale_generation/);
+    const resumed: Actor = { ...boundA, generation: 'launch-a2' };
+    expect(() => store.updateTicket(resumed, { ticket_id: open, note: 'taking it', status: 'in_progress' })).toThrow(/launch_assignment_conflict/);
+    expect(store.updateTicket(resumed, { ticket_id: own, note: 'built', status: 'done', evidence: [{ kind: 'other', ref: 'x' }] }).ticket.status).toBe('done');
+    await a.close();
+    store.close();
+  });
+
   it('through the CLI: a bound environment refuses a borrowed session', () => {
     const dir = mkdtempSync(join(tmpdir(), 'helmo-bound-'));
     const dbPath = join(dir, 'helmo.db');

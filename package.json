@@ -13,7 +13,7 @@
   "scripts": {
     "prepare:cold": "node scripts/prepare-build.mjs",
     "build": "node scripts/build.mjs",
-    "test": "node scripts/assert-built.mjs && node --test scripts/build.test.mjs && npm run test --workspaces --if-present"
+    "test": "node scripts/assert-built.mjs && node --test scripts/build.test.mjs scripts/stage-legacy-launch-paths.test.mjs && npm run test --workspaces --if-present"
   },
   "publish": {
     "cold": {

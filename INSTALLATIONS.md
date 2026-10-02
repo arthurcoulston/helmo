@@ -185,6 +185,20 @@ components. That layout remains readable and selectable so an installation can
 inspect its current release and roll back across the consolidation boundary;
 new releases use the one-component layout above.
 
+An MCP client configuration written against that older layout names
+`<release>/helmo/dist/server.js` or `<release>/helmo-roadmap/dist/server.js`.
+One command after the build adds those two paths back to a staged release as
+forwarders, so such a configuration keeps reaching the same server until
+2027-04-01:
+
+```bash
+node scripts/stage-legacy-launch-paths.mjs /srv/releases/2026.10-4
+```
+
+It refuses a three-component release, where those paths are the real builds.
+[COMPATIBILITY.md](COMPATIBILITY.md) has the window and what the forwarders
+do and do not change.
+
 The release's **id is its directory's name**. A selection records both the id
 and the directory, so a set carrying an id of its own could disagree with where
 it is.

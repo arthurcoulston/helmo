@@ -121,6 +121,43 @@ one-way migration. No record, store or identity is touched either way: the
 retired set is process configuration and nothing reads it but the app at
 startup.
 
+## The release-directory launch paths that move
+
+A release directory built before the consolidation held three sibling
+checkouts — `rev/`, `helmo/`, `helmo-roadmap/` — each with its own `dist/`. A
+one-component release holds one checkout, `helmo/`, with the packages inside
+it ([INSTALLATIONS.md](INSTALLATIONS.md)). So the two paths an MCP client
+configuration names moved:
+
+| Old launch path | Now | Mechanism | Stops working after |
+|---|---|---|---|
+| `<release>/helmo/dist/server.js` | `<release>/helmo/packages/work/dist/server.js` | forwarder staged into the release | 2027-04-01 |
+| `<release>/helmo-roadmap/dist/server.js` | `<release>/helmo/packages/roadmap/dist/server.js` | forwarder staged into the release | 2027-04-01 |
+
+The forwarders are not files in this checkout, because neither path can be
+one: `dist/` is not committed, and `helmo-roadmap/` is a *sibling* of the
+checkout. They belong to the release directory, so that is what writes them —
+once, after the build, when the release is staged:
+
+```bash
+node scripts/stage-legacy-launch-paths.mjs /srv/releases/2026.10-4
+```
+
+It refuses rather than guesses: a release whose `RELEASE.json` names the three
+old components keeps its real builds untouched, an unbuilt release is refused
+before the first write, and a file at either path that it did not generate is
+never overwritten. Re-running it over its own output is safe.
+
+A forwarded start is pinned exactly as a direct one is. The forwarder imports
+the real entry and nothing else, so the release check still reads that entry's
+own location: under a selection naming another directory it refuses with
+`incoherent release set`, having written nothing to stdout.
+
+Only these two are staged. Every other path under `packages/*/dist/` is
+reached by naming it, and the roster keys and service definitions that name
+one are a per-release checklist either way — [ENTRY-POINTS.md](ENTRY-POINTS.md)
+is that checklist.
+
 ## Linking the commands after a first install
 
 `npm` links a package's command only if the file it points at already exists,

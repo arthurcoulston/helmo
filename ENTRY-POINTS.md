@@ -164,11 +164,19 @@ Three entry points, one per binary — `helmo-cli` (`dist/cli.js`), the stdio MC
 server `helmo-mcp` (`dist/server.js`), and the view `helmo-view`
 (`dist/view.js`) — plus the remote surface if you run one.
 
-Under a selected release each is `<release>/helmo/dist/<file>`. Those paths are
-the implementation and carry no deprecation notice; it is the binary *names*
+Under a selected one-component release each is
+`<release>/helmo/packages/work/dist/<file>`. Those paths are the
+implementation and carry no deprecation notice; it is the binary *names*
 `helmo-cli`, `helmo-mcp` and `helmo-view` that are leaving, on the dates in
 [COMPATIBILITY.md](COMPATIBILITY.md). Review every place that names one: Rev's roster (above), your agent and editor MCP
 configuration, wrapper scripts, and any service definitions you wrote yourself.
+
+A configuration written against the older sibling-component layout names
+`<release>/helmo/dist/server.js` instead. That one path a staged release can
+give back — `scripts/stage-legacy-launch-paths.mjs` writes a forwarder for it,
+and for the roadmap's, until 2027-04-01. The rest of this list it cannot: a
+`cli.js` or `view.js` under the old layout has no forwarder, and the roster
+keys above still have to be repointed.
 
 `HELMO_HOME` and `HELMO_DB` are a pair, and **either one alone determines the
 other**: `HELMO_HOME` alone puts the store at `<home>/helmo.db`, and `HELMO_DB`

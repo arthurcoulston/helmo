@@ -110,6 +110,10 @@ legacy reader.
   The root `npm test` likewise refuses before workspace tests unless the four
   built packages carry their expected build artifacts. `scripts/build.mjs`,
   `scripts/assert-built.mjs` and `scripts/build.test.mjs` are the whole of it.
+  The one script that *does* write into a release directory is
+  `scripts/stage-legacy-launch-paths.mjs`, and it is never part of a build: it
+  is run by hand against a staged release, and it refuses the layout whose
+  real builds live at the paths it writes.
 - **One version.** Every package carries the root version and depends on
   `@helmo/core` at exactly that version; `scripts/build.test.mjs` asserts it.
   What the number promises is [VERSIONING.md](VERSIONING.md), and a change to

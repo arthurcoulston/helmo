@@ -392,3 +392,14 @@ describe('a flag the command has no field for (R-39 Q9)', () => {
       '--workstream', 'helmo-dev', '--type', 'ops', '--schedule', 'every 1d');
   });
 });
+
+describe('attended CLI work', () => {
+  it('claims and completes through ordinary commands with the actual agent identity', () => {
+    const claimed = cli('update', '--ticket', ticket, '--note', 'The operator directed this work.', '--status', 'in_progress');
+    expect(claimed.status, claimed.stdout + claimed.stderr).toBe(0);
+    const s = new Store(dbPath);
+    expect(s.seatHolds(writer.name)[0]?.claim_actor).toEqual(writer);
+    s.close();
+    expect(cli('update', '--ticket', ticket, '--note', 'Verified.', '--status', 'done', '--evidence-ref', 'Fixture verification').status).toBe(0);
+  });
+});

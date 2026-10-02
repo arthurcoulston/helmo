@@ -51,7 +51,7 @@ export const CAPACITY = {
 } as const;
 
 export const FLOOR = {
-  /* Measured warm, three runs, on the capacity seed: current record
+  /* Measured as warm render CPU time, three runs, on the capacity seed: current record
      1,706,985 bytes / 146 rows / 100ms, whole record 3,836,822 / 246 / 137ms,
      embedded section 53,698 / 4 / 25ms. The deployed record, measured
      2026-09-29: 838,498 / 79 / 85ms, 2,718,020 / 207 / 128ms, 136,548 / 2 /
@@ -103,6 +103,18 @@ export function overBudget(doc: { bytes: number; ms: number; rows: number }, flo
       failures.push(`costs ${perRow.toFixed(0)} bytes per row over ${doc.rows} rows, budget ${floor.BYTES_PER_ROW}`);
   }
   return failures;
+}
+
+/** CPU time spent rendering, reported by the view process through the
+ * standard Server-Timing header. Timing the parent process's fetch instead
+ * makes unrelated host contention look like render work when the child is
+ * descheduled between accepting the request and sending its response. */
+export function renderMs(headers: { get(name: string): string | null }): number {
+  const timing = headers.get('server-timing') ?? '';
+  const match = timing.match(/(?:^|,)\s*helmo-render;dur=([0-9]+(?:\.[0-9]+)?)(?:\s*(?:,|$))/);
+  const ms = Number(match?.[1]);
+  if (!Number.isFinite(ms)) throw new Error('response carries no valid helmo-render Server-Timing value');
+  return ms;
 }
 
 // ---------- reading the served document ----------

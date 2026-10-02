@@ -9,7 +9,7 @@
  */
 
 import { ChildProcess, spawn } from 'node:child_process';
-import { rowsDrawn } from '../../src/floor.js';
+import { renderMs, rowsDrawn } from '../../src/floor.js';
 import { Store } from '../../src/store.js';
 import { Actor } from '../../src/types.js';
 import { CAPACITY, REAL_RECORD } from '../../src/floor.js';
@@ -207,11 +207,10 @@ export async function load(origin: string, path: string) {
   let html = '';
   let ms = 0;
   for (let attempt = 0; attempt < 3; attempt++) {
-    const started = performance.now();
     const res = await fetch(`${origin}${path}`, { redirect: 'error' });
     const body = await res.text();
     if (res.status !== 200) throw new Error(`${path} answered ${res.status}`);
-    const elapsed = performance.now() - started;
+    const elapsed = renderMs(res.headers);
     html = body;
     ms = Math.max(ms, elapsed);
   }

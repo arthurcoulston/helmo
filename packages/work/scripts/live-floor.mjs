@@ -13,22 +13,21 @@
  */
 
 import { launchBrowser } from './browser.mjs';
-import { FLOOR, elements, markupOf, overBudget, rowsDrawn, styleOf, textOf } from '../src/floor.js';
+import { FLOOR, elements, markupOf, overBudget, renderMs, rowsDrawn, styleOf, textOf } from '../src/floor.js';
 
 const origin = (process.argv[2] ?? 'http://localhost:4420').replace(/\/$/, '');
 const PATHS = ['/', '/?whole=1', '/?section=awaiting'];
 const VIEWPORTS = [360, 390, 480, 700, 1280];
 const failures = [];
 
-/** Fetched twice, timed on the second: the first request to a document pays
- *  for warming a process that has usually been idle, and folding that into a
- *  budget is what made the first version of this number meaningless. */
+/** Fetched twice, reading the view's render CPU time on the second: the first
+ *  request warms a process that has usually been idle, while in-process CPU
+ *  time keeps unrelated host scheduling out of the reading. */
 async function load(path) {
   await (await fetch(`${origin}${path}`)).text();
-  const started = performance.now();
   const res = await fetch(`${origin}${path}`);
   const html = await res.text();
-  const ms = performance.now() - started;
+  const ms = renderMs(res.headers);
   if (res.status !== 200) throw new Error(`${path} answered ${res.status}`);
   return { html, bytes: Buffer.byteLength(html), ms, rows: rowsDrawn(html) };
 }

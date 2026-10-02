@@ -1215,8 +1215,14 @@ const server = createServer((req, res) => {
       res.end(`Unknown Helmo section: ${section}`);
       return;
     }
+    const started = process.cpuUsage();
     const html = page(url.searchParams.get('whole') === '1', section === 'awaiting' ? 'awaiting' : null);
-    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    const cpu = process.cpuUsage(started);
+    const renderMs = (cpu.user + cpu.system) / 1_000;
+    res.writeHead(200, {
+      'content-type': 'text/html; charset=utf-8',
+      'server-timing': `helmo-render;dur=${renderMs.toFixed(3)}`,
+    });
     res.end(html);
   } catch (e) {
     res.writeHead(500, { 'content-type': 'text/plain' });

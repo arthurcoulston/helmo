@@ -515,8 +515,10 @@ Pinned releases accept both the historical three-component layout and C1's one
   assertion in the budget block refuses to measure anything until the fixture
   exceeds the numbers in `src/floor.ts`'s `REAL_RECORD` in total text, in
   bytes per row and in the longest unbreakable run it draws. It warms each
-  document once, then requires the slowest of three bounded warm
-  responses to meet the 600 ms budget so one fast sample cannot mask a miss.
+  document once, then requires the slowest of three bounded warm renders'
+  in-process CPU time to meet the 600 ms budget so one fast sample cannot
+  mask a miss without treating time descheduled by unrelated host load as
+  render work.
   The budget it shipped with before did none of that: 300,000 bytes asserted over 80
   one-line tickets while the record it was shipped against served 2,718,020,
   nine times the ceiling, green the whole time (H-202).
@@ -638,9 +640,9 @@ Pinned releases accept both the historical three-component layout and C1's one
 - `npm run floor` runs the release-floor checks alone (links, performance
   budget, declared widths, accessibility) against the served page. They are
   part of `npm test` too, but `npm test` runs them in a second Vitest process
-  after the rest of the suite. The 600 ms render budget measures the view, not
-  contention from unrelated parallel test workers; isolating the timed gate
-  keeps that budget strict and repeatable. The separate script exists because
+  after the rest of the suite. The view reports its own render CPU time through
+  `Server-Timing`; the 600 ms budget therefore measures its work rather than
+  time descheduled by unrelated host load. The separate script exists because
   the floor is what a release is gated on and it is worth being able to ask
   for by name.
 - `npm run viewport` lays the same document out in Chromium at 360, 390, 480,

@@ -122,9 +122,9 @@ records your answers. For the running machine, *"summon the watch officer"* →
 ## Development
 
 ```
+npm run build       # every package, in dependency order
 npm test            # all four packages, including the invariant that every
                     # record rebuilds exactly from its event log
-npm run build       # every package, in dependency order
 ```
 
 [DEV.md](DEV.md) is the coding context for the repository as a whole; each area

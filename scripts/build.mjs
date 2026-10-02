@@ -1,10 +1,16 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const MARKER = '.helmo-candidate';
 export const MARKER_TEXT = 'Helmo writable build checkout.';
+export const BUILD_ARTIFACTS = [
+  'packages/core/dist/index.js',
+  'packages/work/dist/BUILD.json',
+  'packages/roadmap/dist/BUILD.json',
+  'packages/runtime/dist/BUILD.json',
+];
 
 export function assertBuildRoot(root) {
   const marker = join(root, MARKER);
@@ -16,6 +22,15 @@ export function assertBuildRoot(root) {
   }
   if (!contents.startsWith(MARKER_TEXT)) {
     throw new Error(`refusing to build: ${marker} is not the Helmo build marker`);
+  }
+}
+
+export function assertBuilt(root) {
+  const missing = BUILD_ARTIFACTS.filter((artifact) => !existsSync(join(root, artifact)));
+  if (missing.length) {
+    throw new Error(
+      `refusing to test an unbuilt checkout: missing ${missing.join(', ')}; run npm run prepare:cold && npm run build`,
+    );
   }
 }
 

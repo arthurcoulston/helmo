@@ -1,9 +1,19 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { assertBuildRoot, MARKER, MARKER_TEXT } from './build.mjs';
+import {
+  assertBuildRoot, assertBuilt, BUILD_ARTIFACTS, MARKER, MARKER_TEXT,
+} from './build.mjs';
+
+function writeBuildArtifacts(root) {
+  for (const artifact of BUILD_ARTIFACTS) {
+    const path = join(root, artifact);
+    mkdirSync(join(path, '..'), { recursive: true });
+    writeFileSync(path, 'built\n');
+  }
+}
 
 test('allows a marked writable checkout', () => {
   const root = mkdtempSync(join(tmpdir(), 'helmo-build-'));
@@ -29,6 +39,29 @@ test('refuses a marker with unrelated contents', () => {
   try {
     writeFileSync(join(root, MARKER), 'not this candidate\n');
     assert.throws(() => assertBuildRoot(root), /is not the Helmo build marker/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('allows tests in a marked and built checkout', () => {
+  const root = mkdtempSync(join(tmpdir(), 'helmo-built-'));
+  try {
+    writeFileSync(join(root, MARKER), `${MARKER_TEXT}\n`);
+    writeBuildArtifacts(root);
+    assert.doesNotThrow(() => assertBuilt(root));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('refuses a checkout missing one build artifact', () => {
+  const root = mkdtempSync(join(tmpdir(), 'helmo-built-'));
+  const missing = 'packages/roadmap/dist/BUILD.json';
+  try {
+    writeBuildArtifacts(root);
+    rmSync(join(root, missing));
+    assert.throws(() => assertBuilt(root), new RegExp(`missing ${missing}`));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

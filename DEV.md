@@ -54,7 +54,9 @@ legacy reader.
 - **A build writes only where it is marked to.** The root `npm run build`
   refuses unless the root carries the build marker, so it can never write into
   a release directory or a checkout an installation resolves through.
-  `scripts/build.mjs` and `scripts/build.test.mjs` are the whole of it.
+  The root `npm test` likewise refuses before workspace tests unless all four
+  packages carry their expected build artifacts. `scripts/build.mjs`,
+  `scripts/assert-built.mjs` and `scripts/build.test.mjs` are the whole of it.
 - **One version.** Every package carries the root version and depends on
   `@helmo/core` at exactly that version; `scripts/build.test.mjs` asserts it.
   What the number promises is [VERSIONING.md](VERSIONING.md), and a change to

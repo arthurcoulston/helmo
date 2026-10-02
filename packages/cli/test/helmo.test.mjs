@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { copyFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -48,6 +48,13 @@ function fixture(t) {
   const home = mkdtempSync(join(tmpdir(), 'helmo-front-'));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   return home;
+}
+
+function atTime(t, iso) {
+  const home = fixture(t);
+  const preload = join(home, 'clock.mjs');
+  writeFileSync(preload, `Date.now = () => ${Date.parse(iso)};\n`);
+  return { NODE_OPTIONS: `--import=${preload}` };
 }
 
 // Every runtime command loads the roster at module level, so a runtime
@@ -142,6 +149,21 @@ test('helmo-view names its replacement and its own shorter window', (t) => {
   assert.equal(notices.length, 1, r.stderr);
   assert.match(notices[0], /helmo-view is now 'helmo serve work'/);
   assert.match(notices[0], /2027-01-01/);
+});
+
+test('every retired name refuses after its documented window before starting its old entry point', (t) => {
+  for (const [bin, replacement, after] of [
+    ['helmo-view', 'helmo serve work', '2027-01-02T00:00:00.000Z'],
+    ['helmo-cli', 'helmo work', '2027-04-02T00:00:00.000Z'],
+    ['helmo-mcp', 'helmo mcp work', '2027-04-02T00:00:00.000Z'],
+    ['roadmap-mcp', 'helmo mcp roadmap', '2027-04-02T00:00:00.000Z'],
+  ]) {
+    const r = run(bin, [], atTime(t, after));
+    assert.equal(r.status, 2, `${bin}: ${r.stderr}`);
+    assert.equal(r.stdout, '', `${bin} started its old entry point`);
+    assert.match(r.stderr, new RegExp(`use '${replacement}'`));
+    assert.equal(r.stderr.trim().split('\n').length, 1, `${bin}: ${r.stderr}`);
+  }
 });
 
 test('usage under the front command names the front command, and rev stays rev', (t) => {

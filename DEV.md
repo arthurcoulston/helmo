@@ -26,8 +26,9 @@ proves the target actually ran rather than that a path resolved.
 
 The deprecating adapters for the old binary names live beside the area they
 front, in `packages/<area>/bin/`, and are what that area's `bin` entries point
-at. Each writes one line to stderr and then imports the unchanged `dist` entry;
-nothing about the implementation moves.
+at. Before its documented UTC sunset each writes one line to stderr and imports
+the unchanged `dist` entry; after it, the adapter refuses before that import.
+Nothing about the implementation moves.
 
 ## What `core` owns
 

@@ -18,9 +18,14 @@ test('team renders configured metadata and operator-owned links without their co
 });
 
 test('overview and empty states are explicit', () => {
-  assert.match(appPage('/',{data:{records:[{id:'work',title:'Work',state:'2 records'}]}}),/2 records/);
+  const overview=appPage('/',{data:{records:[{id:'work',title:'Work',state:'2 records'},{id:'roadmap',title:'Roadmap'},{id:'team',title:'Team'},{id:'runtime',title:'Runtime'},{id:'H-1',title:'Current'}]}});
+  assert.match(overview,/2 records/); assert.match(overview,/<h3>Areas<\/h3>/); assert.match(overview,/<h3>Current work<\/h3>/);
   assert.match(appPage('/team',{data:{loops:[]}}),/No team records are configured/);
   assert.match(appPage('/team'),/Could not read team/);
+});
+
+test('interactive links use the dark-mode-safe estate token directly', () => {
+  assert.match(appPage('/team',{data:{loops:[]}}),/\.links a\{color:var\(--interactive\)\}/);
 });
 
 test('fixture-backed app request renders a real record', () => {

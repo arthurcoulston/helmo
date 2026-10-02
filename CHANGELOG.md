@@ -13,6 +13,10 @@ longer.
 
 ## Unreleased — 0.7.0
 
+- **One five-area application.** `helmo serve` provides Overview, Work,
+  Roadmap, Team, and Runtime from one listener, with versioned JSON APIs and
+  configurable redirects for retired dashboard ports. Team exposes configured
+  roster metadata and operator-owned profile links, never profile contents.
 - **One installation key.** `HELMO_INSTALLATION` is the canonical identity for
   Work, Roadmap, and Runtime. Existing `HELMO_LABEL`, `ROADMAP_LABEL`, and
   `REV_LABEL` settings remain accepted during the documented two-release

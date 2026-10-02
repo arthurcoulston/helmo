@@ -434,4 +434,16 @@ describe('launch-admit stays the harness call it was (H-574)', () => {
     expect(refused.status).toBe(1);
     expect(JSON.parse(refused.stderr).error).toMatch(/launch-claim must be written by the exact accountable agent/);
   });
+
+  it('passes --tickets through as an exact allowlist (H-671)', () => {
+    const elsewhere = as(worker, 'launch-claim', '--workstream', 'helmo-dev', '--assignee', 'builder-loop',
+      '--launch-id', 'rev:builder-loop:4242:4:1700000000003', '--tickets', 'H-999,H-998');
+    expect(elsewhere.stderr).toBe('');
+    expect(JSON.parse(elsewhere.stdout)).toMatchObject({ admitted: false, launch_id: 'rev:builder-loop:4242:4:1700000000003' });
+    expect(read().status).toBe('open');
+
+    const listed = as(worker, 'launch-claim', '--workstream', 'helmo-dev', '--assignee', 'builder-loop',
+      '--launch-id', 'rev:builder-loop:4242:5:1700000000004', '--tickets', `H-999,${ticket}`);
+    expect(JSON.parse(listed.stdout)).toMatchObject({ claimed: true, ticket_id: ticket, scope: { tickets: ['H-999', ticket].sort() } });
+  });
 });

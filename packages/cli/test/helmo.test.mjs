@@ -222,6 +222,17 @@ test('helmo mcp work starts the Helmo MCP server', async (t) => {
   assert.deepEqual(deprecationLines(stderr), []);
 });
 
+test('helmo-mcp still starts the Helmo MCP server without polluting its protocol', async (t) => {
+  const home = fixture(t);
+  const { stdout, stderr, matched } = await started('helmo-mcp', [], { HELMO_HOME: home }, /Helmo MCP \(stdio\)/);
+  assert.ok(matched, `the server never announced itself: ${stderr}`);
+  const notices = deprecationLines(stderr);
+  assert.equal(notices.length, 1, stderr);
+  assert.match(notices[0], /helmo-mcp is now 'helmo mcp work'/);
+  assert.match(notices[0], /2027-04-01/);
+  assert.equal(stdout, '', 'the deprecation notice must not pollute the MCP protocol channel');
+});
+
 test('roadmap-mcp still starts the roadmap MCP server, and says it is leaving', async (t) => {
   const home = fixture(t);
   const { stderr, matched } = await started('roadmap-mcp', [], { ROADMAP_HOME: home }, /MCP \(stdio\)/);

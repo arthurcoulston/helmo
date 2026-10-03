@@ -11,7 +11,7 @@ consolidation imported still carried that release's notes under "Unreleased";
 this is the published wording, which is two entries and one commit reference
 longer.
 
-## v0.7.0 — 2026-10-02
+## Unreleased — 0.8.0
 
 - Route burn, capacity and anomaly safety stops to independent live-peer investigations, with restart-safe structured recovery, one restart per fresh peer disposition, and peer-owned recurrence instead of routine human permission prompts.
 
@@ -23,6 +23,9 @@ longer.
   Work, Roadmap, and Runtime. Existing `HELMO_LABEL`, `ROADMAP_LABEL`, and
   `REV_LABEL` settings remain accepted during the documented two-release
   window, and conflicting values still refuse instead of choosing a target.
+
+## v0.7.0 — 2026-10-02
+
 - **One command: `helmo`.** Every area is reachable through one front command —
   `helmo work`, `helmo roadmap`, `helmo run`, `helmo team`, `helmo release`,
   `helmo service`, `helmo serve <area>` and `helmo mcp <area>`. It does no work

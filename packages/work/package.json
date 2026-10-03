@@ -1,6 +1,6 @@
 {
   "name": "helmo",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Agent work record: agents write, humans read and meet.",
   "scripts": {
     "test": "vitest run --exclude 'test/view-viewport-render.test.ts' --exclude 'test/view-release-floor.test.ts' && vitest run test/view-release-floor.test.ts",
@@ -38,10 +38,10 @@
   },
   "type": "module",
   "dependencies": {
-    "@helmo/core": "0.7.0",
+    "@helmo/core": "0.8.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "better-sqlite3": "^13.0.2",
-    "helmo-roadmap": "0.7.0",
+    "helmo-roadmap": "0.8.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

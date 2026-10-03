@@ -16,6 +16,7 @@ import { createServer } from 'node:http';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Store } from '../../roadmap/dist/store.js';
+import { Store as WorkStore } from '../../work/dist/store.js';
 import { BIN, env, fixture, freePort, revHome, sentinel } from './installation.mjs';
 
 const FILER = JSON.stringify({ name: 'helmo-orchestrator', kind: 'orchestrator', model: 'test', version: 'test' });
@@ -168,7 +169,7 @@ constitution = "/tmp/PROFILE.md"
     await t.test(name, async (t) => {
       const homes = { HELMO_HOME: fixture(t), ROADMAP_HOME: fixture(t), REV_HOME };
       const app = await startApp(t, homes);
-      for (const path of ['/run', '/', '/team', '/api/v1/team', '/api/v1/overview']) {
+      for (const path of ['/run', '/overview', '/team', '/api/v1/team', '/api/v1/overview']) {
         const failed = await fetch(`${app.origin}${path}`);
         assert.equal(failed.status, 500, path);
         assert.match(await failed.text(), message, path);
@@ -336,4 +337,66 @@ test('two installations each serve their own records, and one shutting down leav
   assert.equal((await fetch(`${betaApp.origin}/health.json`)).status, 200, 'beta stopped answering when alpha shut down');
   const stillThere = await fetch(`http://127.0.0.1:${betaLegacy[0].port}/`, { redirect: 'manual' });
   assert.equal(stillThere.status, 301, 'beta’s retired listener went down with alpha');
+});
+
+
+test('unified routes retain the established product workflows and common navigation', async (t) => {
+  const homes = installation(t);
+  const ticket = seedTicket(homes, 'Preserved work disclosure');
+  seedProject(homes, 'Preserved roadmap disclosure');
+  const roadmap = new Store(join(homes.ROADMAP_HOME, 'roadmap.db'));
+  const next = roadmap.createProject(SEED, {title:'Prioritized fixture initiative',status:'ready'}).id;
+  roadmap.setShipNext(SEED, {project_id:next,decided_by:'fixture-operator',reason:'Synthetic priority decision'});
+  roadmap.close();
+  const { origin } = await startApp(t, homes);
+  for (const path of ['/', '/work', '/work/', '/work?whole=1', '/roadmap', '/roadmap/', '/run', '/run/']) {
+    const response = await fetch(origin + path);
+    assert.equal(response.status, 200, path);
+    const html = await response.text();
+    assert.match(html, /aria-label="Areas"/, path);
+    for (const link of ['/overview', '/work', '/roadmap', '/team', '/run']) assert.ok(html.includes(`href="${link}"`), path + ' ' + link);
+    if (path === '/' || path.startsWith('/work')) {
+      assert.match(html, new RegExp(ticket));
+      assert.match(html, /record-scope/);
+      assert.match(html, /data-answer=/);
+      assert.match(html, /class="trow/);
+      assert.match(html, /Review evidence|ticket detail|class="rtoggle"/);
+      if (path.includes('whole')) assert.match(html, /Whole record/);
+    } else if (path.startsWith('/roadmap')) {
+      assert.match(html, /Preserved roadmap disclosure/);
+      assert.match(html, /<summary>history<\/summary>/);
+      assert.match(html, /data-copy=/);
+    } else {
+      assert.match(html, /aria-label="Loop status"/);
+      assert.match(html, /Recent trace/);
+      assert.match(html, /data-refresh="loops"/);
+    }
+  }
+});
+
+
+test('decisions and actions work through the unified app with their original protections', async (t) => {
+  const homes = installation(t);
+  const store = new WorkStore(join(homes.HELMO_HOME, 'helmo.db'));
+  t.after(() => store.close());
+  const create = (title) => store.createTicket(SEED, { title, body: 'Synthetic workflow fixture', workstream: 'estate-ui', type: 'build' });
+  const decision = create('Choose the fixture option');
+  store.returnToHuman(SEED, decision.id, { situation: 'Fixture choice', question: 'Proceed?', recommendation: 'Proceed', options: [{label:'Proceed',consequence:'Fixture continues'},{label:'Wait',consequence:'Fixture waits'}] });
+  const action = create('Confirm the fixture action');
+  store.requestAction(SEED, action.id, { situation: 'Fixture action', action: 'Complete the fixture', why_human: 'Synthetic test', if_unanswered: 'Fixture waits' });
+  const { origin } = await startApp(t, homes, [], { HELMO_OPERATOR: 'fixture-operator' });
+  const html = await (await fetch(origin + '/work')).text();
+  assert.match(html, /class="ratify"/);
+  assert.match(html, /class="acted"/);
+  const nonce = html.match(/data-answer="([^"]+)"/)[1];
+  const question = html.match(/data-ask="([^"]+)"/)[1];
+  const act = html.match(/data-act="([^"]+)"/)[1];
+  const post = (path, payload, token = nonce) => fetch(origin + path, { method: 'POST', headers: {'content-type':'application/json',origin,'x-helmo-answer':token}, body:JSON.stringify(payload) });
+  const answer = {ticket_id:decision.id,ratify:true,question_fingerprint:question};
+  assert.notEqual((await post('/answer', answer, 'wrong')).status, 200);
+  assert.equal(store.getTicket(decision.id).status, 'awaiting_human');
+  assert.equal((await post('/answer', answer)).status, 200);
+  assert.equal(store.lastAnswer(decision.id).chosen_option, 'Proceed');
+  assert.equal((await post('/work/acted', {ticket_id:action.id,done:true,action_fingerprint:act})).status, 200);
+  assert.ok(store.getEvents(action.id).some(event => event.event_type === 'acted'));
 });

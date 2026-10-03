@@ -1,14 +1,14 @@
 import { ESTATE_TOKENS } from '../core/dist/index.js';
 
-const ROUTES = new Map([['/', 'overview'], ['/work', 'work'], ['/roadmap', 'roadmap'], ['/team', 'team'], ['/run', 'runtime']]);
+const ROUTES = new Map([['/overview', 'overview'], ['/work', 'work'], ['/roadmap', 'roadmap'], ['/team', 'team'], ['/run', 'runtime']]);
 const esc = (value) => String(value ?? '').replace(/[&<>\"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[character]);
 function rows(document_) { const data=document_?.data??document_; return Array.isArray(data)?data:Array.isArray(data?.records)?data.records:Array.isArray(data?.projects)?data.projects:Array.isArray(data?.loops)?data.loops:data?[data]:[]; }
 function cards(document_) { return rows(document_).map((row) => `<article class="card"${row.id?` id="${esc(row.id)}"`:''}>${row.id?`<div class="ref">${esc(row.id)}</div>`:''}<strong>${esc(row.title??row.name??row.installation??'Record')}</strong>${row.status||row.state?`<div class="meta">${esc(row.status??row.state)}</div>`:''}${row.body||row.detail?`<p>${esc(row.body??row.detail)}</p>`:''}${Array.isArray(row.links)?`<div class="links">${row.links.map((link)=>`<a href="${esc(link.href)}">${esc(link.label)}</a>`).join('')}</div>`:''}</article>`).join(''); }
 function content(active, document_, empty) {
   const records=rows(document_);
   if(active!=='overview')return `<div class="cards" id="records">${cards(document_)||empty}</div>`;
-  const areas={data:{records:records.slice(0,4)}}, work={data:{records:records.slice(4)}};
-  return `<section class="area-summary"><h3>Areas</h3><div class="cards">${cards(areas)||empty}</div></section><section class="current-work"><h3>Current work</h3><div class="cards" id="records">${cards(work)||'<p class="empty">No current work records.</p>'}</div></section>`;
+  const areas={data:{records:records.slice(0,4)}};
+  return `<section class="area-summary"><h3>Areas</h3><div class="cards">${cards(areas)||empty}</div></section><section class="current-work" id="records"><h3>Current work</h3><p><a href="/work">Open Work for decisions, actions, progress and evidence.</a></p></section>`;
 }
 
 export function appPage(pathname, document_=null) {
@@ -17,3 +17,25 @@ export function appPage(pathname, document_=null) {
 }
 
 export function appRequest(request,response,documents={}) { const url=new URL(request.url??'/',`http://${request.headers.host??'localhost'}`), pathname=url.pathname.length>1?url.pathname.replace(/\/$/,''):url.pathname, area=ROUTES.get(pathname); if(!area)return false; const document_=documents[area]?.(); response.writeHead(200,{'content-type':'text/html; charset=utf-8'}); response.end(appPage(pathname,document_)); return true; }
+
+
+// Compose the established product documents without replacing their behavior.
+// Scoped CSS leaves each product's layout, disclosure and refresh code intact.
+export function productNavigation(area) {
+  return `<style>
+.helmo-navigation{display:flex;align-items:center;gap:1rem;flex-wrap:wrap;border-bottom:1px solid var(--border);padding:0 0 1rem;margin:0 0 1.5rem;font:14px/1.5 system-ui,sans-serif;color:var(--foreground)}
+.helmo-navigation strong{font-size:16px}.helmo-navigation nav{display:flex;gap:.25rem;overflow-x:auto;max-width:100%;flex-wrap:nowrap}.helmo-navigation a{display:block;white-space:nowrap;padding:.4rem .55rem;border-radius:var(--radius);text-decoration:none;color:var(--foreground)}.helmo-navigation a[aria-current=page]{background:var(--primary);color:var(--primary-foreground)}
+@media(max-width:42rem){.helmo-navigation{gap:.4rem}.helmo-navigation nav{width:100%}}
+</style><div class="helmo-navigation"><strong>Helmo</strong><nav aria-label="Areas">${[...ROUTES].map(([href,name])=>`<a href="${href}"${name===area?' aria-current="page"':''}>${name[0].toUpperCase()+name.slice(1)}</a>`).join('')}</nav></div>`;
+}
+
+export function serveProduct(request, response, handler, area) {
+  const end = response.end;
+  response.end = function(body, ...args) {
+    if (typeof body === 'string' && body.startsWith('<!doctype html>')) {
+      body = body.replace(/<body(?:\s[^>]*)?>/i, (tag) => tag + productNavigation(area));
+    }
+    return end.call(this, body, ...args);
+  };
+  return handler(request, response);
+}

@@ -3,7 +3,7 @@ import test from 'node:test';
 import { appPage, appRequest } from '../server.mjs';
 
 test('five-area shell marks every direct route and its API', () => {
-  for (const [route, area] of [['/','overview'], ['/work','work'], ['/roadmap','roadmap'], ['/team','team'], ['/run','runtime']]) {
+  for (const [route, area] of [['/overview','overview'], ['/work','work'], ['/roadmap','roadmap'], ['/team','team'], ['/run','runtime']]) {
     const html = appPage(route);
     assert.match(html, new RegExp(`>${area[0].toUpperCase()+area.slice(1)}</a>`));
     assert.match(html, new RegExp(`/api/v1/${area}`));
@@ -18,7 +18,7 @@ test('team renders configured metadata and operator-owned links without their co
 });
 
 test('overview and empty states are explicit', () => {
-  const overview=appPage('/',{data:{records:[{id:'work',title:'Work',state:'2 records'},{id:'roadmap',title:'Roadmap'},{id:'team',title:'Team'},{id:'runtime',title:'Runtime'},{id:'H-1',title:'Current'}]}});
+  const overview=appPage('/overview',{data:{records:[{id:'work',title:'Work',state:'2 records'},{id:'roadmap',title:'Roadmap'},{id:'team',title:'Team'},{id:'runtime',title:'Runtime'},{id:'H-1',title:'Current'}]}});
   assert.match(overview,/2 records/); assert.match(overview,/<h3>Areas<\/h3>/); assert.match(overview,/<h3>Current work<\/h3>/);
   assert.match(appPage('/team',{data:{loops:[]}}),/No team records are configured/);
   assert.match(appPage('/team'),/Could not read team/);

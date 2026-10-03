@@ -31,10 +31,13 @@ remain unchanged compatibility surfaces; their schemas are compared byte for
 byte with the unified listing in the fixture test.
 
 `helmo serve` owns the one application listener. It imports each product's
-request handler into that process. The shared shell owns `/`, `/work`,
-`/roadmap`, `/team`, and `/run`; its migrated Work, Roadmap, and Runtime pages
-read `/api/v1/work`, `/api/v1/roadmap`, and `/api/v1/runtime`. The product
-handlers retain the answer routes and supply those JSON documents. The
+request handler into that process. The established Work, Roadmap and Runtime handlers render `/work`, `/roadmap`
+and `/run`, with the app adding only scoped common navigation. `/` also serves
+Work, preserving historical `/#H-n` bookmarks and query views. `/overview` and
+`/team` are the app-owned summary pages. Product handlers retain their complete
+controls, disclosures, refresh behavior and answer protections; their versioned
+JSON APIs remain available. A backend consolidation must not replace these
+product behaviors with generic record cards. The
 aggregate machine reading remains at
 `/health.json`. The product view entries remain executable compatibility
 surfaces; importing them never binds their old ports.

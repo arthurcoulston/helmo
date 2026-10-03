@@ -11,6 +11,13 @@ consolidation imported still carried that release's notes under "Unreleased";
 this is the published wording, which is two entries and one commit reference
 longer.
 
+## Unreleased
+
+- Restore the established Work, Roadmap and Runtime views inside the unified
+  app, including decision/action controls, evidence, history, prioritization
+  and live refresh. Keep common navigation and the consolidated backend.
+  `/` preserves Work bookmarks; the summary is available at `/overview`.
+
 ## v0.9.0 — 2026-10-03
 
 - **Agent sessions are bound to one installation deed.** `HELMO_BINDING` plus

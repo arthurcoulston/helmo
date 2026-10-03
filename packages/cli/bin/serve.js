@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { appConfig, startAppServer } from '../app-server.mjs';
-import { appRequest } from '../../app/server.mjs';
+import { appRequest, serveProduct } from '../../app/server.mjs';
 import { workHealth, workListening, workRequest, workSnapshot } from '../../work/dist/view.js';
 import { roadmapHealth, roadmapRequest, roadmapSnapshot } from '../../roadmap/dist/view.js';
 import { runtimeRequest, runtimeSnapshot } from '../../runtime/dist/view.js';
@@ -31,7 +31,6 @@ function overviewSnapshot() {
     { id:'roadmap', title:'Roadmap', state:`${roadmap.projects.length} projects`, links:[{label:'Open Roadmap',href:'/roadmap'}] },
     { id:'team', title:'Team', state:`${teamSnapshot().loops.length} configured`, links:[{label:'Open Team',href:'/team'}] },
     { id:'runtime', title:'Runtime', state:runtime.supervisor_state, links:[{label:'Open Runtime',href:'/run'}] },
-    ...work.records,
   ] };
 }
 const appDocuments={overview:overviewSnapshot,work:workSnapshot,roadmap:roadmapSnapshot,team:teamSnapshot,runtime:runtimeSnapshot};
@@ -54,12 +53,11 @@ const running = await startAppServer(appConfig(), (request, response) => {
       response.end(apiJson(area,document_));
       return;
     }
-    const compatibilityPath = ['/work/', '/roadmap/', '/run/'].some((prefix) => request.url?.startsWith(prefix));
-    if (!compatibilityPath && appRequest(request,response,appDocuments)) return;
-    if (at(request, '/roadmap')) return roadmapRequest(request, response);
-    if (at(request, '/run')) return runtimeRequest(request, response);
-    if (at(request, '/work')) return workRequest(request, response);
-    if (request.url === '/' || request.url?.startsWith('/?') || request.url === '/answer' || request.url === '/acted') return workRequest(request, response);
+    if (at(request, '/roadmap')) return serveProduct(request, response, roadmapRequest, 'roadmap');
+    if (at(request, '/run')) return serveProduct(request, response, runtimeRequest, 'runtime');
+    if (at(request, '/work')) return serveProduct(request, response, workRequest, 'work');
+    if (request.url === '/' || request.url?.startsWith('/?') || request.url === '/answer' || request.url === '/acted') return serveProduct(request, response, workRequest, 'work');
+    if (appRequest(request,response,appDocuments)) return;
     response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
     response.end('Unknown Helmo app route.\n');
   } catch (error) {

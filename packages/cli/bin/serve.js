@@ -49,8 +49,9 @@ const running = await startAppServer(appConfig(), (request, response) => {
     if (request.url === '/api/v1/runtime') return runtimeRequest(request, response);
     if (request.url === '/api/v1/overview' || request.url === '/api/v1/team') {
       const area=request.url.endsWith('/team')?'team':'overview';
+      const document_=appDocuments[area]();
       response.writeHead(200,JSON_HEADERS);
-      response.end(apiJson(area,appDocuments[area]()));
+      response.end(apiJson(area,document_));
       return;
     }
     const compatibilityPath = ['/work/', '/roadmap/', '/run/'].some((prefix) => request.url?.startsWith(prefix));

@@ -168,9 +168,11 @@ constitution = "/tmp/PROFILE.md"
     await t.test(name, async (t) => {
       const homes = { HELMO_HOME: fixture(t), ROADMAP_HOME: fixture(t), REV_HOME };
       const app = await startApp(t, homes);
-      const failed = await fetch(`${app.origin}/run`);
-      assert.equal(failed.status, 500);
-      assert.match(await failed.text(), message);
+      for (const path of ['/run', '/', '/team', '/api/v1/team', '/api/v1/overview']) {
+        const failed = await fetch(`${app.origin}${path}`);
+        assert.equal(failed.status, 500, path);
+        assert.match(await failed.text(), message, path);
+      }
       assert.equal((await fetch(`${app.origin}/work`)).status, 200, 'the app process did not remain available');
     });
   }

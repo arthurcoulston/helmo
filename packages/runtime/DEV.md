@@ -354,7 +354,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   every further attempt. A manual `rev resume` and any
   unrelated unstructured block remove stale structured-release records. **No
   percent is ever converted to tokens or dollars**, in either direction.
-- `shim.ts` — the runtime adapter (claude / codex / mock). Owns non-interactive
+- `shim.ts` — the runtime adapter (claude / codex / mock). It carries the
+  installation deed and required-binding flag into both the agent process and
+  its generated Helmo MCP configuration, so a session cannot acquire a store
+  from user scope, cwd or a copied command. Owns non-interactive
   flags, constitution injection (fail-closed), `cleanEnv()` (strips parent
   CLAUDE/ANTHROPIC/CODEX env — the auth-leak fix; don't weaken it) and
   `sessionEnv()` over it (the seat's git committer identity, H-787 — the
@@ -522,7 +525,9 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   iteration held it to 02:28:54Z, fleet back 160ms later.
 - `service.ts` — reboot resilience: launchd plist (KeepAlive on crash only —
   a drain exits 0 and stays down) / systemd user unit. Units embed
-  install-time PATH and REV_HOME because service managers strip env.
+  install-time PATH and REV_HOME because service managers strip env. Bound
+  definitions also carry `HELMO_BINDING`; the stable launcher sets
+  `HELMO_REQUIRE_BINDING=1` before handing over to a selected release.
   **The service identity is the resolved Rev home** (`serviceLabel()`,
   `systemdUnitName()`, H-2210 then H-2452). It was the constant `dev.rev`, and
   that one string is also the plist filename and the bootout/kickstart address —
@@ -629,6 +634,9 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   at startup; `compare()` says whether they are still the same bytes. See "What
   built `dist`, and what is RUNNING it" below — the two are never one claim.
 - `install.ts` — **which installation is this command about?** (H-2473). The
+  shared core deed is checked before any Runtime command reads roster,
+  control, release or service state. Repair commands skip release coherence,
+  but never the deed's name/control/service fence.
   identity above answers what an installation is called; this answers the
   question every command was assuming. `target()` returns the label, the
   resolved home, and a conflict if there is one; `targetLine()` is the line
@@ -677,6 +685,9 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
     name must come from the home. Without that, a crew session running `gp-rev`
     would be refused every mutation it asked for, correctly.
 - `release.ts` — **changing which release an installation runs** (H-2493).
+  Upgrade and rollback also durably rewrite a supplied installation deed's
+  `release`; their unchanged path repeats that maintenance, so an interruption
+  between the selection and deed renames is repaired by rerunning the command.
   `install.ts` verifies the pin; this is the only thing that moves it, because
   until now the write half was a text editor. `rev release status | upgrade
   <dir> | rollback`.
@@ -1042,7 +1053,7 @@ name. Exactly one function draws one and it takes the name it prints, and
 `.actor { white-space: nowrap }` is part of the same rule — the Loop column is
 the narrowest on the page and the first to wrap on a phone.
 
-## Where the cross-surface link points (R-11 H-832)
+## Where the Work link points (R-11 H-832, R-47 H-2801)
 
 `src/estate-reach.generated.ts` is the third **vendored copy** on the same
 seam, and the first whose source is the crew repo rather than the estate:
@@ -1053,15 +1064,15 @@ carries plist and log paths rev has no business holding — so the vendor script
 refuses a registry with no `reach` prefix or nothing navigable rather than
 emitting a table of localhost addresses that look fine on this Mac.
 
-**A surface has two true addresses.** `url` is the product on its own port,
-right at the desk and dead from anywhere else; `path` is the same-origin path
-the estate shell composes it at. Rev's one link out — "work lives in Helm" —
-was `http://localhost:4400` until this ticket, which is exactly the defect
-H-831 found across the estate: perfect on the machine that serves it, dead on
-the phone. Which address is right is a property of the READER'S ORIGIN, not of
-the surface, so it is decided in the browser: `reachLink()` in `src/reach.ts`
-ships both (`href` and `data-reach`), and `REACH_SCRIPT` — the only script on
-this page — swaps them when `location.hostname` is not this machine.
+**A composed surface has two true addresses.** `url` is the product on its own
+port, right at the desk and dead from anywhere else; `path` is the same-origin
+path the estate shell composes it at. A `desk_only` surface instead has one
+loopback address and the vendor repeats it in both fields. Runtime's one link
+out now names unified `helmo-app` and appends `/work`: from `/run` that is the
+same app origin, while the standalone Runtime compatibility view reaches the
+app's loopback listener. `REV_HELMO_VIEW_URL` remains the explicit base for an
+isolated installation. `reachLink()` ships both addresses (`href` and
+`data-reach`), and `REACH_SCRIPT` swaps them only for a remote reader.
 
 **The server cannot decide it**, which is the thing to know before deleting the
 script. The estate shell's proxy fetches this page itself, so the `Host` header
@@ -1071,8 +1082,8 @@ lives in `estate/src/lib/reach.ts` and `crew/tools/estate/registry.mjs`
 service hand-keeping one of its own. With scripting off the href stays the desk
 address, which is every rev build before this one.
 
-The checks aim at the silent shapes: a link shipped with only one of its two
-addresses, the script placed above the anchors it rewrites (finds none, reports
+The checks aim at the silent shapes: a link shipped without the registry's
+address, the script placed above the anchors it rewrites (finds none, reports
 nothing, looks like a working page), and a surface renamed in the registry —
 which `reachLink` throws on, so it goes red in CI rather than on Arthur's phone.
 The far-origin half of the proof is a real browser: `estate/tools/reach.test.mjs`

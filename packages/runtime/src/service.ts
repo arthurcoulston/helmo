@@ -72,6 +72,28 @@ if (!named) {
   refuse('INSTALLATION_RELEASE is unset, so nothing says which release to load. Reinstall the service from the rev this installation should run: rev service install');
 }
 const file = resolve(named);
+const bindingName = process.env.HELMO_BINDING?.trim();
+let binding = null;
+if (bindingName) {
+  const bindingFile = resolve(bindingName);
+  try { binding = JSON.parse(readFileSync(bindingFile, 'utf8')); }
+  catch (e) { refuse(\`its installation binding \${bindingFile} is unreadable (\${e.message})\`); }
+  if (!binding || binding.version !== 1 || !binding.installation || !binding.work?.home || !binding.work?.store
+    || !binding.roadmap?.home || !binding.roadmap?.store || !binding.control?.home || !binding.control?.service) {
+    refuse(\`its installation binding \${bindingFile} is incomplete or unsupported\`);
+  }
+  const pathBindings = { REV_HOME: binding.control.home, HELMO_HOME: binding.work.home, HELMO_DB: binding.work.store,
+    ROADMAP_HOME: binding.roadmap.home, ROADMAP_DB: binding.roadmap.store };
+  for (const [key, value] of Object.entries(pathBindings)) {
+    if (process.env[key]?.trim() && resolve(process.env[key]) !== resolve(value)) refuse(\`\${key}=\${resolve(process.env[key])} conflicts with binding \${resolve(value)}\`);
+    process.env[key] = resolve(value);
+  }
+  if (process.env.HELMO_INSTALLATION?.trim() && process.env.HELMO_INSTALLATION.trim() !== binding.installation) refuse(\`HELMO_INSTALLATION=\${process.env.HELMO_INSTALLATION} conflicts with binding \${binding.installation}\`);
+  if (binding.control.service !== binding.installation) refuse(\`binding service \${binding.control.service} does not match installation \${binding.installation}\`);
+  process.env.HELMO_INSTALLATION = binding.installation;
+  process.env.HELMO_BINDING = bindingFile;
+  process.env.HELMO_REQUIRE_BINDING = '1';
+}
 let selection;
 try {
   selection = JSON.parse(readFileSync(file, 'utf8'));
@@ -83,6 +105,7 @@ if (!selection || typeof selection !== 'object' || Array.isArray(selection)
   || typeof selection.directory !== 'string' || !selection.directory.trim()) {
   refuse(\`its release selection \${file} names no release (it needs 'release' and 'directory'). Repair it with: rev release upgrade <release directory>\`);
 }
+if (binding && binding.release !== selection.release) refuse(\`release \${selection.release} conflicts with binding \${binding.release}\`);
 const releaseDir = resolve(dirname(file), selection.directory);
 let commits;
 try {
@@ -244,7 +267,7 @@ const xml = (s: string) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt
 export function launchdPlist(
   node: string,
   cli: string,
-  opts: { label: string; home: string; path: string; logPath: string; release?: string },
+  opts: { label: string; home: string; path: string; logPath: string; release?: string; binding?: string },
 ): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -271,6 +294,7 @@ export function launchdPlist(
          same label the job holds. -->
     <key>HELMO_INSTALLATION</key><string>${xml(opts.label)}</string>
     ${opts.release ? `<key>INSTALLATION_RELEASE</key><string>${xml(opts.release)}</string>` : ''}
+    ${opts.binding ? `<key>HELMO_BINDING</key><string>${xml(opts.binding)}</string>\n    <key>HELMO_REQUIRE_BINDING</key><string>1</string>` : ''}
   </dict>
   <key>StandardOutPath</key><string>${xml(opts.logPath)}</string>
   <key>StandardErrorPath</key><string>${xml(opts.logPath)}</string>
@@ -284,7 +308,7 @@ export function launchdPlist(
 `;
 }
 
-export function systemdUnit(node: string, cli: string, opts: { home: string; path: string; label: string; release?: string }): string {
+export function systemdUnit(node: string, cli: string, opts: { home: string; path: string; label: string; release?: string; binding?: string }): string {
   return `[Unit]
 Description=Rev — keeps agent loops turning
 
@@ -303,6 +327,7 @@ Environment=REV_HOME=${opts.home}
 # The installed identity, for the reason the plist carries it (H-2452).
 Environment=HELMO_INSTALLATION=${opts.label}
 ${opts.release ? `Environment=INSTALLATION_RELEASE=${opts.release}` : ''}
+${opts.binding ? `Environment=HELMO_BINDING=${opts.binding}\nEnvironment=HELMO_REQUIRE_BINDING=1` : ''}
 
 [Install]
 WantedBy=default.target
@@ -471,6 +496,7 @@ export function serviceInstall(): void {
   const home = revHome();
   const path = process.env['PATH'] ?? '/usr/local/bin:/usr/bin:/bin';
   const release = process.env['INSTALLATION_RELEASE']?.trim();
+  const binding = process.env['HELMO_BINDING']?.trim() ? resolve(process.env['HELMO_BINDING']!) : undefined;
   assertOwnService(kind, file, 'install over');
   // A pinned installation's definition names its own launcher, never the
   // cli.js this command happens to be running from — that one is inside a
@@ -482,11 +508,11 @@ export function serviceInstall(): void {
   if (kind === 'launchd') {
     const logPath = join(stateDir('supervisor'), 'launchd.log');
     const domain = `gui/${process.getuid!()}`;
-    installLaunchd(file, launchdPlist(node, cli, { label, home, path, logPath, release }), domain, label);
+    installLaunchd(file, launchdPlist(node, cli, { label, home, path, logPath, release, binding }), domain, label);
     console.log(`Installed and started: ${file}\nAny running supervisor was stopped and restarted; launchd allows its loop drivers 60 seconds to exit, while detached agent sessions continue to completion.\nThe supervisor now survives reboots. Logs: ${logPath}`);
   } else {
     const unit = systemdUnitName();
-    writeFileSync(file, systemdUnit(node, cli, { home, path, label, release }));
+    writeFileSync(file, systemdUnit(node, cli, { home, path, label, release, binding }));
     systemctl('daemon-reload');
     systemctl('enable', '--now', unit);
     console.log(`Installed and started: ${file} (systemd user unit '${unit}').`);

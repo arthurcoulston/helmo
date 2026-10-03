@@ -63,19 +63,19 @@ describe('vendored estate reach table', () => {
     // The href is the desk address and `data-reach` is the composed one. A
     // link carrying only the first is today's defect; only the second would
     // break the desk, where the shell is deliberately out of the middle.
-    const html = reachLink('helmo-view', 'Helm');
-    expect(html).toContain(`href="${ESTATE_REACH['helmo-view']!.url}"`);
-    expect(html).toContain(`data-reach="${ESTATE_REACH['helmo-view']!.path}"`);
+    const html = reachLink('helmo-app', 'Helmo', undefined, '/work');
+    expect(html).toContain('href="http://localhost:4400/work"');
+    expect(html).toContain('data-reach="http://localhost:4400/work"');
   });
 
   it('takes an explicit local URL without changing the composed reach', () => {
-    const html = reachLink('helmo-view', 'Helm', 'http://localhost:4420/');
+    const html = reachLink('helmo-app', 'Helmo', 'http://localhost:4420/', '/work');
     expect(html).toContain('href="http://localhost:4420/"');
-    expect(html).toContain(`data-reach="${ESTATE_REACH['helmo-view']!.path}"`);
+    expect(html).toContain('data-reach="http://localhost:4400/work"');
   });
 
   it('keeps an explicit URL inside its href attribute', () => {
-    expect(reachLink('helmo-view', 'Helm', 'http://localhost:4420/\" data-crossed=\"yes')).not.toContain(
+    expect(reachLink('helmo-app', 'Helmo', 'http://localhost:4420/\" data-crossed=\"yes')).not.toContain(
       'href="http://localhost:4420/" data-crossed=',
     );
   });
@@ -133,6 +133,14 @@ describe('vendored estate reach table', () => {
       services: [{ id: 'estate-shell', nav: 'Estate', url: 'http://localhost:4300/', reach: '/' }],
     };
     expect(table(reg)['estate-shell']!.path).toBe('/');
+  });
+
+  it('keeps a desk-only surface on its loopback address', () => {
+    const reg = {
+      reach: '/s/',
+      services: [{ id: 'helmo-app', desk_only: true, url: 'http://localhost:4400/' }],
+    };
+    expect(table(reg)['helmo-app']).toEqual({ url: 'http://localhost:4400/', path: 'http://localhost:4400/' });
   });
 
   it('refuses a registry with nothing navigable', () => {

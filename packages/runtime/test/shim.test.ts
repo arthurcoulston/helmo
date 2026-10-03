@@ -371,6 +371,21 @@ describe('sessionSpec (H-1152)', () => {
     expect(spec.model).toBe('claude-fable-5-1');
   });
 
+  it('carries the installation deed into both the session and its MCP server', () => {
+    const saved = process.env['HELMO_BINDING'];
+    const required = process.env['HELMO_REQUIRE_BINDING'];
+    process.env['HELMO_BINDING'] = '/tmp/fixture-installation.json';
+    process.env['HELMO_REQUIRE_BINDING'] = '1';
+    try {
+      const spec = sessionSpec(g, loop);
+      expect(spec.env).toMatchObject({ HELMO_BINDING: '/tmp/fixture-installation.json', HELMO_REQUIRE_BINDING: '1' });
+      expect(spec.mcp_servers['helmo']!['env']).toMatchObject({ HELMO_BINDING: '/tmp/fixture-installation.json', HELMO_REQUIRE_BINDING: '1' });
+    } finally {
+      if (saved === undefined) delete process.env['HELMO_BINDING']; else process.env['HELMO_BINDING'] = saved;
+      if (required === undefined) delete process.env['HELMO_REQUIRE_BINDING']; else process.env['HELMO_REQUIRE_BINDING'] = required;
+    }
+  });
+
   // The stamp is how seatDecide tells a live loop's own hold from a foreign
   // one (H-558). A meeting wearing `rev:mason` would stand the mason loop down
   // against itself, so the override has to reach the actor the server sees —
@@ -385,7 +400,7 @@ describe('sessionSpec (H-1152)', () => {
 
   // A spec is printed to stdout. sessionEnv() copies this process's whole
   // environment, so exporting it would publish the fleet's secrets; the export
-  // carries the RULE (env_strip) and the overrides, and nothing of the caller.
+  // carries the RULE (env_strip), the scratch installation, and Rev's overrides.
   it('exports what rev sets and none of the caller environment', () => {
     process.env['REV_SPEC_FIXTURE_SECRET'] = 'do-not-export';
     try {
@@ -395,6 +410,7 @@ describe('sessionSpec (H-1152)', () => {
         GIT_COMMITTER_EMAIL: 'mason@crew.local',
         REV_LOOP: 'mason',
         REV_CLI: process.argv[1] ?? '',
+        ...(process.env['REV_HOME'] ? { REV_HOME: process.env['REV_HOME'] } : {}),
       });
       expect(JSON.stringify(spec)).not.toContain('do-not-export');
       expect(new RegExp(spec.env_strip).test('ANTHROPIC_API_KEY')).toBe(true);

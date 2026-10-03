@@ -41,6 +41,33 @@ Nothing below changes a default. If you run one installation and are happy
 running the code your checkouts hold, you are done — read on when you want a
 second installation, a pinned version, or a removal you can trust.
 
+The agent-launch migration path does not retain that compatibility default. A
+bound launcher carries a versioned installation deed through `HELMO_BINDING`
+and sets `HELMO_REQUIRE_BINDING=1`;
+the deed binds the installation name to both stores, the release selection and
+Runtime control identity before any store is opened. To migrate an existing
+single installation, first create and verify that deed from its current homes,
+stores, selection and service identity, then repoint its launchers. Do not turn
+on the requirement first: a missing or label-only binding is intentionally a
+hard refusal, not a request to rediscover `~/.helmo`.
+
+The deed is JSON with `version: 1`, a stable `id`, `installation`, `release`
+(`null` when unpinned), absolute `work.home`/`work.store`, absolute
+`roadmap.home`/`roadmap.store`, and `control.home`/`control.service`. Every
+agent entry point receives the absolute deed path as `HELMO_BINDING` plus
+`HELMO_REQUIRE_BINDING=1`. The front command, old binary aliases, unified and
+per-area MCP servers, app/views, Runtime commands, service launcher, loop
+sessions and their subprocesses all carry and check the same deed. A copied
+command or endpoint whose ambient home, store, name, release or control
+identity disagrees refuses before returning records or acting.
+
+This boundary prevents a correctly launched agent from being accidentally
+misdirected by its working directory, `HOME`, `PATH`, a copied command, or an
+inherited environment. It is not filesystem isolation from another process
+running as the same operating-system user: such a process can edit or repoint
+`HELMO_BINDING`, or open the SQLite stores directly. Use separate OS identities
+or another isolation boundary when that is the threat being addressed.
+
 ## What an installation is
 
 An installation is one identity that binds five things together: the **code**

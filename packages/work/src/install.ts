@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { formatInstallationLine, installationFields, InstallationError, namesResolvedInstallation, requestedInstallation, requireResolvedInstallation, resolveInstallation, type Installation, type InstallationConfig } from '@helmo/core';
 import { selectedRelease as selectedCoreRelease } from '@helmo/core/release';
 import { runningLine, runningRef } from './build.js';
-const config: InstallationConfig = { homeKey: 'HELMO_HOME', dbKey: 'HELMO_DB', defaultHome: '.helmo', defaultDb: 'helmo.db', derivedPrefix: 'dev.helmo', homePattern: /^\.helmo([-_.]|$)/, stripPattern: /^\.?helmo(?=[-_.]|$)/, release: (env) => selectedRelease('helmo', env) };
+const config: InstallationConfig = { homeKey: 'HELMO_HOME', dbKey: 'HELMO_DB', defaultHome: '.helmo', defaultDb: 'helmo.db', derivedPrefix: 'dev.helmo', homePattern: /^\.helmo([-_.]|$)/, stripPattern: /^\.?helmo(?=[-_.]|$)/, release: (env) => selectedRelease('helmo', env), bindingProduct: 'work' };
 export { InstallationError, requestedInstallation }; export type { Installation };
 export const installation = (env: NodeJS.ProcessEnv = process.env) => resolveInstallation(config, env);
 export const requireInstallation = (env: NodeJS.ProcessEnv = process.env, report?: (message: string) => never, requested?: string) => requireResolvedInstallation(config, env, report, requested);

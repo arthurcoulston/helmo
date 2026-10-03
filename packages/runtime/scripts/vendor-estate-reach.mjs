@@ -6,16 +6,11 @@
    and for the same reason: rev is published standalone and holds no import of
    a sibling repo, so what it needs from the estate it copies in.
 
-   WHAT IS COPIED, AND WHY IT IS NOT AN ADDRESS. A surface has two true
-   addresses — `url`, the product on its own port, correct at the desk and dead
-   from anywhere else; and the same-origin path the estate shell composes it
-   at, correct through the Mac's LAN address and through the tunnel alike. The
-   registry decides the prefix once and no service hand-keeps an address of its
-   own (services.json, "_reach"), so rev vendors the PAIR for every navigable
-   surface and picks between them in the browser, where the reader's origin is
-   the only thing that can answer. Rev's own cross-link to Helm was
-   `http://localhost:4400` until this ticket: perfect at the desk, dead on the
-   phone the composed view was built for.
+   WHAT IS COPIED. A composed surface has two true addresses — `url`, the
+   product on its own port, and the same-origin path the estate shell composes
+   it at. A desk-only surface has one loopback address, repeated in both fields
+   so the browser rewrite is a no-op. The registry decides both cases and no
+   service hand-keeps an address of its own (services.json, "_reach").
 
    The copy is derived, not verbatim — a registry entry carries a plist path, a
    log path and an expectation rev has no business holding. What it must not do
@@ -49,7 +44,8 @@ export const SOURCE =
 export const VENDORED = join(ROOT, 'src', 'estate-reach.generated.ts');
 
 /** The reach table for a parsed registry: every navigable surface's two
- *  addresses, keyed by id.
+ *  addresses, keyed by id. A desk-only surface has one true loopback address,
+ *  so both fields carry it and the browser rewrite is a no-op.
  *
  *  The path rule is the registry's, restated in the registry's own terms: the
  *  declared prefix plus the id, unless the service states a `reach` of its own
@@ -66,12 +62,12 @@ export function table(reg) {
         'see "_reach" in services.json; without it every link here would be a localhost ' +
         'address, which is exactly the defect this file exists to end',
     );
-  const surfaces = (reg.services ?? []).filter((s) => s.nav && s.url);
+  const surfaces = (reg.services ?? []).filter((s) => (s.nav || s.desk_only) && s.url);
   // An empty table compiles, renders, and links nowhere — the silent shape.
   if (!surfaces.length)
-    throw new Error('the estate registry has no navigable surface with a `url` — nothing to vendor');
+    throw new Error('the estate registry has no navigable surface or desk-only surface with a `url` — nothing to vendor');
   return Object.fromEntries(
-    surfaces.map((s) => [s.id, { url: s.url, path: s.reach ?? `${prefix}${s.id}/` }]),
+    surfaces.map((s) => [s.id, { url: s.url, path: s.desk_only ? s.url : s.reach ?? `${prefix}${s.id}/` }]),
   );
 }
 
@@ -83,11 +79,10 @@ export function render(json) {
     '// Refresh: node scripts/vendor-estate-reach.mjs',
     '// Drift is a test failure: npm test (skipped, loudly, with no crew checkout)',
     '//',
-    '// Where each estate surface is reached: `url` is the product on its own',
-    '// port, right at the desk and dead from anywhere else; `path` is the',
-    '// same-origin path the estate shell composes it at (R-11). Which one a',
-    '// link should use is a property of the reader’s origin, so it is asked',
-    '// in the browser — see src/reach.ts.',
+    '// Where each estate surface is reached: composed surfaces carry a desk',
+    '// `url` and shell `path`; desk-only surfaces repeat their loopback URL.',
+    '// Which address a link should use is decided in the browser — see',
+    '// src/reach.ts.',
     '',
     'export const ESTATE_REACH: Record<string, { url: string; path: string }> = {',
     ...entries.map(([id, r]) => `  ${JSON.stringify(id)}: { url: ${JSON.stringify(r.url)}, path: ${JSON.stringify(r.path)} },`),

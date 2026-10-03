@@ -14,6 +14,14 @@ the two-release window in [VERSIONING.md](VERSIONING.md); if more than one is
 set, every value must agree. Newly installed services write only the canonical
 key.
 
+The old binary names and per-area MCP/view surfaces participate in the same
+installation binding as their replacements. They accept `HELMO_BINDING` and
+`HELMO_REQUIRE_BINDING=1` unchanged and refuse a foreign deed before opening a
+store or returning data; compatibility is not an unbound fallback.
+Entry points from v0.7.0 and earlier predate the deed and ignore these keys, so
+rolling back that far also rolls back this boundary until the installation is
+upgraded again.
+
 ## The one command
 
 ```

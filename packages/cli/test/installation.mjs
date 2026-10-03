@@ -7,7 +7,7 @@
 // test file: a second, slightly different scrubber is how one file quietly
 // stops being isolated.
 import { createServer } from 'node:http';
-import { copyFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -37,6 +37,26 @@ export function revHome(t) {
   const home = fixture(t);
   copyFileSync(join(ROOT, 'packages', 'runtime', 'examples', 'roster.toml'), join(home, 'roster.toml'));
   return home;
+}
+
+export function boundInstallation(t, label = 'fixture-bound') {
+  const root = fixture(t);
+  const work = join(root, 'work');
+  const roadmap = join(root, 'roadmap');
+  const runtime = join(root, 'runtime');
+  const binding = join(root, 'installation.json');
+  // The Runtime fixture needs its roster in the control home, not the shared
+  // parent used to make all owned paths visible in one test failure.
+  mkdirSync(work); mkdirSync(roadmap); mkdirSync(runtime);
+  copyFileSync(join(ROOT, 'packages', 'runtime', 'examples', 'roster.toml'), join(runtime, 'roster.toml'));
+  writeFileSync(binding, JSON.stringify({ version: 1, id: label, installation: label, release: null,
+    work: { home: work, store: join(work, 'helmo.db') },
+    roadmap: { home: roadmap, store: join(roadmap, 'roadmap.db') },
+    control: { home: runtime, service: label } }));
+  return { root, work, roadmap, runtime, binding, label, env: {
+    HELMO_BINDING: binding, HELMO_REQUIRE_BINDING: '1', HELMO_INSTALLATION: label,
+    HELMO_HOME: work, ROADMAP_HOME: roadmap, REV_HOME: runtime,
+  } };
 }
 
 /** A port nothing holds, found by binding and releasing it. Good enough for a

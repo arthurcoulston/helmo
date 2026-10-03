@@ -114,7 +114,7 @@ describe('view idle reasons (H-954)', () => {
     for (const reason of Object.values(reasons)) expect(html).toContain(reason);
     expect(html).toContain('SEAT_HELD');
     expect(html).toContain("another live session ('desk') holds H-891");
-    expect(html).toContain('href="http://localhost:4420/" data-reach="/s/helmo-view/"');
+    expect(html).toContain('href="http://localhost:4420/" data-reach="http://localhost:4400/work"');
   });
 
   it('presents all three bounded reasons in /health.json', async () => {

@@ -41,6 +41,16 @@ Nothing below changes a default. If you run one installation and are happy
 running the code your checkouts hold, you are done — read on when you want a
 second installation, a pinned version, or a removal you can trust.
 
+The agent-launch migration path does not retain that compatibility default. A
+bound launcher carries a versioned installation deed through `HELMO_BINDING`
+and sets `HELMO_REQUIRE_BINDING=1`;
+the deed binds the installation name to both stores, the release selection and
+Runtime control identity before any store is opened. To migrate an existing
+single installation, first create and verify that deed from its current homes,
+stores, selection and service identity, then repoint its launchers. Do not turn
+on the requirement first: a missing or label-only binding is intentionally a
+hard refusal, not a request to rediscover `~/.helmo`.
+
 ## What an installation is
 
 An installation is one identity that binds five things together: the **code**

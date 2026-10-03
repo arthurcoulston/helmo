@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 
@@ -7,7 +8,9 @@ import { basename, dirname, join, resolve, sep } from 'node:path';
 export const IDENTITY_KEYS = ['HELMO_INSTALLATION', 'ROADMAP_LABEL', 'HELMO_LABEL', 'REV_LABEL'] as const;
 export type IdentitySource = typeof IDENTITY_KEYS[number] | 'derived';
 export interface Installation { label: string; home: string; db: string; source: IdentitySource; release: string | null }
-export interface InstallationConfig { homeKey: string; dbKey: string; defaultHome: string; defaultDb: string; derivedPrefix: 'dev.helmo' | 'dev.roadmap'; homePattern: RegExp; stripPattern: RegExp; release(env: NodeJS.ProcessEnv): string | null }
+export type InstallationProduct = 'work' | 'roadmap';
+export interface InstallationBinding { version: 1; id: string; installation: string; release: string | null; work: { home: string; store: string }; roadmap: { home: string; store: string }; control: { home: string; service: string } }
+export interface InstallationConfig { homeKey: string; dbKey: string; defaultHome: string; defaultDb: string; derivedPrefix: 'dev.helmo' | 'dev.roadmap'; homePattern: RegExp; stripPattern: RegExp; release(env: NodeJS.ProcessEnv): string | null; bindingProduct?: InstallationProduct }
 export class InstallationError extends Error {}
 
 export function explicitInstallationIdentity(env: NodeJS.ProcessEnv = process.env): { label: string; source: IdentitySource } | null {
@@ -25,8 +28,40 @@ export function resolveInstallation(c: InstallationConfig, env: NodeJS.ProcessEn
   return { label: identity?.label ?? derivedLabel(c, home), home, db, source: identity?.source ?? 'derived', release: c.release(env) };
 }
 export function requireResolvedInstallation(c: InstallationConfig, env: NodeJS.ProcessEnv = process.env, report: (message: string) => never = plainExit, requested?: string): Installation {
-  try { const i = resolveInstallation(c, env); const problem = mismatch(c, i, requested); if (problem) throw new InstallationError(problem); return i; }
+  try { const i = resolveInstallation(c, env); const problem = mismatch(c, i, requested); if (problem) throw new InstallationError(problem); requireInstallationBinding(c, i, env); return i; }
   catch (e) { return report(e instanceof Error ? e.message : String(e)); }
+}
+
+/** Validate the caller's installation deed before a caller is allowed to open
+ * a store. HELMO_BINDING is deliberately a file, not a label: one document
+ * binds the name to both stores, the release selection and control identity. */
+export function requireInstallationBinding(c: InstallationConfig, i: Installation, env: NodeJS.ProcessEnv = process.env): InstallationBinding | null {
+  const file = env.HELMO_BINDING?.trim();
+  const required = env.HELMO_REQUIRE_BINDING?.trim() === '1';
+  if (!file) {
+    if (required) throw new InstallationError('HELMO_REQUIRE_BINDING=1 but HELMO_BINDING is missing. Nothing was opened or written. Run the installation setup/migration and launch through its bound entry point.');
+    return null;
+  }
+  if (!c.bindingProduct) throw new InstallationError('This entry point does not declare which installation store it owns. Nothing was opened or written.');
+  let value: unknown;
+  try { value = JSON.parse(readFileSync(resolve(file), 'utf8')); }
+  catch (error) { throw new InstallationError(`Cannot read installation binding ${resolve(file)}: ${error instanceof Error ? error.message : String(error)}. Nothing was opened or written.`); }
+  const b = value as Partial<InstallationBinding>;
+  const endpoint = b[c.bindingProduct] as { home?: unknown; store?: unknown } | undefined;
+  if (b.version !== 1 || !text(b.id) || !text(b.installation) || !endpoint || !text(endpoint.home) || !text(endpoint.store)
+    || !b.control || !text(b.control.home) || !text(b.control.service) || !(b.release === null || text(b.release))) {
+    throw new InstallationError(`Installation binding ${resolve(file)} is incomplete or unsupported. Nothing was opened or written.`);
+  }
+  const conflicts = [
+    b.installation === i.label ? null : `name ${JSON.stringify(b.installation)} != ${JSON.stringify(i.label)}`,
+    resolve(endpoint.home as string) === i.home ? null : `home ${resolve(endpoint.home as string)} != ${i.home}`,
+    resolve(endpoint.store as string) === i.db ? null : `store ${resolve(endpoint.store as string)} != ${i.db}`,
+    (b.release ?? null) === i.release ? null : `release ${JSON.stringify(b.release)} != ${JSON.stringify(i.release)}`,
+    env.REV_HOME?.trim() && resolve(b.control!.home) !== resolve(env.REV_HOME) ? `control home ${resolve(b.control!.home)} != ${resolve(env.REV_HOME)}` : null,
+    b.control!.service === b.installation ? null : `service ${JSON.stringify(b.control!.service)} != ${JSON.stringify(b.installation)}`,
+  ].filter(Boolean);
+  if (conflicts.length) throw new InstallationError(`Installation binding ${resolve(file)} is stale or foreign: ${conflicts.join('; ')}. Nothing was opened or written.`);
+  return b as InstallationBinding;
 }
 export function namesResolvedInstallation(c: InstallationConfig, i: Installation, want: string): boolean {
   if (!i.home || !i.db) return want === i.label;
@@ -41,4 +76,5 @@ function derivedLabel(c: InstallationConfig, home: string): string { const suffi
 function labelSuffix(c: InstallationConfig, name: string): string { return name.replace(c.stripPattern, '').replace(/^[-_.]+/, '').replace(/[^A-Za-z0-9-]+/g, '-').replace(/^-+|-+$/g, ''); }
 function accountHome(): string { try { return resolve(userInfo().homedir); } catch { return resolve(homedir()); } }
 function within(home: string, path: string): boolean { return path === home || path.startsWith(home.endsWith(sep) ? home : home + sep); }
+function text(value: unknown): value is string { return typeof value === 'string' && value.trim().length > 0; }
 function plainExit(message: string): never { console.error(message); process.exit(1); }

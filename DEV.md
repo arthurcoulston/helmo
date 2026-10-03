@@ -80,6 +80,13 @@ leaves the `/health.json` compatibility surface unchanged. One documented
 precedence replaced three lists that differed by one entry, which is the
 measured cause of an identity incident (H-2424).
 
+`HELMO_BINDING` names a versioned installation deed that binds one identity to
+Work and Roadmap homes/stores, the selected release, and Runtime's control home
+and service identity. A bound launcher sets `HELMO_REQUIRE_BINDING=1`; missing,
+incomplete, stale, or foreign deeds then refuse in core before a Store exists.
+Unbound operator use remains only as the documented single-install migration
+path, not as an agent-launch fallback.
+
 Every Helmo-family surface accepts canonical `HELMO_INSTALLATION`, followed by
 the legacy `ROADMAP_LABEL`, `HELMO_LABEL`, and `REV_LABEL`. Precedence picks the key when one is set; two accepted keys
 carrying distinct values refuse at startup rather than guessing. Adding a

@@ -71,6 +71,13 @@ test is a different thing: report it and stop.
 Each agent's MCP config launches the server with that agent's identity. The
 stores reject writes that carry no identity.
 
+Before connecting an agent, create the installation deed described in
+[INSTALLATIONS.md](INSTALLATIONS.md), using absolute paths and the canonical
+installation name. Pass its absolute path as `HELMO_BINDING` and pass
+`HELMO_REQUIRE_BINDING=1` to every MCP registration below. A label by itself is
+not a binding; the required gate intentionally refuses rather than falling
+back to the account's default store.
+
 | Area | Server | Identity variable |
 | --- | --- | --- |
 | Work | `<helmo-path>/packages/work/dist/server.js` | `HELMO_ACTOR` |
@@ -81,9 +88,11 @@ stores reject writes that carry no identity.
 ```bash
 claude mcp add --scope user helmo \
   -e 'HELMO_ACTOR={"name":"<agent-name>","kind":"agent","model":"<model-id>","version":"<harness-version>"}' \
+  -e 'HELMO_BINDING=<absolute-path-to-installation.json>' -e HELMO_REQUIRE_BINDING=1 \
   -- node <helmo-path>/packages/work/dist/server.js
 claude mcp add --scope user roadmap \
   -e 'HELMO_ACTOR={"name":"<agent-name>","kind":"agent","model":"<model-id>","version":"<harness-version>"}' \
+  -e 'HELMO_BINDING=<absolute-path-to-installation.json>' -e HELMO_REQUIRE_BINDING=1 \
   -- node <helmo-path>/packages/roadmap/dist/server.js
 ```
 

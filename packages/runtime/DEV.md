@@ -354,7 +354,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   every further attempt. A manual `rev resume` and any
   unrelated unstructured block remove stale structured-release records. **No
   percent is ever converted to tokens or dollars**, in either direction.
-- `shim.ts` — the runtime adapter (claude / codex / mock). Owns non-interactive
+- `shim.ts` — the runtime adapter (claude / codex / mock). It carries the
+  installation deed and required-binding flag into both the agent process and
+  its generated Helmo MCP configuration, so a session cannot acquire a store
+  from user scope, cwd or a copied command. Owns non-interactive
   flags, constitution injection (fail-closed), `cleanEnv()` (strips parent
   CLAUDE/ANTHROPIC/CODEX env — the auth-leak fix; don't weaken it) and
   `sessionEnv()` over it (the seat's git committer identity, H-787 — the
@@ -522,7 +525,9 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   iteration held it to 02:28:54Z, fleet back 160ms later.
 - `service.ts` — reboot resilience: launchd plist (KeepAlive on crash only —
   a drain exits 0 and stays down) / systemd user unit. Units embed
-  install-time PATH and REV_HOME because service managers strip env.
+  install-time PATH and REV_HOME because service managers strip env. Bound
+  definitions also carry `HELMO_BINDING`; the stable launcher sets
+  `HELMO_REQUIRE_BINDING=1` before handing over to a selected release.
   **The service identity is the resolved Rev home** (`serviceLabel()`,
   `systemdUnitName()`, H-2210 then H-2452). It was the constant `dev.rev`, and
   that one string is also the plist filename and the bootout/kickstart address —
@@ -629,6 +634,9 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   at startup; `compare()` says whether they are still the same bytes. See "What
   built `dist`, and what is RUNNING it" below — the two are never one claim.
 - `install.ts` — **which installation is this command about?** (H-2473). The
+  shared core deed is checked before any Runtime command reads roster,
+  control, release or service state. Repair commands skip release coherence,
+  but never the deed's name/control/service fence.
   identity above answers what an installation is called; this answers the
   question every command was assuming. `target()` returns the label, the
   resolved home, and a conflict if there is one; `targetLine()` is the line

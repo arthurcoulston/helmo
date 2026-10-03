@@ -23,6 +23,16 @@ describe('service unit generation', () => {
     // path; detached sessions survive if their loop drivers are swept.
     expect(p).toContain('<key>ExitTimeOut</key><integer>60</integer>');
   });
+  it('launchd and systemd carry a bound installation into the stable launcher', () => {
+    const binding = '/srv/fixture/installation.json';
+    const p = launchdPlist('/node', '/launch.mjs', { label: 'fixture-a', home: '/srv/fixture/rev', path: '/bin', logPath: '/log', binding });
+    const u = systemdUnit('/node', '/launch.mjs', { label: 'fixture-a', home: '/srv/fixture/rev', path: '/bin', binding });
+    for (const text of [p, u]) {
+      expect(text).toContain(`HELMO_BINDING`);
+      expect(text).toContain(binding);
+      expect(text).toContain('HELMO_REQUIRE_BINDING');
+    }
+  });
   it('launchd: XML-escapes paths', () => {
     const p = launchdPlist('/node', '/a&b/cli.js', { label: 'dev.rev.a&b', home: '/h', path: '/p', logPath: '/l' });
     expect(p).toContain('/a&amp;b/cli.js');
@@ -418,6 +428,18 @@ describe('a pinned installation starts through its own launcher', () => {
     const out = JSON.parse(start(['status'], { INSTALLATION_RELEASE: file }).stdout);
     expect(out.argv[1]).not.toBe(launcherPath());
     expect(out.release).toBe(file);
+  });
+
+  it('turns a carried deed into a fail-closed binding before handing over', () => {
+    release('current', 'legacy', 'console.log(JSON.stringify({ binding: process.env.HELMO_BINDING, required: process.env.HELMO_REQUIRE_BINDING }));');
+    const file = select({ release: 'current', directory: join(root, 'release', 'current') });
+    const binding = join(root, 'installation.json');
+    writeFileSync(binding, JSON.stringify({ version: 1, id: 'pinned', installation: 'dev.rev.pinned', release: 'current',
+      work: { home: join(root, 'work'), store: join(root, 'work', 'helmo.db') },
+      roadmap: { home: join(root, 'roadmap'), store: join(root, 'roadmap', 'roadmap.db') },
+      control: { home: process.env['REV_HOME'], service: 'dev.rev.pinned' } }));
+    const out = JSON.parse(start(['status'], { INSTALLATION_RELEASE: file, HELMO_BINDING: binding }).stdout);
+    expect(out).toEqual({ binding, required: '1' });
   });
 
   // A selection nobody can read is a real fault and still refuses — but as one

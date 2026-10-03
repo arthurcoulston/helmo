@@ -32,9 +32,15 @@ describe('fail-closed installation binding', () => {
     const f = fixture();
     const good = { HELMO_REQUIRE_BINDING: '1', HELMO_BINDING: f.binding, HELMO_INSTALLATION: 'fixture-a', HELMO_HOME: f.home, INSTALLATION_RELEASE: join(f.root, 'release.json') };
     expect(requireResolvedInstallation(config, good).db).toBe(f.store);
-    expect(() => requireResolvedInstallation(config, { ...good, HELMO_HOME: join(f.root, 'foreign') }, throwReport)).toThrow(/stale or foreign.*home/);
+    expect(() => requireResolvedInstallation(config, { ...good, HELMO_HOME: join(f.root, 'foreign') }, throwReport)).toThrow(/name different installations|stale or foreign.*home/);
     expect(existsSync(f.store)).toBe(false);
     expect(existsSync(join(f.root, 'foreign', 'helmo.db'))).toBe(false);
+  });
+
+  it('uses the deed for omitted identity and endpoint values, without treating it as a redirect', () => {
+    const f = fixture();
+    const resolved = requireResolvedInstallation(config, { HELMO_REQUIRE_BINDING: '1', HELMO_BINDING: f.binding, INSTALLATION_RELEASE: join(f.root, 'release.json') });
+    expect(resolved).toMatchObject({ label: 'fixture-a', home: f.home, db: f.store });
   });
 
   it('refuses incomplete bindings', () => {

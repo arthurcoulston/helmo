@@ -38,6 +38,10 @@ const requestedInstall = takeInstallFlag(rest);
 // Before the pinned-release check, so that a wrong name is answered as a wrong
 // name rather than masked by an unrelated incoherent-release error.
 if (requestedInstall !== undefined) assertInstallation([commandName, cmd, rest[0]].filter(Boolean).join(' '), requestedInstall);
+// A bound caller is checked even on the two release-repair families below.
+// `unchecked` keeps a broken selection repairable while still fencing name,
+// control home and service identity before any control state is touched.
+target('unchecked');
 // Validate a pinned release before even reading the roster. Every command,
 // including read-only surfaces and the supervisor, enters through this file.
 //

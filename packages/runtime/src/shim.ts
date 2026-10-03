@@ -42,6 +42,7 @@ export function sessionEnvOverrides(l: LoopConfig): Record<string, string> {
     GIT_COMMITTER_EMAIL: `${l.name}@crew.local`,
     REV_LOOP: l.name,
     REV_CLI: process.argv[1] ?? '',
+    ...installationEnv(),
   };
 }
 
@@ -129,9 +130,8 @@ export function spawnSession(
 // identity) plus any extra servers the loop declares. Each adapter serializes
 // this one record its CLI's way and keeps ambient user-scope servers out.
 export function mcpServers(g: GlobalConfig, l: LoopConfig, model: string, session?: string, generation?: string): Record<string, Record<string, unknown>> {
-  const helmEnv: Record<string, string> = { HELMO_ACTOR: JSON.stringify(loopActor(l, model, session, generation)) };
+  const helmEnv: Record<string, string> = { ...installationEnv(), HELMO_ACTOR: JSON.stringify(loopActor(l, model, session, generation)) };
   if (g.helmo_db) helmEnv['HELMO_DB'] = g.helmo_db;
-  if (process.env['INSTALLATION_RELEASE']) helmEnv['INSTALLATION_RELEASE'] = process.env['INSTALLATION_RELEASE'];
   const servers: Record<string, Record<string, unknown>> = {
     helmo: { command: 'node', args: [g.helmo_mcp_server], env: helmEnv },
   };
@@ -139,6 +139,11 @@ export function mcpServers(g: GlobalConfig, l: LoopConfig, model: string, sessio
     Object.assign(servers, (JSON.parse(readFileSync(l.mcp_extra, 'utf8')) as { mcpServers?: Record<string, Record<string, unknown>> }).mcpServers ?? {});
   }
   return servers;
+}
+
+function installationEnv(): Record<string, string> {
+  const keys = ['HELMO_BINDING', 'HELMO_REQUIRE_BINDING', 'HELMO_INSTALLATION', 'HELMO_HOME', 'HELMO_DB', 'ROADMAP_HOME', 'ROADMAP_DB', 'REV_HOME', 'INSTALLATION_RELEASE'] as const;
+  return Object.fromEntries(keys.flatMap((key) => process.env[key] ? [[key, process.env[key]!]] : []));
 }
 
 function writeMcpConfig(g: GlobalConfig, l: LoopConfig, dir: string, model: string, generation?: string): string {

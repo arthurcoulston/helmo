@@ -84,6 +84,10 @@ measured cause of an identity incident (H-2424).
 Work and Roadmap homes/stores, the selected release, and Runtime's control home
 and service identity. A bound launcher sets `HELMO_REQUIRE_BINDING=1`; missing,
 incomplete, stale, or foreign deeds then refuse in core before a Store exists.
+Runtime checks the same deed before roster/control/release/service work and
+propagates it through service definitions, loop sessions, MCP configuration and
+Helmo subprocesses. Compatibility aliases import those gated entries rather
+than reconstructing installation state.
 Unbound operator use remains only as the documented single-install migration
 path, not as an agent-launch fallback.
 

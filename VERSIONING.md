@@ -20,6 +20,12 @@ or changing write or read meaning is breaking even when the wire shape remains
 valid. Everything outside this list is internal and does not itself determine
 the version.
 
+Version 0.8 adds the optional `HELMO_BINDING` and
+`HELMO_REQUIRE_BINDING` configuration keys as a backward-compatible minor
+surface. Unbound single-install operator use remains accepted; an installation
+that opts into the required gate deliberately narrows its own launches to the
+exact versioned deed it names.
+
 During an upgrade, the released consolidated version and its immediately
 preceding consolidated version are supported together for the documented
 two-release compatibility window. Compatibility does not authorize a store

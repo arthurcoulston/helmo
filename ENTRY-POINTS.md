@@ -38,6 +38,15 @@ stderr what replaces it and when it stops. The dates are in
 The one thing the app adds to review is not a path but a pair of variables,
 and it is the first section below.
 
+For an agent-bound installation, every row below also carries the same
+absolute `HELMO_BINDING` path and `HELMO_REQUIRE_BINDING=1`. Do not rebuild
+that pair independently in an MCP file, wrapper, service or shell alias: the
+deed is the installation boundary, and a surface aimed at another home refuses
+instead of adopting the command's cwd, PATH or defaults. Runtime propagates
+the pair into loop sessions, their Helmo MCP server and every Helmo CLI
+subprocess; the stable service launcher turns a carried deed into the required
+gate before loading the selected release.
+
 ## One installation needs nothing here
 
 If you run one installation of each product, from one checkout, with no release

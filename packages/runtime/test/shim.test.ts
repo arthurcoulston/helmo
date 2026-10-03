@@ -371,6 +371,21 @@ describe('sessionSpec (H-1152)', () => {
     expect(spec.model).toBe('claude-fable-5-1');
   });
 
+  it('carries the installation deed into both the session and its MCP server', () => {
+    const saved = process.env['HELMO_BINDING'];
+    const required = process.env['HELMO_REQUIRE_BINDING'];
+    process.env['HELMO_BINDING'] = '/tmp/fixture-installation.json';
+    process.env['HELMO_REQUIRE_BINDING'] = '1';
+    try {
+      const spec = sessionSpec(g, loop);
+      expect(spec.env).toMatchObject({ HELMO_BINDING: '/tmp/fixture-installation.json', HELMO_REQUIRE_BINDING: '1' });
+      expect(spec.mcp_servers['helmo']!['env']).toMatchObject({ HELMO_BINDING: '/tmp/fixture-installation.json', HELMO_REQUIRE_BINDING: '1' });
+    } finally {
+      if (saved === undefined) delete process.env['HELMO_BINDING']; else process.env['HELMO_BINDING'] = saved;
+      if (required === undefined) delete process.env['HELMO_REQUIRE_BINDING']; else process.env['HELMO_REQUIRE_BINDING'] = required;
+    }
+  });
+
   // The stamp is how seatDecide tells a live loop's own hold from a foreign
   // one (H-558). A meeting wearing `rev:mason` would stand the mason loop down
   // against itself, so the override has to reach the actor the server sees —

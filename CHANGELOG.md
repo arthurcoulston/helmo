@@ -23,6 +23,12 @@ longer.
   Work, Roadmap, and Runtime. Existing `HELMO_LABEL`, `ROADMAP_LABEL`, and
   `REV_LABEL` settings remain accepted during the documented two-release
   window, and conflicting values still refuse instead of choosing a target.
+- **Agent sessions are bound to one installation deed.** `HELMO_BINDING` plus
+  `HELMO_REQUIRE_BINDING=1` carries one name, both stores, the selected release
+  and Runtime control identity through the front command, compatibility
+  aliases, MCP, app/view, service launcher, loop sessions and subprocesses.
+  Missing, stale or foreign targets refuse before records or controls are
+  touched; unbound single-install operator use remains compatible.
 
 ## v0.7.0 — 2026-10-02
 

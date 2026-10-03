@@ -51,6 +51,16 @@ stores, selection and service identity, then repoint its launchers. Do not turn
 on the requirement first: a missing or label-only binding is intentionally a
 hard refusal, not a request to rediscover `~/.helmo`.
 
+The deed is JSON with `version: 1`, a stable `id`, `installation`, `release`
+(`null` when unpinned), absolute `work.home`/`work.store`, absolute
+`roadmap.home`/`roadmap.store`, and `control.home`/`control.service`. Every
+agent entry point receives the absolute deed path as `HELMO_BINDING` plus
+`HELMO_REQUIRE_BINDING=1`. The front command, old binary aliases, unified and
+per-area MCP servers, app/views, Runtime commands, service launcher, loop
+sessions and their subprocesses all carry and check the same deed. A copied
+command or endpoint whose ambient home, store, name, release or control
+identity disagrees refuses before returning records or acting.
+
 ## What an installation is
 
 An installation is one identity that binds five things together: the **code**

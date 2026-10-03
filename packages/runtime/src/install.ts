@@ -28,6 +28,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { selectedRelease as selectedCoreRelease } from '@helmo/core/release';
+import { requireControlInstallationBinding } from '@helmo/core';
 import { revHome } from './config.js';
 import { definedHome, serviceFile, serviceLabel } from './service.js';
 
@@ -50,12 +51,14 @@ export interface Target {
  */
 export function target(release: 'verify' | 'unchecked' = 'verify'): Target {
   const home = resolve(revHome());
-  return {
+  const value = {
     label: serviceLabel(),
     home,
     conflict: inheritedConflict(home),
     release: release === 'verify' ? selectedRelease('rev') : null,
   };
+  requireControlInstallationBinding({ ...value, service: value.label }, process.env, release === 'verify');
+  return value;
 }
 
 /**

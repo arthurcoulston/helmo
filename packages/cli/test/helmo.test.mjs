@@ -8,9 +8,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { BIN, ROOT, env, fixture, revHome } from './installation.mjs';
+import { BIN, ROOT, boundInstallation, env, fixture, revHome } from './installation.mjs';
 
 const VERSION = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
 // Two actors, because Helmo refuses a seat the claim of a ticket it filed
@@ -103,6 +103,32 @@ test('the new name says nothing about deprecation', (t) => {
   const r = run('helmo', ['work', 'list'], { HELMO_HOME: home, HELMO_ACTOR: ACTOR });
   assert.equal(r.status, 0);
   assert.deepEqual(deprecationLines(r.stderr), []);
+});
+
+test('a bound caller works through the front command and legacy CLI, while a copied command aimed elsewhere refuses before opening a store', (t) => {
+  const a = boundInstallation(t, 'fixture-a');
+  const deedOnly = run('helmo', ['work', 'list'], { HELMO_BINDING: a.binding, HELMO_REQUIRE_BINDING: '1', HELMO_ACTOR: ACTOR });
+  assert.equal(deedOnly.status, 0, deedOnly.stderr);
+  assert.equal(JSON.parse(deedOnly.stdout).installation.label, a.label);
+  for (const bin of ['helmo', 'helmo-cli']) {
+    const args = bin === 'helmo' ? ['work', 'list'] : ['list'];
+    const good = run(bin, args, { ...a.env, HELMO_ACTOR: ACTOR });
+    assert.equal(good.status, 0, good.stderr);
+    const foreign = join(a.root, `foreign-${bin}`);
+    const wrong = run(bin, args, { ...a.env, HELMO_HOME: foreign, HELMO_ACTOR: ACTOR });
+    assert.notEqual(wrong.status, 0);
+    assert.match(wrong.stderr, /name different installations|binding .* stale or foreign.*home/s);
+    assert.equal(existsSync(join(foreign, 'helmo.db')), false);
+  }
+});
+
+test('runtime control and release surfaces refuse a foreign control home under the same binding', (t) => {
+  const a = boundInstallation(t, 'fixture-runtime-a');
+  for (const args of [['run', 'status'], ['release']]) {
+    const wrong = run('helmo', args, { ...a.env, REV_HOME: revHome(t) });
+    assert.notEqual(wrong.status, 0, `${args.join(' ')} unexpectedly ran`);
+    assert.match(wrong.stderr, /binding .* stale or foreign.*control home/s);
+  }
 });
 
 test('helmo-view names its replacement and its own shorter window', (t) => {

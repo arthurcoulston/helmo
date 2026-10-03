@@ -2982,3 +2982,41 @@ describe('a sitting names the agent to sit with (R-42 I13)', () => {
     expect(() => create(s, { needs_human: 'do it' })).toThrow(/what the sitting needs/);
   });
 });
+
+describe('blocking disclosed to list callers (H-621)', () => {
+  it('answers a whole page of ids with their open blockers, sorted, and omits unblocked ones', () => {
+    const s = freshStore();
+    const first = create(s);
+    const second = create(s);
+    const waiting = create(s, { deps: [{ to: second.id, type: 'blocks' as const }] });
+    s.linkTickets(builder, waiting.id, first.id, 'blocks', 'add');
+    const free = create(s);
+    const blockers = s.blockersFor([waiting.id, free.id]);
+    expect(blockers.get(waiting.id)).toEqual([first.id, second.id].sort());
+    expect(blockers.has(free.id)).toBe(false);
+  });
+
+  it('stops naming a blocker once it closes, as the ready queue does', () => {
+    const s = freshStore();
+    const blocker = create(s);
+    const waiting = create(s, { deps: [{ to: blocker.id, type: 'blocks' as const }] });
+    expect(s.blockersFor([waiting.id]).get(waiting.id)).toEqual([blocker.id]);
+    s.updateTicket(builder, { ticket_id: blocker.id, status: 'done', note: 'landed', evidence: [{ kind: 'commit', ref: 'helmo@abc1234' }] });
+    expect(s.blockersFor([waiting.id]).has(waiting.id)).toBe(false);
+    expect(s.isBlocked(waiting.id)).toBe(false);
+  });
+
+  it('asks nothing of the database for an empty page', () => {
+    const s = freshStore();
+    expect(s.blockersFor([]).size).toBe(0);
+  });
+
+  it('keeps the ready queue withholding blocked work it now describes elsewhere', () => {
+    const s = freshStore();
+    const blocker = create(s, { assignee: 'reviewer-loop' });
+    const waiting = create(s, { assignee: 'builder-loop', deps: [{ to: blocker.id, type: 'blocks' as const }] });
+    triage(s, waiting.id);
+    expect(s.listTickets({ ready: true, caller: 'builder-loop' }).map((t) => t.id)).not.toContain(waiting.id);
+    expect(s.listTickets({ assignee: 'builder-loop' }).map((t) => t.id)).toContain(waiting.id);
+  });
+});

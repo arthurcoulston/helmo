@@ -52,7 +52,13 @@ function refusal(installation: string | undefined, e: unknown): { content: { typ
   return { content: [{ type: 'text', text: JSON.stringify({ error: msg, ...(installation ? { installation } : {}) }) }], isError: true };
 }
 
-function compact(t: Ticket) {
+// `blockedBy` is passed in rather than read off the ticket because the store
+// answers it for a whole page in one query (H-621): a dependency-blocked row
+// used to be the one "you cannot start this" condition a list caller could not
+// see, so the assignee read every loop makes first looked identical for work it
+// could take and work it could only re-read. The ids, not a boolean — the row
+// has to say WHAT to go fix.
+function compact(t: Ticket, blockedBy: string[] = []) {
   return {
     id: t.id, title: t.title, status: t.status, priority: t.priority, workstream: t.workstream,
     type: t.type, assignee: t.assignee, blast_radius: t.blast_radius, updated_at: t.updated_at,
@@ -63,6 +69,7 @@ function compact(t: Ticket) {
     ...(t.needs_human && (!t.release_handoff || t.release_handoff.current) ? { needs_human: t.sitting ?? true } : {}),
     ...(t.release_handoff ? { release_handoff: t.release_handoff } : {}),
     ...(t.capacity_hold ? { capacity_hold: t.capacity_hold } : {}),
+    ...(blockedBy.length ? { blocked_by: blockedBy } : {}),
   };
 }
 
@@ -176,7 +183,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
         `Query tickets. Key filters: ready: true (open tickets with no open blockers that are unassigned or reserved for you — use this to find work you can start), status, workstream, assignee, type, priority_max. Returns compact rows sorted live work first (done and cancelled last), then priority, then age; paginated (limit default 20, cursor = offset).\n\n` +
         `Start every loop iteration with {assignee: <your name>} — this returns both work you're mid-way through (in_progress) and work handed to you that you haven't started (open + reserved). Then {ready: true} for new work. Answered questions come back as unassigned open tickets — the ready queue surfaces them; you don't need to have been the agent who asked.\n\n` +
         `Triage duty: if you pass over a ready ticket BECAUSE it needs something only the human can supply (a missing input, an unrecorded location, a decision), do not route around it silently — file its question with helmo_return_to_human first (no claim needed), then take other work. Helmo cannot see that kind of blockage; only you can. A known-blocked ticket left quietly in the ready queue stalls until someone else rediscovers what you already knew.\n\n` +
-        `The response's 'workstreams' carry each stream's seat and budget where set: 'budget_usd'/'spent_usd'/'remaining_usd' disclose the stream's budget. budget_usd 0 is the explicit no-cap sentinel: remaining_usd is null and runnable work must remain runnable. A positive budget is a finite plan — front-load the highest-value work so stopping at any point is safe. What done means for a stream is never a field here: it is the seat's profile or the project body. Ready-queue triage rule: tickets you filed yourself are withheld from your own ready queue until a human, an orchestrator relaying the human, or another agent touches them; they appear under 'awaiting_triage' (and stay available to everyone else). Date-gated work appears under 'gated'. Work needing the operator present appears under 'with_human'. Deliberate spending holds appear under 'capacity_held': they stay visible but never enter the executable queue until a separate update releases the hold.`,
+        `The response's 'workstreams' carry each stream's seat and budget where set: 'budget_usd'/'spent_usd'/'remaining_usd' disclose the stream's budget. budget_usd 0 is the explicit no-cap sentinel: remaining_usd is null and runnable work must remain runnable. A positive budget is a finite plan — front-load the highest-value work so stopping at any point is safe. What done means for a stream is never a field here: it is the seat's profile or the project body. Ready-queue triage rule: tickets you filed yourself are withheld from your own ready queue until a human, an orchestrator relaying the human, or another agent touches them; they appear under 'awaiting_triage' (and stay available to everyone else). Date-gated work appears under 'gated'. Work needing the operator present appears under 'with_human'. Deliberate spending holds appear under 'capacity_held': they stay visible but never enter the executable queue until a separate update releases the hold. A row carrying 'blocked_by' cannot be started until those ticket ids close: the ready queue withholds it, your assignee read still shows it because it is routed to you, and re-reading it each iteration buys nothing — go at a blocker, or take other work.`,
       inputSchema: strict({
         ready: z.boolean().optional(),
         status: z.enum(STATUSES).optional(),
@@ -194,6 +201,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
       try {
         const caller = resolveActor(actor as Actor | undefined)?.name;
         const tickets = store.listTickets({ ...filter, caller });
+        const blockers = store.blockersFor(tickets.map((t) => t.id));
         const workstreams = store.listWorkstreamInfo().map((w) => ({
           name: w.name,
           ...(w.seat ? { seat: w.seat } : {}),
@@ -206,7 +214,7 @@ export function buildServer(store: Store, envActor: Actor | null): McpServer {
         const capacityHeld = filter.ready && caller ? store.capacityHeldPending(caller) : [];
         const withHuman = filter.ready && caller ? store.withHumanPending(caller) : [];
         return ok({
-          tickets: tickets.map(compact),
+          tickets: tickets.map((t) => compact(t, blockers.get(t.id))),
           count: tickets.length,
           workstreams,
           ...(awaitingTriage.length ? { awaiting_triage: awaitingTriage } : {}),

@@ -11,6 +11,20 @@ consolidation imported still carried that release's notes under "Unreleased";
 this is the published wording, which is two entries and one commit reference
 longer.
 
+## Unreleased — 0.9.0
+
+- **Agent sessions are bound to one installation deed.** `HELMO_BINDING` plus
+  `HELMO_REQUIRE_BINDING=1` carries one name, both stores, the selected release
+  and Runtime control identity through the front command, compatibility
+  aliases, MCP, app/view, service launcher, loop sessions and subprocesses.
+  Missing, stale or foreign targets refuse before records or controls are
+  touched; unbound single-install operator use remains compatible.
+  Release upgrade and rollback maintain that deed's selected release, including
+  repairing it when an interrupted upgrade is repeated. The public install docs
+  state the same-user threat boundary and that pre-v0.9 clients are deed-blind.
+- Runtime's Work link now follows the unified application's `/work` route and
+  remains valid from the standalone compatibility view.
+
 ## v0.8.0 — 2026-10-03
 
 - Route burn, capacity and anomaly safety stops to independent live-peer investigations, with restart-safe structured recovery, one restart per fresh peer disposition, and peer-owned recurrence instead of routine human permission prompts.
@@ -23,16 +37,6 @@ longer.
   Work, Roadmap, and Runtime. Existing `HELMO_LABEL`, `ROADMAP_LABEL`, and
   `REV_LABEL` settings remain accepted during the documented two-release
   window, and conflicting values still refuse instead of choosing a target.
-- **Agent sessions are bound to one installation deed.** `HELMO_BINDING` plus
-  `HELMO_REQUIRE_BINDING=1` carries one name, both stores, the selected release
-  and Runtime control identity through the front command, compatibility
-  aliases, MCP, app/view, service launcher, loop sessions and subprocesses.
-  Missing, stale or foreign targets refuse before records or controls are
-  touched; unbound single-install operator use remains compatible.
-  Release upgrade and rollback maintain that deed's selected release, including
-  repairing it when an interrupted change is repeated. The public install docs
-  now state the same-user threat boundary and that pre-v0.8 clients are
-  deed-blind.
 
 ## v0.7.0 — 2026-10-02
 

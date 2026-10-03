@@ -20,15 +20,15 @@ or changing write or read meaning is breaking even when the wire shape remains
 valid. Everything outside this list is internal and does not itself determine
 the version.
 
-Version 0.8 adds the optional `HELMO_BINDING` and
+Version 0.9 adds the optional `HELMO_BINDING` and
 `HELMO_REQUIRE_BINDING` configuration keys as a backward-compatible minor
 surface. Unbound single-install operator use remains accepted; an installation
 that opts into the required gate deliberately narrows its own launches to the
 exact versioned deed it names.
 
-The immediately preceding v0.7.0 entry points predate this gate and ignore the
-deed. Rolling a bound installation back to v0.7.0 therefore removes the
-misdirection boundary until it is upgraded to v0.8 or later again; the
+The preceding v0.8.0 entry points predate this gate and ignore the deed.
+Rolling a bound installation back to v0.8.0 or earlier therefore removes the
+misdirection boundary until it is upgraded to v0.9 or later again; the
 two-release data/protocol compatibility window does not make the older client
 deed-aware.
 

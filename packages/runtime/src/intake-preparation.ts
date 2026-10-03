@@ -46,8 +46,10 @@ export function validateEnvelope(value: unknown): IntakeEnvelope {
   return e as IntakeEnvelope;
 }
 
-async function signedPost(origin: string, action: string, body: object, secret: string, request: typeof fetch): Promise<Response> {
-  const path = `/api/intake-preparation/${action}`;
+/** Sign one executor request; refinement commits share the capability on their own base (H-800). */
+export async function signedPost(origin: string, action: string, body: object, secret: string, request: typeof fetch,
+  base = '/api/intake-preparation'): Promise<Response> {
+  const path = `${base}/${action}`;
   const raw = JSON.stringify(body);
   const timestamp = Date.now();
   const nonce = randomBytes(18).toString('base64url');
@@ -59,7 +61,7 @@ async function signedPost(origin: string, action: string, body: object, secret: 
   } });
 }
 
-function atomicJson(path: string, value: unknown): void {
+export function atomicJson(path: string, value: unknown): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const next = `${path}.${process.pid}.tmp`;
   writeFileSync(next, `${JSON.stringify(value)}\n`, { mode: 0o600 });

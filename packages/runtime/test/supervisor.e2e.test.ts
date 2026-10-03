@@ -247,8 +247,9 @@ if [ -z "$ID" ]; then
   node ${HELM_CLI} update --ticket $ID --note "claimed by mock" --status in_progress
 fi
 node ${HELM_CLI} update --ticket $ID --note "kept producing" --evidence-kind other --evidence-ref burn
+exit 1
 '''
-`);
+`, 'fail_cap = 1');
     helm(e, ['create', '--title', 'work that burns', '--body', 'x', '--workstream', 'rev-test', '--type', 'ops']);
     const { proc } = startFleet(e);
     try {
@@ -281,8 +282,9 @@ if [ -z "$ID" ]; then
   node ${HELM_CLI} update --ticket $ID --note "claimed by mock" --status in_progress
 fi
 node ${HELM_CLI} update --ticket $ID --note "kept producing" --evidence-kind other --evidence-ref burn
+exit 1
 '''
-`, '', 6);
+`, 'fail_cap = 1', 6);
     helm(e, ['create', '--title', 'work that burns', '--body', 'x', '--workstream', 'rev-test', '--type', 'ops']);
     const { proc } = startFleet(e);
     const events = () => readFileSync(join(e.home, 'state', 'closed-loop', 'events.log'), 'utf8');
@@ -320,8 +322,9 @@ if [ -z "$ID" ]; then
   node ${HELM_CLI} update --ticket $ID --note "claimed by mock" --status in_progress
 fi
 node ${HELM_CLI} update --ticket $ID --note "kept producing" --evidence-kind other --evidence-ref burn
+exit 1
 '''
-`);
+`, 'fail_cap = 1');
     helm(e, ['create', '--title', 'work that reaches the breaker', '--body', 'x', '--workstream', 'rev-test', '--type', 'ops']);
     const { proc } = startFleet(e);
     try {
@@ -373,7 +376,7 @@ mock_cmd = "true"
     }
   });
 
-  it('sends a same-reason relapse to the human instead of releasing twice (H-188)', { timeout: 60000 }, async () => {
+  it('keeps a same-reason relapse with its peer investigator instead of releasing twice (H-2779)', { timeout: 60000 }, async () => {
     const e = setup(`[loops.worker]
 workstream = "ws-worker"
 cwd = "/tmp"
@@ -391,9 +394,18 @@ mock_cmd = "true"
     writeFileSync(join(dir, '.auto_release.json'), JSON.stringify({ reason, at: new Date().toISOString() }));
     const { proc } = startFleet(e);
     try {
-      await waitFor(() => (helm(e, ['get', ticket]) as { status: string }).status === 'awaiting_human', 'relapse returned to human');
+      await waitFor(() => {
+        const store = new Store(join(e.home, 'helm.db'));
+        try {
+          return store.getEvents(ticket).some((event: { payload?: { note?: string } }) => event.payload?.note?.includes('authorized one restart only'));
+        } finally {
+          store.close();
+        }
+      }, 'relapse recorded');
       expect(loopPid(e, 'worker')).toBeNull();
       expect(existsSync(join(dir, 'BLOCKED'))).toBe(true);
+      expect((helm(e, ['get', ticket]) as { status: string }).status).toBe('in_progress');
+      expect((helm(e, ['list', '--status', 'awaiting_human']) as { tickets: unknown[] }).tickets).toHaveLength(0);
     } finally {
       proc.kill('SIGKILL');
     }
@@ -424,9 +436,10 @@ if [ -z "$ID" ]; then
   node ${HELM_CLI} update --ticket $ID --note "claimed by mock" --status in_progress
 fi
 node ${HELM_CLI} update --ticket $ID --note "kept producing" --evidence-kind other --evidence-ref burn
+exit 1
 '''
 `,
-      '',
+      'fail_cap = 1',
       20,
     );
     helm(e, ['create', '--title', 'work that burns', '--body', 'x', '--workstream', 'rev-test', '--type', 'ops']);

@@ -21,7 +21,7 @@ import { rotateOpenFd } from './logretention.js';
 import { logEvent, occupiedPid, pidAlive, runningStamp, sClear, sGet, sHas, sSet, streakReset } from './sentinels.js';
 import { endSessionGroup, sessionGroupsOf } from './shim.js';
 import { REDEPLOY_EXIT, RedeployRequest, armRedeployWatch, readRedeploy, reportRedeployLanded } from './redeploy.js';
-import { agentFalseAlarmDisposition, answeredResumeEscalation, completeAnsweredResume, createIntakeAssignment, failAnsweredResume, returnRelapseToHuman, cliError, ticketStatus } from './helm.js';
+import { agentFalseAlarmDisposition, answeredResumeEscalation, completeAnsweredResume, createIntakeAssignment, failAnsweredResume, recordRelapse, cliError, ticketStatus } from './helm.js';
 import { GlobalConfig, LoopConfig } from './types.js';
 import { completeActivation, deploymentFile } from './deployment.js';
 import { readSelection, selectionFile } from './release.js';
@@ -56,13 +56,13 @@ function scheduledResumeAt(name: string): number | null {
 function agentResume(g: GlobalConfig, l: LoopConfig): { ticket: string; reason: string } | null {
   try {
     const detail = JSON.parse(readFileSync(join(stateDir(l.name), 'BLOCKED.json'), 'utf8')) as { kind?: string; reason?: string; investigation_ticket?: string };
-    if (!['anomaly', 'capacity'].includes(detail.kind ?? '') || !detail.reason || !detail.investigation_ticket) return null;
+    if (!['anomaly', 'capacity', 'burn'].includes(detail.kind ?? '') || !detail.reason || !detail.investigation_ticket) return null;
     if (!agentFalseAlarmDisposition(g, detail.investigation_ticket, detail.reason)) return null;
     const historyPath = join(stateDir(l.name), '.auto_release.json');
     let previous: { reason?: string; at?: string } = {};
     try { previous = JSON.parse(readFileSync(historyPath, 'utf8')) as typeof previous; } catch { /* first release */ }
     if (previous.reason === detail.reason && Date.now() - Date.parse(previous.at ?? '') < g.relapse_window_seconds * 1000) {
-      returnRelapseToHuman(g, l, detail.investigation_ticket, detail.reason);
+      recordRelapse(g, l, detail.investigation_ticket, detail.reason);
       return null;
     }
     writeFileSync(historyPath, `${JSON.stringify({ reason: detail.reason, at: new Date().toISOString() })}\n`);

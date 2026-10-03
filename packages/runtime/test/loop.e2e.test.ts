@@ -994,9 +994,10 @@ fi
     expect(events).toMatch(/breaker.*metered in the last 24h/);
     expect(events).toMatch(/blocked/);
 
-    // The alarm reached the human queue, not just the trace.
-    const q = helm(e, ['list', '--status', 'awaiting_human']) as { tickets: { title: string }[] };
-    expect(q.tickets.some((t) => t.title.includes('burn-loop'))).toBe(true);
+    const detail = JSON.parse(readFileSync(join(dir, 'BLOCKED.json'), 'utf8')) as { kind: string; investigation_ticket: string };
+    expect(detail.kind).toBe('burn');
+    expect(helm(e, ['get', detail.investigation_ticket])).toMatchObject({ status: 'open', assignee: null, priority: 0 });
+    expect((helm(e, ['list', '--status', 'awaiting_human']) as { tickets: unknown[] }).tickets).toHaveLength(0);
   });
 
   it('a subscription cost-rate anomaly writes the structured investigation record', () => {
@@ -1094,7 +1095,7 @@ mock_cmd = "true"
     expect(helm(e, ['get', detail.investigation_ticket])).toMatchObject({ status: 'open', assignee: 'review', priority: 0 });
   });
 
-  it('keeps an anomaly blocked and alarms the operator when no investigator is live (H-188)', () => {
+  it('keeps an anomaly open for peer investigation when no investigator is live (H-2779)', () => {
     const e = setup(`[providers.flat]
 runtime = "mock"
 billing = "subscription"
@@ -1131,9 +1132,9 @@ echo "rev-mock-usage tokens=1000 cost_usd=7.00"
     };
     expect(detail.kind).toBe('anomaly');
     expect(existsSync(join(e.home, 'state', 'anomaly-loop', 'BLOCKED'))).toBe(true);
-    expect(helm(e, ['get', detail.investigation_ticket])).toMatchObject({ status: 'awaiting_human', assignee: null });
-    expect(readFileSync(alarm, 'utf8')).toContain('Rev: investigation needs a human');
-    expect(readFileSync(alarm, 'utf8')).toContain("Loop 'anomaly-loop' is blocked and no live peer is available");
+    expect(helm(e, ['get', detail.investigation_ticket])).toMatchObject({ status: 'open', assignee: null });
+    expect(existsSync(alarm)).toBe(false);
+    expect((helm(e, ['list', '--status', 'awaiting_human']) as { tickets: unknown[] }).tickets).toHaveLength(0);
   });
 
   it('nets out agent self-reported spend so the session lands in the totals exactly once (H-57)', () => {

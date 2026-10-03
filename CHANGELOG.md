@@ -13,6 +13,8 @@ longer.
 
 ## Unreleased — 0.7.0
 
+- Route burn, capacity and anomaly safety stops to independent live-peer investigations, with structured one-shot recovery and peer-owned recurrence instead of routine human permission prompts.
+
 - **One five-area application.** `helmo serve` provides Overview, Work,
   Roadmap, Team, and Runtime from one listener, with versioned JSON APIs and
   configurable redirects for retired dashboard ports. Team exposes configured

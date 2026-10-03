@@ -4,7 +4,6 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { loadRoster } from './config.js';
-import { notifyOperator } from './health.js';
 import { processObservation, sHas } from './sentinels.js';
 import { GlobalConfig, LoopConfig } from './types.js';
 import type { LaunchReceipt } from './launch-journal.js';
@@ -487,7 +486,7 @@ export function drawsScope(l: LoopConfig, workstream: string, project: string | 
 
 export function investigatorFor(g: GlobalConfig, stopped: LoopConfig): LoopConfig | null {
   for (const loop of Object.values(loadRoster().loops)) {
-    if (loop.name === stopped.name || processObservation(loop.name).state !== 'alive') continue;
+    if (seatName(loop) === seatName(stopped) || processObservation(loop.name).state !== 'alive') continue;
     if (!drawsScope(loop, g.escalation_workstream)) continue;
     if ((['BLOCKED', 'STOP', 'HOLD', 'PARKED'] as const).some((s) => sHas(loop.name, s))) continue;
     return loop;
@@ -595,8 +594,11 @@ export function redeployFailed(g: GlobalConfig, r: { by: string; reason: string;
 
 // A BLOCKED loop is a summons, not a log line. Investigable subscription
 // anomalies go to the first live peer; every other block reaches the human.
-export function escalateBlocked(g: GlobalConfig, l: LoopConfig, reason: string, outputTail: string, stateDir: string, kind?: 'anomaly' | 'capacity'): string {
+export function escalateBlocked(g: GlobalConfig, l: LoopConfig, reason: string, outputTail: string, stateDir: string, kind?: 'anomaly' | 'capacity' | 'burn'): string {
   const investigator = kind ? investigatorFor(g, l) : null;
+  const investigationInstructions = kind
+    ? `\n\nInvestigate the trace. If this is a false alarm, add evidence kind 'other' with this exact ref and leave the ticket in progress while Rev proves the restart (do not clear a sentinel yourself):\nrev:false_alarm:${encodeURIComponent(reason)}`
+    : `\nTo resume after fixing: remove the BLOCKED sentinel and run \`${runCommand} run ${l.name}\`.`;
   const created = run(
     g,
     [
@@ -604,18 +606,22 @@ export function escalateBlocked(g: GlobalConfig, l: LoopConfig, reason: string, 
       '--title', escalationTitle(l),
       '--body',
       `Rev halted loop '${l.name}' (${scopeLabel(l)}). Reason: ${reason}.\n\nState dir: ${stateDir} (events.log has the trace; console tail below).` +
-      (investigator ? `\n\nInvestigate the trace. If this is a false alarm, add evidence kind 'other' with this exact ref and leave the ticket in progress while Rev proves the restart (do not clear a sentinel yourself):\nrev:false_alarm:${encodeURIComponent(reason)}` : `\nTo resume after fixing: remove the BLOCKED sentinel and run \`${runCommand} run ${l.name}\`.`) +
+      investigationInstructions +
       `\n\nLast session output:\n${outputTail.slice(-1500)}`,
       '--workstream', g.escalation_workstream,
       '--type', 'ops',
-      '--priority', investigator ? '0' : '1',
+      '--priority', kind ? '0' : '1',
       // The seat, not the loop: workers draw by seat, and a pool worker's own
       // name is no assignee anything wakes on (H-676).
       ...(investigator ? ['--assignee', seatName(investigator)] : []),
     ],
     revActor(),
   ) as { id: string };
-  if (investigator) return created.id;
+  // Mechanical safety stops are investigations, even when every peer is
+  // presently unavailable. Keep the work open for the next eligible peer;
+  // absence of one is not a decision for the operator and must not turn a
+  // useful ceiling into a permanent human gate.
+  if (kind) return created.id;
   run(
     g,
     [
@@ -633,16 +639,12 @@ export function escalateBlocked(g: GlobalConfig, l: LoopConfig, reason: string, 
     ],
     revActor(),
   );
-  if (kind) notifyOperator('Rev: investigation needs a human', `Loop '${l.name}' is blocked and no live peer is available to investigate.`);
   return created.id;
 }
 
-export function returnRelapseToHuman(g: GlobalConfig, l: LoopConfig, ticketId: string, reason: string): void {
-  run(g, ['return', '--ticket', ticketId,
-    '--situation', `Loop '${l.name}' tripped again for the same reason inside the relapse window: ${reason}. The peer's earlier false-alarm disposition cannot authorize a second restart.`,
-    '--question', `Should loop '${l.name}' be resumed again?`,
-    '--recommendation', 'investigate — a repeated trip is a real anomaly until a human rules otherwise',
-    '--if-unanswered', `${scopeLabel(l)} has no '${l.name}' worker until this repeat trip is resolved`,
+export function recordRelapse(g: GlobalConfig, l: LoopConfig, ticketId: string, reason: string): void {
+  run(g, ['update', '--ticket', ticketId,
+    '--note', `Rev kept loop '${l.name}' blocked after it tripped again for the same cause inside the relapse window: ${reason}. The earlier false-alarm disposition authorized one restart only; the assigned investigator must record a repaired disposition before any further release.`,
   ], revActor());
 }
 

@@ -950,7 +950,9 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
 
     switch (action.act) {
       case 'blocked': {
-        sSet(l.name, 'BLOCKED', `${action.reason}\nat=${new Date().toISOString()}\n`);
+        const kind = action.reason.startsWith('burn breaker:') ? 'burn' : undefined;
+        const at = new Date().toISOString();
+        sSet(l.name, 'BLOCKED', `${kind ? `kind=${kind}\n` : ''}reason=${action.reason}\nat=${at}\n`);
         logEvent(l.name, 'blocked', `reason=${action.reason}`);
         // Best-effort check only: a duplicate escalation beats a silent block.
         let standing: string | null = null;
@@ -963,7 +965,8 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
           return;
         }
         try {
-          const id = escalateBlocked(g, l, action.reason, res.outputTail, dir);
+          const id = escalateBlocked(g, l, action.reason, res.outputTail, dir, kind);
+          if (kind) writeFileSync(join(dir, 'BLOCKED.json'), `${JSON.stringify({ kind, reason: action.reason, at, investigation_ticket: id }, null, 2)}\n`);
           console.log(`rev: '${l.name}' BLOCKED — escalated as Helm ticket ${id}.`);
           logEvent(l.name, 'escalated', `ticket=${id}`);
         } catch (e) {

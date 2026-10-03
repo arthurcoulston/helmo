@@ -329,12 +329,16 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   blowout; the measured plan-point ceiling remains absolute. A trip writes both the halt
   sentinel and `BLOCKED.json` with the observed values, baseline, time and
   escalation ticket, which `/health.json` and the dashboard surface. An
-  anomaly or terminal-capacity trip is assigned at priority 0 to the first
-  live, unblocked roster peer. A peer can authorize one restart by attaching
+  anomaly, terminal-capacity or burn trip is assigned at priority 0 to the first
+  live, unblocked roster peer outside the stopped seat. If none is live, the
+  investigation stays open and unassigned until an eligible peer can draw it;
+  a routine mechanical stop never becomes a human question or notification.
+  A peer can authorize one restart by attaching
   an exact `rev:false_alarm:<encoded reason>` evidence ref; the supervisor
   matches it to `BLOCKED.json`, clears only BLOCKED, and proves minimum uptime
   before closing the investigation. A same-reason relapse inside the configured
-  window, or the absence of a live peer, routes to the human instead. **No
+  window remains blocked on its peer-owned investigation; the first disposition
+  authorizes one restart, not a blind retry. **No
   percent is ever converted to tokens or dollars**, in either direction.
 - `shim.ts` — the runtime adapter (claude / codex / mock). Owns non-interactive
   flags, constitution injection (fail-closed), `cleanEnv()` (strips parent
@@ -1258,10 +1262,11 @@ follow a module imported dynamically much later.
   ladder, so a network wobble never becomes a migration. The probe pass runs
   on the provider actually chosen. The actor identity, token-log, run-start
   event, and spend note all carry the provider/model actually used.
-- **The burn breaker is a ceiling, not a pacer** (H-412). It checks only
+- **The burn breaker is a ceiling, not a pacer** (H-412, H-2779). It checks only
   `continue` iterations — every other ladder action is already stopping — and
-  trips to BLOCKED with the usual escalation, so a runaway reaches Arthur's
-  queue rather than a log. Defaults (`burn_usd_per_hour` 30, `burn_usd_per_day`
+  trips to BLOCKED with a structured peer investigation. A productive loop's
+  arbitrary iteration count is a signal to assess, never a permission request
+  sent to Arthur. Defaults (`burn_usd_per_hour` 30, `burn_usd_per_day`
   75, `continue_cap` 15, per-loop overridable) sit above every figure in the
   token-log's history: a trip means new territory, never a busy afternoon. It
   deliberately does NOT catch a small spin — ward's five iterations against a

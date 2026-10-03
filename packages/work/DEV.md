@@ -87,6 +87,11 @@ Pinned releases accept both the historical three-component layout and C1's one
   the claim ends and the ticket goes open with `needs_human`, and the worker
   draws its next ticket: a spent launch admission cannot be admitted again,
   so refusing would wedge the worker on it forever.
+  A held ticket with a future `not_before` is not resumed (H-710): the claim
+  ends, the ticket goes open still reserved to its assignee, and the worker
+  draws its next ticket; the gate opening is the wake and the ordinary claim
+  takes it. Workflow-bound held work is excluded, for the same spent-admission
+  reason, and keeps resuming.
   A server whose `HELMO_ACTOR` carries `generation` is supervised:
   `writingActor` refuses caller-stated name/kind/session/generation that
   conflict and inherits omitted ones; outside it a stated generation refuses.

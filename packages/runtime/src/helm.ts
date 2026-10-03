@@ -592,8 +592,9 @@ export function redeployFailed(g: GlobalConfig, r: { by: string; reason: string;
   ], revActor());
 }
 
-// A BLOCKED loop is a summons, not a log line. Investigable subscription
-// anomalies go to the first live peer; every other block reaches the human.
+// A BLOCKED loop is a summons, not a log line. Mechanical safety stops go to
+// an independent peer when one is live and remain open for one otherwise;
+// faults that need a decision still reach the human.
 export function escalateBlocked(g: GlobalConfig, l: LoopConfig, reason: string, outputTail: string, stateDir: string, kind?: 'anomaly' | 'capacity' | 'burn'): string {
   const investigator = kind ? investigatorFor(g, l) : null;
   const investigationInstructions = kind

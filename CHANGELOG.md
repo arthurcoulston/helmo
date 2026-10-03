@@ -11,7 +11,7 @@ consolidation imported still carried that release's notes under "Unreleased";
 this is the published wording, which is two entries and one commit reference
 longer.
 
-## Unreleased — 0.9.0
+## v0.9.0 — 2026-10-03
 
 - **Agent sessions are bound to one installation deed.** `HELMO_BINDING` plus
   `HELMO_REQUIRE_BINDING=1` carries one name, both stores, the selected release

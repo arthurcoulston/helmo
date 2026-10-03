@@ -12,7 +12,7 @@
 // poll_seconds of `rev resume`.
 import { spawn, ChildProcess } from 'node:child_process';
 import { ancestryBroken, ancestryStamp } from './ancestry.js';
-import { closeSync, openSync, readFileSync, writeFileSync } from 'node:fs';
+import { closeSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { stateDir } from './config.js';
 import { respawnDecide } from './ladder.js';
@@ -60,17 +60,18 @@ function agentResume(g: GlobalConfig, l: LoopConfig): { ticket: string; kind: 'a
     const detail = JSON.parse(readFileSync(join(stateDir(l.name), 'BLOCKED.json'), 'utf8')) as { kind?: string; reason?: string; investigation_ticket?: string };
     if (!['anomaly', 'capacity', 'burn'].includes(detail.kind ?? '') || !detail.reason || !detail.investigation_ticket) return null;
     const historyPath = join(stateDir(l.name), '.auto_release.json');
-    let previous: { reason?: string; at?: string; relapse_recorded?: boolean; attempts?: number; dispositions?: number } = {};
+    let previous: { ticket?: string; reason?: string; at?: string; relapse_recorded?: boolean; attempts?: number; dispositions?: number } = {};
     try { previous = JSON.parse(readFileSync(historyPath, 'utf8')) as typeof previous; } catch { /* first release */ }
+    const sameIncident = previous.ticket === detail.investigation_ticket;
     const dispositions = agentFalseAlarmDisposition(g, detail.investigation_ticket, detail.reason);
     if (!dispositions) {
-      if (previous.reason === detail.reason && !previous.relapse_recorded) {
+      if (sameIncident && previous.reason === detail.reason && !previous.relapse_recorded) {
         recordRelapse(g, l, detail.investigation_ticket, detail.reason);
         writeFileSync(historyPath, `${JSON.stringify({ ...previous, relapse_recorded: true })}\n`);
       }
       return null;
     }
-    if (previous.reason === detail.reason) {
+    if (sameIncident && previous.reason === detail.reason) {
       if (dispositions <= (previous.dispositions ?? 0)) {
         if (!previous.relapse_recorded) {
           recordRelapse(g, l, detail.investigation_ticket, detail.reason);
@@ -80,8 +81,8 @@ function agentResume(g: GlobalConfig, l: LoopConfig): { ticket: string; kind: 'a
       }
       if (Date.now() - Date.parse(previous.at ?? '') < g.relapse_window_seconds * 1000) return null;
     }
-    const attempts = previous.reason === detail.reason ? (previous.attempts ?? 0) + 1 : 1;
-    writeFileSync(historyPath, `${JSON.stringify({ reason: detail.reason, at: new Date().toISOString(), attempts, dispositions })}\n`);
+    const attempts = sameIncident && previous.reason === detail.reason ? (previous.attempts ?? 0) + 1 : 1;
+    writeFileSync(historyPath, `${JSON.stringify({ ticket: detail.investigation_ticket, reason: detail.reason, at: new Date().toISOString(), attempts, dispositions })}\n`);
     return { ticket: detail.investigation_ticket, kind: detail.kind as 'anomaly' | 'capacity' | 'burn', reason: detail.reason, attempts, dispositions };
   } catch {
     return null;
@@ -183,7 +184,7 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
               if (current) reason = current;
             } catch { /* preserve the release cause */ }
             writeFileSync(join(dir, 'BLOCKED.json'), `${JSON.stringify({ kind: released.kind, reason, at: new Date().toISOString(), investigation_ticket: ticket }, null, 2)}\n`);
-            writeFileSync(join(dir, '.auto_release.json'), `${JSON.stringify({ reason, at: new Date().toISOString(), attempts: released.attempts, dispositions: reason === released.reason ? released.dispositions : 0, relapse_recorded: true })}\n`);
+            writeFileSync(join(dir, '.auto_release.json'), `${JSON.stringify({ ticket, reason, at: new Date().toISOString(), attempts: released.attempts, dispositions: reason === released.reason ? released.dispositions : 0, relapse_recorded: true })}\n`);
             return { kind: released.kind, reason };
           })() : null;
           sSet(name, 'BLOCKED', structured
@@ -275,6 +276,11 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
           const ticket = s.resumeTicket;
           try {
             const closed = completeAnsweredResume(g, ticket, join(stateDir(s.cfg.name), 'RUNNING'), s.resumeOrigin === 'agent');
+            if (s.resumeOrigin === 'agent') {
+              for (const record of ['BLOCKED.json', '.auto_release.json']) {
+                try { unlinkSync(join(stateDir(s.cfg.name), record)); } catch { /* absent */ }
+              }
+            }
             s.resumeTicket = null;
             s.resumeOrigin = null;
             s.resumeDetail = null;

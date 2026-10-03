@@ -369,8 +369,42 @@ mock_cmd = "true"
       await waitFor(() => loopPid(e, 'worker') !== null, 'peer-released loop running');
       await waitFor(() => (helm(e, ['get', ticket]) as { status: string }).status === 'done', 'investigation closed after healthy restart');
       expect(existsSync(join(dir, 'BLOCKED'))).toBe(false);
+      expect(existsSync(join(dir, 'BLOCKED.json'))).toBe(false);
+      expect(existsSync(join(dir, '.auto_release.json'))).toBe(false);
       expect(readFileSync(join(dir, 'events.log'), 'utf8')).toMatch(/agent-resume.*BLOCKED cleared/);
       expect((helm(e, ['list', '--status', 'awaiting_human']) as { tickets: unknown[] }).tickets).toHaveLength(0);
+    } finally {
+      proc.kill('SIGKILL');
+    }
+  });
+
+  it('does not consume a new incident disposition from stale release state (H-2779)', { timeout: 60000 }, async () => {
+    const e = setup(`[loops.worker]
+workstream = "ws-worker"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = "true"
+`);
+    const reason = 'burn breaker: fixture repeat';
+    const ticket = (helm(e, ['create', '--title', "Loop 'worker' is blocked: needs a decision", '--body', 'investigate', '--workstream', 'rev-test', '--type', 'ops', '--priority', '0', '--assignee', 'reviewer']) as { id: string }).id;
+    helm(e, ['update', '--ticket', ticket, '--note', 'claimed the new incident and found one false alarm', '--status', 'in_progress', '--evidence-kind', 'other', '--evidence-ref', `rev:false_alarm:${encodeURIComponent(reason)}`],
+      '{"name":"reviewer","kind":"agent","model":"t","version":"0","session":"rev:reviewer"}');
+    const dir = join(e.home, 'state', 'worker');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'BLOCKED'), `kind=burn\nreason=${reason}\n`);
+    writeFileSync(join(dir, 'BLOCKED.json'), JSON.stringify({ kind: 'burn', reason, investigation_ticket: ticket }));
+    writeFileSync(join(dir, '.auto_release.json'), JSON.stringify({ ticket: 'H-previous', reason, at: new Date(Date.now() - 172800000).toISOString(), attempts: 1, dispositions: 1, relapse_recorded: true }));
+    const { proc } = startFleet(e);
+    try {
+      await waitFor(() => loopPid(e, 'worker') !== null, 'new incident disposition releases loop');
+      await waitFor(() => (helm(e, ['get', ticket]) as { status: string }).status === 'done', 'new investigation closes');
+      const store = new Store(join(e.home, 'helm.db'));
+      try {
+        expect(store.getEvents(ticket).some((event: { payload?: { note?: string } }) =>
+          event.payload?.note?.includes('authorized one restart only'))).toBe(false);
+      } finally {
+        store.close();
+      }
     } finally {
       proc.kill('SIGKILL');
     }
@@ -391,7 +425,7 @@ mock_cmd = "true"
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'BLOCKED'), `kind=capacity\nreason=${reason}\n`);
     writeFileSync(join(dir, 'BLOCKED.json'), JSON.stringify({ kind: 'capacity', reason, investigation_ticket: ticket }));
-    writeFileSync(join(dir, '.auto_release.json'), JSON.stringify({ reason, at: new Date().toISOString(), dispositions: 1 }));
+    writeFileSync(join(dir, '.auto_release.json'), JSON.stringify({ ticket, reason, at: new Date().toISOString(), dispositions: 1 }));
     const { proc } = startFleet(e);
     try {
       await waitFor(() => {
@@ -446,10 +480,10 @@ mock_cmd = "true"
     try {
       await waitFor(() => existsSync(join(dir, 'events.log')) && /agent-resume-failed/.test(readFileSync(join(dir, 'events.log'), 'utf8')), 'peer-owned failed resume recorded');
       const blocked = JSON.parse(readFileSync(join(dir, 'BLOCKED.json'), 'utf8')) as { kind: string; reason: string; investigation_ticket: string };
-      const release = JSON.parse(readFileSync(join(dir, '.auto_release.json'), 'utf8')) as { reason: string; attempts: number; dispositions: number; relapse_recorded: boolean };
+      const release = JSON.parse(readFileSync(join(dir, '.auto_release.json'), 'utf8')) as { ticket: string; reason: string; attempts: number; dispositions: number; relapse_recorded: boolean };
       expect(blocked).toMatchObject({ kind: 'burn', investigation_ticket: ticket });
       expect(blocked.reason).toContain('runtime failed');
-      expect(release).toMatchObject({ reason: blocked.reason, attempts: 1, dispositions: 0, relapse_recorded: true });
+      expect(release).toMatchObject({ ticket, reason: blocked.reason, attempts: 1, dispositions: 0, relapse_recorded: true });
       expect((helm(e, ['get', ticket]) as { status: string }).status).toBe('in_progress');
       expect((helm(e, ['list', '--status', 'awaiting_human']) as { tickets: unknown[] }).tickets).toHaveLength(0);
       const store = new Store(join(e.home, 'helm.db'));

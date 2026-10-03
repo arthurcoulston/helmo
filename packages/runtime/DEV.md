@@ -343,7 +343,9 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   files first, the observed new cause is restored to `BLOCKED.json` and the
   durable release record while the same investigator keeps ownership. The loop
   also preserves that record when a supervisor drain forgets the in-memory
-  release context. The durable release record emits one relapse note, not one
+  release context. The durable release record is keyed to the investigation
+  ticket and removed after a healthy restart, so a later same-reason incident
+  starts with its own dispositions. It emits one relapse note, not one
   per supervisor poll, and consumes each append-only matching disposition for
   exactly one restart; a persistent fault needs fresh peer evidence before
   every further attempt. A manual `rev resume` and any

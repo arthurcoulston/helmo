@@ -958,7 +958,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
           standing = openEscalation(g, l);
         } catch { /* fall through to escalate */ }
         let prior: { kind?: string; reason?: string; investigation_ticket?: string } = {};
-        let release: { reason?: string; attempts?: number; dispositions?: number } = {};
+        let release: { ticket?: string; reason?: string; attempts?: number; dispositions?: number } = {};
         try { prior = JSON.parse(readFileSync(join(dir, 'BLOCKED.json'), 'utf8')) as typeof prior; } catch { /* no structured predecessor */ }
         try { release = JSON.parse(readFileSync(join(dir, '.auto_release.json'), 'utf8')) as typeof release; } catch { /* no released predecessor */ }
         const preservedKind = !trippedKind && standing === prior.investigation_ticket && ['anomaly', 'capacity', 'burn'].includes(prior.kind ?? '')
@@ -978,9 +978,10 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
             if (preservedKind) {
               writeFileSync(join(dir, '.auto_release.json'), `${JSON.stringify({
                 reason: action.reason,
+                ticket: standing,
                 at,
                 attempts: release.attempts ?? 1,
-                dispositions: release.reason === action.reason ? release.dispositions ?? 0 : 0,
+                dispositions: release.ticket === standing && release.reason === action.reason ? release.dispositions ?? 0 : 0,
                 relapse_recorded: false,
               })}\n`);
             }

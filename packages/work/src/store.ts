@@ -919,6 +919,24 @@ export class Store {
     if (t.workstream !== workstream || (project !== undefined && t.project !== project) || (tickets && !tickets.includes(t.id)) || exclude?.includes(t.id)) {
       throw new HelmoError(`launch_claim_scope_conflict ${JSON.stringify({ launch_id: launchId, held_ticket_id: t.id, workstream: t.workstream, project: t.project })}`);
     }
+    // A held claim whose ticket is date-gated has nothing to do until the gate
+    // (H-710): resuming it spent a full pass every poll and kept the worker
+    // off its ready queue. Release it to the gate instead — still reserved to
+    // the assignee — so the gate opening is what wakes the worker and the
+    // ordinary claim takes it once. Workflow-bound work keeps its claim: its
+    // launch admission is spent, so a released attempt could not be claimed
+    // again.
+    if (t.not_before && t.not_before > now() && !t.workflow_attempt_id) {
+      const ts = now();
+      this.endExecution(t.id, `gated_release:${launchId}`, ts);
+      const payload = {
+        diffs: { status: { from: t.status, to: 'open' } },
+        note: `Supervised launch ${launchId} released this claim instead of resuming it: the ticket is gated until ${t.not_before}. Generation ${held.generation} retired; it stays reserved to ${assignee} and returns to the ready queue when the gate opens.`,
+      };
+      this.append(ts, t.id, 'updated', worker, payload);
+      this.applyUpdated(ts, t.id, payload);
+      return null;
+    }
     let admission: { id: string; launch_id: string } | undefined;
     if (t.workflow_attempt_id) {
       const prior = this.db.prepare("SELECT admission FROM workflow_admissions WHERE attempt_id = ? AND json_extract(admission, '$.operation') = 'launch' ORDER BY rowid DESC LIMIT 1")

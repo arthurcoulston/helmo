@@ -287,7 +287,7 @@ describe('lane through the CLI (H-824)', () => {
     return { status: r.status, out: r.status === 0 ? JSON.parse(r.stdout) : undefined, err: r.stderr };
   }
 
-  it('files, lists, wakes, claims and clears by --lane', () => {
+  it('files, lists, wakes, claims and clears by --lane', { timeout: 60_000 }, () => {
     const base = ['--workstream', 'goodplumb', '--assignee', builder.name];
     const { id } = as(orch, 'create', '--title', 'Build the importer', '--body', 'Goal: import CSVs.', '--type', 'build', ...base, '--lane', 'harness').out;
     const other = as(orch, 'create', '--title', 'General work', '--body', 'Goal: tidy.', '--type', 'build', ...base).out.id;

@@ -1053,7 +1053,7 @@ name. Exactly one function draws one and it takes the name it prints, and
 `.actor { white-space: nowrap }` is part of the same rule — the Loop column is
 the narrowest on the page and the first to wrap on a phone.
 
-## Where the cross-surface link points (R-11 H-832)
+## Where the Work link points (R-11 H-832, R-47 H-2801)
 
 `src/estate-reach.generated.ts` is the third **vendored copy** on the same
 seam, and the first whose source is the crew repo rather than the estate:
@@ -1064,15 +1064,15 @@ carries plist and log paths rev has no business holding — so the vendor script
 refuses a registry with no `reach` prefix or nothing navigable rather than
 emitting a table of localhost addresses that look fine on this Mac.
 
-**A surface has two true addresses.** `url` is the product on its own port,
-right at the desk and dead from anywhere else; `path` is the same-origin path
-the estate shell composes it at. Rev's one link out — "work lives in Helm" —
-was `http://localhost:4400` until this ticket, which is exactly the defect
-H-831 found across the estate: perfect on the machine that serves it, dead on
-the phone. Which address is right is a property of the READER'S ORIGIN, not of
-the surface, so it is decided in the browser: `reachLink()` in `src/reach.ts`
-ships both (`href` and `data-reach`), and `REACH_SCRIPT` — the only script on
-this page — swaps them when `location.hostname` is not this machine.
+**A composed surface has two true addresses.** `url` is the product on its own
+port, right at the desk and dead from anywhere else; `path` is the same-origin
+path the estate shell composes it at. A `desk_only` surface instead has one
+loopback address and the vendor repeats it in both fields. Runtime's one link
+out now names unified `helmo-app` and appends `/work`: from `/run` that is the
+same app origin, while the standalone Runtime compatibility view reaches the
+app's loopback listener. `REV_HELMO_VIEW_URL` remains the explicit base for an
+isolated installation. `reachLink()` ships both addresses (`href` and
+`data-reach`), and `REACH_SCRIPT` swaps them only for a remote reader.
 
 **The server cannot decide it**, which is the thing to know before deleting the
 script. The estate shell's proxy fetches this page itself, so the `Host` header
@@ -1082,8 +1082,8 @@ lives in `estate/src/lib/reach.ts` and `crew/tools/estate/registry.mjs`
 service hand-keeping one of its own. With scripting off the href stays the desk
 address, which is every rev build before this one.
 
-The checks aim at the silent shapes: a link shipped with only one of its two
-addresses, the script placed above the anchors it rewrites (finds none, reports
+The checks aim at the silent shapes: a link shipped without the registry's
+address, the script placed above the anchors it rewrites (finds none, reports
 nothing, looks like a working page), and a surface renamed in the registry —
 which `reachLink` throws on, so it goes red in CI rather than on Arthur's phone.
 The far-origin half of the proof is a real browser: `estate/tools/reach.test.mjs`

@@ -306,7 +306,7 @@ ${ESTATE_TOKENS}
     h1 .title-line { min-width: 0; overflow-wrap: anywhere; color: var(--ink-3); font-weight: normal; font-size: 15px; }
   </style></head><body>
   ${ESTATE_AVATARS}
-  <h1 data-refresh="title">Rev <span class="title-line">the machine, read-only · supervisor ${processObservation('supervisor').state === 'unknown' ? `unobservable (recorded pid ${processObservation('supervisor').pid})` : pidAlive('supervisor') ? `running (pid ${pidAlive('supervisor')})` : 'down'} · installation ${esc(INSTALL.label)} · home ${esc(revHome())} · work lives in ${reachLink('helmo-view', 'Helm', process.env.REV_HELMO_VIEW_URL)}</span></h1>
+  <h1 data-refresh="title">Rev <span class="title-line">the machine, read-only · supervisor ${processObservation('supervisor').state === 'unknown' ? `unobservable (recorded pid ${processObservation('supervisor').pid})` : pidAlive('supervisor') ? `running (pid ${pidAlive('supervisor')})` : 'down'} · installation ${esc(INSTALL.label)} · home ${esc(revHome())} · work lives in ${reachLink('helmo-app', 'Helmo', process.env.REV_HELMO_VIEW_URL, '/work')}</span></h1>
   <p class="usage ${provenanceSeverity()}" data-refresh="build">${esc(provenanceLine())}</p>
   <p class="usage ${worstSeverity(readUsage())}" data-refresh="claude">${esc(usageLine(readUsage(), 'Claude'))}</p>
   <p class="usage ${worstSeverity(readCodexUsage())}" data-refresh="codex">${esc(usageLine(readCodexUsage(), 'Codex'))}</p>

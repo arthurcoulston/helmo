@@ -1,10 +1,10 @@
 /* Where a cross-surface link points, decided by the reader's origin (H-832).
 
-   Rev's one link out of this page — "work lives in Helm" — was
-   `http://localhost:4400`, which is right at the desk and dead everywhere
-   else. It matters now because the estate shell composes this view at
-   `/s/rev-view/` on its own origin, so the page is read from a phone, and a
-   localhost href there goes nowhere.
+   Runtime's one link out of this page points to Work in the unified app.
+   The app is desk-only, so its registry entry carries one loopback address;
+   the `/work` route works both inside `helmo serve` and from the standalone
+   Runtime compatibility view. An explicit installation URL can replace the
+   loopback base without changing the route.
 
    The addresses come from the estate registry, vendored
    (src/estate-reach.generated.ts): a surface has two, and rev hand-keeps
@@ -19,8 +19,7 @@
    `reachFrom`; three implementations because three runtimes, one registry
    deciding the addresses.
 
-   With scripting off the href stays the localhost address — the behaviour of
-   every rev build before this one. */
+   With scripting off the href stays the registry's desk address. */
 
 import { ESTATE_REACH } from './estate-reach.generated.js';
 
@@ -37,20 +36,22 @@ export const LOCAL_HOSTNAMES = ['localhost', '127.0.0.1', '[::1]', '::1'];
 export const REACH_SCRIPT = `if (!${JSON.stringify(LOCAL_HOSTNAMES)}.includes(location.hostname))
   document.querySelectorAll("a[data-reach]").forEach(function (a) { a.setAttribute("href", a.getAttribute("data-reach")); });`;
 
-/** An anchor to another estate surface, carrying both of its addresses.
+/** An anchor to another estate surface, carrying its registry addresses.
  *
  *  Unknown ids throw rather than rendering a link to nothing: the failure this
  *  whole file exists to end is a href that looks fine and goes nowhere, and a
+ *  route is appended to both addresses for a surface inside a shared app. A
  *  surface renamed in the registry must not come back as another one of those.
  *  test/estate-reach.test.ts fires the same check over the ids this view uses,
  *  so a rename goes red in CI rather than on Arthur's phone. */
-export function reachLink(id: string, label: string, url?: string): string {
+export function reachLink(id: string, label: string, url?: string, route = ''): string {
   const target = ESTATE_REACH[id];
   if (!target)
     throw new Error(
       `no estate surface "${id}" in the vendored reach table — it was renamed or dropped from ` +
         `the registry; run node scripts/vendor-estate-reach.mjs and fix the link`,
     );
-  const href = (url ?? target.url).replace(/[&"<>]/g, (c) => ({ '&': '&amp;', '"': '&quot;', '<': '&lt;', '>': '&gt;' })[c]!);
-  return `<a href="${href}" data-reach="${target.path}">${label}</a>`;
+  const address = (base: string) => route ? `${base.replace(/\/$/, '')}/${route.replace(/^\//, '')}` : base;
+  const escape = (value: string) => value.replace(/[&"<>]/g, (c) => ({ '&': '&amp;', '"': '&quot;', '<': '&lt;', '>': '&gt;' })[c]!);
+  return `<a href="${escape(url ?? address(target.url))}" data-reach="${escape(address(target.path))}">${label}</a>`;
 }

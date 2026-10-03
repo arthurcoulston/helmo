@@ -98,7 +98,11 @@ function startFleet(e: Env): { proc: ChildProcess; out: () => string } {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function waitFor(cond: () => boolean, what: string, timeoutMs = 20000): Promise<void> {
+// A burn-breaker halt is two mock iterations of serial helmo-cli spawns, so it
+// scales with host load (H-675): measured for H-740 at load 27-65, the halt
+// took 20.6-25.1s and a restart's failure return 20.1s, past the old 20s. 60s
+// is over twice the worst measured; a hang still fails, naming what it awaited.
+async function waitFor(cond: () => boolean, what: string, timeoutMs = 60000): Promise<void> {
   const t0 = Date.now();
   while (!cond()) {
     if (Date.now() - t0 > timeoutMs) throw new Error(`timed out waiting for: ${what}`);
@@ -234,7 +238,7 @@ mock_cmd = "true"
     }
   });
 
-  it('turns a human resume answer into a healthy running loop and closes the escalation (H-1038)', { timeout: 60000 }, async () => {
+  it('turns a human resume answer into a healthy running loop and closes the escalation (H-1038)', { timeout: 150000 }, async () => {
     const e = setup(`[loops.resume-loop]
 workstream = "rev-test"
 cwd = "/tmp"
@@ -270,7 +274,7 @@ exit 1
     }
   });
 
-  it('stops completing a resume once another agent has already closed its escalation (H-2164)', { timeout: 60000 }, async () => {
+  it('stops completing a resume once another agent has already closed its escalation (H-2164)', { timeout: 150000 }, async () => {
     const e = setup(`[loops.closed-loop]
 workstream = "rev-test"
 cwd = "/tmp"
@@ -311,7 +315,7 @@ exit 1
     }
   });
 
-  it('leaves a blocked loop down when the dashboard answer chooses investigate (H-1320)', { timeout: 60000 }, async () => {
+  it('leaves a blocked loop down when the dashboard answer chooses investigate (H-1320)', { timeout: 150000 }, async () => {
     const e = setup(`[loops.investigate-loop]
 workstream = "rev-test"
 cwd = "/tmp"
@@ -567,7 +571,7 @@ mock_cmd = "true"
   // real fleet's shape anyway (the shipped default is 60) and leaves the loop
   // roughly ten times the room it needs to block itself. Do not compress it
   // back for speed: nothing in this case waits on it.
-  it('blocks again and returns the answered ticket when the restarted loop fails (H-1038)', { timeout: 60000 }, async () => {
+  it('blocks again and returns the answered ticket when the restarted loop fails (H-1038)', { timeout: 150000 }, async () => {
     const e = setup(
       `[loops.resume-loop]
 workstream = "rev-test"

@@ -73,6 +73,12 @@ describe('claiming by lane (H-824)', () => {
     const elsewhere = file(s, { workstream: 'goodplumb-lab', lane: 'harness' });
     expect(claim(s, product, 'p-1', 'design-prep')).toEqual({ admitted: false, launch_id: 'p-1' });
     expect(claim(s, harness, 'h-1', 'harness')).toMatchObject({ ticket_id: elsewhere.id });
+    // Continuation must preserve the worker's routing scope, not require the
+    // assigned ticket's accounting workstream to equal that scope (H-837).
+    expect(() => s.launchClaim(harness, 'changed-stream', builder.name, 'h-bad', undefined, undefined, undefined, 'harness'))
+      .toThrow(/launch_claim_scope_conflict/);
+    expect(claim(s, harness, 'h-2', 'harness')).toMatchObject({ resumed: true, ticket_id: elsewhere.id });
+    expect(claim(s, harness, 'h-3', 'harness')).toMatchObject({ resumed: true, ticket_id: elsewhere.id });
   });
 
   it('keeps every readiness gate inside a lane', () => {

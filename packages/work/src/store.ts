@@ -951,7 +951,13 @@ export class Store {
       .get(worker.session, assignee) as { ticket_id: string; generation: string } | undefined;
     if (!held) return null;
     const t = this.getTicket(held.ticket_id);
-    if (t.workstream !== workstream || (project !== undefined && t.project !== project) || (tickets && !tickets.includes(t.id)) || exclude?.includes(t.id)
+    // Assigned work may be claimed across workstreams (H-661). Preserve the
+    // worker's original scope on resume, not the ticket's accounting stream.
+    // Direct supervised claims without a launch receipt retain the old check.
+    const prior = this.db.prepare('SELECT claim FROM launch_claims WHERE launch_id = ? AND ticket_id = ?')
+      .get(held.generation, t.id) as { claim: string } | undefined;
+    const priorWorkstream = prior ? (JSON.parse(prior.claim) as { scope: { workstream: string } }).scope.workstream : t.workstream;
+    if (priorWorkstream !== workstream || (project !== undefined && t.project !== project) || (tickets && !tickets.includes(t.id)) || exclude?.includes(t.id)
       || (t.lane ?? undefined) !== lane) {
       throw new HelmoError(`launch_claim_scope_conflict ${JSON.stringify({ launch_id: launchId, held_ticket_id: t.id, workstream: t.workstream, project: t.project, lane: t.lane })}`);
     }

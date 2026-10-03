@@ -21,7 +21,7 @@ import { rotateOpenFd } from './logretention.js';
 import { logEvent, occupiedPid, pidAlive, runningStamp, sClear, sGet, sHas, sSet, streakReset } from './sentinels.js';
 import { endSessionGroup, sessionGroupsOf } from './shim.js';
 import { REDEPLOY_EXIT, RedeployRequest, armRedeployWatch, readRedeploy, reportRedeployLanded } from './redeploy.js';
-import { agentFalseAlarmDisposition, answeredResumeEscalation, completeAnsweredResume, createIntakeAssignment, failAnsweredResume, recordRelapse, cliError, ticketStatus } from './helm.js';
+import { agentFalseAlarmDisposition, answeredResumeEscalation, completeAnsweredResume, createIntakeAssignment, failAnsweredResume, recordAgentResumeFailure, recordRelapse, cliError, ticketStatus } from './helm.js';
 import { GlobalConfig, LoopConfig } from './types.js';
 import { completeActivation, deploymentFile } from './deployment.js';
 import { readSelection, selectionFile } from './release.js';
@@ -40,6 +40,7 @@ interface Slot {
   respawnAt: number | null; // backoff expiry (ms epoch); null = waiting on sentinels/foreign pid
   resumeTicket: string | null; // answered block ticket awaiting a healthy restart
   resumeOrigin: 'agent' | 'answer' | null;
+  resumeDetail: { kind: 'anomaly' | 'capacity' | 'burn'; reason: string; ticket: string; attempts: number } | null;
 }
 
 function halted(name: string): boolean {
@@ -54,13 +55,13 @@ function scheduledResumeAt(name: string): number | null {
   return Number.isFinite(at) ? at : null;
 }
 
-function agentResume(g: GlobalConfig, l: LoopConfig): { ticket: string; reason: string } | null {
+function agentResume(g: GlobalConfig, l: LoopConfig): { ticket: string; kind: 'anomaly' | 'capacity' | 'burn'; reason: string; attempts: number } | null {
   try {
     const detail = JSON.parse(readFileSync(join(stateDir(l.name), 'BLOCKED.json'), 'utf8')) as { kind?: string; reason?: string; investigation_ticket?: string };
     if (!['anomaly', 'capacity', 'burn'].includes(detail.kind ?? '') || !detail.reason || !detail.investigation_ticket) return null;
     if (!agentFalseAlarmDisposition(g, detail.investigation_ticket, detail.reason)) return null;
     const historyPath = join(stateDir(l.name), '.auto_release.json');
-    let previous: { reason?: string; at?: string; relapse_recorded?: boolean } = {};
+    let previous: { reason?: string; at?: string; relapse_recorded?: boolean; attempts?: number } = {};
     try { previous = JSON.parse(readFileSync(historyPath, 'utf8')) as typeof previous; } catch { /* first release */ }
     if (previous.reason === detail.reason && Date.now() - Date.parse(previous.at ?? '') < g.relapse_window_seconds * 1000) {
       if (!previous.relapse_recorded) {
@@ -69,8 +70,9 @@ function agentResume(g: GlobalConfig, l: LoopConfig): { ticket: string; reason: 
       }
       return null;
     }
-    writeFileSync(historyPath, `${JSON.stringify({ reason: detail.reason, at: new Date().toISOString() })}\n`);
-    return { ticket: detail.investigation_ticket, reason: detail.reason };
+    const attempts = (previous.attempts ?? 0) + 1;
+    writeFileSync(historyPath, `${JSON.stringify({ reason: detail.reason, at: new Date().toISOString(), attempts })}\n`);
+    return { ticket: detail.investigation_ticket, kind: detail.kind as 'anomaly' | 'capacity' | 'burn', reason: detail.reason, attempts };
   } catch {
     return null;
   }
@@ -158,17 +160,28 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
         if (s.resumeTicket) {
           const ticket = s.resumeTicket;
           const origin = s.resumeOrigin;
+          const released = s.resumeDetail;
           s.resumeTicket = null;
           s.resumeOrigin = null;
+          s.resumeDetail = null;
           const detail = `process exited with code ${code ?? 'unknown'} after ${Math.round((Date.now() - s.startedAt) / 1000)}s`;
-          const structured = origin === 'agent' ? (() => {
-            try { return JSON.parse(readFileSync(join(stateDir(name), 'BLOCKED.json'), 'utf8')) as { kind: string; reason: string }; } catch { return null; }
+          const structured = origin === 'agent' && released ? (() => {
+            const dir = stateDir(name);
+            let reason = released.reason;
+            try {
+              const current = sGet(name, 'BLOCKED')?.split('\n').find((line) => line.startsWith('reason='))?.slice('reason='.length);
+              if (current) reason = current;
+            } catch { /* preserve the release cause */ }
+            writeFileSync(join(dir, 'BLOCKED.json'), `${JSON.stringify({ kind: released.kind, reason, at: new Date().toISOString(), investigation_ticket: ticket }, null, 2)}\n`);
+            writeFileSync(join(dir, '.auto_release.json'), `${JSON.stringify({ reason, at: new Date().toISOString(), attempts: released.attempts, relapse_recorded: true })}\n`);
+            return { kind: released.kind, reason };
           })() : null;
           sSet(name, 'BLOCKED', structured
             ? `kind=${structured.kind}\nreason=${structured.reason}\nautomatic_resume_failed=${detail}\nat=${new Date().toISOString()}\n`
             : `automatic resume failed: ${detail}\nat=${new Date().toISOString()}\n`);
           try {
             if (origin === 'answer') failAnsweredResume(g, s.cfg, ticket, detail);
+            if (origin === 'agent' && structured) recordAgentResumeFailure(g, s.cfg, ticket, structured.reason, detail);
             logEvent(name, origin === 'agent' ? 'agent-resume-failed' : 'resume-failed', `ticket=${ticket} ${detail}`);
           } catch (e) {
             logEvent(name, 'resume-failure-alarm-failed', `ticket=${ticket} ${String(e).slice(0, 200)}`);
@@ -254,6 +267,7 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
             const closed = completeAnsweredResume(g, ticket, join(stateDir(s.cfg.name), 'RUNNING'), s.resumeOrigin === 'agent');
             s.resumeTicket = null;
             s.resumeOrigin = null;
+            s.resumeDetail = null;
             logEvent(s.cfg.name, 'resume-complete', `ticket=${ticket}${closed ? '' : ' already closed by someone else'}`);
           } catch (e) {
             logEvent(s.cfg.name, 'resume-completion-failed', `ticket=${ticket} ${cliError(e).slice(0, 200)}`);
@@ -274,6 +288,7 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
             if (ticket) {
               s.resumeTicket = ticket;
               s.resumeOrigin = agent ? 'agent' : 'answer';
+              s.resumeDetail = agent;
               sClear(name, 'BLOCKED');
               streakReset(name, 'fail', 'limit');
               logEvent(name, agent ? 'agent-resume' : 'answer-resume', `ticket=${ticket} BLOCKED cleared${agent ? ` reason=${agent.reason}` : ''}`);
@@ -345,7 +360,7 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
     console.log(`rev: supervisor pid ${process.pid} — ${Object.keys(loops).length} loop(s) in the roster. Stop the machine: ${commandName} stop`);
     if (landed) reportRedeployLanded(g, landed, process.pid);
     for (const cfg of Object.values(loops)) {
-      const slot: Slot = { cfg, child: null, fd: null, startedAt: 0, restartStreak: 0, respawnAt: null, resumeTicket: null, resumeOrigin: null };
+      const slot: Slot = { cfg, child: null, fd: null, startedAt: 0, restartStreak: 0, respawnAt: null, resumeTicket: null, resumeOrigin: null, resumeDetail: null };
       slots.set(cfg.name, slot);
       const foreign = occupiedPid(cfg.name);
       if (foreign) {

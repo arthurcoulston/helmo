@@ -63,7 +63,7 @@ function answerResume(e: Env, ticketId: string): void {
     store.answerTicket(
       { name: 'Arthur', kind: 'human' },
       ticketId,
-      { answer: 'Yes — resume this loop once.', chosen_option: 'Yes — resume this loop once.', resolution: 'resume' },
+      { answer: 'Yes, resume this loop once.', chosen_option: 'Yes, resume this loop once.', resolution: 'resume' },
     );
   } finally {
     store.close();
@@ -412,6 +412,50 @@ mock_cmd = "true"
         const relapseNotes = store.getEvents(ticket).filter((event: { payload?: { note?: string } }) =>
           event.payload?.note?.includes('authorized one restart only'));
         expect(relapseNotes).toHaveLength(1);
+      } finally {
+        store.close();
+      }
+    } finally {
+      proc.kill('SIGKILL');
+    }
+  });
+
+  it('restores structured peer ownership when the released loop trips its own fail ladder (H-2779)', { timeout: 60000 }, async () => {
+    const e = setup(`[loops.worker]
+workstream = "ws-worker"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = "exit 1"
+
+[loops.reviewer]
+workstream = "ws-review"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = "true"
+`, 'fail_cap = 1', 20);
+    helm(e, ['create', '--title', 'work that exposes a persistent runtime fault', '--body', 'x', '--workstream', 'ws-worker', '--type', 'ops']);
+    const reason = 'burn breaker: fixture iteration cap';
+    const ticket = (helm(e, ['create', '--title', "Loop 'worker' is blocked: needs a decision", '--body', 'investigate', '--workstream', 'rev', '--type', 'ops', '--priority', '0', '--assignee', 'reviewer']) as { id: string }).id;
+    helm(e, ['update', '--ticket', ticket, '--note', 'claimed investigation and found one false alarm', '--status', 'in_progress', '--evidence-kind', 'other', '--evidence-ref', `rev:false_alarm:${encodeURIComponent(reason)}`],
+      '{"name":"reviewer","kind":"agent","model":"t","version":"0","session":"rev:reviewer"}');
+    const dir = join(e.home, 'state', 'worker');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'BLOCKED'), `kind=burn\nreason=${reason}\n`);
+    writeFileSync(join(dir, 'BLOCKED.json'), JSON.stringify({ kind: 'burn', reason, investigation_ticket: ticket }));
+    const { proc } = startFleet(e);
+    try {
+      await waitFor(() => existsSync(join(dir, 'events.log')) && /agent-resume-failed/.test(readFileSync(join(dir, 'events.log'), 'utf8')), 'peer-owned failed resume recorded');
+      const blocked = JSON.parse(readFileSync(join(dir, 'BLOCKED.json'), 'utf8')) as { kind: string; reason: string; investigation_ticket: string };
+      const release = JSON.parse(readFileSync(join(dir, '.auto_release.json'), 'utf8')) as { reason: string; attempts: number; relapse_recorded: boolean };
+      expect(blocked).toMatchObject({ kind: 'burn', investigation_ticket: ticket });
+      expect(blocked.reason).toContain('runtime failed');
+      expect(release).toMatchObject({ reason: blocked.reason, attempts: 1, relapse_recorded: true });
+      expect((helm(e, ['get', ticket]) as { status: string }).status).toBe('in_progress');
+      expect((helm(e, ['list', '--status', 'awaiting_human']) as { tickets: unknown[] }).tickets).toHaveLength(0);
+      const store = new Store(join(e.home, 'helm.db'));
+      try {
+        expect(store.getEvents(ticket).some((event: { payload?: { note?: string } }) =>
+          event.payload?.note?.includes('authorized restart failed before becoming healthy'))).toBe(true);
       } finally {
         store.close();
       }

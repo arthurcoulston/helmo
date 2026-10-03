@@ -338,7 +338,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   matches it to `BLOCKED.json`, clears only BLOCKED, and proves minimum uptime
   before closing the investigation. A same-reason relapse inside the configured
   window remains blocked on its peer-owned investigation; the first disposition
-  authorizes one restart, not a blind retry. The durable release record emits
+  authorizes one restart, not a blind retry. The supervisor retains that release
+  context in memory, so if the child trips its own fail ladder and deletes the
+  files first, the observed new cause is restored to `BLOCKED.json` and the
+  durable release record while the same investigator keeps ownership. The durable release record emits
   one relapse note, not one per supervisor poll, and the same disposition is
   reconsidered only after that bounded window. A manual `rev resume` and any
   unrelated unstructured block remove stale structured-release records. **No

@@ -519,7 +519,7 @@ export function answeredResumeEscalation(g: GlobalConfig, l: LoopConfig): string
   const ticket = run(g, ['get', id]) as EscalationState;
   const choice = ticket.last_answer?.chosen_option?.trim().toLowerCase();
   return ticket.status === 'open' && ticket.last_answer?.resolution === 'resume' &&
-    (choice === 'resume' || choice?.startsWith('resume —') || choice === 'yes' || choice?.startsWith('yes —')) ? id : null;
+    !!choice && /^(resume|yes)\b/.test(choice) ? id : null;
 }
 
 /** Closes the escalation once the resumed loop has stayed up. Returns false
@@ -648,6 +648,12 @@ export function escalateBlocked(g: GlobalConfig, l: LoopConfig, reason: string, 
 export function recordRelapse(g: GlobalConfig, l: LoopConfig, ticketId: string, reason: string): void {
   run(g, ['update', '--ticket', ticketId,
     '--note', `Rev kept loop '${l.name}' blocked after it tripped again for the same cause inside the relapse window: ${reason}. The earlier false-alarm disposition authorized one restart only; Rev will reconsider it after the bounded relapse window, while the assigned investigator owns diagnosis and repair.`,
+  ], revActor());
+}
+
+export function recordAgentResumeFailure(g: GlobalConfig, l: LoopConfig, ticketId: string, reason: string, detail: string): void {
+  run(g, ['update', '--ticket', ticketId,
+    '--note', `Rev kept loop '${l.name}' blocked with its peer investigator after the authorized restart failed before becoming healthy: ${detail}. New cause: ${reason}. A fresh matching false-alarm disposition is required, and the relapse window bounds another automatic attempt.`,
   ], revActor());
 }
 

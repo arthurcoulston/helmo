@@ -28,6 +28,12 @@ test('interactive links use the dark-mode-safe estate token directly', () => {
   assert.match(appPage('/team',{data:{loops:[]}}),/\.links a\{color:var\(--interactive\)\}/);
 });
 
+test('mobile area navigation stays on one scrollable row', () => {
+  const html=appPage('/run');
+  assert.match(html,/nav\{flex-wrap:nowrap;width:100%;overflow-x:auto\}/);
+  assert.match(html,/nav a\{padding:\.4rem \.45rem;white-space:nowrap\}/);
+});
+
 test('fixture-backed app request renders a real record', () => {
   const writes = [];
   const response = { writeHead(code, headers) { writes.push({ code, headers }); }, end(body) { writes.push(body); } };

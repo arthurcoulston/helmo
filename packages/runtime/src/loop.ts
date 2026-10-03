@@ -4,13 +4,13 @@
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { stateDir, tokenLogPath } from './config.js';
-import { LaunchAdmission, LaunchClaim, WakeCheck, WorkstreamInfo, actorActivity, actorSelfSpend, actorTickets, escalateBlocked, escalateSilentDeclines, launchAdmit, launchClaim, launchId, launchQuarantine, launchReceipt, launchRevalidate, openEscalation, poolWorker, readyTicketIds, recordSpend, releaseClaim, scopeLabel, seatHolds, seatId, seatName, seatStreams, ticketStatus, wakeCheck, workstreamInfo } from './helm.js';
+import { LaunchAdmission, LaunchClaim, WakeCheck, WorkstreamInfo, actorActivity, actorSelfSpend, actorTickets, escalateBlocked, escalateSilentDeclines, launchAdmit, launchClaim, launchId, launchQuarantine, launchReceipt, launchRevalidate, openEscalation, poolWorker, readyTicketIds, recordSpend, releaseClaim, scopeLabel, seatHolds, seatId, seatName, seatStreams, ticketState, ticketStatus, wakeCheck, workstreamInfo } from './helm.js';
 import { burnWindow, markBurnFloor, recentCosts } from './burn.js';
 import { exhaustedLimit, pollUsage, readCodexUsage, readUsage, refreshCodexUsage, refreshFor, usageForModel } from './usage.js';
 import { anomalyDecide, capacityDecide, planPointsConsumed } from './capacity.js';
 import { choiceExhausted, selectRun } from './routing.js';
 import { raiseWedgeAlarm, wedgeDecide } from './health.js';
-import { breakerDecide, declineDecide, ladderDecide, limitDecide, probeDecide, rollingMean, seatDecide, velocityToPause, wakeDecide } from './ladder.js';
+import { breakerDecide, declineDecide, ladderDecide, routedDeclines, limitDecide, probeDecide, rollingMean, seatDecide, velocityToPause, wakeDecide } from './ladder.js';
 import { logEvent, occupiedPid, paceAutoRelease, pidAlive, runningStamp, sClear, sGet, sHas, sOwner, sReleaseOwned, sSet, sSetOwned, sValue, streak, streakMap, streakMapSet, streakReset } from './sentinels.js';
 import { ancestryBroken, ancestryStamp } from './ancestry.js';
 import { runSession } from './shim.js';
@@ -25,6 +25,17 @@ function writeBlockedDetail(
   detail: { kind: 'anomaly' | 'capacity'; reason: string; observed: unknown; measured_against: unknown; at: string; investigation_ticket: string | null },
 ): void {
   writeFileSync(join(dir, 'BLOCKED.json'), `${JSON.stringify(detail, null, 2)}\n`);
+}
+
+/** Keep the material state of each routed ticket as it stood when routed, so
+ *  the resync can tell a changed ticket from the one Rev routed. A
+ *  ticket gets its state once, at routing or the first pass after; tickets
+ *  that left the routed set drop theirs. */
+function keepRoutedState(g: GlobalConfig, l: LoopConfig, streaks: Record<string, number>): void {
+  const previous = streakMap<string>(l.name, 'routed_state');
+  const states: Record<string, string> = {};
+  for (const id of routedDeclines(streaks)) states[id] = previous[id] ?? ticketState(g, id);
+  streakMapSet(l.name, 'routed_state', states);
 }
 
 /** Helm is reachable across a subprocess boundary, so a poll can fail for
@@ -264,13 +275,40 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       // ready work counts once there, so a loop that went down with work queued
       // picks it up on restart instead of waiting for something else to move.
       const restartPoll = firstPoll;
+      // The hourly resync re-offers standing ready work. Work this seat has
+      // already routed to team coordination is excluded until it changes, or
+      // one declined ticket buys a full-price pass every hour. Changed
+      // means its material state differs from when it was routed: a coordinator
+      // supplying the next step must wake the seat. One routed without
+      // a recorded state is offered, and the pass records it.
+      let resyncDue = Date.now() - (parseInt(sGet(l.name, 'IDLE_AT') ?? '', 10) || Date.now()) >= 3_600_000;
+      const streaks = l.workstream === '*' ? {} : streakMap(l.name, 'silent_decline');
+      const routed = routedDeclines(streaks);
+      if (resyncDue && routed.length && !w.newly_ready_count) {
+        try {
+          const states = streakMap<string>(l.name, 'routed_state');
+          const live = readyTicketIds(g, l).filter((id) => !routed.includes(id) || states[id] !== ticketState(g, id));
+          const changed = live.filter((id) => states[id] !== undefined);
+          if (changed.length) {
+            // Changed work is fresh work: it may be routed again, from one.
+            for (const id of changed) { delete streaks[id]; delete states[id]; }
+            streakMapSet(l.name, 'silent_decline', streaks);
+            streakMapSet(l.name, 'routed_state', states);
+            logEvent(l.name, 'routed-changed', `tickets=${changed.join(',')}`);
+          }
+          resyncDue = live.length > 0;
+          // Restart the hour, so the suppressed resync is asked again hourly, not every poll.
+          if (!resyncDue) sSet(l.name, 'IDLE_AT', String(Date.now()));
+        }
+        catch (e) { logEvent(l.name, 'decline-check-failed', `resync ${String(e).slice(0, 160)}`); }
+      }
       const wake = wakeDecide({
         changedSince: w.changed_since,
         firstPoll: restartPoll,
         workstream: l.workstream,
         readyCount: w.ready_count,
         newlyReadyCount: w.newly_ready_count,
-        resyncDue: Date.now() - (parseInt(sGet(l.name, 'IDLE_AT') ?? '', 10) || Date.now()) >= 3_600_000,
+        resyncDue,
       });
       firstPoll = false;
       // Idle floor (H-336/H-545): an unproductive pass costs the same whatever
@@ -645,16 +683,26 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       ? (resumedClaim
         ? `Rev has resumed ticket ${claimedTicket} for this launch: worker ${seatId(l)} of seat '${seatName(l)}' left it in progress last time, and it stays with this worker until it is finished. Your workspace is ${l.cwd}, as before. Read ${claimedTicket} with its history first and continue from its last recorded next step rather than starting over. `
         : `Rev has already claimed ticket ${claimedTicket} for this launch, as seat '${seatName(l)}' from worker ${seatId(l)}. `) +
-        `It is the only ticket you work this session: other workers on this seat hold their own claims, so do not claim, start or change any other ticket. You may file tickets you discover, linked to ${claimedTicket}. Work ${claimedTicket} to a natural stopping point; if it is unfinished when you stop, leave it in progress with its next step recorded, and this worker's next launch resumes it, `
+        `It is the only ticket you work this session: other workers on this seat hold their own claims, so do not claim, start or change any other ticket. You may file tickets you discover, linked to ${claimedTicket}. Work ${claimedTicket} to a natural stopping point; if it is unfinished when you stop, leave it in progress with its next step recorded, and this worker's next launch resumes it. ` +
+        // A held claim waiting on another ticket starves that prerequisite: the
+        // only-ticket rule keeps this worker off it, and the hold keeps the
+        // claim resumed. An ordinary claim may go back to open, still
+        // reserved to the seat; a workflow-bound one never is (H-687).
+        (admission.admissionId || admission.workflowAttemptId
+          ? ''
+          : `If it cannot advance until another ticket is done, link that blocker and set ${claimedTicket} back to open with its next step recorded rather than holding the claim; it stays reserved to this seat and returns when the blocker clears. `)
       : l.workstream === '*'
         ? `Use your Helmo tools: first list tickets assigned to you, then survey fresh activity and unclaimed filings across all workstreams — your constitution says what your work is. If nothing has materially changed since your last pass, end the session WITHOUT filing a ticket or writing a note: producing nothing is the idle signal this loop reads, and a no-change sweep record is itself fresh motion that wakes you again (H-545). Otherwise work to a natural stopping point, `
         : `Use your Helm tools: first list tickets assigned to you, then ready work in workstream '${l.workstream}'. A ticket reserved for you is yours to work whatever its workstream. If nothing in EITHER list is workable — both are empty, or every ticket is blocked, time-gated, or already sitting with the human — end the session WITHOUT filing a ticket or writing a note: producing nothing is the idle signal this loop reads, and recording the no-change finding re-certifies you as busy and buys another full-price pass, evidence attached or not (H-545, H-740). The one exception is a question only the human can answer that is not already pending — return that once, then stop. Otherwise work ONE ticket to a natural stopping point, `;
+    // Outcome ownership spans iterations: a split is for
+    // independently useful deliverables, and a parent closed as a plan dropped
+    // the delivery it was opened for.
     const split =
-      `If the ticket you pick will not reach a natural stopping point this pass, split it now: file children that each fit one iteration and close the parent as a plan with those children as evidence. `;
+      `Split a ticket only into independently useful deliverables, never to fit an iteration: each child carries its own outcome, and the parent stays open with its owner until its scope is delivered or deliberately changed. `;
     const disposition =
-      `Never leave ready work as found: record why and act — link its blocker, hand it to the right seat, return it or mark needs_human, set a genuine start date, or cancel with reason. ` +
+      `Never leave ready work as found: act on it — link its real blocker and that blocker's owner, hand it to the seat that can act, set a start date tied to a real event, or cancel with reason. Ask the human only for a decision or act reserved to them that is not already decided. ` +
       (l.workstream === '*'
-        ? `For this store-wide sweep, a disposition note is action. `
+        ? `For this store-wide sweep, a note that changes nothing on the ticket is not a disposition. `
         : `For a scoped seat, prevent that unchanged ticket waking it again. `);
     // Deploying a fix the crew has already committed and tested is the crew's
     // call, not a question for the operator (Arthur, H-1046) — and the bar the
@@ -781,7 +829,9 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     if (l.workstream !== '*' && res.cls === 'ok') {
       try {
         if (produced) {
-          streakMapSet(l.name, 'silent_decline', {});
+          const kept = declineDecide(streakMap(l.name, 'silent_decline'), [], true).streaks;
+          streakMapSet(l.name, 'silent_decline', kept);
+          keepRoutedState(g, l, kept);
         } else if (readyBefore !== null) {
           const afterIds = readyTicketIds(g, l);
           const unchanged = readyBefore.filter((id) => afterIds.includes(id));
@@ -795,6 +845,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
             const id = escalateSilentDeclines(g, l, decline.escalate);
             logEvent(l.name, 'silent-decline-escalated', `ticket=${id} work=${decline.escalate.join(',')}`);
           }
+          keepRoutedState(g, l, decline.streaks);
         }
       } catch (e) {
         logEvent(l.name, 'decline-check-failed', `after ${String(e).slice(0, 160)}`);

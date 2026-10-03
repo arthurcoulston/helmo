@@ -262,7 +262,8 @@ exit 1
       await waitFor(() => loopPid(e, 'resume-loop') !== null, 'answered loop running');
       await waitFor(() => (helm(e, ['get', escalation.id]) as { status: string }).status === 'done', 'resume ticket closed');
       expect(existsSync(join(e.home, 'state', 'resume-loop', 'BLOCKED'))).toBe(false);
-      expect(readFileSync(join(e.home, 'state', 'resume-loop', 'events.log'), 'utf8')).toMatch(/resume-complete.*ticket=H-/);
+      // The supervisor closes the ticket before it logs the completion.
+      await waitFor(() => /resume-complete.*ticket=H-/.test(readFileSync(join(e.home, 'state', 'resume-loop', 'events.log'), 'utf8')), 'resume completion logged');
     } finally {
       proc.kill('SIGKILL');
     }
@@ -600,7 +601,8 @@ exit 1
         return t.status === 'awaiting_human' && !!t.question?.situation.includes('restarted worker failed');
       }, 'restart failure returned to human');
       expect(existsSync(join(e.home, 'state', 'resume-loop', 'BLOCKED'))).toBe(true);
-      expect(readFileSync(join(e.home, 'state', 'resume-loop', 'events.log'), 'utf8')).toMatch(/resume-failed.*ticket=H-/);
+      // Logged after the return to the human, so wait for it.
+      await waitFor(() => /resume-failed.*ticket=H-/.test(readFileSync(join(e.home, 'state', 'resume-loop', 'events.log'), 'utf8')), 'resume failure logged');
     } finally {
       proc.kill('SIGKILL');
     }

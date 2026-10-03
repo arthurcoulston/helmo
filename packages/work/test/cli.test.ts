@@ -53,6 +53,14 @@ function read() {
   return t;
 }
 
+describe('get carries the ticket\'s links', () => {
+  it('returns deps as the MCP get does, so a link-only change is visible to a CLI reader', () => {
+    expect(JSON.parse(cli('get', '--ticket', ticket).stdout).deps).toEqual({ outgoing: [], incoming: [] });
+    const child = JSON.parse(cli('create', '--title', 'Subtask', '--body', 'Goal: a link. Current state: none.', '--workstream', 'helmo-dev', '--type', 'ops', '--dep', ticket, '--dep-type', 'parent').stdout).id;
+    expect(JSON.parse(cli('get', '--ticket', ticket).stdout).deps).toEqual({ outgoing: [], incoming: [{ from_id: child, to_id: ticket, type: 'parent' }] });
+  });
+});
+
 describe('a flag that takes a value must be given one (H-1783)', () => {
   it('refuses the bare flag at the end of argv, by name, and writes nothing', () => {
     const r = cli('update', '--ticket', ticket, '--note', 'quarantined: no answer in 24h', '--needs-human');

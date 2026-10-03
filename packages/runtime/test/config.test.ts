@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { controlTargets, loadRoster } from '../src/config.js';
+import { launchClaimArgs } from '../src/helm.js';
 import { systemPrompt } from '../src/shim.js';
 
 describe('roster skills (H-247)', () => {
@@ -110,6 +111,32 @@ describe('parallel workers', () => {
     }
     roster([['builder', 'tickets = ["H-1"]\n'], ['reviewer']]);
     expect(() => loadRoster()).toThrow(/'tickets' scopes a pool worker's claims/);
+  });
+
+  it('loads a lane per worker, marks the lane-null sibling, and refuses a shared, mixed or unpooled lane (H-824)', () => {
+    roster([['builder', 'lane = "design-prep"\n'], ['builder-2', 'seat = "builder"\nlane = "harness"\n'], ['builder-3', 'seat = "builder"\n'], ['reviewer']]);
+    const loops = loadRoster().loops;
+    expect(loops['builder']!.lane).toBe('design-prep');
+    expect(loops['builder-3']!).toMatchObject({ lane_null: true });
+    expect(loops['builder-3']!.exclude_tickets).toBeUndefined();
+    expect(loops['builder']!.lane_null).toBeUndefined();
+    expect(loops['reviewer']!.lane_null).toBeUndefined();
+    // Without a lane anywhere, nothing new is derived or sent.
+    roster([['builder', 'tickets = ["H-1"]\n'], ['builder-2', 'seat = "builder"\n']]);
+    const plain = loadRoster().loops;
+    expect(plain['builder-2']!.lane_null).toBeUndefined();
+    expect(launchClaimArgs(plain['builder-2']!, 'id')).toEqual(['launch-claim', '--workstream', 'w', '--assignee', 'builder', '--launch-id', 'id', '--exclude-tickets', 'H-1']);
+
+    roster([['builder', 'lane = "harness"\n'], ['builder-2', 'seat = "builder"\nlane = "harness"\n']]);
+    expect(() => loadRoster()).toThrow(/both serve lane 'harness'/);
+    roster([['builder', 'lane = "harness"\ntickets = ["H-1"]\n'], ['builder-2', 'seat = "builder"\n']]);
+    expect(() => loadRoster()).toThrow(/'lane' or 'tickets', not both/);
+    roster([['builder', 'lane = "harness"\n'], ['reviewer']]);
+    expect(() => loadRoster()).toThrow(/'lane' scopes a pool worker's claims/);
+    for (const bad of ['"Harness"', '"-x"', '""', '["harness"]']) {
+      roster([['builder', `lane = ${bad}\n`], ['builder-2', 'seat = "builder"\n']]);
+      expect(() => loadRoster()).toThrow(/'lane' must be a lane name/);
+    }
   });
 
   it('refuses a store-wide pool worker, whose claim has no exact workstream (H-574)', () => {

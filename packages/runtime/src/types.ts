@@ -83,6 +83,8 @@ export interface LoopConfig {
   project?: string;           // pool workers only: claim just this project's tickets
   tickets?: string[];         // pool workers only: claim just these exact tickets (H-671)
   exclude_tickets?: string[]; // derived, never a roster key: the tickets same-seat siblings' allowlists own
+  lane?: string;              // pool workers only: claim just the tickets carrying this lane (H-824)
+  lane_null?: boolean;        // derived, never a roster key: a same-seat sibling serves a lane, so this worker wakes on lane-null work only
   workstream: string;
   cwd: string;
   runtime: Runtime;        // primary adapter (derived from 'provider' when that is set)
@@ -116,5 +118,5 @@ export interface SessionResult {
   outputTail: string; // last lines of session output, for traces and escalations
 }
 
-export const SENTINELS = ['STOP', 'HOLD', 'BLOCKED', 'LIMIT', 'IDLE', 'IDLE_AT', 'RUNNING', 'PACE', 'PARKED', 'SEAT_HELD', 'BACKOFF', 'WEDGED', 'REDEPLOY'] as const;
+export const SENTINELS = ['STOP', 'HOLD', 'BLOCKED', 'LIMIT', 'IDLE', 'IDLE_AT', 'RUNNING', 'PACE', 'PARKED', 'SEAT_HELD', 'BACKOFF', 'WEDGED', 'REDEPLOY', 'OUT_OF_SCOPE'] as const;
 export type Sentinel = (typeof SENTINELS)[number];

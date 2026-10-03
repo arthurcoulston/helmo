@@ -1300,6 +1300,30 @@ export class Store {
     return row.n > 0;
   }
 
+  /** The open blockers of each id, in ONE query rather than an `isBlocked` per
+   *  row (H-621). List rows disclose blocking now, and the per-row form would
+   *  have put a query per returned ticket on the call every loop is told to
+   *  make first. The ready filter reads it too, so "open blocker" keeps one
+   *  definition; ids are sorted so the same row reads the same way twice. */
+  blockersFor(ids: string[]): Map<string, string[]> {
+    if (!ids.length) return new Map();
+    const rows = this.db
+      .prepare(
+        `SELECT d.from_id AS id, d.to_id AS blocker FROM deps d JOIN tickets t ON t.id = d.to_id
+         WHERE d.from_id IN (${ids.map(() => '?').join(',')}) AND d.type = 'blocks'
+           AND t.status NOT IN ('done','cancelled')
+         ORDER BY d.to_id ASC`,
+      )
+      .all(...ids) as { id: string; blocker: string }[];
+    const byId = new Map<string, string[]>();
+    for (const r of rows) {
+      const already = byId.get(r.id);
+      if (already) already.push(r.blocker);
+      else byId.set(r.id, [r.blocker]);
+    }
+    return byId;
+  }
+
   listTickets(filter: ListFilter): Ticket[] {
     // Lazy materialization (H-22): every ticket-list read catches up recurring
     // templates first, so due instances exist by the time the queue is answered.
@@ -1363,8 +1387,9 @@ export class Store {
       .all(...params, limit + (filter.ready ? 50 : 0), offset) as Record<string, unknown>[];
     let tickets = rows.map(rowToTicket);
     if (filter.ready) {
+      const blockers = this.blockersFor(tickets.map((t) => t.id));
       tickets = tickets
-        .filter((t) => !this.isBlocked(t.id))
+        .filter((t) => !blockers.has(t.id))
         // Triage rule (H-55): work an agent filed for itself needs a second
         // pair of eyes before that same agent may draw it — otherwise the
         // queue is fed by its own consumer and never empties.

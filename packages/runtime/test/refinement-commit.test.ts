@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -123,8 +123,55 @@ describe('refinement commit executor', () => {
 
     const other = harness([[200, envelope('# Other words\n')], [200, { state: 'failed' }]]);
     expect(await refinementCommitPass(options(other.request, r))).toBe('failed');
-    expect(other.calls[1]!.body).toMatchObject({ retryable: false, diagnostic: expect.stringMatching(/other words/) });
+    expect(other.calls[1]!.body).toMatchObject({ retryable: false, diagnostic: expect.stringMatching(/other than these words/) });
     expect(git(r.origin, 'rev-parse', `refs/heads/${BRANCH}`)).toBe(pushed);
+  });
+
+  /** Push a commit holding the claimed words to the job branch by hand, built by `build` in a scratch clone. */
+  function plant(r: ReturnType<typeof repos>, build: (clone: string) => void) {
+    const clone = mkdtempSync(join(tmpdir(), 'rev-refinement-plant-'));
+    execFileSync('git', ['clone', '--quiet', r.origin, clone]);
+    git(clone, 'config', 'user.name', 'Other');
+    git(clone, 'config', 'user.email', 'other@example.invalid');
+    build(clone);
+    mkdirSync(join(clone, 'clients/test-org/projects/test-project'), { recursive: true });
+    writeFileSync(join(clone, PATH), envelope().markdown);
+    git(clone, 'add', '-A');
+    git(clone, 'commit', '--quiet', '-m', 'planted');
+    git(clone, 'push', '--quiet', 'origin', `HEAD:refs/heads/${BRANCH}`);
+    return git(clone, 'rev-parse', 'HEAD');
+  }
+
+  it('refuses a same-word branch whose history or other contents are not main\'s', async () => {
+    for (const build of [
+      (clone: string) => { git(clone, 'checkout', '--quiet', '--orphan', 'unrelated'); git(clone, 'rm', '-rq', '--cached', '.');
+        writeFileSync(join(clone, 'README.md'), 'unrelated history\n'); },
+      (clone: string) => writeFileSync(join(clone, 'payload.sh'), 'echo smuggled\n'),
+    ]) {
+      const r = repos();
+      const planted = plant(r, build);
+      const h = harness([[200, envelope()], [200, { state: 'failed' }]]);
+      expect(await refinementCommitPass(options(h.request, r))).toBe('failed');
+      expect(h.calls.map((c) => c.action)).toEqual(['claim', 'failure']);
+      expect(h.calls[1]!.body).toMatchObject({ retryable: false, diagnostic: expect.stringMatching(/other than these words on main/) });
+      expect(git(r.origin, 'rev-parse', `refs/heads/${BRANCH}`)).toBe(planted);
+    }
+  });
+
+  it('reuses an earlier attempt\'s branch after main has moved on', async () => {
+    const r = repos();
+    const first = harness([[200, envelope()], [503, { error: 'resolver down' }]]);
+    await expect(refinementCommitPass(options(first.request, r))).rejects.toThrow(/503/);
+    const pushed = git(r.origin, 'rev-parse', `refs/heads/${BRANCH}`);
+    const clone = mkdtempSync(join(tmpdir(), 'rev-refinement-main-'));
+    execFileSync('git', ['clone', '--quiet', r.origin, clone]);
+    git(clone, '-c', 'user.name=Other', '-c', 'user.email=other@example.invalid', 'commit', '--quiet', '--allow-empty', '-m', 'main moves on');
+    git(clone, 'push', '--quiet', 'origin', 'HEAD:refs/heads/main');
+
+    execFileSync('rm', ['-f', r.stateFile]);
+    const replay = harness([[200, envelope()], [200, { state: 'committed' }]]);
+    expect(await refinementCommitPass(options(replay.request, r))).toBe('committed');
+    expect(replay.calls[1]!.body.artifactRef).toBe(`goodplumb@${pushed}`);
   });
 
   it('keeps an unreachable commit leased and retries it, holding no words locally', async () => {
@@ -164,6 +211,6 @@ describe('refinement commit executor', () => {
     execFileSync('rm', ['-rf', gone.origin]);
     const down = harness([[200, envelope()], [200, { state: 'drafted' }]]);
     expect(await refinementCommitPass(options(down.request, gone))).toBe('failed');
-    expect(down.calls[1]).toMatchObject({ action: 'failure', body: { retryable: true, diagnostic: expect.stringMatching(/git ls-remote failed/) } });
+    expect(down.calls[1]).toMatchObject({ action: 'failure', body: { retryable: true, diagnostic: expect.stringMatching(/git fetch failed/) } });
   });
 });

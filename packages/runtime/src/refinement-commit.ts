@@ -78,31 +78,40 @@ async function blobSha256(checkout: string, commit: string, path: string): Promi
   return sha256(await git(checkout, ['cat-file', 'blob', `${commit}:${path}`]));
 }
 
+/** The tree of `base` with only `path` set to `blob`, built in a private index. */
+async function treeWith(checkout: string, base: string, blob: string, path: string): Promise<string> {
+  const scratch = mkdtempSync(join(tmpdir(), 'rev-refinement-'));
+  try {
+    const env = { ...process.env, GIT_INDEX_FILE: join(scratch, 'index') };
+    await git(checkout, ['read-tree', base], { env });
+    await git(checkout, ['update-index', '--add', '--cacheinfo', `100644,${blob},${path}`], { env });
+    return await text(checkout, ['write-tree'], { env });
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
 /** Put the exact words on the job's branch and push it; returns the commit. Never forces. */
 export async function commitRefinement(checkout: string, e: RefinementEnvelope): Promise<string> {
-  // A pushed branch from an earlier attempt is reused only if it already holds these exact words.
+  await git(checkout, ['fetch', '--quiet', 'origin', 'refs/heads/main:refs/remotes/origin/main']);
+  const base = await text(checkout, ['rev-parse', '--verify', 'refs/remotes/origin/main^{commit}']);
+  const blob = await text(checkout, ['hash-object', '-w', '--no-filters', '--stdin'], { input: Buffer.from(e.markdown, 'utf8') });
+  // A pushed branch from an earlier attempt is reused only if it is exactly one
+  // commit on main's history that changes nothing but these words: descent alone
+  // would still let a matching-named branch carry unrelated files into the proof.
   const listed = await text(checkout, ['ls-remote', 'origin', `refs/heads/${e.branch}`]);
   if (listed) {
     const existing = listed.split(/\s/)[0]!;
     await git(checkout, ['fetch', '--quiet', '--no-write-fetch-head', 'origin', `refs/heads/${e.branch}`]);
-    if (await blobSha256(checkout, existing, e.path).catch(() => '') !== e.markdownSha256) {
-      throw new Refused('the proposal branch already holds other words');
+    const [, ...parents] = (await text(checkout, ['rev-list', '--parents', '-n', '1', existing])).split(' ');
+    const parent = parents.length === 1 ? parents[0]! : '';
+    const onMain = parent && await git(checkout, ['merge-base', '--is-ancestor', parent, base]).then(() => true, () => false);
+    if (!onMain || await text(checkout, ['rev-parse', `${existing}^{tree}`]) !== await treeWith(checkout, parent, blob, e.path)) {
+      throw new Refused('the proposal branch already holds something other than these words on main');
     }
     return existing;
   }
-  await git(checkout, ['fetch', '--quiet', 'origin', 'refs/heads/main:refs/remotes/origin/main']);
-  const base = await text(checkout, ['rev-parse', '--verify', 'refs/remotes/origin/main^{commit}']);
-  const blob = await text(checkout, ['hash-object', '-w', '--no-filters', '--stdin'], { input: Buffer.from(e.markdown, 'utf8') });
-  const scratch = mkdtempSync(join(tmpdir(), 'rev-refinement-'));
-  let tree: string;
-  try {
-    const env = { ...process.env, GIT_INDEX_FILE: join(scratch, 'index') };
-    await git(checkout, ['read-tree', base], { env });
-    await git(checkout, ['update-index', '--add', '--cacheinfo', `100644,${blob},${e.path}`], { env });
-    tree = await text(checkout, ['write-tree'], { env });
-  } finally {
-    rmSync(scratch, { recursive: true, force: true });
-  }
+  const tree = await treeWith(checkout, base, blob, e.path);
   const summary = e.changeSummary.trim().slice(0, 2000);
   const message = `Propose the ${e.orgSlug}/${e.projectSlug} directive revision from meeting ${e.meetingId}\n\n`
     + (summary ? `${summary}\n\n` : '')

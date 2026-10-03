@@ -527,7 +527,9 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   plumbing (`hash-object`, a private index, `commit-tree`) on origin/main and
   pushed without force, so the operator's checkout and main are never
   touched. A branch already pushed by an earlier attempt is reused only if it
-  holds the same words. The result carries the raw commit, directive blob and
+  is one commit whose parent is on origin/main and whose tree is that
+  parent's with only the directive set to these words; anything else on a
+  matching name is refused, never overwritten. The result carries the raw commit, directive blob and
   path trees. State under state/supervisor holds identifiers and the commit,
   never the words; a 422 keeps the lease and retries, and the fifth hands the
   attempt back as retryable. Refused claims fail as not retryable; Git or

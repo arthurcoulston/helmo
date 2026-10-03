@@ -11,12 +11,15 @@ consolidation imported still carried that release's notes under "Unreleased";
 this is the published wording, which is two entries and one commit reference
 longer.
 
-## Unreleased
+## v0.9.1 — 2026-10-03
 
 - Restore the established Work, Roadmap and Runtime views inside the unified
   app, including decision/action controls, evidence, history, prioritization
   and live refresh. Keep common navigation and the consolidated backend.
   `/` preserves Work bookmarks; the summary is available at `/overview`.
+- Keep the versioned Overview API record projection compatible while the
+  summary page links to the full Work view. No store migration, installation
+  binding change, service change or configuration change is required.
 
 ## v0.9.0 — 2026-10-03
 

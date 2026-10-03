@@ -133,6 +133,9 @@ test('the app answers its own port directly and renders the record a recorded UR
   const ticket = seedTicket(homes, 'the record a bookmark names');
   const { origin } = await startApp(t, homes);
 
+  const overview = await (await fetch(`${origin}/api/v1/overview`)).json();
+  assert.ok(overview.data.records.some(record => record.id === ticket), 'Overview API preserves its existing record projection');
+
   // `:4400/#H-n` reaches the server as `/`: the fragment is resolved in the
   // page. So "the recorded URL still works" is two readings — the document
   // answers 200, and the record it names is in it.

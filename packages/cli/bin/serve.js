@@ -31,6 +31,7 @@ function overviewSnapshot() {
     { id:'roadmap', title:'Roadmap', state:`${roadmap.projects.length} projects`, links:[{label:'Open Roadmap',href:'/roadmap'}] },
     { id:'team', title:'Team', state:`${teamSnapshot().loops.length} configured`, links:[{label:'Open Team',href:'/team'}] },
     { id:'runtime', title:'Runtime', state:runtime.supervisor_state, links:[{label:'Open Runtime',href:'/run'}] },
+    ...work.records,
   ] };
 }
 const appDocuments={overview:overviewSnapshot,work:workSnapshot,roadmap:roadmapSnapshot,team:teamSnapshot,runtime:runtimeSnapshot};

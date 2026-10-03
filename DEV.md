@@ -133,6 +133,12 @@ legacy reader.
   `scripts/stage-legacy-launch-paths.mjs`, and it is never part of a build: it
   is run by hand against a staged release, and it refuses the layout whose
   real builds live at the paths it writes.
+- **Tests do not inherit an installation.** The root suite runs every workspace
+  through `scripts/test-env.mjs`, which clears all `HELMO_`, `ROADMAP_`,
+  `REV_`, and `INSTALLATION_` variables and points `REV_HOME` at a disposable
+  empty directory. Merely unsetting it would fall back to the operator's live
+  `~/.rev` selection, making the same checkout pass or fail according to who
+  launched the suite.
 - **One version.** Every package carries the root version and depends on
   `@helmo/core` at exactly that version; `scripts/build.test.mjs` asserts it.
   What the number promises is [VERSIONING.md](VERSIONING.md), and a change to

@@ -400,7 +400,7 @@ describe('sessionSpec (H-1152)', () => {
 
   // A spec is printed to stdout. sessionEnv() copies this process's whole
   // environment, so exporting it would publish the fleet's secrets; the export
-  // carries the RULE (env_strip) and the overrides, and nothing of the caller.
+  // carries the RULE (env_strip), the scratch installation, and Rev's overrides.
   it('exports what rev sets and none of the caller environment', () => {
     process.env['REV_SPEC_FIXTURE_SECRET'] = 'do-not-export';
     try {
@@ -410,6 +410,7 @@ describe('sessionSpec (H-1152)', () => {
         GIT_COMMITTER_EMAIL: 'mason@crew.local',
         REV_LOOP: 'mason',
         REV_CLI: process.argv[1] ?? '',
+        ...(process.env['REV_HOME'] ? { REV_HOME: process.env['REV_HOME'] } : {}),
       });
       expect(JSON.stringify(spec)).not.toContain('do-not-export');
       expect(new RegExp(spec.env_strip).test('ANTHROPIC_API_KEY')).toBe(true);

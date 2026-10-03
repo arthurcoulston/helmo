@@ -61,6 +61,13 @@ sessions and their subprocesses all carry and check the same deed. A copied
 command or endpoint whose ambient home, store, name, release or control
 identity disagrees refuses before returning records or acting.
 
+This boundary prevents a correctly launched agent from being accidentally
+misdirected by its working directory, `HOME`, `PATH`, a copied command, or an
+inherited environment. It is not filesystem isolation from another process
+running as the same operating-system user: such a process can edit or repoint
+`HELMO_BINDING`, or open the SQLite stores directly. Use separate OS identities
+or another isolation boundary when that is the threat being addressed.
+
 ## What an installation is
 
 An installation is one identity that binds five things together: the **code**

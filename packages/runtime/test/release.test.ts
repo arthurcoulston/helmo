@@ -147,6 +147,23 @@ describe('reading a release set (H-2493)', () => {
 });
 
 describe('upgrading (H-2493)', () => {
+  it('maintains a bound installation deed through upgrade, repeat repair, and rollback', () => {
+    const dir = root();
+    const file = selectionAt(dir);
+    const binding = join(dir, 'installation.json');
+    writeFileSync(binding, JSON.stringify({ version: 1, id: 'fixture', installation: 'fixture', release: 'current', control: { home: dir, service: 'fixture' } }));
+    upgrade(file, makeRelease(dir, 'current'), { HELMO_BINDING: binding });
+    upgrade(file, makeRelease(dir, 'next'), { HELMO_BINDING: binding });
+    expect(JSON.parse(readFileSync(binding, 'utf8')).release).toBe('next');
+
+    writeFileSync(binding, JSON.stringify({ ...JSON.parse(readFileSync(binding, 'utf8')), release: 'interrupted-old' }));
+    expect(upgrade(file, join(dir, 'release', 'next'), { HELMO_BINDING: binding }).unchanged).toBe(true);
+    expect(JSON.parse(readFileSync(binding, 'utf8')).release).toBe('next');
+
+    rollback(file, { HELMO_BINDING: binding });
+    expect(JSON.parse(readFileSync(binding, 'utf8')).release).toBe('current');
+  });
+
   it('writes one component for a unified release, which all three products consume', () => {
     const dir = root();
     const release = makeUnifiedRelease(dir, 'next');

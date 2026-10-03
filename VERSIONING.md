@@ -26,6 +26,12 @@ surface. Unbound single-install operator use remains accepted; an installation
 that opts into the required gate deliberately narrows its own launches to the
 exact versioned deed it names.
 
+The immediately preceding v0.7.0 entry points predate this gate and ignore the
+deed. Rolling a bound installation back to v0.7.0 therefore removes the
+misdirection boundary until it is upgraded to v0.8 or later again; the
+two-release data/protocol compatibility window does not make the older client
+deed-aware.
+
 During an upgrade, the released consolidated version and its immediately
 preceding consolidated version are supported together for the documented
 two-release compatibility window. Compatibility does not authorize a store

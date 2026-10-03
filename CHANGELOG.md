@@ -29,6 +29,10 @@ longer.
   aliases, MCP, app/view, service launcher, loop sessions and subprocesses.
   Missing, stale or foreign targets refuse before records or controls are
   touched; unbound single-install operator use remains compatible.
+  Release upgrade and rollback maintain that deed's selected release, including
+  repairing it when an interrupted change is repeated. The public install docs
+  now state the same-user threat boundary and that pre-v0.8 clients are
+  deed-blind.
 
 ## v0.7.0 — 2026-10-02
 

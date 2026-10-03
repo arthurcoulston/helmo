@@ -685,6 +685,9 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
     name must come from the home. Without that, a crew session running `gp-rev`
     would be refused every mutation it asked for, correctly.
 - `release.ts` — **changing which release an installation runs** (H-2493).
+  Upgrade and rollback also durably rewrite a supplied installation deed's
+  `release`; their unchanged path repeats that maintenance, so an interruption
+  between the selection and deed renames is repaired by rerunning the command.
   `install.ts` verifies the pin; this is the only thing that moves it, because
   until now the write half was a text editor. `rev release status | upgrade
   <dir> | rollback`.

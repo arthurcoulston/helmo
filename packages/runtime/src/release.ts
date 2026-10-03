@@ -277,7 +277,7 @@ export interface Change {
  * and the replacement retains the selection it replaced so `rollback` needs
  * nothing else.
  */
-export function upgrade(file: string, dir: string): Change {
+export function upgrade(file: string, dir: string, env: NodeJS.ProcessEnv = process.env): Change {
   const next = readRelease(dir);
   // An unreadable current selection does not stop the upgrade: this command IS
   // the repair for one, and refusing here would leave the installation stuck on
@@ -291,9 +291,17 @@ export function upgrade(file: string, dir: string): Change {
     discarded = e instanceof Error ? e.message : String(e);
   }
   if (current && current.release === next.id && resolve(current.directory) === next.dir) {
+    stageBindingRelease(next.id, env).commit();
     return { from: current.release, to: next.id, directory: next.dir, migration: next.migration, unchanged: true };
   }
-  writeSelection(file, selectionFor(next, current ? retained(current) : null, current?.install));
+  const binding = stageBindingRelease(next.id, env);
+  try {
+    writeSelection(file, selectionFor(next, current ? retained(current) : null, current?.install));
+    binding.commit();
+  } catch (e) {
+    binding.cancel();
+    throw e;
+  }
   recordSelection(deploymentFile(file), readSelection(file)!, 'selected');
   return {
     from: current?.release ?? null, to: next.id, directory: next.dir, migration: next.migration, unchanged: false,
@@ -309,7 +317,7 @@ export function upgrade(file: string, dir: string): Change {
  * directory has since gone or been rebuilt into something else, or a selection
  * made before a declaration was recorded and so unable to say which it was.
  */
-export function rollback(file: string): Change {
+export function rollback(file: string, env: NodeJS.ProcessEnv = process.env): Change {
   const current = readSelection(file);
   if (!current) {
     throw new ReleaseError(`${file} names no selection, so there is nothing to roll back. Select a release with: ${commandName} release upgrade <release directory>`);
@@ -351,9 +359,35 @@ export function rollback(file: string): Change {
       );
     }
   }
-  writeSelection(file, selectionFor(restored, retained(current), current.install));
+  const binding = stageBindingRelease(restored.id, env);
+  try {
+    writeSelection(file, selectionFor(restored, retained(current), current.install));
+    binding.commit();
+  } catch (e) {
+    binding.cancel();
+    throw e;
+  }
   recordSelection(deploymentFile(file), readSelection(file)!, 'rolled_back');
   return { from: current.release, to: restored.id, directory: restored.dir, migration: restored.migration, unchanged: false };
+}
+
+/** Keep a bound installation's deed on the release selected by this command.
+ * Release commands remain reachable when the two files disagree, so repeating
+ * an interrupted upgrade repairs the deed through the unchanged path above. */
+function stageBindingRelease(release: string, env: NodeJS.ProcessEnv): DurableWrite {
+  const named = env.HELMO_BINDING?.trim();
+  if (!named) return { commit() {}, cancel() {} };
+  const file = resolve(named);
+  let binding: Record<string, unknown>;
+  try {
+    binding = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+  } catch (e) {
+    throw new ReleaseError(`cannot maintain installation binding ${file}: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  if (binding.version !== 1 || typeof binding.installation !== 'string' || !binding.control) {
+    throw new ReleaseError(`cannot maintain installation binding ${file}: it is incomplete or unsupported`);
+  }
+  return stageDurableJson(file, { ...binding, release });
 }
 
 function retained(s: Selection): PreviousSelection {
@@ -389,28 +423,40 @@ function selectionFor(set: ReleaseSet, previous: PreviousSelection | null, insta
  * them is not.
  */
 export function writeSelection(file: string, selection: Selection): void {
+  writeDurableJson(file, selection);
+}
+
+function writeDurableJson(file: string, value: unknown): void {
+  const staged = stageDurableJson(file, value);
+  try { staged.commit(); } catch (e) { staged.cancel(); throw e; }
+}
+
+interface DurableWrite { commit(): void; cancel(): void }
+
+function stageDurableJson(file: string, value: unknown): DurableWrite {
   const dir = dirname(file);
   mkdirSync(dir, { recursive: true });
   const tmp = join(dir, `.${basename(file)}.${process.pid}.tmp`);
   try {
     const fd = openSync(tmp, 'w');
     try {
-      writeFileSync(fd, `${JSON.stringify(selection, null, 1)}\n`);
+      writeFileSync(fd, `${JSON.stringify(value, null, 1)}\n`);
       fsyncSync(fd);
     } finally {
       closeSync(fd);
     }
-    renameSync(tmp, file);
   } catch (e) {
     try { unlinkSync(tmp); } catch { /* nothing was left behind */ }
     throw e;
   }
-  const dfd = openSync(dir, 'r');
-  try {
-    fsyncSync(dfd);
-  } finally {
-    closeSync(dfd);
-  }
+  return {
+    commit() {
+      renameSync(tmp, file);
+      const dfd = openSync(dir, 'r');
+      try { fsyncSync(dfd); } finally { closeSync(dfd); }
+    },
+    cancel() { try { unlinkSync(tmp); } catch { /* already committed or absent */ } },
+  };
 }
 
 // ---- describing it -------------------------------------------------------

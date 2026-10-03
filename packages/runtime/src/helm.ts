@@ -501,11 +501,12 @@ interface EscalationState {
   evidence?: { kind: string; ref: string }[];
 }
 
-export function agentFalseAlarmDisposition(g: GlobalConfig, ticketId: string, reason: string): boolean {
+export function agentFalseAlarmDisposition(g: GlobalConfig, ticketId: string, reason: string): number {
   const ticket = run(g, ['get', ticketId]) as EscalationState;
-  return ['open', 'in_progress'].includes(ticket.status) && (ticket.evidence ?? []).some(
+  if (!['open', 'in_progress'].includes(ticket.status)) return 0;
+  return (ticket.evidence ?? []).filter(
     (e) => e.kind === 'other' && e.ref === `rev:false_alarm:${encodeURIComponent(reason)}`,
-  );
+  ).length;
 }
 
 /** An answered resume is process-control input, not work for the halted seat.
@@ -647,13 +648,13 @@ export function escalateBlocked(g: GlobalConfig, l: LoopConfig, reason: string, 
 
 export function recordRelapse(g: GlobalConfig, l: LoopConfig, ticketId: string, reason: string): void {
   run(g, ['update', '--ticket', ticketId,
-    '--note', `Rev kept loop '${l.name}' blocked after it tripped again for the same cause inside the relapse window: ${reason}. The earlier false-alarm disposition authorized one restart only; Rev will reconsider it after the bounded relapse window, while the assigned investigator owns diagnosis and repair.`,
+    '--note', `Rev kept loop '${l.name}' blocked after it tripped again: ${reason}. The earlier false-alarm disposition authorized one restart only; a fresh matching disposition from the assigned investigator is required before another attempt.`,
   ], revActor());
 }
 
 export function recordAgentResumeFailure(g: GlobalConfig, l: LoopConfig, ticketId: string, reason: string, detail: string): void {
   run(g, ['update', '--ticket', ticketId,
-    '--note', `Rev kept loop '${l.name}' blocked with its peer investigator after the authorized restart failed before becoming healthy: ${detail}. New cause: ${reason}. A fresh matching false-alarm disposition is required, and the relapse window bounds another automatic attempt.`,
+    '--note', `Rev kept loop '${l.name}' blocked with its peer investigator after the authorized restart failed before becoming healthy: ${detail}. New cause: ${reason}. A fresh matching false-alarm disposition is required before another attempt.`,
   ], revActor());
 }
 

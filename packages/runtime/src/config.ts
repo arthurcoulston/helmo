@@ -75,7 +75,8 @@ const GLOBAL_DEFAULTS = {
   // actually meet, and the incident it answers cost 7h08m.
   investigation_target_seconds: 1800,
   // A second trip on the same reason inside the hour is a real anomaly, not a
-  // false alarm, and goes to a human. This is the anti-blind-restart rule.
+  // false alarm. Even fresh peer evidence waits out this floor; stale evidence
+  // never releases the loop again. This is the anti-blind-restart rule.
   relapse_window_seconds: 3600,
   // Calibrated against 597 rolling windows of this fleet's token-log: a cost
   // multiple of 4 would have tripped 23 times, 5 seven times, 6 twice. See

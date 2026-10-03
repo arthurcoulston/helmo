@@ -1,7 +1,7 @@
 // The single-loop driver: wake on the Helm cursor, spawn one session, classify
 // the outcome through the ladder, idle or halt. v0 runs one loop in the
 // foreground; the multi-loop supervisor is the next milestone.
-import { unlinkSync, writeFileSync } from 'node:fs';
+import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { stateDir, tokenLogPath } from './config.js';
 import { LaunchAdmission, LaunchClaim, WakeCheck, WorkstreamInfo, actorActivity, actorSelfSpend, actorTickets, escalateBlocked, escalateSilentDeclines, launchAdmit, launchClaim, launchId, launchQuarantine, launchReceipt, launchRevalidate, openEscalation, poolWorker, readyTicketIds, recordSpend, releaseClaim, scopeLabel, seatHolds, seatId, seatName, seatStreams, ticketStatus, wakeCheck, workstreamInfo } from './helm.js';
@@ -950,8 +950,21 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
 
     switch (action.act) {
       case 'blocked': {
-        const kind = action.reason.startsWith('burn breaker:') ? 'burn' : undefined;
+        const trippedKind = action.reason.startsWith('burn breaker:') ? 'burn' : undefined;
         const at = new Date().toISOString();
+        // Best-effort check only: a duplicate escalation beats a silent block.
+        let standing: string | null = null;
+        try {
+          standing = openEscalation(g, l);
+        } catch { /* fall through to escalate */ }
+        let prior: { kind?: string; reason?: string; investigation_ticket?: string } = {};
+        let release: { reason?: string; attempts?: number; dispositions?: number } = {};
+        try { prior = JSON.parse(readFileSync(join(dir, 'BLOCKED.json'), 'utf8')) as typeof prior; } catch { /* no structured predecessor */ }
+        try { release = JSON.parse(readFileSync(join(dir, '.auto_release.json'), 'utf8')) as typeof release; } catch { /* no released predecessor */ }
+        const preservedKind = !trippedKind && standing === prior.investigation_ticket && ['anomaly', 'capacity', 'burn'].includes(prior.kind ?? '')
+          ? prior.kind as 'anomaly' | 'capacity' | 'burn'
+          : undefined;
+        const kind = trippedKind ?? preservedKind;
         sSet(l.name, 'BLOCKED', `${kind ? `kind=${kind}\n` : ''}reason=${action.reason}\nat=${at}\n`);
         if (!kind) {
           for (const stale of ['BLOCKED.json', '.auto_release.json']) {
@@ -959,13 +972,19 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
           }
         }
         logEvent(l.name, 'blocked', `reason=${action.reason}`);
-        // Best-effort check only: a duplicate escalation beats a silent block.
-        let standing: string | null = null;
-        try {
-          standing = openEscalation(g, l);
-        } catch { /* fall through to escalate */ }
         if (standing) {
-          if (kind) writeFileSync(join(dir, 'BLOCKED.json'), `${JSON.stringify({ kind, reason: action.reason, at, investigation_ticket: standing }, null, 2)}\n`);
+          if (kind) {
+            writeFileSync(join(dir, 'BLOCKED.json'), `${JSON.stringify({ kind, reason: action.reason, at, investigation_ticket: standing }, null, 2)}\n`);
+            if (preservedKind) {
+              writeFileSync(join(dir, '.auto_release.json'), `${JSON.stringify({
+                reason: action.reason,
+                at,
+                attempts: release.attempts ?? 1,
+                dispositions: release.reason === action.reason ? release.dispositions ?? 0 : 0,
+                relapse_recorded: false,
+              })}\n`);
+            }
+          }
           console.log(`rev: '${l.name}' BLOCKED — escalation ${standing} already open; not filing another.`);
           logEvent(l.name, 'escalation-standing', `ticket=${standing}`);
           return;

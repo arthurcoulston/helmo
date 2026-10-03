@@ -26,7 +26,7 @@ export interface GlobalConfig {
   shared_reserve_percent: number;       // plan allowance held back from loops so the operator's sessions outlast them
   stale_grace_iterations: number;       // iterations a loop may run on unreadable usage bars before waiting
   investigation_target_seconds: number; // a blocked loop unclaimed longer than this is itself a finding
-  relapse_window_seconds: number;       // a second trip on the same reason inside this goes to a human, never auto-released
+  relapse_window_seconds: number;       // minimum delay before a fresh peer disposition may release the same cause again
   anomaly_rate_multiple: number;        // x the loop's rolling mean of the last 5 iterations
   anomaly_min_usd: number;              // below this an iteration is too small for a multiple to mean anything
   anomaly_abs_percent: number;          // plan percentage points one iteration may consume

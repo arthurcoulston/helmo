@@ -341,9 +341,12 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   authorizes one restart, not a blind retry. The supervisor retains that release
   context in memory, so if the child trips its own fail ladder and deletes the
   files first, the observed new cause is restored to `BLOCKED.json` and the
-  durable release record while the same investigator keeps ownership. The durable release record emits
-  one relapse note, not one per supervisor poll, and the same disposition is
-  reconsidered only after that bounded window. A manual `rev resume` and any
+  durable release record while the same investigator keeps ownership. The loop
+  also preserves that record when a supervisor drain forgets the in-memory
+  release context. The durable release record emits one relapse note, not one
+  per supervisor poll, and consumes each append-only matching disposition for
+  exactly one restart; a persistent fault needs fresh peer evidence before
+  every further attempt. A manual `rev resume` and any
   unrelated unstructured block remove stale structured-release records. **No
   percent is ever converted to tokens or dollars**, in either direction.
 - `shim.ts` — the runtime adapter (claude / codex / mock). Owns non-interactive

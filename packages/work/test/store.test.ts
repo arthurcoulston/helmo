@@ -421,6 +421,43 @@ describe('atomic workflow admission (H-431)', () => {
       expect(() => s.launchClaim(workerA, 'helmo-dev', builder.name, 'launch-a2', 'R-b')).toThrow(/launch_claim_scope_conflict/);
     });
 
+    it('releases a held claim that is date-gated instead of resuming it, and claims it once the gate opens (H-710)', () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date('2030-01-01T15:00:00.000Z'));
+        const s = freshStore();
+        const a = create(s); triage(s, a.id);
+        expect(s.launchClaim(workerA, 'helmo-dev', builder.name, 'launch-a')).toMatchObject({ ticket_id: a.id });
+        s.updateTicket(genA, { ticket_id: a.id, note: 'deploy waits for the window', not_before: '2030-01-01T17:30:00Z' });
+
+        // Before the gate: no resume, the claim ends, and the ticket stays the worker's.
+        vi.setSystemTime(new Date('2030-01-01T15:10:00.000Z'));
+        expect(s.launchClaim(workerA, 'helmo-dev', builder.name, 'launch-a2')).toEqual({ admitted: false, launch_id: 'launch-a2' });
+        expect(s.getTicket(a.id)).toMatchObject({ status: 'open', assignee: builder.name });
+        expect(s.getEvents(a.id).at(-1)?.payload).toMatchObject({ note: expect.stringMatching(/gated until 2030-01-01T17:30:00/) });
+        expect(() => s.updateTicket(genA, { ticket_id: a.id, note: 'late write' })).toThrow(/stale_generation/);
+        const idleSeq = s.maxSeq();
+
+        // Every later poll before the gate launches nothing and wakes nothing,
+        // while other ready work is free to be drawn.
+        vi.setSystemTime(new Date('2030-01-01T15:12:00.000Z'));
+        expect(s.launchClaim(workerA, 'helmo-dev', builder.name, 'launch-a3')).toEqual({ admitted: false, launch_id: 'launch-a3' });
+        expect(s.wakeCheck(idleSeq, 'helmo-dev', builder.name).newly_ready_ids).toEqual([]);
+        const other = create(s); triage(s, other.id);
+        expect(s.launchClaim(workerA, 'helmo-dev', builder.name, 'launch-a4')).toMatchObject({ claimed: true, ticket_id: other.id });
+        s.updateTicket({ ...workerA, generation: 'launch-a4' }, { ticket_id: other.id, note: 'built', status: 'done', evidence: [{ kind: 'other', ref: 'x' }] });
+        expect(s.getTicket(a.id).status).toBe('open');
+
+        // The gate opening is the wake, and the ordinary claim takes it once.
+        vi.setSystemTime(new Date('2030-01-01T17:31:00.000Z'));
+        expect(s.wakeCheck(idleSeq, 'helmo-dev', builder.name).newly_ready_ids).toEqual([a.id]);
+        expect(s.launchClaim(workerA, 'helmo-dev', builder.name, 'launch-a5')).toMatchObject({ claimed: true, ticket_id: a.id });
+        expect(s.launchClaim(workerA, 'helmo-dev', builder.name, 'launch-a6')).toMatchObject({ resumed: true, ticket_id: a.id });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('lets the operator release claimed work, which ends the claim', () => {
       const s = freshStore();
       const { a } = twoClaims(s);
@@ -481,6 +518,12 @@ describe('atomic workflow admission (H-431)', () => {
       expect(resumed).toMatchObject({ resumed: true, ticket_id: ticket.id, launch_id: 'launch-2', admission_id: admissionId, admission_launch_id: 'launch-1' });
       expect(s.revalidateLaunch(admissionId, resumed.admission_launch_id as string)).toMatchObject({ valid: true });
       expect(() => s.revalidateLaunch(admissionId, 'launch-2')).toThrow(/does not match/);
+    });
+
+    it('keeps resuming a date-gated workflow claim, whose spent admission a release would strand (H-710)', () => {
+      const { s, ticket } = heldWorkflowClaim();
+      s.updateTicket({ ...worker, generation: 'launch-1' }, { ticket_id: ticket.id, note: 'later', not_before: '2999-01-01' });
+      expect(s.launchClaim(worker, 'helmo-dev', builder.name, 'launch-2')).toMatchObject({ resumed: true, ticket_id: ticket.id });
     });
 
     it('returns a claim whose authority is gone to the human and frees the worker', () => {

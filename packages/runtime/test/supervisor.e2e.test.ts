@@ -63,7 +63,7 @@ function answerResume(e: Env, ticketId: string): void {
     store.answerTicket(
       { name: 'Arthur', kind: 'human' },
       ticketId,
-      { answer: 'Resume this loop once.', chosen_option: 'resume', resolution: 'resume' },
+      { answer: 'Yes — resume this loop once.', chosen_option: 'Yes — resume this loop once.', resolution: 'resume' },
     );
   } finally {
     store.close();
@@ -406,6 +406,15 @@ mock_cmd = "true"
       expect(existsSync(join(dir, 'BLOCKED'))).toBe(true);
       expect((helm(e, ['get', ticket]) as { status: string }).status).toBe('in_progress');
       expect((helm(e, ['list', '--status', 'awaiting_human']) as { tickets: unknown[] }).tickets).toHaveLength(0);
+      await sleep(2500);
+      const store = new Store(join(e.home, 'helm.db'));
+      try {
+        const relapseNotes = store.getEvents(ticket).filter((event: { payload?: { note?: string } }) =>
+          event.payload?.note?.includes('authorized one restart only'));
+        expect(relapseNotes).toHaveLength(1);
+      } finally {
+        store.close();
+      }
     } finally {
       proc.kill('SIGKILL');
     }

@@ -1649,9 +1649,14 @@ mock_cmd = "exit 1"
     rev(e, ['run', 'bad-loop', '--count', '5']);
     expect(existsSync(join(e.home, 'state', 'bad-loop', '.fail_streak'))).toBe(true);
 
+    writeFileSync(join(e.home, 'state', 'bad-loop', 'BLOCKED.json'), '{}');
+    writeFileSync(join(e.home, 'state', 'bad-loop', '.auto_release.json'), '{}');
+
     rev(e, ['resume', 'bad-loop']);
     // The resume is a statement the cause was looked at: full budget back.
     expect(existsSync(join(e.home, 'state', 'bad-loop', '.fail_streak'))).toBe(false);
+    expect(existsSync(join(e.home, 'state', 'bad-loop', 'BLOCKED.json'))).toBe(false);
+    expect(existsSync(join(e.home, 'state', 'bad-loop', '.auto_release.json'))).toBe(false);
 
     const out = rev(e, ['run', 'bad-loop', '--count', '5']);
     expect(out).toContain('already open; not filing another');

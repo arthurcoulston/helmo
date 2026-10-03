@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // rev — run and control loops. Control verbs are sentinel writes; anything
 // that reads state is safe from any context (the watch officer uses these).
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildLine, compare, parseMarker, runningLine, snapshot } from './build.js';
 import { controlTargets, loadRoster, resolveRef, stateDir } from './config.js';
@@ -404,6 +404,9 @@ switch (cmd) {
     console.log(targetLine(requireTarget(`resume '${name}'`)));
     for (const n of names) {
       sClear(n, 'STOP', 'HOLD', 'BLOCKED');
+      for (const stale of ['BLOCKED.json', '.auto_release.json']) {
+        try { unlinkSync(join(stateDir(n), stale)); } catch { /* absent */ }
+      }
       // A resume is a statement the cause was looked at: the loop gets its full
       // retry budget back. Carrying the streak over made resume a single retry
       // that re-blocked in seconds and filed a duplicate escalation (H-401).

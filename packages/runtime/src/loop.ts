@@ -1,7 +1,7 @@
 // The single-loop driver: wake on the Helm cursor, spawn one session, classify
 // the outcome through the ladder, idle or halt. v0 runs one loop in the
 // foreground; the multi-loop supervisor is the next milestone.
-import { writeFileSync } from 'node:fs';
+import { unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { stateDir, tokenLogPath } from './config.js';
 import { LaunchAdmission, LaunchClaim, WakeCheck, WorkstreamInfo, actorActivity, actorSelfSpend, actorTickets, escalateBlocked, escalateSilentDeclines, launchAdmit, launchClaim, launchId, launchQuarantine, launchReceipt, launchRevalidate, openEscalation, poolWorker, readyTicketIds, recordSpend, releaseClaim, scopeLabel, seatHolds, seatId, seatName, seatStreams, ticketStatus, wakeCheck, workstreamInfo } from './helm.js';
@@ -953,6 +953,11 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
         const kind = action.reason.startsWith('burn breaker:') ? 'burn' : undefined;
         const at = new Date().toISOString();
         sSet(l.name, 'BLOCKED', `${kind ? `kind=${kind}\n` : ''}reason=${action.reason}\nat=${at}\n`);
+        if (!kind) {
+          for (const stale of ['BLOCKED.json', '.auto_release.json']) {
+            try { unlinkSync(join(dir, stale)); } catch { /* absent */ }
+          }
+        }
         logEvent(l.name, 'blocked', `reason=${action.reason}`);
         // Best-effort check only: a duplicate escalation beats a silent block.
         let standing: string | null = null;
@@ -960,6 +965,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
           standing = openEscalation(g, l);
         } catch { /* fall through to escalate */ }
         if (standing) {
+          if (kind) writeFileSync(join(dir, 'BLOCKED.json'), `${JSON.stringify({ kind, reason: action.reason, at, investigation_ticket: standing }, null, 2)}\n`);
           console.log(`rev: '${l.name}' BLOCKED — escalation ${standing} already open; not filing another.`);
           logEvent(l.name, 'escalation-standing', `ticket=${standing}`);
           return;

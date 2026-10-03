@@ -519,19 +519,21 @@ export function answeredResumeEscalation(g: GlobalConfig, l: LoopConfig): string
   const ticket = run(g, ['get', id]) as EscalationState;
   const choice = ticket.last_answer?.chosen_option?.trim().toLowerCase();
   return ticket.status === 'open' && ticket.last_answer?.resolution === 'resume' &&
-    (choice === 'resume' || choice?.startsWith('resume —')) ? id : null;
+    (choice === 'resume' || choice?.startsWith('resume —') || choice === 'yes' || choice?.startsWith('yes —')) ? id : null;
 }
 
 /** Closes the escalation once the resumed loop has stayed up. Returns false
  *  when someone already closed it — an agent reading the answer can beat the
  *  min-uptime check, and Helmo refuses every write to a terminal ticket, so
  *  retrying would fail every poll forever (H-2164). */
-export function completeAnsweredResume(g: GlobalConfig, ticketId: string, runningPath: string): boolean {
+export function completeAnsweredResume(g: GlobalConfig, ticketId: string, runningPath: string, agent = false): boolean {
   const status = ticketStatus(g, ticketId);
   if (status === 'done' || status === 'cancelled') return false;
   run(g, [
     'update', '--ticket', ticketId,
-    '--note', 'Rev applied the human resume answer; the supervisor restarted the loop and confirmed it stayed running.',
+    '--note', agent
+      ? 'Rev applied the peer investigator disposition; the supervisor restarted the loop and confirmed it stayed running.'
+      : 'Rev applied the human resume answer; the supervisor restarted the loop and confirmed it stayed running.',
     '--status', 'done', '--confidence', 'routine',
     '--evidence-kind', 'file', '--evidence-ref', runningPath,
   ], revActor());
@@ -645,7 +647,7 @@ export function escalateBlocked(g: GlobalConfig, l: LoopConfig, reason: string, 
 
 export function recordRelapse(g: GlobalConfig, l: LoopConfig, ticketId: string, reason: string): void {
   run(g, ['update', '--ticket', ticketId,
-    '--note', `Rev kept loop '${l.name}' blocked after it tripped again for the same cause inside the relapse window: ${reason}. The earlier false-alarm disposition authorized one restart only; the assigned investigator must record a repaired disposition before any further release.`,
+    '--note', `Rev kept loop '${l.name}' blocked after it tripped again for the same cause inside the relapse window: ${reason}. The earlier false-alarm disposition authorized one restart only; Rev will reconsider it after the bounded relapse window, while the assigned investigator owns diagnosis and repair.`,
   ], revActor());
 }
 

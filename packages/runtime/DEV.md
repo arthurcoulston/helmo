@@ -338,7 +338,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   matches it to `BLOCKED.json`, clears only BLOCKED, and proves minimum uptime
   before closing the investigation. A same-reason relapse inside the configured
   window remains blocked on its peer-owned investigation; the first disposition
-  authorizes one restart, not a blind retry. **No
+  authorizes one restart, not a blind retry. The durable release record emits
+  one relapse note, not one per supervisor poll, and the same disposition is
+  reconsidered only after that bounded window. A manual `rev resume` and any
+  unrelated unstructured block remove stale structured-release records. **No
   percent is ever converted to tokens or dollars**, in either direction.
 - `shim.ts` — the runtime adapter (claude / codex / mock). Owns non-interactive
   flags, constitution injection (fail-closed), `cleanEnv()` (strips parent

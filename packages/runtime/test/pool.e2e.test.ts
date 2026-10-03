@@ -186,6 +186,34 @@ describe('pool workers on one seat (H-574)', { timeout: 60000 }, () => {
     expect(resumedPrompt).toContain(`Rev has resumed ticket ${id}`);
     expect(resumedPrompt).toContain(`Your workspace is ${join(e.home, 'w1')}`);
     expect(readFileSync(join(e.home, 'prompt-1'), 'utf8')).not.toContain('Rev has resumed');
+    // An ordinary claim may be set back to open while it waits, and
+    // no claimed prompt asks for an iteration-sized split or a plan closure.
+    for (const n of ['1', '2']) {
+      const p = readFileSync(join(e.home, `prompt-${n}`), 'utf8');
+      expect(p).toContain(`link that blocker and set ${id} back to open`);
+      expect(p).toContain('Split a ticket only into independently useful deliverables');
+      expect(p).not.toContain('close the parent as a plan');
+    }
+  });
+
+  it('an ordinary claim set back to open while it waits stays with the seat and frees the worker for ready work', () => {
+    // A resumed claim blocked on a prerequisite held its worker, and the
+    // only-ticket rule kept that worker off the prerequisite. Setting the claim
+    // back to open keeps the seat's reservation and lets the next launch draw.
+    const wait = `${BOUND}; if [ ! -f $REV_HOME/second ]; then node ${HELM_CLI} update --ticket $T --note "waiting on its prerequisite; next step recorded" --status open --not-before 2099-01-01; else ${FINISH}; fi`;
+    const e = setup((h) => worker('w1', h, wait) + worker('w2', h, 'true'));
+    const waiting = seed(e, 'Waits on a prerequisite');
+    const prerequisite = seed(e, 'The prerequisite');
+    const run = () => execFileSync('npx', ['tsx', REV_CLI, 'run', 'w1', '--count', '1'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') });
+
+    run();
+    expect(ticket(e, waiting)).toMatchObject({ status: 'open', assignee: 'builder' });
+    writeFileSync(join(e.home, 'second'), '');
+    run();
+    expect(readFileSync(join(e.home, 'bound'), 'utf8').trim().split('\n')).toEqual([`w1 ${waiting}`, `w1 ${prerequisite}`]);
+    expect(ticket(e, prerequisite).status).toBe('done');
+    expect(ticket(e, waiting)).toMatchObject({ status: 'open', assignee: 'builder' });
+    expect((helm(e, ['list', '--status', 'awaiting_human']) as { tickets: unknown[] }).tickets).toHaveLength(0);
   });
 
   it('puts the claim back when the session never started', () => {
@@ -366,7 +394,7 @@ process.exit(r.status ?? 1);
     const run = (e: Env) => execFileSync('npx', ['tsx', REV_CLI, 'run', 'w1', '--count', '1'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') });
 
     it('keeps an unfinished claim unquarantined, and its next launch resumes and revalidates it by the launch its admission belongs to', () => {
-      const e = setup((h) => worker('w1', h, `${BOUND}; [ -f $REV_HOME/second ] || exit 1; ${FINISH}`) + worker('w2', h, 'true'));
+      const e = setup((h) => worker('w1', h, `${BOUND}; printf '%s' "$REV_PROMPT" > $REV_HOME/prompt-wf; [ -f $REV_HOME/second ] || exit 1; ${FINISH}`) + worker('w2', h, 'true'));
       const id = seedWorkflow(e, 'Gated work left unfinished');
 
       run(e);
@@ -384,6 +412,9 @@ process.exit(r.status ?? 1);
       expect(log).not.toMatch(/failed pre-dispatch revalidation|post-session revalidation failed/);
       expect(ticket(e, id).status).toBe('done');
       expect(journal(e, 'w1').map((j) => j['phase']).sort()).toEqual(['complete', 'quarantined']);
+      // Its admission is spent, so it is never told to set the claim back to open.
+      expect(readFileSync(join(e.home, 'prompt-wf'), 'utf8')).toContain(`Rev has resumed ticket ${id}`);
+      expect(readFileSync(join(e.home, 'prompt-wf'), 'utf8')).not.toContain('back to open');
     });
 
     it('keeps a claim whose session never started, because its launch admission is spent', () => {

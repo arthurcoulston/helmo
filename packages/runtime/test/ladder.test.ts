@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { breakerDecide, choiceDecide, classifyExit, declineDecide, limitDecide, ladderDecide, probeDecide, respawnDecide, rollingMean, seatDecide, velocityToPause, wakeDecide } from '../src/ladder.js';
+import { breakerDecide, choiceDecide, classifyExit, declineDecide, limitDecide, ladderDecide, probeDecide, respawnDecide, rollingMean, routedDeclines, seatDecide, velocityToPause, wakeDecide } from '../src/ladder.js';
 
 const base = { produced: true, failStreak: 0, limitStreak: 0, failCap: 2, limitCap: 20, limitWait: 900 };
 
@@ -64,8 +64,14 @@ describe('declineDecide', () => {
   it('counts per ticket, resets dispositions, and escalates from the third pass', () => {
     expect(declineDecide({}, ['H-1'], false)).toEqual({ streaks: { 'H-1': 1 }, escalate: [] });
     expect(declineDecide({ 'H-1': 1, 'H-2': 2 }, ['H-2'], false)).toEqual({ streaks: { 'H-2': 3 }, escalate: ['H-2'] });
-    expect(declineDecide({ 'H-2': 3 }, ['H-2'], false).escalate).toEqual(['H-2']);
+    // Routed once, at the crossing: a fourth unchanged pass is already on record.
+    expect(declineDecide({ 'H-2': 3 }, ['H-2'], false)).toEqual({ streaks: { 'H-2': 4 }, escalate: [] });
     expect(declineDecide({ 'H-2': 2 }, ['H-2'], true)).toEqual({ streaks: {}, escalate: [] });
+    // Another ticket advancing keeps a routed one routed, so it is not routed again.
+    expect(declineDecide({ 'H-1': 2, 'H-2': 4 }, [], true)).toEqual({ streaks: { 'H-2': 4 }, escalate: [] });
+    // It leaves only when an unproductive pass no longer finds it ready and unchanged.
+    expect(declineDecide({ 'H-2': 4 }, ['H-3'], false)).toEqual({ streaks: { 'H-3': 1 }, escalate: [] });
+    expect(routedDeclines({ 'H-1': 2, 'H-2': 3, 'H-3': 7 })).toEqual(['H-2', 'H-3']);
   });
 });
 

@@ -314,3 +314,84 @@ describe('a key the tool does not declare (R-39 Q9)', () => {
     store.close();
   });
 });
+
+// Assignee reads must disclose why routed work cannot start.
+describe('a blocked row on the first queue read every loop makes (H-621)', () => {
+  const cyber: Actor = { name: 'cyber', kind: 'agent', model: 'gpt-5.6-luna', version: '0.1' };
+
+  async function rows(store: Store, args: Record<string, unknown>) {
+    const client = await connect(store);
+    const res = await client.callTool({ name: 'helmo_list_tickets', arguments: args });
+    await client.close();
+    return JSON.parse((res.content as { text: string }[])[0]!.text).result as {
+      tickets: Record<string, unknown>[];
+    };
+  }
+
+  function seed(store: Store, over: Record<string, unknown> = {}) {
+    const blocker = store.createTicket(orch, { title: 'Land the pending fix', body: 'Goal: unblock dependent work. Current state: open.', workstream: 'helmo-dev', type: 'build' });
+    const waiting = store.createTicket(orch, {
+      title: 'Approve the live command',
+      body: 'Goal: approve once the fix lands. Current state: waiting.',
+      workstream: 'helmo-dev',
+      type: 'review',
+      assignee: 'cyber',
+      priority: 0,
+      deps: [{ to: blocker.id, type: 'blocks' as const }],
+      ...over,
+    });
+    return { blocker, waiting };
+  }
+
+  it('names what is blocking it, as ids, not as a boolean', async () => {
+    const store = new Store(':memory:');
+    const { blocker, waiting } = seed(store);
+    const result = await rows(store, { assignee: 'cyber', actor: cyber });
+    const row = result.tickets.find((t) => t['id'] === waiting.id)!;
+    expect(row).toBeDefined();
+    expect(row['blocked_by']).toEqual([blocker.id]);
+    expect(row).not.toHaveProperty('blocked');
+    store.close();
+  });
+
+  it('still shows the work routed to the agent rather than hiding it', async () => {
+    const store = new Store(':memory:');
+    const { waiting } = seed(store);
+    expect((await rows(store, { assignee: 'cyber', actor: cyber })).tickets.map((t) => t['id'])).toContain(waiting.id);
+    expect((await rows(store, { ready: true, actor: cyber })).tickets.map((t) => t['id'])).not.toContain(waiting.id);
+    store.close();
+  });
+
+  // Both of these assert an ABSENCE, so each carries the matching presence in
+  // the same read: a field that was never emitted at all would satisfy the
+  // absence on its own and say nothing.
+  it('leaves an unblocked row exactly as it was', async () => {
+    const store = new Store(':memory:');
+    const { waiting } = seed(store);
+    const free = store.createTicket(orch, { title: 'Build the importer', body: 'Goal: import CSVs. Current state: not started.', workstream: 'helmo-dev', type: 'build', assignee: 'cyber' });
+    const read = (await rows(store, { assignee: 'cyber', actor: cyber })).tickets;
+    expect(read.find((t) => t['id'] === waiting.id)).toHaveProperty('blocked_by');
+    expect(read.find((t) => t['id'] === free.id)).not.toHaveProperty('blocked_by');
+    store.close();
+  });
+
+  it('drops the marker when the blocker closes, so the row says it is startable', async () => {
+    const store = new Store(':memory:');
+    const { blocker, waiting } = seed(store);
+    const before = (await rows(store, { assignee: 'cyber', actor: cyber })).tickets.find((t) => t['id'] === waiting.id)!;
+    expect(before['blocked_by']).toEqual([blocker.id]);
+    store.updateTicket(orch, { ticket_id: blocker.id, status: 'done', note: 'landed', evidence: [{ kind: 'commit', ref: 'helmo@abc1234' }] });
+    const after = (await rows(store, { assignee: 'cyber', actor: cyber })).tickets.find((t) => t['id'] === waiting.id)!;
+    expect(after).not.toHaveProperty('blocked_by');
+    store.close();
+  });
+
+  it('says so in the tool description, where an agent reads it before calling', async () => {
+    const store = new Store(':memory:');
+    const client = await connect(store);
+    const tool = (await client.listTools()).tools.find((t) => t.name === 'helmo_list_tickets')!;
+    expect(tool.description).toContain("'blocked_by'");
+    await client.close();
+    store.close();
+  });
+});

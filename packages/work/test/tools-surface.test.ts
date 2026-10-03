@@ -96,6 +96,19 @@ describe('mistaken human returns through the MCP boundary (H-391)', () => {
   });
 });
 
+describe('the human-return description teaches reserved asks only', () => {
+  it('frames the ask as reserved, uses a reserved example, and names team-owned recovery as no question', async () => {
+    const client = await connect(new Store(':memory:'));
+    const description = (await client.listTools()).tools.find((t) => t.name === 'helmo_return_to_human')!.description!;
+    expect(description).toContain('it is reserved for what only the human can supply');
+    // The standing-alone example is a client price commitment nothing on the record authorizes.
+    expect(description).toContain('question: "Send the renewal at $520?"');
+    // The team's own lint rule now sits under the no-question heading, with the recovery spelled out.
+    expect(description).toMatch(/NOT A QUESTION: the staging deploy is red because of a lint rule the team added last week\. That method is the team's own — fix or remove the rule/);
+    expect(description).toContain('Repeated passes with no progress are likewise a routing problem for the team, not a decision for the human.');
+  });
+});
+
 describe('trusted workflow decision door (H-430)', () => {
   it('uses the runtime actor and rejects a caller-supplied identity before writing', async () => {
     const reviewer: Actor = { name: 'reviewer-loop', kind: 'agent', model: 'gpt-6-codex', version: '2.1', session: 'rev:reviewer-loop' };

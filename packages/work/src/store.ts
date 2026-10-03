@@ -2047,12 +2047,26 @@ export class Store {
    *  real diff. A note-only update does not count. Writing "still blocked,
    *  nothing to do" is the cheapest possible event and, counted as production,
    *  it re-certifies a loop as busy and buys it another whole iteration —
-   *  which is how rev's ladder lost the chance to idle (H-412). */
+   *  which is how rev's ladder lost the chance to idle (H-412).
+   *
+   *  Claim motion is the same kind of record: taking a ticket to
+   *  in_progress or putting it back to open, with the assignee unchanged, the
+   *  writer's own or cleared, and nothing else in the diff. A pool launch
+   *  claims before its session runs, so counting that bought every launch a
+   *  "productive" pass whatever the session did. A handoff to another seat,
+   *  a date gate, a link, a filing or a close still counts. */
   actorActivitySince(actorName: string, seq: number, advancingOnly = false, session?: string): number {
     const advancing = advancingOnly
       ? `AND NOT (event_type = 'updated'
                   AND (json_extract(payload, '$.diffs') IS NULL
-                       OR json_extract(payload, '$.diffs') = '{}'))`
+                       OR json_extract(payload, '$.diffs') = '{}'
+                       OR (json_extract(payload, '$.diffs.status.from') IN ('open', 'in_progress')
+                           AND json_extract(payload, '$.diffs.status.to') IN ('open', 'in_progress')
+                           AND NOT EXISTS (SELECT 1 FROM json_each(payload, '$.diffs') WHERE key NOT IN ('status', 'assignee'))
+                           AND (json_type(payload, '$.diffs.assignee') IS NULL
+                                OR json_extract(payload, '$.diffs.assignee.to') IS NULL
+                                OR json_extract(payload, '$.diffs.assignee.to') = json_extract(payload, '$.diffs.assignee.from')
+                                OR json_extract(payload, '$.diffs.assignee.to') = json_extract(actor, '$.name')))))`
       : '';
     const sessionFilter = session ? "AND json_extract(actor, '$.session') = ?" : '';
     const row = this.db

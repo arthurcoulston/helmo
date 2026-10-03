@@ -390,7 +390,10 @@ Pinned releases accept both the historical three-component layout and C1's one
   `actor-activity --advancing` answers "did this
   actor MOVE anything" — a note-only update is excluded, because a harness
   that counts "still blocked, nothing to do" as production re-certifies its
-  loop as busy and buys another iteration, H-412; `actor-spend` lets the meter net out what the agent
+  loop as busy and buys another iteration, H-412; so is bare claim motion — a
+  claim or release between open and in_progress whose diff holds nothing but
+  that status and an assignee that is unchanged, the writer's own or cleared,
+  because a pool launch claims before its session runs; `actor-spend` lets the meter net out what the agent
   self-reported so a session lands in the totals exactly once, H-57; it carries
   the same session filter — negative
   spend events are reconciliations, keep accepting them; `by_ticket` lets the

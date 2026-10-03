@@ -1922,13 +1922,62 @@ describe('harness queries (wake cursor)', () => {
     expect(s.actorActivitySince('builder-loop', seq)).toBe(1);
     expect(s.actorActivitySince('builder-loop', seq, true)).toBe(0);
 
-    // A status change is advancement, note or not.
+    // A claim and its release are record motion, not advancement:
+    // an unchanged claim/release cycle must not buy another full-price pass.
     s.updateTicket(builder, { ticket_id: t.id, note: 'claimed', status: 'in_progress' });
+    expect(s.actorActivitySince('builder-loop', seq, true)).toBe(0);
+    s.updateTicket(builder, { ticket_id: t.id, note: 'put back, still waiting', status: 'open' });
+    expect(s.actorActivitySince('builder-loop', seq, true)).toBe(0);
+
+    // A status change that moves the work is advancement, note or not.
+    s.updateTicket(builder, { ticket_id: t.id, note: 'claimed again', status: 'in_progress' });
+    s.updateTicket(builder, { ticket_id: t.id, note: 'shipped', status: 'done', evidence: [{ kind: 'other', ref: 'fixture' }] });
     expect(s.actorActivitySince('builder-loop', seq, true)).toBe(1);
 
     // So is filing a new ticket.
     create(s, { workstream: 'alpha' });
-    expect(s.actorActivitySince('builder-loop', seq, true)).toBeGreaterThan(1);
+    expect(s.actorActivitySince('builder-loop', seq, true)).toBe(2);
+  });
+
+  it('claim motion is not advancement, but a handoff, date gate, link or recovery is', () => {
+    const s = freshStore();
+    const reviewer: Actor = { name: 'reviewer-loop', kind: 'agent', model: 'm', version: '1' };
+    const waiting = create(s, { workstream: 'alpha' });
+    const prerequisite = create(s, { workstream: 'alpha' });
+    triage(s, waiting.id);
+    triage(s, prerequisite.id);
+    const count = (since: number) => s.actorActivitySince('builder-loop', since, true);
+
+    // Unseen ticket, same cycle: claim and release with nothing else is motion only.
+    let seq = s.maxSeq();
+    for (let n = 0; n < 3; n += 1) {
+      s.updateTicket(builder, { ticket_id: waiting.id, note: `pass ${n}: claimed`, status: 'in_progress' });
+      s.updateTicket(builder, { ticket_id: waiting.id, note: `pass ${n}: still waiting`, status: 'open' });
+    }
+    expect(count(seq)).toBe(0);
+
+    // Putting work down with a real start date is a disposition.
+    seq = s.maxSeq();
+    s.updateTicket(builder, { ticket_id: waiting.id, note: 'claimed', status: 'in_progress' });
+    s.updateTicket(builder, { ticket_id: waiting.id, note: 'waits for Monday intake', status: 'open', not_before: '2099-01-05' });
+    expect(count(seq)).toBe(1);
+
+    // Linking the real prerequisite is genuine dependency recovery.
+    seq = s.maxSeq();
+    s.linkTickets(builder, waiting.id, prerequisite.id, 'blocks', 'add');
+    expect(count(seq)).toBe(1);
+
+    // Handing the work to the seat that can act is a disposition, not motion.
+    seq = s.maxSeq();
+    s.updateTicket(builder, { ticket_id: prerequisite.id, note: 'claimed', status: 'in_progress' });
+    s.updateTicket(builder, { ticket_id: prerequisite.id, note: 'reviewer owns this', handoff_to: reviewer.name });
+    expect(count(seq)).toBe(1);
+
+    // Delivery counts.
+    seq = s.maxSeq();
+    s.updateTicket(reviewer, { ticket_id: prerequisite.id, note: 'claimed', status: 'in_progress' });
+    s.updateTicket(reviewer, { ticket_id: prerequisite.id, note: 'delivered', status: 'done', evidence: [{ kind: 'other', ref: 'fixture' }] });
+    expect(s.actorActivitySince('reviewer-loop', seq, true)).toBe(1);
   });
 });
 

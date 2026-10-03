@@ -18,7 +18,11 @@
   },
   "publish": {
     "cold": {
-      "scripts": ["prepare:cold", "build", "test"]
+      "scripts": [
+        "prepare:cold",
+        "build",
+        "test"
+      ]
     }
   }
 }

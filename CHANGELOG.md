@@ -11,6 +11,14 @@ consolidation imported still carried that release's notes under "Unreleased";
 this is the published wording, which is two entries and one commit reference
 longer.
 
+## Unreleased
+
+- Route pool work by a ticket `lane` instead of a per-worker ticket allowlist
+  (H-824). `create`, `update` and `list` take `lane` on the CLI and MCP;
+  `launch-claim --lane` takes only that lane, and without it only lane-null
+  tickets; `wake-check` takes `--lane` or `--no-lane`. The column is additive
+  and null on every existing ticket, so installed callers see no change.
+
 ## v0.9.2 — 2026-10-03
 
 - Route repeated passes with no progress to team coordination. Claiming and

@@ -31,7 +31,7 @@ test('interactive links use the dark-mode-safe estate token directly', () => {
 test('mobile area navigation stays on one scrollable row', () => {
   const html=appPage('/run');
   assert.match(html,/nav\{flex-wrap:nowrap;width:100%;overflow-x:auto\}/);
-  assert.match(html,/nav a\{padding:\.4rem \.45rem;white-space:nowrap\}/);
+  assert.match(html,/nav a\{padding:\.4rem \.3rem;white-space:nowrap;font-size:\.8rem\}/);
 });
 
 test('fixture-backed app request renders a real record', () => {

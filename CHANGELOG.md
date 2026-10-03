@@ -17,6 +17,8 @@ longer.
   app, including decision/action controls, evidence, history, prioritization
   and live refresh. Keep common navigation and the consolidated backend.
   `/` preserves Work bookmarks; the summary is available at `/overview`.
+  Mobile navigation keeps all five links visible, and Runtime names its
+  horizontally scrollable columns.
 - Keep the versioned Overview API record projection compatible while the
   summary page links to the full Work view. No store migration, installation
   binding change, service change or configuration change is required.

@@ -372,6 +372,8 @@ test('unified routes retain the established product workflows and common navigat
     } else {
       assert.match(html, /aria-label="Loop status"/);
       assert.match(html, /Recent trace/);
+      assert.match(html, /aria-describedby="helmo-runtime-scroll"/);
+      assert.match(html, /Scroll sideways for runtime, pace, spend and recent trace/);
       assert.match(html, /data-refresh="loops"/);
     }
   }

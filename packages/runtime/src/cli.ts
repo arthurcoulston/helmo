@@ -252,7 +252,7 @@ switch (cmd) {
     const stateFile = join(dir, 'intake-preparation.json');
     const resultFile = join(dir, 'intake-preparation-result.json');
     recordIntakeResult(resultFile, buildIntakeResult(g.intake_preparation_checkout, stateFile, rest[1]));
-    console.log('intake preparation result staged; the supervisor will sign and deliver it on its next poll.');
+    console.log('intake preparation result staged; the supervisor will sign and deliver it on its next poll, even if the ticket closes first.');
     break;
   }
   case 'team': {

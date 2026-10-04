@@ -28,6 +28,7 @@ import { readSelection, selectionFile } from './release.js';
 import { target } from './install.js';
 import { intakePreparationPass } from './intake-preparation.js';
 import { commandName } from './command-name.js';
+import { refinementCommitPass } from './refinement-commit.js';
 
 const SUP = 'supervisor';
 
@@ -355,6 +356,15 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
       }).then((result) => {
         if (result !== 'idle' && result !== 'heartbeat') logEvent(SUP, 'intake-preparation', `result=${result}`);
       }).catch((error) => logEvent(SUP, 'intake-preparation-error', String(error).replace(/\s+/g, ' ').slice(0, 200)));
+      // The same opt-in carries the refinement commit pull (H-800): mechanical,
+      // so it runs here rather than as a Builder assignment.
+      void refinementCommitPass({
+        origin: g.intake_preparation_origin,
+        checkout: g.intake_preparation_checkout,
+        stateFile: join(dir, 'refinement-commit.json'),
+      }).then((result) => {
+        if (result !== 'idle') logEvent(SUP, 'refinement-commit', `result=${result}`);
+      }).catch((error) => logEvent(SUP, 'refinement-commit-error', String(error).replace(/\s+/g, ' ').slice(0, 200)));
     };
     const intakeTimer = g.intake_preparation_origin && g.intake_preparation_checkout
       ? setInterval(intake, g.poll_seconds * 1000) : null;

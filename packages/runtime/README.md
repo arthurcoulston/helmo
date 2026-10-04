@@ -92,6 +92,10 @@ from the macOS Keychain service `plumb-intake-executor-secret`; never put it in
 the roster, environment or command line. The adapter validates the claimed
 occurrence identity and signup hash, writes the exact signup to the scoped
 client path, and creates one Builder assignment containing identifiers only.
+The same settings carry the refinement commit pull: a drafted directive
+revision's exact words are committed on their own `refinement/...` branch,
+pushed, and proven back to the Worker with raw Git objects, with no session
+and no change to the checkout's working tree.
 Omitting either setting disables the integration and preserves ordinary Rev
 behaviour.
 

@@ -524,11 +524,33 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   using only Helmo CLI-supported fields; project metadata is not passed because
   that CLI refuses fields which exist only on the MCP create surface.
   Attempt state contains no signup text and lives under state/supervisor; a
-  stale result is discarded on the Worker's 409. Before heartbeat or result,
-  the adapter re-reads that ticket and retains the lease only while it is open
-  or in progress; any other status discards the local attempt and result so the
-  Worker can recover it after lease expiry. There is no listener or
+  stale result is discarded on the Worker's 409. A staged result is delivered
+  whatever the ticket's status (H-654): staging then closing is the Builder's
+  ordinary sequence, and the close can land before the poll. Any other refusal
+  is logged with the Worker's error phrase (bounded by shape, never the raw
+  body); while the ticket is open or in progress the lease is renewed and the
+  result kept for retry, and once it is not, or before a heartbeat with nothing
+  staged, the adapter discards the local attempt. A discard is recorded,
+  identifiers only, in `intake-preparation-abandoned.json` (last 20), because
+  the Worker hands a live lease straight back to its owner: the next ticket for
+  that occurrence names the prior ticket, attempt and commit and the refusal,
+  so it reads as a resubmission rather than fresh preparation. There is no listener or
   second scheduler, and an installation declaring neither key is unchanged.
+  The same poll and keys run `refinement-commit.ts` (H-800), the Worker's
+  `/api/refinement-commit/*` pull: a claimed directive revision is checked
+  against its hash, its path (`clients/<org>/projects/<project>/directive.md`)
+  and its own `refinement/<org>/<project>/` branch, then committed with
+  plumbing (`hash-object`, a private index, `commit-tree`) on origin/main and
+  pushed without force, so the operator's checkout and main are never
+  touched. A branch already pushed by an earlier attempt is reused only if it
+  is one commit whose parent is on origin/main and whose tree is that
+  parent's with only the directive set to these words; anything else on a
+  matching name is refused, never overwritten. The result carries the raw commit, directive blob and
+  path trees. State under state/supervisor holds identifiers and the commit,
+  never the words; a 422 keeps the lease and retries, and the fifth hands the
+  attempt back as retryable. Refused claims fail as not retryable; Git or
+  network errors as retryable. Each non-idle pass is a `refinement-commit`
+  event.
 - A human answer reopens a Helmo ticket with `resolution: resume` regardless
   of whether its operational choice was resume, hold, or investigate. The
   supervisor clears `BLOCKED` only when `last_answer.chosen_option` is the

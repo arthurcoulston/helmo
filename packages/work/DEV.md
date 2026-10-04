@@ -23,8 +23,10 @@ Pinned releases accept both the historical three-component layout and C1's one
   Definition insertion rejects empty/duplicate stages, unknown prerequisites,
   cycles, revision replacement and fields outside the enforced schema. Stages
   may declare entry and exit requirement scopes: entry scopes gate admission,
-  exit scopes gate `advanced`, and a declared scope with no requirement row
-  refuses. Existing definitions without scope arrays retain their historical
+  exit scopes gate `advanced`; the exact exit evidence consumed is retained
+  with that outcome, so its later revocation, replacement or supersession
+  quarantines the completed attempt and its descendants. A declared scope with
+  no requirement row refuses. Existing definitions without scope arrays retain their historical
   entry-requirement behavior. A superseded manifest's decisions cannot support
   a new admission, and retry change evidence must differ mechanically from
   every predecessor input/output subject set; meaningfulness remains review

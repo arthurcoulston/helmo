@@ -605,6 +605,16 @@ export class Store {
         const stage = this.getWorkflowDefinition(context.workflow_id, context.definition_revision)!.stages.find((candidate) => candidate.id === context.stage_id)!;
         const gate = this.workflowRequirementGate(context.workflow_id, context.definition_revision, context.stage_id, stage.exit_scopes ?? []);
         if (gate.missing.length || gate.stale.length || gate.failed.length) throw new HelmoError(`workflow_admission_denied ${JSON.stringify({ attempt_id: input.attempt_id, operation: 'advance', ...gate })}`);
+        const admission = {
+          id: `outcome:${input.attempt_id}:advanced`,
+          attempt_id: input.attempt_id,
+          operation: 'advance',
+          workflow_id: context.workflow_id,
+          definition_revision: context.definition_revision,
+          requirements: gate.admitted,
+        };
+        this.db.prepare('INSERT INTO workflow_admissions (id, attempt_id, admission, created_at) VALUES (?, ?, ?, ?)')
+          .run(admission.id, input.attempt_id, JSON.stringify(admission), now());
       }
       this.db.prepare('INSERT INTO workflow_outcomes (attempt_id, outcome, created_at) VALUES (?, ?, ?)').run(input.attempt_id, JSON.stringify({ outcome: input.outcome }), now());
       this.db.prepare("UPDATE workflow_attempts SET state = 'complete' WHERE id = ?").run(input.attempt_id);

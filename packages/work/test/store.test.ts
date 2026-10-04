@@ -780,6 +780,40 @@ describe('workflow invalidation and quarantine (H-432)', () => {
 });
 
 describe('workflow outcomes and retry recovery (H-433)', () => {
+  function exitAuthoritySubject() {
+    const s = new Store(':memory:', undefined, reviewer);
+    s.addWorkflowDefinition({ workflow_id: 'release', revision: 'v1', stages: [{ id: 'build', exit_scopes: ['security'] }, { id: 'publish', after: ['build'] }] });
+    s.addWorkflowRun({ id: 'run-1', workflow_id: 'release', definition_revision: 'v1' });
+    s.addWorkflowAttempt({ id: 'build-1', run_id: 'run-1', stage_id: 'build', ordinal: 1 });
+    const build = create(s, { workflow_attempt_id: 'build-1' }); triage(s, build.id);
+    s.addWorkflowManifest({ id: 'output', attempt_id: 'build-1', kind: 'output', subjects: ['fixture@one'], creators: [builder] });
+    s.addWorkflowRequirement({ id: 'security', workflow_id: 'release', definition_revision: 'v1', stage_id: 'build', scope: 'security', subject_manifest_id: 'output', allowed_verdicts: ['pass', 'fail'], authorities: [reviewer], independence: 'different_from_manifest_creators' });
+    s.recordWorkflowDecision({ id: 'pass', requirement_id: 'security', manifest_id: 'output', verdict: 'pass', source: 'review:pass' });
+    s.updateTicket(builder, { ticket_id: build.id, note: 'build', status: 'in_progress' });
+    s.recordWorkflowOutcome({ attempt_id: 'build-1', outcome: 'advanced' });
+    s.addWorkflowAttempt({ id: 'publish-1', run_id: 'run-1', stage_id: 'publish', ordinal: 1 });
+    const publish = create(s, { workflow_attempt_id: 'publish-1' }); triage(s, publish.id);
+    s.updateTicket(builder, { ticket_id: publish.id, note: 'publish', status: 'in_progress' });
+    return { s, publish };
+  }
+
+  for (const [name, invalidate] of [
+    ['revoked', (s: Store) => s.recordWorkflowDecision({ id: 'revoke', requirement_id: 'security', manifest_id: 'output', verdict: 'revocation', source: 'review:revoke', revokes_decision_id: 'pass' })],
+    ['replaced by failure', (s: Store) => s.recordWorkflowDecision({ id: 'fail', requirement_id: 'security', manifest_id: 'output', verdict: 'fail', source: 'review:fail' })],
+    ['superseded', (s: Store) => s.addWorkflowManifest({ id: 'output-2', attempt_id: 'build-1', kind: 'output', subjects: ['fixture@two'], creators: [builder], supersedes_manifest_id: 'output' })],
+  ] as const) {
+    it(`quarantines an already-running descendant when consumed exit authority is ${name}`, () => {
+      const { s, publish } = exitAuthoritySubject();
+      invalidate(s);
+      expect(() => s.updateTicket(builder, { ticket_id: publish.id, note: 'stale finish', status: 'done', evidence: [{ kind: 'commit', ref: 'helmo@stale' }] })).toThrow(/invalidation/);
+    });
+  }
+
+  it('keeps descendants executable while consumed exit authority is unchanged', () => {
+    const { s, publish } = exitAuthoritySubject();
+    expect(s.updateTicket(builder, { ticket_id: publish.id, note: 'valid finish', status: 'done', evidence: [{ kind: 'commit', ref: 'helmo@valid' }] }).ticket.status).toBe('done');
+  });
+
   function subject() {
     const s = new Store(':memory:', undefined, reviewer);
     s.addWorkflowDefinition({ workflow_id: 'release', revision: 'v1', stages: [{ id: 'build' }] });

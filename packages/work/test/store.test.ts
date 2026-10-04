@@ -61,6 +61,22 @@ describe('durable workflow model (H-429)', () => {
     expect(() => s.addWorkflowDefinition({ workflow_id: 'x', revision: '1', stages: [{ id: ' a ' }] })).toThrow(HelmoError);
     expect(() => s.addWorkflowDefinition({ workflow_id: 'x', revision: '1', stages: [{ id: 'a', after: ['missing'] }] })).toThrow(/unknown/);
     expect(() => s.addWorkflowDefinition({ workflow_id: 'x', revision: '1', stages: [{ id: 'a', after: ['b'] }, { id: 'b', after: ['a'] }] })).toThrow(/cycle/);
+    expect(() => s.addWorkflowDefinition({ workflow_id: 'x', revision: '2', stages: [{ id: 'a', exits: ['technical'] }] } as never)).toThrow(/closed schema/);
+    expect(() => s.addWorkflowDefinition({ workflow_id: 'x', revision: '3', stages: [{ id: 'a' }], ignored: true } as never)).toThrow(/closed schema/);
+  });
+
+  it('enforces declared entry and exit scopes at their lifecycle boundaries', () => {
+    const s = new Store(':memory:', undefined, reviewer);
+    s.addWorkflowDefinition({ workflow_id: 'release', revision: 'v1', stages: [{ id: 'build', entry_scopes: ['technical'], exit_scopes: ['release'] }] });
+    s.addWorkflowRun({ id: 'run-1', workflow_id: 'release', definition_revision: 'v1' });
+    s.addWorkflowAttempt({ id: 'attempt-1', run_id: 'run-1', stage_id: 'build', ordinal: 1 });
+    const ticket = create(s, { workflow_attempt_id: 'attempt-1' }); triage(s, ticket.id);
+    expect(() => s.updateTicket(builder, { ticket_id: ticket.id, note: 'start', status: 'in_progress' })).toThrow(/scope:technical/);
+    s.addWorkflowManifest({ id: 'candidate', attempt_id: 'attempt-1', kind: 'input', subjects: ['repo@candidate'], creators: [builder] });
+    s.addWorkflowRequirement({ id: 'entry', workflow_id: 'release', definition_revision: 'v1', stage_id: 'build', scope: 'technical', subject_manifest_id: 'candidate', allowed_verdicts: ['pass'], authorities: [reviewer], independence: 'different_from_manifest_creators' });
+    s.recordWorkflowDecision({ id: 'entry-pass', requirement_id: 'entry', manifest_id: 'candidate', verdict: 'pass', source: 'review:entry' });
+    s.updateTicket(builder, { ticket_id: ticket.id, note: 'start', status: 'in_progress' });
+    expect(() => s.recordWorkflowOutcome({ attempt_id: 'attempt-1', outcome: 'advanced' })).toThrow(/scope:release/);
   });
 
   it('migrates an existing file store and preserves definitions through backup and restore', async () => {
@@ -794,6 +810,17 @@ describe('workflow outcomes and retry recovery (H-433)', () => {
     expect(s.updateTicket(builder, { ticket_id: ticket.id, note: 'fresh admission', status: 'in_progress' }).ticket.status).toBe('in_progress');
   });
 
+  it('refuses retry change evidence identical to predecessor input or output subjects', () => {
+    const s = subject();
+    s.addWorkflowManifest({ id: 'input', attempt_id: 'attempt-1', kind: 'input', subjects: ['repo@same', 'config@same'], creators: [builder] });
+    s.recordWorkflowOutcome({ attempt_id: 'attempt-1', outcome: 'rejected' });
+    s.addWorkflowManifest({ id: 'diagnosis', attempt_id: 'attempt-1', kind: 'diagnosis', subjects: ['failure:known'], creators: [builder] });
+    s.addWorkflowManifest({ id: 'unchanged', attempt_id: 'attempt-1', kind: 'change', subjects: ['config@same', 'repo@same'], creators: [builder] });
+    expect(() => s.retryWorkflowAttempt({ id: 'attempt-2', predecessor_attempt_id: 'attempt-1', diagnosis_manifest_id: 'diagnosis', change_manifest_id: 'unchanged' })).toThrow(/must differ/);
+    s.addWorkflowManifest({ id: 'changed', attempt_id: 'attempt-1', kind: 'change', subjects: ['repo@new'], creators: [builder] });
+    expect(() => s.retryWorkflowAttempt({ id: 'attempt-2', predecessor_attempt_id: 'attempt-1', diagnosis_manifest_id: 'diagnosis', change_manifest_id: 'changed' })).not.toThrow();
+  });
+
   it('retries an aborted quarantined attempt with predecessor evidence', () => {
     const s = new Store(':memory:', undefined, reviewer);
     s.addWorkflowDefinition({ workflow_id: 'release', revision: 'v1', stages: [{ id: 'build' }] });
@@ -811,7 +838,7 @@ describe('workflow outcomes and retry recovery (H-433)', () => {
 
     s.retryWorkflowAttempt({ id: 'attempt-2', predecessor_attempt_id: 'attempt-1', diagnosis_manifest_id: 'diagnosis', change_manifest_id: 'change' });
     const ticket = create(s, { workflow_attempt_id: 'attempt-2' }); triage(s, ticket.id);
-    expect(s.updateTicket(builder, { ticket_id: ticket.id, note: 'fresh admission after quarantine', status: 'in_progress' }).ticket.status).toBe('in_progress');
+    expect(() => s.updateTicket(builder, { ticket_id: ticket.id, note: 'fresh admission after quarantine', status: 'in_progress' })).toThrow(/requirement:check/);
   });
 
   it('keeps retry outcomes isolated between workflow runs', () => {

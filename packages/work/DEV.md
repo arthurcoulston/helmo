@@ -21,7 +21,14 @@ Pinned releases accept both the historical three-component layout and C1's one
   (H-429): immutable JSON definition revisions plus normalized run, attempt,
   manifest, requirement, decision, admission and terminal-outcome tables.
   Definition insertion rejects empty/duplicate stages, unknown prerequisites,
-  cycles and revision replacement. These tables do not alter ordinary ticket
+  cycles, revision replacement and fields outside the enforced schema. Stages
+  may declare entry and exit requirement scopes: entry scopes gate admission,
+  exit scopes gate `advanced`, and a declared scope with no requirement row
+  refuses. Existing definitions without scope arrays retain their historical
+  entry-requirement behavior. A superseded manifest's decisions cannot support
+  a new admission, and retry change evidence must differ mechanically from
+  every predecessor input/output subject set; meaningfulness remains review
+  judgment. These tables do not alter ordinary ticket
   semantics. The bounded decision seam (H-430) writes immutable manifests and
   requirements against one definition revision, then records decisions from
   the store-resolved actor only. Requirements bind one exact subject manifest,

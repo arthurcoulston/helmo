@@ -207,18 +207,23 @@ describe('resuming a held claim across a scope change (H-824 migration)', () => 
   });
 });
 
-describe('a store written before lanes (H-824)', () => {
-  // The installed release the migration starts from. Present on the GP
-  // runtime host; elsewhere, point HELMO_LEGACY_DIST at a 923cc49 dist.
-  const legacyDist = process.env['HELMO_LEGACY_DIST']
-    ?? join(process.env['HOME'] ?? '', 'projects/gp-runtime/releases/helmo-923cc49d8cf85c78d0e50fca2d08ee50c50a8c26/dist');
+// The releases a migration starts from: 923cc49, the split runtime the lane
+// design was drawn against, and 4cd5392, the unified v0.9.2 release serving
+// when this port was built. Present on the GP runtime host; elsewhere, point
+// HELMO_LEGACY_DIST at one such dist.
+const RELEASES = join(process.env['HOME'] ?? '', 'projects/gp-runtime/releases');
+const legacyDists = process.env['HELMO_LEGACY_DIST'] ? [['HELMO_LEGACY_DIST', process.env['HELMO_LEGACY_DIST']]] : [
+  ['923cc49', join(RELEASES, 'helmo-923cc49d8cf85c78d0e50fca2d08ee50c50a8c26/dist')],
+  ['4cd5392', join(RELEASES, 'helmo-4cd5392621be850df24ca9661a4460c69143bf19/packages/work/dist')],
+];
+describe.each(legacyDists)('a store written before lanes, by %s (H-824)', (_release, legacyDist) => {
   let dir: string;
   beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'helmo-lane-legacy-')); });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  it.skipIf(!existsSync(join(legacyDist, 'store.js')))('opens a 923cc49 store holding an allowlist claim, resumes it and replays its receipt', async () => {
+  it.skipIf(!existsSync(join(legacyDist!, 'store.js')))('opens a pre-lane store holding an allowlist claim, resumes it and replays its receipt', async () => {
     const dbPath = join(dir, 'helmo.db');
-    const legacy = await import(pathToFileURL(join(legacyDist, 'store.js')).href) as { Store: new (path: string) => {
+    const legacy = await import(pathToFileURL(join(legacyDist!, 'store.js')).href) as { Store: new (path: string) => {
       createTicket: Store['createTicket']; launchClaim: (a: Actor, w: string, as: string, id: string, p?: string, t?: string[]) => Record<string, unknown>; close(): void;
     } };
     const old = new legacy.Store(dbPath);

@@ -836,7 +836,6 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
           const afterIds = readyTicketIds(g, l);
           const unchanged = readyBefore.filter((id) => afterIds.includes(id));
           const decline = declineDecide(streakMap(l.name, 'silent_decline'), unchanged, false);
-          streakMapSet(l.name, 'silent_decline', decline.streaks);
           if (unchanged.length) {
             logEvent(l.name, 'silent-decline', `tickets=${unchanged.join(',')} streaks=${unchanged.map((id) => `${id}:${decline.streaks[id]}`).join(',')}`);
             console.log(`rev: '${l.name}' left ready work unchanged: ${unchanged.join(', ')}.`);
@@ -845,6 +844,9 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
             const id = escalateSilentDeclines(g, l, decline.escalate);
             logEvent(l.name, 'silent-decline-escalated', `ticket=${id} work=${decline.escalate.join(',')}`);
           }
+          // A routed count suppresses retries and resyncs. Commit it only
+          // after the coordination write succeeds, so a transient failure retries.
+          streakMapSet(l.name, 'silent_decline', decline.streaks);
           keepRoutedState(g, l, decline.streaks);
         }
       } catch (e) {

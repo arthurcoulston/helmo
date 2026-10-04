@@ -99,7 +99,9 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   this: repeated no-progress is a team routing problem. Each ticket is routed
   once, at the crossing, and keeps its count through other work's productive
   passes; it leaves the map when an unproductive pass finds it no longer ready
-  and unchanged. Containment is Rev's own: the hourly resync skips a ready set
+  and unchanged. The routed count is saved only after coordination succeeds;
+  a failed write leaves the crossing available for retry. Containment is Rev's
+  own: the hourly resync skips a ready set
   made only of routed tickets and restarts its hour, while newly ready work
   still wakes the seat. Rev records each routed ticket's material state
   (`.routed_state_streaks.json`; its fields and its links, read through

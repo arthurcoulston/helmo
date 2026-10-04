@@ -1417,6 +1417,50 @@ mock_cmd = 'echo no-disposition'
     expect(readFileSync(join(e.home, 'state', 'decline-loop', 'events.log'), 'utf8').match(/silent-decline-escalated/g)).toHaveLength(1);
   });
 
+  it('retries a failed coordination write before marking declined work as routed', () => {
+    const e = setup(`[loops.retry-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = "true"
+`);
+    const id = seedTicket(e, 'Coordination must survive a temporary write failure');
+    const proxy = join(e.home, 'once-unavailable.mjs');
+    writeFileSync(proxy, `import { existsSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+const args = process.argv.slice(2);
+const marker = process.env.REV_HOME + '/coordination-failed-once';
+if (args[0] === 'create' && args.includes("Loop 'retry-loop' silently declined ready work three times") && !existsSync(marker)) {
+  writeFileSync(marker, 'failed');
+  process.stderr.write('temporary coordination write failure');
+  process.exit(1);
+}
+const result = spawnSync(process.execPath, [${JSON.stringify(HELM_CLI)}, ...args], { env: process.env, stdio: 'inherit' });
+process.exit(result.status ?? 1);
+`);
+    const roster = join(e.home, 'roster.toml');
+    writeFileSync(roster, readFileSync(roster, 'utf8').replace(`helmo_cli = "${HELM_CLI}"`, `helmo_cli = "${proxy}"`));
+    const dir = join(e.home, 'state', 'retry-loop');
+    const coordination = () => (helm(e, ['list', '--status', 'open']) as { tickets: { title: string }[] }).tickets
+      .filter((t) => t.title.includes('silently declined'));
+
+    for (let n = 0; n < 3; n += 1) rev(e, ['run', 'retry-loop', '--count', '1']);
+    expect(readFileSync(join(dir, 'events.log'), 'utf8')).toContain('decline-check-failed');
+    expect(coordination()).toHaveLength(0);
+    expect(JSON.parse(readFileSync(join(dir, '.silent_decline_streaks.json'), 'utf8'))).toEqual({ [id]: 2 });
+    expect(existsSync(join(dir, '.routed_state_streaks.json'))).toBe(false);
+
+    rev(e, ['run', 'retry-loop', '--count', '1']);
+    expect(coordination()).toHaveLength(1);
+    expect(JSON.parse(readFileSync(join(dir, '.silent_decline_streaks.json'), 'utf8'))).toEqual({ [id]: 3 });
+    expect(Object.keys(JSON.parse(readFileSync(join(dir, '.routed_state_streaks.json'), 'utf8')))).toEqual([id]);
+    expect(helm(e, ['get', id])).toMatchObject({ status: 'open', needs_human: false });
+
+    rev(e, ['run', 'retry-loop', '--count', '1']);
+    expect(coordination()).toHaveLength(1);
+    expect(readFileSync(join(dir, 'events.log'), 'utf8').match(/silent-decline-escalated/g)).toHaveLength(1);
+  });
+
   it('a second seat routing its own declines reuses no human channel and files its own team record', () => {
     // Unseen seat and ticket: the behaviour is the seat's, not a fixture's name.
     const e = setup(`[loops.decline-a]

@@ -285,7 +285,7 @@ describe('lane through the CLI (H-824)', () => {
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
   function as(actor: Actor, ...argv: string[]) {
-    const r = spawnSync(process.execPath, ['node_modules/.bin/tsx', 'src/cli.ts', ...argv], {
+    const r = spawnSync(process.execPath, ['--import', 'tsx', 'src/cli.ts', ...argv], {
       cwd: new URL('..', import.meta.url).pathname,
       env: { ...process.env, HELMO_DB: dbPath, HELMO_ACTOR: JSON.stringify(actor) },
       encoding: 'utf8',

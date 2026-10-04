@@ -270,8 +270,14 @@ mock_cmd = "true"
       writeFileSync(rosterPath, readFileSync(rosterPath, 'utf8').replace('"$REV_HOME/v1"', '"$REV_HOME/v2"'));
       expect(rev(e, ['reload', 'solo'])).toMatch(/Reload requested for 'solo'/);
 
+      await waitFor(() => {
+        const p = loopPid(e, 'solo');
+        return p !== null && p !== solo1;
+      }, 'solo respawned with a new pid');
+      // An idle loop keeps its IDLE cursor across the respawn, as it should, so
+      // give it work: the session it runs is the edited roster's.
+      helm(e, ['create', '--title', 'wake solo', '--body', 'x', '--workstream', 'ws-solo', '--type', 'ops']);
       await waitFor(() => existsSync(join(e.home, 'v2')), 'respawned loop runs the edited roster');
-      expect(loopPid(e, 'solo')).not.toBe(solo1);
       expect(loopPid(e, 'sibling')).toBe(sibling1);
       const log = readFileSync(join(e.home, 'state', 'supervisor', 'events.log'), 'utf8');
       expect(log).toMatch(/reload\s+loop=solo pid=/);

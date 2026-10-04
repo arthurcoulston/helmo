@@ -24,6 +24,10 @@ import { Sentinel } from './types.js';
 //   REDEPLOY agent/operator (supervisor's dir): drain and come back on the new
 //            code. Present at startup it is the record of the restart that just
 //            happened, never a fresh ask — see redeploy.ts.
+//   RELOAD   operator/agent: respawn this one loop after its in-flight
+//            iteration so it reads the roster again. NOT a halt, and never
+//            clears one: a STOP/HOLD/BLOCKED present when the loop exits keeps
+//            it down (H-891).
 
 export function sPath(loop: string, s: Sentinel | string): string {
   return join(stateDir(loop), s);

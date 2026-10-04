@@ -69,6 +69,8 @@ rev stop                graceful stop-all: in-flight iterations finish, then the
 rev status              supervisor + every loop at a glance
 rev trace H-n@install   join a ticket to content-off launch/session metadata and Work events
 rev stop|resume|pace <loop>  per-loop control verbs (sentinel writes)
+rev reload <loop>       respawn one loop on the current roster after its in-flight iteration;
+                            never clears STOP/HOLD/BLOCKED, so a halt present then keeps it down
 gp-rev team stop|resume <loop|all>  Prime-owned GP controls; never clears foreign holds
 rev service install     survive reboots: launchd (macOS) / systemd user unit (Linux)
 npm run view                read-only dashboard at :4500

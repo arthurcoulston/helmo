@@ -14,7 +14,7 @@ import { spawn, ChildProcess } from 'node:child_process';
 import { ancestryBroken, ancestryStamp } from './ancestry.js';
 import { closeSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { stateDir } from './config.js';
+import { loadRoster, stateDir } from './config.js';
 import { respawnDecide } from './ladder.js';
 import { pollUsage } from './usage.js';
 import { rotateOpenFd } from './logretention.js';
@@ -41,6 +41,7 @@ interface Slot {
   resumeTicket: string | null; // answered block ticket awaiting a healthy restart
   resumeOrigin: 'agent' | 'answer' | null;
   resumeDetail: { kind: 'anomaly' | 'capacity' | 'burn'; reason: string; ticket: string; attempts: number; dispositions: number } | null;
+  reloading: boolean; // a RELOAD asked this child to exit; its exit is not a failure (H-891)
 }
 
 function halted(name: string): boolean {
@@ -168,6 +169,23 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
           finishIfDrained();
           return;
         }
+        // A requested reload (H-891): the exit is ours, so it neither fails a
+        // pending resume nor counts toward the backoff streak. The halt check
+        // is read here, at the exit, so a STOP/HOLD/BLOCKED that arrived at any
+        // point during the reload keeps the loop down. Nothing here clears one.
+        if (s.reloading) {
+          s.reloading = false;
+          s.restartStreak = 0;
+          try { s.cfg = loadRoster().loops[name] ?? s.cfg; } catch { /* the child reports a bad roster itself */ }
+          if (halted(name)) {
+            logEvent(SUP, 'exit', `loop=${name} code=${code} action=await_clearance (reload)`);
+            console.log(`rev: loop '${name}' exited for reload but a halt sentinel is present — will respawn when cleared.`);
+          } else {
+            logEvent(SUP, 'exit', `loop=${name} code=${code} action=respawn wait=0s (reload)`);
+            launch(s);
+          }
+          return;
+        }
         if (s.resumeTicket) {
           const ticket = s.resumeTicket;
           const origin = s.resumeOrigin;
@@ -289,6 +307,21 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
             logEvent(s.cfg.name, 'resume-completion-failed', `ticket=${ticket} ${cliError(e).slice(0, 200)}`);
           }
         }
+        if (!shuttingDown && sHas(s.cfg.name, 'RELOAD')) {
+          sClear(s.cfg.name, 'RELOAD');
+          if (s.child && !s.reloading) {
+            // SIGTERM is the loop's graceful stop: it lands at the iteration
+            // boundary (loop.ts), so an agent mid-turn finishes. No drain
+            // grace applies, so nothing is killed.
+            s.reloading = true;
+            logEvent(SUP, 'reload', `loop=${s.cfg.name} pid=${s.child.pid}`);
+            s.child.kill('SIGTERM');
+          } else if (!s.child) {
+            // Down (halted, backing off or foreign): its next start reads the
+            // roster anyway, and a reload never starts a halted loop.
+            logEvent(SUP, 'reload-noop', `loop=${s.cfg.name} not running under this supervisor`);
+          }
+        }
         if (s.child || shuttingDown) continue;
         const name = s.cfg.name;
         const resumeAt = scheduledResumeAt(name);
@@ -376,8 +409,11 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
     console.log(`rev: supervisor pid ${process.pid} — ${Object.keys(loops).length} loop(s) in the roster. Stop the machine: ${commandName} stop`);
     if (landed) reportRedeployLanded(g, landed, process.pid);
     for (const cfg of Object.values(loops)) {
-      const slot: Slot = { cfg, child: null, fd: null, startedAt: 0, restartStreak: 0, respawnAt: null, resumeTicket: null, resumeOrigin: null, resumeDetail: null };
+      const slot: Slot = { cfg, child: null, fd: null, startedAt: 0, restartStreak: 0, respawnAt: null, resumeTicket: null, resumeOrigin: null, resumeDetail: null, reloading: false };
       slots.set(cfg.name, slot);
+      // A fresh supervisor reads the current roster, so a reload asked of the
+      // previous one is already satisfied.
+      sClear(cfg.name, 'RELOAD');
       const foreign = occupiedPid(cfg.name);
       if (foreign) {
         console.log(`rev: loop '${cfg.name}' already running outside the supervisor (pid ${foreign}) — leaving it alone; will adopt if it exits.`);

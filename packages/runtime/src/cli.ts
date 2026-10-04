@@ -16,7 +16,7 @@ import { planLines, removalPlan, removeInstallation } from './remove.js';
 import { ReleaseError, describe as describeRelease, migrationLine, readSelection, rollback, selectionFile, upgrade } from './release.js';
 import { beginActivation, deploymentFile } from './deployment.js';
 import { readRedeploy, requestRedeploy, watchRedeploy } from './redeploy.js';
-import { logEvent, NO_OWNER_PID, pidAlive, processObservation, sClear, sGet, sHas, sPendingPid, sSetOwned, sValue, streakReset } from './sentinels.js';
+import { logEvent, NO_OWNER_PID, pidAlive, processObservation, sClear, sGet, sHas, sPendingPid, sSet, sSetOwned, sValue, streakReset } from './sentinels.js';
 import { runFleet } from './supervisor.js';
 import { teamResume, teamStop } from './team-control.js';
 import { buildIntakeResult, recordIntakeResult } from './intake-preparation.js';
@@ -142,6 +142,7 @@ const COMMAND_HELP: Record<string, string> = {
   run: `usage: ${commandName} run [<loop> [--count N]]`,
   stop: `usage: ${commandName} stop [<loop|role> [--worker]]`,
   resume: `usage: ${commandName} resume <loop|role> [--worker]`,
+  reload: `usage: ${commandName} reload <loop|role> [--worker]`,
   service: `usage: ${commandName} service <install|uninstall|start|status>`,
   install: `usage: ${commandName} install remove [--confirm]`,
   release: `usage: ${commandName} release <status | upgrade <release directory> | rollback | activate>`,
@@ -463,6 +464,32 @@ switch (cmd) {
     );
     break;
   }
+  // Reload one worker's roster without a fleet drain and without touching a
+  // halt (H-891). `resume` cannot do this safely: it clears STOP/HOLD/BLOCKED
+  // unconditionally, so a hold that someone else set, even mid-operation,
+  // would be wiped. This only asks the supervisor to respawn the loop after
+  // its in-flight iteration. The supervisor re-reads the halt sentinels at
+  // that exit, so any halt present then keeps the loop down.
+  case 'reload': {
+    const names = controlArg();
+    const name = controlArgs[0]!;
+    console.log(targetLine(requireTarget(`reload '${name}'`)));
+    const sup = pidAlive('supervisor');
+    if (!sup) {
+      console.error(`No supervisor running, so there is nothing to reload. A loop started next reads the current roster anyway.`);
+      process.exit(1);
+    }
+    const actor = cliActor();
+    for (const n of names) {
+      sSet(n, 'RELOAD', `by=${actor.human ? 'human' : actor.label}\nat=${new Date().toISOString()}\n`);
+      logEvent(n, actor.label, 'RELOAD requested');
+    }
+    console.log(
+      `Reload requested for ${listed(names)}. Within ${g.poll_seconds}s the supervisor asks each one to exit after its in-flight iteration, ` +
+        `then respawns it on the current roster. A STOP/HOLD/BLOCKED present at that exit keeps it down.`,
+    );
+    break;
+  }
   case 'service': {
     const verb = rest[0];
     // A refusal here is the ordinary answer, not a crash: it is how one
@@ -728,6 +755,8 @@ switch (cmd) {
   stop <loop|role>         set STOP — clean halt after the in-flight iteration; a pooled
                            role reaches every worker of its seat, --worker only that loop
   resume <loop|role>       clear STOP/HOLD/BLOCKED; a running supervisor picks the loop back up
+  reload <loop|role>       respawn after the in-flight iteration on the current roster; never
+                           clears a halt (a STOP/HOLD/BLOCKED present then keeps it down)
   pace <loop|role> <v>     velocity: fraction (0,1], 'park', or 'clear'
   usage [--poll]           Max plan usage bars (session, weekly, per-model)
   routing                  preview working-model choices from current usage (no runs)

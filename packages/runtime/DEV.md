@@ -74,7 +74,13 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   from every scoped loop in the instance roster. The first successful poll after
   a process start bypasses a surviving `IDLE_AT`: the floor spaces passes from
   the same process, but must not make a restarted seat sleep on queued work
-  (H-995). BOTH prompts tell a no-change
+  (H-995). A scoped pass retains its pre-session cursor when Work's atomic
+  post-session snapshot finds a readiness edge during that pass, so the first
+  idle poll offers work the session never saw; the following pass advances
+  normally if it declines that work. Work treats an assigned, in-progress
+  ticket whose blocker or other executable gate opened as the same one-shot
+  readiness edge, without putting held work in the open claim queue (H-2851).
+  BOTH prompts tell a no-change
   pass to end WITHOUT filing or noting — its own exhaust is fresh motion, so a
   no-change record re-wakes the loop it closes. The scoped prompt says it in
   the terms a scoped seat actually meets (queue empty, or every ticket blocked,

@@ -421,9 +421,11 @@ Pinned releases accept both the historical three-component layout and C1's one
   JSON every other command reads from that flag; an identity passed by habit is
   refused rather than silently matching nobody.
   The Store's bounded `newlyReadySince` read supports the event-driven half of
-  wake-check: it intersects the canonical current-ready set (up to 1,000 IDs)
-  with readiness-causing events after the cursor, plus date gates that crossed
-  after that event's timestamp. Indexed event queries cover direct route /
+  wake-check: it intersects the canonical current-ready set (up to 1,000 IDs),
+  plus executable in-progress work assigned to the caller, with readiness-causing
+  events after the cursor and date gates that crossed after that event's
+  timestamp. Held work participates only in this edge calculation, never the
+  open claim queue. Indexed event queries cover direct route /
   gate changes, removal or closure of blockers, clearing a human sitting, and
   moving unassigned work into the watched stream; notes, spend, unrelated close-out, and
   self-filed untouched work cannot enter through that intersection. The first
@@ -432,8 +434,10 @@ Pinned releases accept both the historical three-component layout and C1's one
   subsequent notes stay inert. `wake-check`
   exposes both sets as `ready_ids`/`ready_count` and
   `newly_ready_ids`/`newly_ready_count`; Rev uses the edge for immediate wakes
-  and the current set for periodic reconciliation. Existing `max_seq`,
-  `held_count`, and `changed_since` fields remain compatible (H-1098).
+  and the current set for periodic reconciliation. A blocker or gate opening
+  on the caller's in-progress work is therefore a one-shot wake too (H-2851).
+  Existing `max_seq`, `held_count`, and `changed_since` fields remain compatible
+  (H-1098).
   All of it comes from `Store.wakeCheck`, one IMMEDIATE transaction over one
   ready read. Assembled as separate statements it was not one snapshot: each
   took its own WAL view, and a handoff committing partway through appeared in

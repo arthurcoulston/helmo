@@ -1814,6 +1814,22 @@ describe('harness queries (wake cursor)', () => {
     s.updateTicket(reviewer, { ticket_id: selfFiled.id, note: 'later context only' });
     expect(s.wakeCheck(afterRelease, 'alpha', builder.name).newly_ready_ids).toEqual([]);
   });
+  it('wakeCheck reports a blocker closing on the caller\'s in-progress work once', () => {
+    const s = freshStore();
+    const blocker = create(s, { workstream: 'alpha', assignee: reviewer.name });
+    const held = s.createTicket(builder, {
+      title: 'Held work', body: 'resume when its prerequisite closes', workstream: 'elsewhere', type: 'build',
+      status: 'in_progress', assignee: builder.name, deps: [{ to: blocker.id, type: 'blocks' }],
+    });
+    const seq = s.maxSeq();
+
+    s.updateTicket(reviewer, { ticket_id: blocker.id, note: 'prerequisite complete', status: 'done', evidence: [{ kind: 'other', ref: 'fixture' }] });
+    const released = s.wakeCheck(seq, 'alpha', builder.name);
+    expect(released.ready_ids).toEqual([]);
+    expect(released.held_count).toBe(1);
+    expect(released.newly_ready_ids).toEqual([held.id]);
+    expect(s.wakeCheck(s.maxSeq(), 'alpha', builder.name).newly_ready_ids).toEqual([]);
+  });
   it('wakeCheck answers from one ready read, taken inside one transaction (rev H-1895)', () => {
     const s = freshStore();
     const routed = create(s, { workstream: 'alpha', assignee: reviewer.name });

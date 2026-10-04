@@ -643,6 +643,43 @@ mock_cmd = "true"
     }
   });
 
+  it('offers work made ready during a scoped iteration on the first idle poll', async () => {
+    const e = setup(`[loops.edge-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+idle_floor_s = 0
+mock_cmd = "sleep 1"
+`);
+    seedTicket(e, 'Work offered to the first iteration');
+    const store = new Store(e.db);
+    const actor = { name: 'seeder', kind: 'agent', model: 't', version: '0' };
+    const blocker = store.createTicket(actor, {
+      title: 'Prerequisite', body: 'completed during the iteration', workstream: 'other', type: 'build', assignee: 'other-seat',
+    });
+    const waiting = store.createTicket(actor, {
+      title: 'Newly unblocked work', body: 'must reach the next poll', workstream: 'rev-test', type: 'build',
+      deps: [{ to: blocker.id, type: 'blocks' }],
+    });
+
+    const dir = join(e.home, 'state', 'edge-loop');
+    const eventsPath = join(dir, 'events.log');
+    const child = spawn(process.execPath, ['--import', 'tsx', REV_CLI, 'run', 'edge-loop', '--count', '2'], {
+      env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore',
+    });
+    try {
+      await waitUntil(() => existsSync(eventsPath) && /run-start.*iter=1/.test(readFileSync(eventsPath, 'utf8')), 'first run');
+      store.updateTicket(actor, { ticket_id: blocker.id, note: 'prerequisite complete', status: 'done', evidence: [{ kind: 'other', ref: 'fixture' }] });
+      await waitUntil(() => /run-start.*iter=2/.test(readFileSync(eventsPath, 'utf8')), 'second run');
+    } finally {
+      await stop(child);
+    }
+    const events = readFileSync(eventsPath, 'utf8');
+    expect(events).toMatch(/run-end.*iter=1.*action=idle/);
+    expect(events).toMatch(/wake .*ready=2/);
+    expect((helm(e, ['wake-check', '--workstream', 'rev-test', '--assignee', 'edge-loop', '--since-seq', '0']) as { ready_ids: string[] }).ready_ids).toContain(waiting.id);
+  });
+
   it('a note on in-scope work is motion, but never wakes an idle scoped seat (H-1072)', async () => {
     // The H-336 desk-noise shape, which is why the floor existed at all: a
     // ticket the seat cannot draw gets commented on. changed_since goes true

@@ -1876,7 +1876,8 @@ export class Store {
     return this.db.transaction(() => {
       const maxSeq = this.maxSeq();
       const ready = this.listTickets({ ready: true, workstream, caller: assignee, limit: 1000 });
-      const newlyReadyIds = assignee ? this.newlyReadyFrom(ready, seq, assignee) : [];
+      const offered = assignee ? [...ready, ...this.executableHeld(assignee)] : ready;
+      const newlyReadyIds = assignee ? this.newlyReadyFrom(offered, seq, assignee) : [];
       return {
         max_seq: maxSeq,
         ready_count: ready.length,
@@ -1904,7 +1905,22 @@ export class Store {
    *  out of the state calculation makes notes and close-out noise inert while
    *  preserving the exact ready semantics used by listTickets. */
   newlyReadySince(seq: number, workstream: string | undefined, caller: string): string[] {
-    return this.newlyReadyFrom(this.listTickets({ ready: true, workstream, caller, limit: 1000 }), seq, caller);
+    const ready = this.listTickets({ ready: true, workstream, caller, limit: 1000 });
+    return this.newlyReadyFrom([...ready, ...this.executableHeld(caller)], seq, caller);
+  }
+
+  /** Assigned work already in progress is not claimable ready work, but it is
+   *  still executable by its holder once its gates open. Include it only in
+   *  the wake edge calculation: held work remains absent from the open ready
+   *  queue and therefore cannot be claimed twice. */
+  private executableHeld(assignee: string): Ticket[] {
+    const current = now();
+    const held = this.listTickets({ status: 'in_progress', assignee, limit: 1000 })
+      .filter((t) => !t.needs_human)
+      .filter((t) => !t.not_before || t.not_before <= current)
+      .filter((t) => !t.capacity_hold || capacityReleased(t.capacity_hold));
+    const blockers = this.blockersFor(held.map((t) => t.id));
+    return held.filter((t) => !blockers.has(t.id));
   }
 
   /** The narrowing half of newlyReadySince, over a ready set the caller already
@@ -1940,6 +1956,7 @@ export class Store {
     // Recurring instances inherit the template's filing judgment, just as the
     // canonical ready query does in selfFiledUntouched().
     for (const t of ready) {
+      if (t.status !== 'open') continue;
       if (this.filingCreator(t.id) !== caller) continue;
       const releasedAt = this.selfTriageReleaseSeq(t.id, caller);
       if (releasedAt !== null && releasedAt > seq) candidates.add(t.id);

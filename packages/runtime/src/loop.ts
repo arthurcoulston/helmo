@@ -10,7 +10,7 @@ import { exhaustedLimit, pollUsage, readCodexUsage, readUsage, refreshCodexUsage
 import { anomalyDecide, capacityDecide, planPointsConsumed } from './capacity.js';
 import { choiceExhausted, selectRun } from './routing.js';
 import { raiseWedgeAlarm, wedgeDecide } from './health.js';
-import { breakerDecide, declineDecide, ladderDecide, routedDeclines, limitDecide, probeDecide, rollingMean, seatDecide, velocityToPause, wakeDecide } from './ladder.js';
+import { breakerDecide, declineDecide, idleCursorDecide, ladderDecide, routedDeclines, limitDecide, probeDecide, rollingMean, seatDecide, velocityToPause, wakeDecide } from './ladder.js';
 import { logEvent, occupiedPid, paceAutoRelease, pidAlive, runningStamp, sClear, sGet, sHas, sOwner, sReleaseOwned, sSet, sSetOwned, sValue, streak, streakMap, streakMapSet, streakReset } from './sentinels.js';
 import { ancestryBroken, ancestryStamp } from './ancestry.js';
 import { runSession } from './shim.js';
@@ -308,6 +308,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
         workstream: l.workstream,
         readyCount: w.ready_count,
         newlyReadyCount: w.newly_ready_count,
+        newlyUnblockedHeldCount: w.newly_unblocked_held_ids?.length,
         resyncDue,
       });
       firstPoll = false;
@@ -1070,15 +1071,26 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
         // If the cursor read fails, idle at the seq we entered on rather than
         // guessing forward: too low costs one redundant wake, too high skips
         // motion silently.
-        const after = tryWakeCheck(g, l, 0);
+        // Read since the launch seq, so the edges that landed during the run
+        // come back with it (H-804).
+        const after = tryWakeCheck(g, l, before.max_seq);
         // A store-wide session may make its final queue read before it exits.
         // Advancing to a snapshot taken after that exit would acknowledge any
         // event in between without ever showing it to the session. Retain the
         // pre-session cursor for store-wide passes: motion during the pass is
         // delivered at least once on the next wake. That can buy one bounded
         // reconciliation pass for the session's own writes; it cannot lose a
-        // filing. Scoped loops use readiness edges and can advance normally.
-        const cursor = l.workstream === '*' ? before.max_seq : (after?.max_seq ?? before.max_seq);
+        // filing. Scoped loops use readiness edges, and advance past the run
+        // only when no edge it was never shown landed during it (H-804).
+        const { cursor, missed } = idleCursorDecide({
+          workstream: l.workstream,
+          launchSeq: before.max_seq,
+          afterSeq: after?.max_seq,
+          offered: [...(before.ready_ids ?? []), ...(claimedTicket ? [claimedTicket] : [])],
+          newlyReadyIds: after?.newly_ready_ids,
+          newlyUnblockedHeldIds: after?.newly_unblocked_held_ids,
+        });
+        if (missed.length) logEvent(l.name, 'missed-mid-run', `tickets=${missed.join(',')} cursor=${cursor}`);
         const ready = after?.ready_count ?? before.ready_count;
         const held = after?.held_count ?? before.held_count ?? 0;
         const reason = produced

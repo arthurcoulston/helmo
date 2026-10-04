@@ -431,6 +431,10 @@ Pinned releases accept both the historical three-component layout and C1's one
   `newly_ready_ids`/`newly_ready_count`; Rev uses the edge for immediate wakes
   and the current set for periodic reconciliation. Existing `max_seq`,
   `held_count`, and `changed_since` fields remain compatible (H-1098).
+  With an assignee it also reports `newly_unblocked_held_ids`: in_progress
+  claims held by that assignee whose last open blocker closed, or whose
+  blocking link was removed, after the cursor (H-804). A held claim is never
+  ready, so no readiness edge can name it.
   All of it comes from `Store.wakeCheck`, one IMMEDIATE transaction over one
   ready read. Assembled as separate statements it was not one snapshot: each
   took its own WAL view, and a handoff committing partway through appeared in

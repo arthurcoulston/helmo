@@ -19,7 +19,7 @@
 // are. `headroomRate` in usage.ts already holds this line and nothing new may
 // cross it.
 import { BillingMode, RunChoice } from './types.js';
-import { hasSpendableCredits, UsageSnapshot, USAGE_MAX_AGE_MS } from './usage.js';
+import { hasSpendableCredits, usageLimitExhausted, UsageSnapshot, USAGE_MAX_AGE_MS } from './usage.js';
 
 export type { BillingMode };
 
@@ -68,7 +68,7 @@ export function snapshotStale(s: UsageSnapshot | null, now: number, maxAgeMs = U
 }
 
 function outBars(s: UsageSnapshot, atPercent: number) {
-  return s.limits.filter((l) => l.percent >= atPercent || l.severity === 'critical');
+  return s.limits.filter((l) => usageLimitExhausted(l, atPercent));
 }
 
 /** The binding reset for an exhausted snapshot: the soonest moment any of its

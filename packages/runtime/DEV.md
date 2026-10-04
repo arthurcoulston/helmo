@@ -265,6 +265,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   totals exactly once. Each guess is cancelled on the ticket that carries it
   and the meter lands on the primary alone (H-187) — a session-wide
   correction once left a ticket at −62k beside a neighbour's +80k guess.
+- Known Claude usage bars follow the configured numeric exhaustion threshold;
+  a `critical` severity below that threshold remains a warning. Actual Codex
+  reached-cap evidence and unknown critical bar kinds remain binding. Routing
+  and pre-launch capacity use the same `usageLimitExhausted` predicate.
 - `usage.ts` — usage bars per provider. Claude: the undocumented
   `api.anthropic.com/api/oauth/usage` (H-278; security design approved in
   H-280, landed-code check is H-298), polled by the supervisor every 10 min

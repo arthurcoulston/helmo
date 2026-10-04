@@ -177,6 +177,14 @@ export function worstSeverity(s: UsageSnapshot | null): string {
   return s.limits.reduce((worst, l) => (order.indexOf(l.severity) > order.indexOf(worst) ? l.severity : worst), 'normal');
 }
 
+/** Claude severity is a warning, including critical before allowance is spent.
+ * Numeric policy remains authoritative for its known usage bars. Other kinds
+ * retain explicit critical-cap handling, including Codex rate_limit_reached. */
+export function usageLimitExhausted(limit: UsageLimit, atPercent: number): boolean {
+  const claudeBar = ['session', 'weekly_all', 'weekly_scoped', 'five_hour', 'seven_day'].includes(limit.kind);
+  return limit.percent >= atPercent || (!claudeBar && limit.severity === 'critical');
+}
+
 /** The bar that has actually run out, if one has. Returns the worst offender.
  *
  *  This is why the poller is worth having beyond a dashboard line: when a 429
@@ -187,7 +195,7 @@ export function worstSeverity(s: UsageSnapshot | null): string {
 export function exhaustedLimit(s: UsageSnapshot | null, atPercent = 95): UsageLimit | null {
   if (!s || s.stale) return null; // stale numbers must never justify a long wait
   if (hasSpendableCredits(s)) return null; // exhausted included allowance can roll onto available credits
-  const hit = s.limits.filter((l) => l.percent >= atPercent || l.severity === 'critical');
+  const hit = s.limits.filter((l) => usageLimitExhausted(l, atPercent));
   if (!hit.length) return null;
   return hit.reduce((worst, l) => (l.percent > worst.percent ? l : worst));
 }

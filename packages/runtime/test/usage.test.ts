@@ -86,10 +86,24 @@ describe('exhaustedLimit (H-402)', () => {
     expect(exhaustedLimit(s)!.label).toBe('weekly (Fable)');
   });
 
-  it("takes the endpoint's own 'critical' even below the percentage", () => {
+  it('uses configured allowance despite a Claude critical warning', () => {
     const s = parseUsage(LIVE);
+    s.limits[1]!.severity = 'critical';
+    for (const percent of [90, 99, 99.9]) {
+      s.limits[1]!.percent = percent;
+      expect(exhaustedLimit(s, 100)).toBeNull();
+    }
+    s.limits[1]!.percent = 100;
+    expect(exhaustedLimit(s, 100)!.label).toBe('weekly (all models)');
+    s.limits[1]!.percent = 95;
+    expect(exhaustedLimit(s, 95)!.label).toBe('weekly (all models)');
+  });
+
+  it('retains critical-cap refusal for an unknown provider bar', () => {
+    const s = parseUsage(LIVE);
+    s.limits[0]!.kind = 'unknown_provider';
     s.limits[0]!.severity = 'critical';
-    expect(exhaustedLimit(s)!.label).toBe('session (5h)');
+    expect(exhaustedLimit(s, 100)!.kind).toBe('unknown_provider');
   });
 
   it('never lets stale numbers justify a wait', () => {

@@ -61,6 +61,26 @@ describe('capacityDecide — a productive backlog at real capacity (matrix 1)', 
   });
 });
 
+describe('capacityDecide — Claude allowance warnings', () => {
+  const full = { ...thresholds, exhaustedPercent: 100, sharedReservePercent: 0 };
+  const decide = (percent: number, kind = 'weekly_all') => {
+    const snapshot = snap([percent], [48]);
+    snapshot.limits[0]!.severity = 'critical';
+    snapshot.limits[0]!.kind = kind;
+    return capacityDecide({
+      choices: [{ choice: kind.startsWith('codex_') ? codex : claude, snapshot, refreshed: false }],
+      isLoopRun: true, staleIterations: 0, thresholds: full, nowMs: NOW,
+    });
+  };
+  it('continues below the chosen ceiling and schedules at the ceiling', () => {
+    for (const percent of [90, 99, 99.9]) expect(decide(percent)).toEqual({ act: 'continue', on: claude });
+    expect(decide(100).act).toBe('scheduled_resume');
+  });
+  it('keeps actual Codex reached-cap evidence binding below the percentage', () => {
+    expect(decide(90, 'codex_primary').act).toBe('scheduled_resume');
+  });
+});
+
 describe('capacityDecide — the shared reserve', () => {
   it('holds the last slice back from loops but not from a desk session', () => {
     expect(effectiveExhaustedPercent(thresholds, true)).toBe(90);

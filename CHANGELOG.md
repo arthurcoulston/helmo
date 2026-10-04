@@ -11,6 +11,25 @@ consolidation imported still carried that release's notes under "Unreleased";
 this is the published wording, which is two entries and one commit reference
 longer.
 
+## v0.9.2 — 2026-10-03
+
+- Route repeated passes with no progress to team coordination. Claiming and
+  releasing the same work no longer counts as progress, and unchanged work
+  already routed for coordination does not keep waking the same seat. A
+  meaningful ticket or dependency change makes that work eligible again.
+- Retry a failed coordination write before recording the no-progress threshold
+  or suppressing the ticket, so a transient failure cannot strand work without
+  a coordination record.
+- Include dependency links in Work's CLI ticket output, matching the MCP
+  projection used to detect changed work. Clarify that human returns are for
+  decisions only the human can supply; team-owned method and routing problems
+  belong with the team.
+- Compatible correction: no store migration, MCP argument change, CLI command
+  or flag change, installation binding change, service change, port change or
+  configuration change. Consumers adopt this tag through their existing
+  installation and release workflow; publication does not upgrade an
+  installation.
+
 ## v0.9.1 — 2026-10-03
 
 - Restore the established Work, Roadmap and Runtime views inside the unified

@@ -1401,6 +1401,21 @@ follow a module imported dynamically much later.
   narrows the whole store back down to tickets already assigned and silences
   the fresh-filing signal these loops exist for. Cost us bosun's entire wake
   path until H-138.
+- Two edges the readiness rule missed (H-804). A scoped run's queue is read
+  at launch, so idling at the post-run seq acknowledged every edge that landed
+  DURING the run: Tester was launched on H-692, H-108 became ready eleven
+  seconds later, and the seat slept until the hourly resync. The idle check
+  now reads since the launch seq; if a ticket became ready that the run was
+  not offered (not ready at launch, not the ticket it claimed), the seat idles
+  at the launch seq instead and logs `missed-mid-run`, so the next poll wakes
+  it. What the run was offered stays acknowledged — its own release of a claim
+  back to open must not re-wake it (H-426). The second edge is a claim the
+  seat already HOLDS: in_progress is never ready, and the blocker closing is
+  an event on the reviewer's ticket, so a Builder parked on review idled an
+  hour with both verdicts in (H-877). wake-check's `newly_unblocked_held_ids`
+  names held claims whose last blocker closed after the cursor; it wakes the
+  holder, and counts as missed when it lands mid-run. Both are edges, not
+  standing state, so neither can wake a seat twice for the same event.
 
 ## Neighbors
 

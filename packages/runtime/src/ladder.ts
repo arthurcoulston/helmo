@@ -59,11 +59,44 @@ export function wakeDecide(c: {
   workstream: string;
   readyCount: number;
   newlyReadyCount?: number;
+  newlyUnblockedHeldCount?: number;
   resyncDue?: boolean;
 }): boolean {
   if (c.workstream === '*') return c.changedSince;
   if (c.newlyReadyCount === undefined) return c.changedSince || (c.firstPoll && c.readyCount > 0);
-  return c.newlyReadyCount > 0 || (c.firstPoll && c.readyCount > 0) || (Boolean(c.resyncDue) && c.readyCount > 0);
+  // A claim the seat already holds is never ready, so its last blocker closing
+  // is not a readiness edge; it is the same "your work can move" signal (H-804).
+  return c.newlyReadyCount > 0 || (c.newlyUnblockedHeldCount ?? 0) > 0
+    || (c.firstPoll && c.readyCount > 0) || (Boolean(c.resyncDue) && c.readyCount > 0);
+}
+
+// Where a scoped loop idles after a pass (H-804). The run's view of the queue
+// was taken at launch, so idling at the post-run seq acknowledges every edge
+// that landed during the run without the run having seen it: a ticket that
+// became ready mid-run was neither offered nor "newly ready" afterwards, and
+// waited for the hourly resync. Readiness edges since the launch seq that the
+// run was not offered — not ready at launch, not the ticket it claimed — keep
+// the cursor at the launch seq, so the next poll wakes on them. What the run
+// was offered and declined stays acknowledged (H-426): its own release of a
+// claim back to open is an edge since launch, and must not re-wake it every
+// pass. A held claim unblocked mid-run is an edge once and always missed. An
+// older store without the edge sets keeps the post-run cursor; store-wide
+// loops keep the launch seq for their own reason (H-223, in loop.ts).
+export function idleCursorDecide(c: {
+  workstream: string;
+  launchSeq: number;
+  afterSeq?: number;
+  offered: string[];
+  newlyReadyIds?: string[];
+  newlyUnblockedHeldIds?: string[];
+}): { cursor: number; missed: string[] } {
+  if (c.workstream === '*' || c.afterSeq === undefined) return { cursor: c.launchSeq, missed: [] };
+  const offered = new Set(c.offered);
+  const missed = [...new Set([
+    ...(c.newlyReadyIds ?? []).filter((id) => !offered.has(id)),
+    ...(c.newlyUnblockedHeldIds ?? []),
+  ])].sort();
+  return { cursor: missed.length ? c.launchSeq : c.afterSeq, missed };
 }
 
 export function declineDecide(

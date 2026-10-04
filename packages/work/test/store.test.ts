@@ -1823,6 +1823,42 @@ describe('harness queries (wake cursor)', () => {
     expect(w.changed_since).toBe(true);
     expect(w.held_count).toBe(0);
   });
+  it('wakeCheck names a held claim once its last blocker closes, and only then (H-804)', () => {
+    const s = freshStore();
+    const assigned = (title: string, assignee: string) =>
+      s.createTicket(orch, { title, body: 'fixture', workstream: 'alpha', type: 'build', assignee });
+    const held = assigned('Repair after review', builder.name);
+    const other = assigned('Untouched held work', builder.name);
+    const unlinked = assigned('Held behind a link that is removed', builder.name);
+    for (const t of [held, other, unlinked]) s.updateTicket(builder, { ticket_id: t.id, note: 'claimed', status: 'in_progress' });
+    const review = assigned('Review the repair', reviewer.name);
+    const security = assigned('Security pass on the repair', reviewer.name);
+    const stale = assigned('A dependency that was never real', reviewer.name);
+    s.linkTickets(builder, held.id, review.id, 'blocks', 'add');
+    s.linkTickets(builder, held.id, security.id, 'blocks', 'add');
+    s.linkTickets(builder, unlinked.id, stale.id, 'blocks', 'add');
+    const idleSeq = s.maxSeq();
+
+    // A held claim is never ready, and the blocker's close is motion on the
+    // reviewer's ticket, so neither readiness edges nor held_count move.
+    s.updateTicket(reviewer, { ticket_id: review.id, note: 'PASS', status: 'done' });
+    s.updateTicket(builder, { ticket_id: other.id, note: 'progress only' });
+    let w = s.wakeCheck(idleSeq, 'alpha', builder.name);
+    expect(w.newly_ready_ids).toEqual([]);
+    expect(w.newly_unblocked_held_ids).toEqual([]);
+
+    s.updateTicket(reviewer, { ticket_id: security.id, note: 'FAIL: fix the guard', status: 'done' });
+    s.linkTickets(orch, unlinked.id, stale.id, 'blocks', 'remove');
+    w = s.wakeCheck(idleSeq, 'alpha', builder.name);
+    expect(w.newly_ready_ids).toEqual([]);
+    expect(w.newly_unblocked_held_ids).toEqual([held.id, unlinked.id].sort());
+    expect(w.held_count).toBe(3);
+
+    // An edge, not a standing property: past the cursor it is quiet, and
+    // another seat's held work never wakes this one.
+    expect(s.wakeCheck(s.maxSeq(), 'alpha', builder.name).newly_unblocked_held_ids).toEqual([]);
+    expect(s.wakeCheck(idleSeq, 'alpha', reviewer.name).newly_unblocked_held_ids).toEqual([]);
+  });
   it('newlyReadySince follows capacity release and excludes the caller\'s untouched filing', () => {
     const s = freshStore();
     const held = create(s, { workstream: 'alpha' });

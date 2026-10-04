@@ -1820,9 +1820,9 @@ mock_cmd = 'node ${HELM_CLI} hygiene > ${report}'
     const findings = (JSON.parse(readFileSync(report, 'utf8')) as {
       findings: { check: string; ticket_id?: string }[];
     }).findings.filter((f) => f.check === 'awaiting_second_eyes').map((f) => f.ticket_id);
-    // The judge's own prerequisite filing remains in the feed too: wildcard
-    // scope does not make the triager an automatic second pair of eyes.
-    expect(findings).toEqual([eligible.id, blocker.id]);
+    // The judge's unassigned prerequisite is already drawable by other seats;
+    // hygiene is only the release route for work reserved back to its filer.
+    expect(findings).toEqual([eligible.id]);
     expect(store.getTicket(triaged.id).status).toBe('open');
     expect(store.getTicket(terminal.id).status).toBe('done');
     const ownerReady = store.listTickets({ ready: true, caller: 'builder', limit: 100 }).map((t) => t.id);

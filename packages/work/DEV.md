@@ -269,7 +269,10 @@ Pinned releases accept both the historical three-component layout and C1's one
   a loopless seat; a seat is a deliberate binding to a looped one).
   Human direction relayed by an orchestrator is judgment even when the relay
   carries the same agent name that filed the ticket (H-829); otherwise the
-  name-only self-triage check makes Arthur's recorded answer invisible.
+  name-only self-triage check makes Arthur's recorded answer invisible. A
+  refused self-claim names `helmo_hygiene`'s `awaiting_second_eyes` route; the
+  finding is limited to untouched work reserved back to its creator, because
+  a different assignee can already draw and judge the ticket normally.
   Budget zero is the explicit uncapped sentinel (H-267): measured spend remains
   disclosed, `remaining_usd` is null because no finite remainder exists, and
   pressure checks leave runnable work runnable. Positive budgets retain finite

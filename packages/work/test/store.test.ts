@@ -415,6 +415,25 @@ describe('atomic workflow admission (H-431)', () => {
       expect(s.updateTicket(genA2, { ticket_id: a.id, note: 'built', status: 'done', evidence: [{ kind: 'other', ref: 'x' }] }).ticket.status).toBe('done');
     });
 
+    it('preserves live claims and generation fences across rebuild, pruning claims for non-event tickets', () => {
+      const s = freshStore();
+      const { a, b } = twoClaims(s);
+      s.updateTicket(genB, { ticket_id: b.id, note: 'built', status: 'done', evidence: [{ kind: 'other', ref: 'x' }] });
+
+      const db = (s as unknown as { db: Database.Database }).db;
+      db.prepare("INSERT INTO tickets (id, title, body, workstream, type, status, priority, labels, evidence, blast_radius, created_at, updated_at, tokens_total, cost_usd_total) VALUES ('H-99','orphan','','w','ops','in_progress',2,'[]','[]','none','1787863040.0','1787863040.0',0,0)").run();
+      db.prepare("INSERT INTO launch_claims (launch_id, ticket_id, claim, created_at) VALUES ('orphan-launch', 'H-99', '{}', '1787863040.0')").run();
+      db.prepare("INSERT INTO execution_claims (ticket_id, session, generation, created_at) VALUES ('H-99', 'rev:orphan', 'orphan-launch', '1787863040.0')").run();
+
+      s.rebuild();
+
+      expect(() => s.updateTicket(genB, { ticket_id: a.id, note: 'stale sibling' })).toThrow(/stale_generation/);
+      expect(() => s.updateTicket(genB, { ticket_id: b.id, note: 'late write' })).toThrow(/stale_generation/);
+      expect(s.launchClaim(workerA, 'helmo-dev', builder.name, 'launch-a2')).toMatchObject({ resumed: true, ticket_id: a.id });
+      expect(db.prepare("SELECT launch_id FROM launch_claims WHERE launch_id = 'orphan-launch'").get()).toBeUndefined();
+      expect(db.prepare("SELECT ticket_id FROM execution_claims WHERE ticket_id = 'H-99'").get()).toBeUndefined();
+    });
+
     it('refuses to resume held work outside the requested scope', () => {
       const s = freshStore();
       twoClaims(s);
@@ -2246,6 +2265,12 @@ describe('hygiene checks (deterministic, read-only)', () => {
     const finding = s.hygiene().find((f) => f.check === 'awaiting_second_eyes' && f.ticket_id === t.id);
     expect(finding?.detail).toMatch(/^filed by builder-loop, reserved to builder-loop; untouched by anyone else since /);
     s.updateTicket(reviewer, { ticket_id: t.id, note: 'independent intake: bounded and worth doing' });
+    expect(s.hygiene().some((f) => f.check === 'awaiting_second_eyes' && f.ticket_id === t.id)).toBe(false);
+  });
+  it('does not ask for second eyes when a different assignee can already draw the ticket', () => {
+    const s = freshStore();
+    const t = create(s, { assignee: reviewer.name });
+    expect(s.listTickets({ ready: true, caller: reviewer.name }).map((ticket) => ticket.id)).toContain(t.id);
     expect(s.hygiene().some((f) => f.check === 'awaiting_second_eyes' && f.ticket_id === t.id)).toBe(false);
   });
   it('excludes operator filings and work already withheld for a stronger reason', () => {

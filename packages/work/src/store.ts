@@ -1554,6 +1554,11 @@ export class Store {
       if (this.isBlocked(r.id)) continue;
       const creator = this.filingCreator(r.id);
       if (!creator || !this.selfFiledUntouched(r.id, creator)) continue;
+      // A reservation to somebody else is already its second-eyes route: that
+      // assignee can draw the ticket normally. This finding exists for work
+      // hidden from the same filer it is routed back to, not every untouched
+      // self-filed ticket in the store.
+      if (r.assignee !== creator) continue;
       findings.push({
         check: 'awaiting_second_eyes',
         ticket_id: r.id,
@@ -2620,7 +2625,7 @@ export class Store {
       // Agents only — a human or orchestrator IS the second pair of eyes.
       if (input.status === 'in_progress' && t.status === 'open' && actor.kind === 'agent' && this.selfFiledUntouched(t.id, actor.name)) {
         throw new HelmoError(
-          `${t.id} is your own filing, untouched by anyone else — executing your own discoveries takes a second pair of eyes first (the same triage rule that withholds it from your ready queue). Any event by a human, an orchestrator relaying the human, or another agent releases it: a meeting answer, a note, a handoff, a priority change. takeover does not apply — it exists for stale claims, not self-triage. If this cannot wait, helmo_return_to_human with the case for urgency; if you are starting genuinely new work, create the ticket with status 'in_progress' in the same call instead of filing it and drawing it back later.`,
+          `${t.id} is your own filing, untouched by anyone else — executing your own discoveries takes a second pair of eyes first (the same triage rule that withholds it from your ready queue). helmo_hygiene surfaces it as awaiting_second_eyes so a reviewing seat can record that judgment. Any event by a human, an orchestrator relaying the human, or another agent releases it: a meeting answer, a note, a handoff, a priority change. takeover does not apply — it exists for stale claims, not self-triage. If this cannot wait, helmo_return_to_human with the case for urgency; if you are starting genuinely new work, create the ticket with status 'in_progress' in the same call instead of filing it and drawing it back later.`,
         );
       }
       if (input.status === 'in_progress' && t.capacity_hold && !capacityReleased(t.capacity_hold)) {
@@ -3172,6 +3177,11 @@ export class Store {
    *  that materialized state is always derivable from events. */
   rebuild(): void {
     this.db.transaction(() => {
+      // Claim state is deliberately not event-derived: it is the live worker
+      // lease and generation fence layered over the replayable ticket record.
+      // Deferring the foreign keys keeps claims for tickets replay recreates;
+      // the final prune drops only claims whose ticket was a non-event orphan.
+      this.db.pragma('defer_foreign_keys = ON');
       this.db.exec('DELETE FROM tickets; DELETE FROM deps; DELETE FROM workstreams; DELETE FROM hygiene_dispositions; DELETE FROM notice;');
       const rows = this.db.prepare('SELECT * FROM events ORDER BY seq').all() as Record<string, unknown>[];
       for (const row of rows) {
@@ -3242,6 +3252,10 @@ export class Store {
             break;
         }
       }
+      this.db.exec(`
+        DELETE FROM launch_claims WHERE ticket_id NOT IN (SELECT id FROM tickets);
+        DELETE FROM execution_claims WHERE ticket_id NOT IN (SELECT id FROM tickets);
+      `);
     }).immediate();
   }
 

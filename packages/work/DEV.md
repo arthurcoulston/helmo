@@ -176,7 +176,13 @@ Pinned releases accept both the historical three-component layout and C1's one
   string saying what the sitting is for and roughly what it costs him, stored as
   `sitting` and rendered as the card's ask; `false` clears both, and
   `sitting_with` alongside it names the agent to sit with (R-42 I13) and clears
-  with them. A bare `true`
+  with them. A genuine `resume` answer on a ticket carrying both a question
+  and a sitting completes that one operator interaction (H-392): the answered
+  event records `clear_sitting` and clears all three, leaving date, dependency
+  and capacity gates intact, and a current release handoff's sitting (which
+  has its own lifecycle) untouched. Replay applies the same transition, and a
+  one-time migration clears a sitting an earlier answer left behind only when
+  that answer is newer than the event that marked it. A bare `true`
   is refused, the way `return_to_human` refuses a return with no question — a
   marker with nothing to say drew a row that read like backlog, and five
   sittings went unnoticed. The line is a field and never the body's first

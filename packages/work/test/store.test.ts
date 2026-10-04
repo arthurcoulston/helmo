@@ -1232,6 +1232,40 @@ describe('return to human / answer', () => {
     expect(s.lastAnswer(t.id)?.chosen_option).toBe('pay');
   });
 
+  it('answer clears the legacy sitting marker but preserves unrelated holds through replay (H-392)', () => {
+    const s = freshStore();
+    const hold = { reason: 'Preserve reserve.', provenance: 'capacity review', reconsider_when: 'posture changes' };
+    const t = create(s, {
+      needs_human: 'Ten minutes with the operator to make the recorded decision.',
+      sitting_with: builder.name,
+      not_before: '2099-01-01',
+      assignee: builder.name,
+    });
+    s.updateTicket(orch, { ticket_id: t.id, note: 'capacity also constrains the work', capacity_hold: hold });
+    s.returnToHuman(builder, t.id, q);
+    s.answerTicket(orch, t.id, { answer: 'Proceed after the other holds clear.', resolution: 'resume' });
+    expect(s.getEvents(t.id).find((e) => e.event_type === 'answered')?.payload).toMatchObject({ clear_sitting: true });
+    const expected = {
+      status: 'open', assignee: null, needs_human: false, sitting: null, sitting_with: null,
+      not_before: '2099-01-01T00:00:00.000Z', capacity_hold: hold,
+    };
+    expect(s.getTicket(t.id)).toMatchObject(expected);
+    s.rebuild();
+    expect(s.getTicket(t.id)).toMatchObject(expected);
+    expect(s.listTickets({ ready: true, caller: builder.name }).map((x) => x.id)).not.toContain(t.id);
+  });
+
+  it('keeps a sitting marked after the answer (H-392)', () => {
+    const s = freshStore();
+    const t = create(s);
+    s.returnToHuman(builder, t.id, q);
+    s.answerTicket(orch, t.id, { answer: 'Proceed.', resolution: 'resume' });
+    expect(s.getEvents(t.id).find((e) => e.event_type === 'answered')?.payload).toMatchObject({ clear_sitting: false });
+    s.updateTicket(orch, { ticket_id: t.id, note: 'a new sitting', needs_human: 'Twenty minutes choosing between the two drafts.' });
+    s.rebuild();
+    expect(s.getTicket(t.id)).toMatchObject({ needs_human: true, sitting: 'Twenty minutes choosing between the two drafts.' });
+  });
+
   it('refuses an answer whose expected question is not the one on the ticket (H-1053)', () => {
     // The check lives inside the write transaction because the caller's read
     // and its write are two moments: a dashboard card can be answered and
@@ -3037,6 +3071,40 @@ describe('human sitting gate migration (H-1028)', () => {
       expect(after.getTicket(t.id).needs_human).toBe(false);
       after.updateTicket(orch, { ticket_id: t.id, note: 'Arthur needs to be present', needs_human: 'Arthur has to be at the keyboard for this one.' });
       expect(after.withHumanPending('reviewer-loop')).toEqual([t.id]);
+      after.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('answered sitting migration (H-392)', () => {
+  const q = { situation: 'Two retention windows fit the stated need.', question: 'Which window?', recommendation: 'Keep thirty days.' };
+  it('clears a sitting an older answer left behind, and only that one', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'helmo-sitting-migrate-'));
+    const path = join(dir, 'helmo.db');
+    try {
+      const before = new Store(path);
+      const stale = create(before, { needs_human: 'Ten minutes with the operator to decide the retention window.', sitting_with: builder.name });
+      before.returnToHuman(builder, stale.id, q);
+      before.answerTicket(orch, stale.id, { answer: 'Keep thirty days.', resolution: 'resume' });
+      const later = create(before);
+      before.returnToHuman(builder, later.id, q);
+      before.answerTicket(orch, later.id, { answer: 'Proceed.', resolution: 'resume' });
+      before.updateTicket(orch, { ticket_id: later.id, note: 'a new sitting', needs_human: 'Twenty minutes choosing between the two drafts.' });
+      // Reproduce what a release without the transition wrote: the sitting
+      // survives the answer and the event carries no clear_sitting bit.
+      const db = (before as unknown as { db: Database.Database }).db;
+      db.prepare("UPDATE tickets SET needs_human = 1, sitting = 'Ten minutes with the operator to decide the retention window.', sitting_with = ? WHERE id = ?").run(builder.name, stale.id);
+      db.prepare("UPDATE events SET payload = json_remove(payload, '$.clear_sitting') WHERE event_type = 'answered'").run();
+      before.close();
+
+      const after = new Store(path);
+      expect(after.getTicket(stale.id)).toMatchObject({ status: 'open', needs_human: false, sitting: null, sitting_with: null });
+      expect(after.getTicket(later.id)).toMatchObject({ needs_human: true, sitting: 'Twenty minutes choosing between the two drafts.' });
+      const migrated = after.dumpState();
+      after.rebuild();
+      expect(after.dumpState()).toEqual(migrated);
       after.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });

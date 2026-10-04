@@ -506,6 +506,29 @@ export class Store {
       /* column already exists */
     }
     this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_tickets_workflow_attempt ON tickets(workflow_attempt_id) WHERE workflow_attempt_id IS NOT NULL');
+
+    // H-392 migration: older answers reopened the ticket but left the legacy
+    // sitting marker materialized. Clear it only when the latest genuine
+    // resume answer is newer than the event that established the marker;
+    // a later, independent sitting remains untouched, and so does a current
+    // release handoff, whose sitting has its own lifecycle. Replay below
+    // derives the same result from those historical events.
+    this.db.exec(`
+      UPDATE tickets SET needs_human = 0, sitting = NULL, sitting_with = NULL
+       WHERE status = 'open' AND needs_human = 1
+         AND (release_handoff IS NULL OR COALESCE(json_extract(release_handoff, '$.current'), 0) = 0)
+         AND EXISTS (
+           SELECT 1 FROM events a
+            WHERE a.ticket_id = tickets.id AND a.event_type = 'answered'
+              AND COALESCE(json_extract(a.payload, '$.resolution'), 'resume') = 'resume'
+              AND a.seq > COALESCE((
+                SELECT MAX(m.seq) FROM events m
+                 WHERE m.ticket_id = tickets.id
+                   AND ((m.event_type = 'created' AND json_extract(m.payload, '$.needs_human') = 1)
+                     OR (m.event_type = 'updated' AND json_extract(m.payload, '$.diffs.needs_human.to') = 1))
+              ), 0)
+         )
+    `);
   }
 
   close(): void {
@@ -3090,9 +3113,13 @@ export class Store {
       const assignee = resolution === 'resume' ? this.workstreamSeat(t.workstream) : null;
       if (resolution === 'resume' && t.workflow_attempt_id) this.admitWorkflow(t.id, t.workflow_attempt_id, 'answer_resume');
       if (resolution !== 'resume') this.refuseQuarantinedWorkflowMutation(t.id, `answer_${resolution}`);
-      this.append(ts, t.id, 'answered', actor, { ...a, resolution, assignee } as unknown as Record<string, unknown>);
+      // An answer completes the one operator interaction represented by both
+      // legacy shapes (H-392). Other gates are independent columns/links and
+      // remain, as does a current release handoff's own sitting.
+      const clearSitting = resolution === 'resume' && t.needs_human && !t.release_handoff?.current;
+      this.append(ts, t.id, 'answered', actor, { ...a, resolution, assignee, clear_sitting: clearSitting } as unknown as Record<string, unknown>);
       if (resolution === 'resume') {
-        this.db.prepare("UPDATE tickets SET status = 'open', assignee = ?, question = NULL, updated_at = ? WHERE id = ?").run(assignee, ts, t.id);
+        this.resumeAnswered(t.id, assignee, clearSitting, ts);
       } else {
         this.db
           .prepare('UPDATE tickets SET status = ?, assignee = NULL, question = NULL, updated_at = ?, closed_at = ? WHERE id = ?')
@@ -3292,8 +3319,12 @@ export class Store {
           case 'answered': {
             const res = (ev.payload['resolution'] as string) ?? 'resume';
             if (res === 'resume') {
-              this.db.prepare("UPDATE tickets SET status = 'open', assignee = ?, question = NULL, updated_at = ? WHERE id = ?")
-                .run(ev.payload['assignee'] ?? null, ev.ts, ev.ticket_id);
+              // Historical answer events predate the explicit bit (H-392). They
+              // still complete a legacy combined question/sitting interaction,
+              // unless the sitting belongs to a current release handoff.
+              const bit = ev.payload['clear_sitting'];
+              const clearSitting = bit === undefined ? !this.getTicket(ev.ticket_id).release_handoff?.current : Boolean(bit);
+              this.resumeAnswered(ev.ticket_id, (ev.payload['assignee'] as string | null) ?? null, clearSitting, ev.ts);
             } else {
               this.db
                 .prepare('UPDATE tickets SET status = ?, assignee = NULL, question = NULL, updated_at = ?, closed_at = ? WHERE id = ?')
@@ -3424,6 +3455,17 @@ export class Store {
     if (!row && this.installation.source !== 'derived') {
       this.db.prepare("INSERT INTO meta (key, value) VALUES ('installation_name', ?)").run(this.installation.label);
     }
+  }
+
+  private resumeAnswered(id: string, assignee: string | null, clearSitting: boolean, ts: string): void {
+    const clear = clearSitting ? 1 : 0;
+    this.db.prepare(
+      `UPDATE tickets SET status = 'open', assignee = ?, question = NULL,
+         needs_human = CASE WHEN ? THEN 0 ELSE needs_human END,
+         sitting = CASE WHEN ? THEN NULL ELSE sitting END,
+         sitting_with = CASE WHEN ? THEN NULL ELSE sitting_with END,
+         updated_at = ? WHERE id = ?`,
+    ).run(assignee, clear, clear, clear, ts, id);
   }
 
   private workstreamSeat(name: string): string | null {

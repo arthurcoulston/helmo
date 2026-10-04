@@ -145,6 +145,17 @@ async function waitForFile(path: string, timeoutMs = 15000): Promise<void> {
   }
 }
 
+/** Waits for the condition the test is about to assert, and fails naming it.
+ *  A deadline that falls through silently turns a slow machine into a wrong
+ *  assertion two lines later. */
+async function waitUntil(cond: () => boolean, what: string, timeoutMs = 30_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!cond()) {
+    if (Date.now() >= deadline) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
 async function stop(child: ReturnType<typeof spawn>): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
   const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
@@ -346,7 +357,8 @@ mock_cmd = "touch $REV_HOME/model-started; sleep 0.2; echo launched >> $REV_HOME
   // It still asks on every pass so a later workflow candidate cannot inherit
   // an ordinary ticket's bypass.
   it('launches ordinary work against a store with no launch-admit command', () => {
-    // The mock claims the ready ticket, so the first pass produces and a
+    // The mock claims the ready ticket and records progress in its body, so
+    // the first pass produces (a bare claim is not production) and a
     // second iteration follows it: two launches and two fresh classifications.
     const e = setup(`[loops.old-store-loop]
 workstream = "rev-test"
@@ -354,7 +366,7 @@ cwd = "/tmp"
 runtime = "mock"
 mock_cmd = '''
 ID=$(node ${HELM_CLI} list --ready --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
-if [ -n "$ID" ]; then node ${HELM_CLI} update --ticket $ID --note "claimed by mock" --status in_progress; fi
+if [ -n "$ID" ]; then node ${HELM_CLI} update --ticket $ID --note "claimed by mock" --status in_progress --body-append " Progress recorded by mock."; fi
 echo launched >> $REV_HOME/sessions
 '''
 `);
@@ -456,10 +468,7 @@ mock_cmd = "true"
 
     const dir = join(e.home, 'state', 'seat-loop');
     const events = () => (existsSync(join(dir, 'events.log')) ? readFileSync(join(dir, 'events.log'), 'utf8') : '');
-    const until = async (re: RegExp) => {
-      const deadline = Date.now() + 30_000;
-      while (!re.test(events()) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 250));
-    };
+    const until = (re: RegExp) => waitUntil(() => re.test(events()), String(re));
     const child = spawn(process.execPath, ['--import', 'tsx', REV_CLI, 'run', 'seat-loop'], { env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore' });
     try {
       await until(/seat-held/);
@@ -579,12 +588,7 @@ fi
       env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore',
     });
     try {
-      const deadline = Date.now() + 30_000;
-      while (Date.now() < deadline) {
-        const tail = readFileSync(join(dir, 'events.log'), 'utf8').slice(marker);
-        if (/run-end.*iter=1/.test(tail)) break;
-        await new Promise((r) => setTimeout(r, 50));
-      }
+      await waitUntil(() => /run-end.*iter=1/.test(readFileSync(join(dir, 'events.log'), 'utf8').slice(marker)), 'run-end iter=1');
     } finally {
       await stop(child);
     }
@@ -949,9 +953,7 @@ mock_cmd = "true"
       stdio: 'ignore',
     });
     try {
-      const deadline = Date.now() + 30_000;
-      while (!existsSync(join(dir, 'WEDGED')) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 250));
-      expect(existsSync(join(dir, 'WEDGED'))).toBe(true);
+      await waitUntil(() => existsSync(join(dir, 'WEDGED')), 'WEDGED');
       // Let it poll on past the wedge, to prove the alarm does not repeat.
       await new Promise((r) => setTimeout(r, 3000));
     } finally {
@@ -964,10 +966,11 @@ mock_cmd = "true"
   }, 45_000);
 
   it('the burn breaker halts a loop that keeps spending and escalates it (H-412)', () => {
-    // The mock always writes something, so every iteration scores produced=true
-    // and the ladder says 'continue' forever — the shape of the burns this
-    // exists for. At $0.60 an iteration against a $1 day cap it must stop on
-    // the second, not run on.
+    // The mock appends to the body every pass, a real diff where a bare claim
+    // is not production, so every iteration scores produced=true and
+    // the ladder says 'continue' forever — the shape of the burns this exists
+    // for. At $0.60 an iteration against a $1 day cap it must stop on the
+    // second, not run on.
     const e = setup(`[loops.burn-loop]
 workstream = "rev-test"
 cwd = "/tmp"
@@ -977,7 +980,7 @@ mock_cmd = '''
 set -e
 ID=$(node ${HELM_CLI} list --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
 if [ -n "$ID" ]; then
-  node ${HELM_CLI} update --ticket $ID --note "busy, making no progress" --status in_progress
+  node ${HELM_CLI} update --ticket $ID --note "busy, making no progress" --status in_progress --body-append " Progress recorded by mock."
   echo "rev-mock-usage tokens=1000 cost_usd=0.60"
 fi
 '''
@@ -1361,12 +1364,16 @@ mock_cmd = '${CAPTURE_PROMPT}'
     expect(prompt).toContain('blocked, time-gated, or already sitting with the human');
     // Triage duty still outranks idling: the carve-out must survive rewording.
     expect(prompt).toContain('question only the human can answer');
-    expect(prompt).toContain('file children that each fit one iteration and close the parent as a plan');
+    // Outcome ownership across iterations: no iteration-sized
+    // split, no parent closed as a plan, and the human is not a co-equal sink.
+    expect(prompt).toContain('Split a ticket only into independently useful deliverables, never to fit an iteration');
+    expect(prompt).toContain('the parent stays open with its owner until its scope is delivered');
     expect(prompt).toContain('Never leave ready work as found');
+    expect(prompt).toContain('Ask the human only for a decision or act reserved to them that is not already decided');
     expect(prompt).toContain('prevent that unchanged ticket waking it again');
   });
 
-  it('quarantines a ticket after three silent declines and deduplicates the escalation (H-1071)', () => {
+  it('routes three silent declines through team coordination without inventing a human dependency', () => {
     const e = setup(`[loops.decline-loop]
 workstream = "rev-test"
 cwd = "/tmp"
@@ -1374,25 +1381,231 @@ runtime = "mock"
 mock_cmd = 'echo no-disposition'
 `);
     const id = seedTicket(e, 'Silently declined work');
-    for (let n = 0; n < 3; n += 1) rev(e, ['run', 'decline-loop', '--count', '1']);
-    // The line, not just the flag: a bare marker is what helmo refuses, and
-    // asserting only the boolean is what let the quarantine go quiet (H-1782).
-    let ticket = helm(e, ['get', id]) as { needs_human: boolean; sitting: string };
-    expect(ticket.needs_human).toBe(true);
-    expect(ticket.sitting).toContain("loop 'decline-loop' declined three times unchanged");
-    let escalations = (helm(e, ['list', '--status', 'awaiting_human']) as { tickets: { title: string }[] }).tickets;
-    expect(escalations.filter((t) => t.title.includes('silently declined')).length).toBe(1);
+    const routingNotes = () => (new Store(e.db).db.prepare('SELECT payload FROM events WHERE ticket_id = ?').all(id) as { payload: string }[])
+      .filter((ev) => (JSON.parse(ev.payload) as { note?: string }).note?.includes('Rev routed disposition')).length;
+    const human = () => (helm(e, ['list', '--status', 'awaiting_human']) as { tickets: unknown[] }).tickets.length;
+    const coordination = () => (helm(e, ['list', '--status', 'open']) as { tickets: { id: string; title: string }[] }).tickets
+      .filter((t) => t.title.includes('silently declined'));
+
+    for (let n = 0; n < 2; n += 1) rev(e, ['run', 'decline-loop', '--count', '1']);
+    expect(coordination()).toHaveLength(0);
+    rev(e, ['run', 'decline-loop', '--count', '1']);
+
+    // The third pass: one team record, a routing note, and nothing for the human.
+    let ticket = helm(e, ['get', id]) as { status: string; needs_human: boolean; sitting: string | null };
+    expect(ticket).toMatchObject({ status: 'open', needs_human: false, sitting: null });
+    expect(human()).toBe(0);
+    expect(coordination()).toHaveLength(1);
+    const standing = coordination()[0]!;
+    const body = (helm(e, ['get', standing.id]) as { body: string; status: string; needs_human: boolean }).body;
+    expect(body).toContain('route each ticket to an executable team owner');
+    expect(body).toContain('Do not create a human question unless that inspection establishes a decision or act reserved to the human');
+    expect(helm(e, ['get', standing.id])).toMatchObject({ status: 'open', needs_human: false });
+    expect(routingNotes()).toBe(1);
     const events = readFileSync(join(e.home, 'state', 'decline-loop', 'events.log'), 'utf8');
     expect(events).toMatch(new RegExp(`silent-decline\\s+tickets=${id} streaks=${id}:1`));
     expect(events).toMatch(/silent-decline-escalated/);
 
-    helm(e, ['update', '--ticket', id, '--note', 'release for replay proof', '--no-needs-human']);
-    rev(e, ['run', 'decline-loop', '--count', '1']);
-    ticket = helm(e, ['get', id]) as { needs_human: boolean; sitting: string };
-    expect(ticket.needs_human).toBe(true);
-    expect(ticket.sitting).toContain("loop 'decline-loop' declined three times unchanged");
-    escalations = (helm(e, ['list', '--status', 'awaiting_human']) as { tickets: { title: string }[] }).tickets;
-    expect(escalations.filter((t) => t.title.includes('silently declined')).length).toBe(1);
+    // Recurrence: further unchanged passes are already on record. They neither
+    // re-route the ticket nor file, nor reach the human.
+    for (let n = 0; n < 2; n += 1) rev(e, ['run', 'decline-loop', '--count', '1']);
+    ticket = helm(e, ['get', id]) as { status: string; needs_human: boolean; sitting: string | null };
+    expect(ticket.needs_human).toBe(false);
+    expect(human()).toBe(0);
+    expect(coordination()).toHaveLength(1);
+    expect(routingNotes()).toBe(1);
+    expect(readFileSync(join(e.home, 'state', 'decline-loop', 'events.log'), 'utf8').match(/silent-decline-escalated/g)).toHaveLength(1);
+  });
+
+  it('retries a failed coordination write before marking declined work as routed', () => {
+    const e = setup(`[loops.retry-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = "true"
+`);
+    const id = seedTicket(e, 'Coordination must survive a temporary write failure');
+    const proxy = join(e.home, 'once-unavailable.mjs');
+    writeFileSync(proxy, `import { existsSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+const args = process.argv.slice(2);
+const marker = process.env.REV_HOME + '/coordination-failed-once';
+if (args[0] === 'create' && args.includes("Loop 'retry-loop' silently declined ready work three times") && !existsSync(marker)) {
+  writeFileSync(marker, 'failed');
+  process.stderr.write('temporary coordination write failure');
+  process.exit(1);
+}
+const result = spawnSync(process.execPath, [${JSON.stringify(HELM_CLI)}, ...args], { env: process.env, stdio: 'inherit' });
+process.exit(result.status ?? 1);
+`);
+    const roster = join(e.home, 'roster.toml');
+    writeFileSync(roster, readFileSync(roster, 'utf8').replace(`helmo_cli = "${HELM_CLI}"`, `helmo_cli = "${proxy}"`));
+    const dir = join(e.home, 'state', 'retry-loop');
+    const coordination = () => (helm(e, ['list', '--status', 'open']) as { tickets: { title: string }[] }).tickets
+      .filter((t) => t.title.includes('silently declined'));
+
+    for (let n = 0; n < 3; n += 1) rev(e, ['run', 'retry-loop', '--count', '1']);
+    expect(readFileSync(join(dir, 'events.log'), 'utf8')).toContain('decline-check-failed');
+    expect(coordination()).toHaveLength(0);
+    expect(JSON.parse(readFileSync(join(dir, '.silent_decline_streaks.json'), 'utf8'))).toEqual({ [id]: 2 });
+    expect(existsSync(join(dir, '.routed_state_streaks.json'))).toBe(false);
+
+    rev(e, ['run', 'retry-loop', '--count', '1']);
+    expect(coordination()).toHaveLength(1);
+    expect(JSON.parse(readFileSync(join(dir, '.silent_decline_streaks.json'), 'utf8'))).toEqual({ [id]: 3 });
+    expect(Object.keys(JSON.parse(readFileSync(join(dir, '.routed_state_streaks.json'), 'utf8')))).toEqual([id]);
+    expect(helm(e, ['get', id])).toMatchObject({ status: 'open', needs_human: false });
+
+    rev(e, ['run', 'retry-loop', '--count', '1']);
+    expect(coordination()).toHaveLength(1);
+    expect(readFileSync(join(dir, 'events.log'), 'utf8').match(/silent-decline-escalated/g)).toHaveLength(1);
+  });
+
+  it('a second seat routing its own declines reuses no human channel and files its own team record', () => {
+    // Unseen seat and ticket: the behaviour is the seat's, not a fixture's name.
+    const e = setup(`[loops.decline-a]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = 'echo no-disposition'
+
+[loops.decline-b]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = 'echo no-disposition'
+`);
+    const first = seedTicket(e, 'Declined by both seats');
+    for (let n = 0; n < 3; n += 1) rev(e, ['run', 'decline-a', '--count', '1']);
+    const second = seedTicket(e, 'Declined by seat b only');
+    for (let n = 0; n < 3; n += 1) rev(e, ['run', 'decline-b', '--count', '1']);
+    const records = (helm(e, ['list', '--status', 'open']) as { tickets: { title: string }[] }).tickets.filter((t) => t.title.includes('silently declined'));
+    expect(records.map((t) => t.title).sort()).toEqual(["Loop 'decline-a' silently declined ready work three times", "Loop 'decline-b' silently declined ready work three times"]);
+    expect((helm(e, ['list', '--status', 'awaiting_human']) as { tickets: unknown[] }).tickets).toHaveLength(0);
+    for (const id of [first, second]) expect((helm(e, ['get', id]) as { needs_human: boolean }).needs_human).toBe(false);
+  });
+
+  it('work already routed to team coordination does not buy an hourly resync until it changes', async () => {
+    // Containment without a human marker. Before this change the needs_human marker
+    // took the ticket out of the ready set; without it, a routed ticket would
+    // otherwise be re-offered by the hourly resync and buy a full-price pass
+    // every hour. The control below shows the same clock does wake the seat
+    // once the ticket is not on record as routed.
+    const e = setup(`[loops.routed-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+idle_floor_s = 0
+mock_cmd = "true"
+`);
+    const id = seedTicket(e, 'Routed to coordination already');
+    const dir = join(e.home, 'state', 'routed-loop');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, '.silent_decline_streaks.json'), `${JSON.stringify({ [id]: 3 })}\n`);
+
+    const child = spawn(process.execPath, ['--import', 'tsx', REV_CLI, 'run', 'routed-loop', '--count', '2'], {
+      env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore',
+    });
+    try {
+      // The restart pickup still offers standing work once (H-426).
+      await waitForFile(join(dir, 'IDLE_AT'), 30_000);
+      expect(JSON.parse(readFileSync(join(dir, '.silent_decline_streaks.json'), 'utf8'))).toEqual({ [id]: 4 });
+      const marker = readFileSync(join(dir, 'events.log'), 'utf8').length;
+
+      const stale = Date.now() - 2 * 3_600_000;
+      writeFileSync(join(dir, 'IDLE_AT'), String(stale));
+      await waitUntil(() => parseInt(readFileSync(join(dir, 'IDLE_AT'), 'utf8'), 10) !== stale, 'the suppressed resync to restart its hour');
+      await new Promise((r) => setTimeout(r, 1_000));
+      let tail = readFileSync(join(dir, 'events.log'), 'utf8').slice(marker);
+      expect(tail).not.toMatch(/run-start.*iter=2/);
+      expect(tail).not.toMatch(/decline-check-failed/);
+      // The suppressed resync restarts the hour rather than asking every poll.
+      expect(parseInt(readFileSync(join(dir, 'IDLE_AT'), 'utf8'), 10)).toBeGreaterThan(stale);
+      expect((helm(e, ['list', '--status', 'awaiting_human']) as { tickets: unknown[] }).tickets).toHaveLength(0);
+      expect((helm(e, ['get', id]) as { needs_human: boolean }).needs_human).toBe(false);
+
+      // Control: the same ticket, not on record as routed, is resynced.
+      writeFileSync(join(dir, '.silent_decline_streaks.json'), '{}\n');
+      writeFileSync(join(dir, 'IDLE_AT'), String(stale));
+      const deadline = Date.now() + 25_000;
+      while (!/run-start.*iter=2/.test(tail)) {
+        if (Date.now() >= deadline) throw new Error(`the control resync never woke the seat; saw: ${tail}`);
+        await new Promise((r) => setTimeout(r, 25));
+        tail = readFileSync(join(dir, 'events.log'), 'utf8').slice(marker);
+      }
+      expect(tail).toMatch(/wake .*ready=1/);
+    } finally {
+      await stop(child);
+    }
+  });
+
+  // The child lives outside the seat's workstream, so it is not itself new
+  // ready work: only the routed ticket's own links change.
+  const recoveries: [string, (e: Env, id: string, coordinator: string) => void][] = [
+    ['body', (e, id, coordinator) => helm(e, ['update', '--ticket', id, '--note', 'Coordinator supplied the next step', '--body-append', ' Approved next step: run the fixture procedure.'], coordinator)],
+    ['link', (e, id, coordinator) => helm(e, ['create', '--title', 'Prepare the fixture procedure', '--body', 'Goal: the routed ticket\'s next step. Current state: none.', '--workstream', 'rev-other', '--type', 'ops', '--dep', id, '--dep-type', 'parent'], coordinator)],
+  ];
+  it.each(recoveries)('a routed ticket that a coordinator changes (%s) wakes the seat at the next resync; a note does not', async (_kind, recover) => {
+    // The containment above must not outlive the state it contained: a
+    // coordinator supplying the missing next step is executable recovery. No
+    // test hand edits the routed map here; only the ticket changes.
+    const e = setup(`[loops.recover-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+idle_floor_s = 0
+mock_cmd = "true"
+`);
+    const id = seedTicket(e, 'Routed, then given its next step');
+    const dir = join(e.home, 'state', 'recover-loop');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, '.silent_decline_streaks.json'), `${JSON.stringify({ [id]: 3 })}\n`);
+    const coordinator = '{"name":"coordinator","kind":"agent","model":"t","version":"0"}';
+    const stale = Date.now() - 2 * 3_600_000;
+    const log = () => readFileSync(join(dir, 'events.log'), 'utf8');
+    const resyncAsked = async () => {
+      writeFileSync(join(dir, 'IDLE_AT'), String(stale));
+      // A wake clears IDLE_AT, so a missing file means the resync was answered.
+      // Read once and treat ENOENT as missing: the loop can delete the file
+      // between an existence check and the read.
+      const idleAt = () => { try { return parseInt(readFileSync(join(dir, 'IDLE_AT'), 'utf8'), 10); } catch { return null; } };
+      await waitUntil(() => idleAt() !== stale, 'the overdue resync to be answered');
+    };
+
+    const child = spawn(process.execPath, ['--import', 'tsx', REV_CLI, 'run', 'recover-loop', '--count', '2'], {
+      env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore',
+    });
+    try {
+      // The restart pickup records the routed ticket's state.
+      await waitForFile(join(dir, 'IDLE_AT'), 30_000);
+      expect(Object.keys(JSON.parse(readFileSync(join(dir, '.routed_state_streaks.json'), 'utf8')))).toEqual([id]);
+      const marker = log().length;
+
+      // A note is not a change of state: still contained.
+      helm(e, ['update', '--ticket', id, '--note', 'Coordinator looked; nothing to add yet'], coordinator);
+      await resyncAsked();
+      await new Promise((r) => setTimeout(r, 1_000));
+      expect(log().slice(marker)).not.toMatch(/run-start.*iter=2/);
+
+      // Supplying the next step, in the body or as a linked subtask, is: the
+      // overdue resync wakes the seat.
+      recover(e, id, coordinator);
+      await resyncAsked();
+      const deadline = Date.now() + 25_000;
+      while (!/run-start.*iter=2/.test(log().slice(marker))) {
+        if (Date.now() >= deadline) throw new Error(`the changed routed ticket never woke the seat; saw: ${log().slice(marker)}`);
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      const tail = log().slice(marker);
+      expect(tail).toMatch(new RegExp(`routed-changed\\s+tickets=${id}`));
+      expect(tail).not.toMatch(/decline-check-failed/);
+      if (child.exitCode === null) await new Promise((resolve) => child.once('exit', resolve));
+      // Changed work counts afresh: this unproductive pass is its first.
+      expect(JSON.parse(readFileSync(join(dir, '.silent_decline_streaks.json'), 'utf8'))).toEqual({ [id]: 1 });
+      expect((helm(e, ['list', '--status', 'awaiting_human']) as { tickets: unknown[] }).tickets).toHaveLength(0);
+    } finally {
+      await stop(child);
+    }
   });
 
   it('a real disposition resets silent-decline tracking (H-1071)', () => {
@@ -1459,9 +1672,9 @@ fi
     const prompt = promptOf(e);
     expect(prompt).toContain("This is a Rev loop iteration, not a summon; AGENTS.md's summon clause does not apply; the queue is the work.");
     expect(prompt).toContain('across all workstreams'); // the wildcard prompt, not a stream's
-    expect(prompt).toContain('file children that each fit one iteration and close the parent as a plan');
+    expect(prompt).toContain('Split a ticket only into independently useful deliverables, never to fit an iteration');
     expect(prompt).toContain('Never leave ready work as found');
-    expect(prompt).toContain('For this store-wide sweep, a disposition note is action');
+    expect(prompt).toContain('a note that changes nothing on the ticket is not a disposition');
     expect((helm(e, ['get', id]) as { status: string }).status).toBe('done');
     expect(existsSync(join(e.home, 'state', 'judge', 'IDLE'))).toBe(true);
     expect(readFileSync(join(e.home, 'state', 'judge', 'events.log'), 'utf8')).toMatch(/produced=true .*action=idle/);

@@ -375,6 +375,27 @@ export function ticketStatus(g: GlobalConfig, ticketId: string): string {
   return (run(g, ['get', ticketId]) as { status: string }).status;
 }
 
+/** The parts of a ticket that change what a seat can do with it, hashed.
+ *  Rev records this when it routes a ticket to team coordination and lifts its
+ *  resync suppression once it differs: a coordinator supplying
+ *  the missing next step changes the body, a reassignment the owner. Notes,
+ *  spend and the actor chain are left out, so the routing note and a seat's
+ *  own unproductive passes keep the ticket contained. A bare claim and release
+ *  ends where it started, so it reads the same too. Links count: adding a
+ *  blocker or a subtask changes what the seat can do. */
+type Dep = { from_id: string; to_id: string; type: string };
+const materialFields = ['title', 'body', 'workstream', 'project', 'type', 'labels', 'status', 'priority', 'assignee', 'evidence', 'confidence', 'uncertainty_note', 'blast_radius', 'question', 'schedule', 'not_before', 'needs_human', 'sitting', 'sitting_with', 'capacity_hold', 'workflow_attempt_id', 'action', 'last_answer', 'product_acceptance'] as const;
+
+export function ticketState(g: GlobalConfig, ticketId: string): string {
+  const t = run(g, ['get', ticketId]) as Record<string, unknown>;
+  const material: unknown[] = materialFields.map((f) => [f, t[f] ?? null]);
+  // A link is a change of prerequisite or ownership. Edges are read as
+  // from|type|to and sorted, so store row order cannot move the digest.
+  const deps = t.deps as { outgoing?: Dep[]; incoming?: Dep[] } | undefined;
+  material.push(['deps', [...(deps?.outgoing ?? []), ...(deps?.incoming ?? [])].map((d) => `${d.from_id}|${d.type}|${d.to_id}`).sort()]);
+  return createHash('sha256').update(JSON.stringify(material)).digest('hex').slice(0, 16);
+}
+
 /** Human-readable scope for logs and escalations: '*' loops watch the whole store. */
 export function scopeLabel(l: LoopConfig): string {
   return l.workstream === '*' ? 'all workstreams' : `workstream '${l.workstream}'`;
@@ -660,6 +681,15 @@ export function recordAgentResumeFailure(g: GlobalConfig, l: LoopConfig, ticketI
 
 const silentDeclineTitle = (l: LoopConfig) => `Loop '${l.name}' silently declined ready work three times`;
 
+/** Repeated unchanged work is a team routing problem, not a human question.
+ *  Rev records one coordination ticket per loop in the escalation workstream,
+ *  where the coordinating seat draws it, and notes the routing on each source
+ *  ticket. It never returns, marks needs_human or
+ *  alerts the operator here: a loop declining a ticket establishes nothing a
+ *  human alone can supply. Only the coordinator's inspection may find a
+ *  genuinely reserved decision, and it asks through the ordinary tools then.
+ *  Containment is Rev's own: routed tickets stop buying resync passes
+ *  (`routedDeclines`), so the queue stays honest without a false marker. */
 export function escalateSilentDeclines(g: GlobalConfig, l: LoopConfig, ids: string[]): string {
   let standing: string | null = null;
   for (const status of ['awaiting_human', 'open', 'in_progress']) {
@@ -667,14 +697,12 @@ export function escalateSilentDeclines(g: GlobalConfig, l: LoopConfig, ids: stri
     standing = rows.tickets.find((t) => t.title === silentDeclineTitle(l))?.id ?? null;
     if (standing) break;
   }
+  const brief = `Classify each blocker, preserve any real dependency or hold, and route each ticket to an executable team owner: link the real prerequisite and its owner, hand it to the seat that can act, set a start date tied to a real event, or cancel it with reason. Do not create a human question unless that inspection establishes a decision or act reserved to the human that is not already decided.`;
   if (!standing) {
-    standing = (run(g, ['create', '--title', silentDeclineTitle(l), '--body', `Rev observed three consecutive passes in which loop '${l.name}' left these ready tickets unchanged: ${ids.join(', ')}. The tickets are quarantined for a human sitting; the seat continues running.`, '--workstream', g.escalation_workstream, '--type', 'ops', '--priority', '1'], revActor()) as { id: string }).id;
-    run(g, ['return', '--ticket', standing, '--situation', `Loop '${l.name}' left ready tickets ${ids.join(', ')} unchanged for three consecutive passes. Rev quarantined them instead of halting the seat.`, '--question', 'Should these tickets be rerouted, clarified, or released back to the seat?', '--recommendation', 'inspect the named tickets and the loop trace, then release only those whose next action is explicit', '--if-unanswered', 'The named tickets remain withheld from agent queues; the rest of the seat continues running.'], revActor());
+    standing = (run(g, ['create', '--title', silentDeclineTitle(l), '--body', `Rev observed three consecutive passes in which loop '${l.name}' left these ready tickets unchanged: ${ids.join(', ')}. ${brief} The seat continues running and Rev no longer spends idle resync passes on these tickets until they change.`, '--workstream', g.escalation_workstream, '--type', 'ops', '--priority', '1'], revActor()) as { id: string }).id;
+  } else {
+    run(g, ['update', '--ticket', standing, '--note', `Loop '${l.name}' has now also left ${ids.join(', ')} ready and unchanged for three consecutive passes; route these the same way.`], revActor());
   }
-  // The marker carries the line the sitting needs (helmo H-1761). A bare
-  // `--needs-human` reads the slot after itself, so it arrived as no value at
-  // all and the quarantine silently stopped marking anything (H-1782).
-  const sitting = `Decide what to do with a ticket loop '${l.name}' declined three times unchanged: read it and route it, cancel it, or answer what it is waiting on — a few minutes.`;
-  for (const id of ids) run(g, ['update', '--ticket', id, '--note', `Rev quarantined this ticket after loop '${l.name}' left it ready and unchanged for three consecutive passes; escalation ${standing}.`, '--needs-human', sitting], revActor());
+  for (const id of ids) run(g, ['update', '--ticket', id, '--note', `Rev routed disposition of this unchanged ticket through team coordination after three passes by loop '${l.name}'; coordination ${standing}. No human dependency was inferred.`], revActor());
   return standing;
 }

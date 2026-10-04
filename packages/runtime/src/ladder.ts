@@ -72,10 +72,20 @@ export function declineDecide(
   produced: boolean,
   cap = 3,
 ): { streaks: Record<string, number>; escalate: string[] } {
-  if (produced) return { streaks: {}, escalate: [] };
+  // A ticket already routed to team coordination keeps its count through a
+  // productive pass: other work advancing says nothing about it, and dropping
+  // it would re-route the same ticket every few passes. It leaves the
+  // map only when an unproductive pass finds it no longer ready and unchanged.
+  if (produced) return { streaks: Object.fromEntries(Object.entries(previous).filter(([, n]) => n >= cap)), escalate: [] };
   const streaks: Record<string, number> = {};
   for (const id of [...new Set(unchangedReadyIds)].sort()) streaks[id] = (previous[id] ?? 0) + 1;
-  return { streaks, escalate: Object.keys(streaks).filter((id) => streaks[id]! >= cap) };
+  // Route once, at the crossing: later unchanged passes are already on record.
+  return { streaks, escalate: Object.keys(streaks).filter((id) => streaks[id] === cap) };
+}
+
+/** Tickets this seat has already routed to team coordination. */
+export function routedDeclines(streaks: Record<string, number>, cap = 3): string[] {
+  return Object.keys(streaks).filter((id) => streaks[id]! >= cap);
 }
 
 // Same-seat guard (H-558): two live sessions sharing one crew name (a rev loop

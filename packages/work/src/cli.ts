@@ -301,7 +301,9 @@ try {
     case 'get': {
       const id = ticketRefOpt(flag('ticket') ?? args[0]);
       if (!id) throw new HelmoError('get requires a ticket id');
-      out({ ...store.getTicket(id), last_answer: store.lastAnswer(id), agent_chain: store.agentChain(id), product_acceptance: store.productAcceptance(id) });
+      // deps as the MCP get returns them: a link changes what a seat can do
+      // with the ticket, and Rev's routed-state digest reads them here.
+      out({ ...store.getTicket(id), deps: store.getDeps(id), last_answer: store.lastAnswer(id), agent_chain: store.agentChain(id), product_acceptance: store.productAcceptance(id) });
       break;
     }
     case 'product-complete': {

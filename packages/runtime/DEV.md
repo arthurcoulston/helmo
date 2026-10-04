@@ -81,19 +81,36 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   time-gated, or with the human) and carves out an unasked human question,
   which triage duty still requires; only the '*' prompt carried the
   instruction until H-740.
-  Both prompts also make oversized work stop at the planning boundary: the
-  loop files iteration-sized children and closes the parent as a plan in the
-  same pass, instead of carrying one ticket across repeated iterations
-  (H-1057). The sentence sits after the two draw variants so neither scope can
-  omit it. Both prompts also require every considered ready ticket to receive a
-  recorded disposition rather than remain invisibly declined (H-1071). For a
-  scoped seat, Rev snapshots ready IDs around each clean, unproductive pass and
-  keeps a per-ticket streak in `.silent_decline_streaks.json`; the third pass
-  creates one deduplicated human escalation and quarantines those tickets with
-  `needs_human`, carrying the one line the sitting needs — Helmo refuses a bare
-  marker — without halting the rest of the seat. Any advancing work, or a
-  ticket leaving the ready set, resets its streak. Store-wide `'*'` loops are
-  excluded: their job is judgment, and a recorded disposition is the action.
+  Both prompts split a ticket only into independently useful deliverables,
+  never to fit an iteration; the parent stays open with its owner until its
+  scope is delivered or deliberately changed (replacing H-1057's close-as-plan
+  rule). Both prompts also require every considered ready ticket to be acted
+  on rather than remain invisibly declined (H-1071): link its real blocker and
+  owner, hand it on, date it to a real event or cancel it. The human is asked
+  only for a reserved decision not already made. A resumed ordinary claim that
+  cannot advance until another ticket is done may be linked and set back to
+  open, still reserved to the seat, so the held claim does not starve its own
+  prerequisite; workflow-bound claims never are. For a scoped seat, Rev
+  snapshots ready IDs around each clean, unproductive pass and keeps a
+  per-ticket streak in `.silent_decline_streaks.json`. When a streak reaches
+  three, Rev files (or notes on) one coordination ticket per loop in
+  `escalation_workstream` and notes the routing on each source ticket. It
+  never returns to the human, writes `needs_human` or alerts the operator for
+  this: repeated no-progress is a team routing problem. Each ticket is routed
+  once, at the crossing, and keeps its count through other work's productive
+  passes; it leaves the map when an unproductive pass finds it no longer ready
+  and unchanged. The routed count is saved only after coordination succeeds;
+  a failed write leaves the crossing available for retry. Containment is Rev's
+  own: the hourly resync skips a ready set
+  made only of routed tickets and restarts its hour, while newly ready work
+  still wakes the seat. Rev records each routed ticket's material state
+  (`.routed_state_streaks.json`; its fields and its links, read through
+  Helmo's `get`; notes, spend and the actor chain excluded). A routed ticket
+  whose state has changed since then is offered at the next resync and counted
+  afresh, so a coordinator supplying the next step, in the body or as a linked
+  subtask, wakes the seat. Links need a Helmo whose CLI `get` returns `deps`.
+  Store-wide `'*'` loops are excluded, and for them a note that changes
+  nothing on the ticket is not a disposition.
   An IDLE sentinel keeps the wake cursor on its first line and a bounded reason
   on its second (H-954): either no executable work exists in the seat's scope,
   held work is non-executable, or a session left executable work untouched.

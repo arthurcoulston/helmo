@@ -132,12 +132,12 @@ export function streakReset(loop: string, ...names: string[]): void {
   for (const name of names) rmSync(join(stateDir(loop), `.${name}_streak`), { force: true });
 }
 
-export function streakMap(loop: string, name: string): Record<string, number> {
+export function streakMap<T = number>(loop: string, name: string): Record<string, T> {
   const p = join(stateDir(loop), `.${name}_streaks.json`);
-  try { return JSON.parse(readFileSync(p, 'utf8')) as Record<string, number>; } catch { return {}; }
+  try { return JSON.parse(readFileSync(p, 'utf8')) as Record<string, T>; } catch { return {}; }
 }
 
-export function streakMapSet(loop: string, name: string, values: Record<string, number>): void {
+export function streakMapSet<T = number>(loop: string, name: string, values: Record<string, T>): void {
   const p = join(stateDir(loop), `.${name}_streaks.json`);
   if (Object.keys(values).length === 0) rmSync(p, { force: true });
   else writeFileSync(p, `${JSON.stringify(values)}\n`);

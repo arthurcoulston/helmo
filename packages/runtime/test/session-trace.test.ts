@@ -99,10 +99,10 @@ describe('session trace diagnostic', () => {
     writeFileSync(fake, `console.log(${JSON.stringify(JSON.stringify({ ...ticket, id: 'H-8' }))})`);
     const env = { ...process.env, REV_HOME: home };
     for (const key of Object.keys(env)) if (/^(HELMO|ROADMAP|REV|INSTALLATION)_/.test(key) && key !== 'REV_HOME') delete env[key];
-    const invoke = () => spawnSync(process.execPath, [
+    const invoke = (args = ['trace', 'H-7@fixture.personal'], extraEnv = {}) => spawnSync(process.execPath, [
       '--import', join(repo, 'node_modules', 'tsx', 'dist', 'loader.mjs'),
-      join(repo, 'packages', 'runtime', 'src', 'cli.ts'), 'trace', 'H-7@fixture.personal',
-    ], { cwd: repo, env, encoding: 'utf8' });
+      join(repo, 'packages', 'runtime', 'src', 'cli.ts'), ...args,
+    ], { cwd: repo, env: { ...env, ...extraEnv }, encoding: 'utf8' });
     const mismatch = invoke();
     expect(mismatch).toMatchObject({ status: 1, stdout: '', stderr: 'trace refused: diagnostic unavailable\n' });
     writeFileSync(join(home, 'roster.toml'), 'SYNTHETIC_PRIVATE_ROSTER = [invalid');
@@ -110,5 +110,13 @@ describe('session trace diagnostic', () => {
     expect(malformed).toMatchObject({ status: 1, stdout: '', stderr: 'trace refused: diagnostic unavailable\n' });
     expect(malformed.stderr).not.toContain('SYNTHETIC_PRIVATE_ROSTER');
     expect(malformed.stderr).not.toContain(home);
+    const asserted = invoke(['trace', 'H-7@fixture.personal', '--installation', 'SYNTHETIC_PRIVATE_INSTALLATION']);
+    expect(asserted).toMatchObject({ status: 1, stdout: '', stderr: 'trace refused: diagnostic unavailable\n' });
+    expect(asserted.stderr).not.toContain(home);
+    const release = join(home, 'release.json');
+    writeFileSync(release, 'SYNTHETIC_PRIVATE_RELEASE');
+    const malformedRelease = invoke(undefined, { INSTALLATION_RELEASE: release });
+    expect(malformedRelease).toMatchObject({ status: 1, stdout: '', stderr: 'trace refused: diagnostic unavailable\n' });
+    expect(malformedRelease.stderr).not.toContain(home);
   });
 });

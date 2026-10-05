@@ -25,9 +25,10 @@ import { assertTicketIdentity, readTicketLaunches, sessionTrace } from './sessio
 import { ticketHistory } from './helm.js';
 
 const [cmd, ...rest] = process.argv.slice(2);
+const TRACE_REFUSAL = 'trace refused: diagnostic unavailable';
 if (cmd === 'trace') {
   process.on('uncaughtException', () => {
-    console.error('trace refused: diagnostic unavailable');
+    console.error(TRACE_REFUSAL);
     process.exit(1);
   });
 }
@@ -45,14 +46,20 @@ const requestedInstall = takeInstallFlag(rest);
 //
 // Before the pinned-release check, so that a wrong name is answered as a wrong
 // name rather than masked by an unrelated incoherent-release error.
-if (requestedInstall !== undefined) assertInstallation([commandName, cmd, rest[0]].filter(Boolean).join(' '), requestedInstall);
+if (requestedInstall !== undefined) {
+  assertInstallation(
+    [commandName, cmd, rest[0]].filter(Boolean).join(' '),
+    requestedInstall,
+    cmd === 'trace' ? 'throw' : 'exit',
+  );
+}
 // A bound caller is checked even on the two release-repair families below.
 // `unchecked` keeps a broken selection repairable while still fencing name,
 // control home and service identity before any control state is touched.
 try {
   target('unchecked');
 } catch (e) {
-  console.error(e instanceof Error ? e.message : String(e));
+  console.error(cmd === 'trace' ? TRACE_REFUSAL : e instanceof Error ? e.message : String(e));
   process.exit(1);
 }
 // Validate a pinned release before even reading the roster. Every command,
@@ -73,11 +80,11 @@ if (!UNPINNED.includes(cmd ?? '')) {
   } catch (e) {
     // A refusal that leaves the operator a `rm -rf` is the H-2431 shape. The
     // stack trace from inside the check named neither escape, so it said one.
-    console.error(
+    console.error(cmd === 'trace' ? TRACE_REFUSAL : (
       `${e instanceof Error ? e.message : String(e)}\n`
       + `Read what broke with: ${runCommand} release status  (then ${runCommand} release upgrade <release directory>)\n`
-      + `Or take this installation's records away entirely with: ${runCommand} install remove`,
-    );
+      + `Or take this installation's records away entirely with: ${runCommand} install remove`
+    ));
     process.exit(1);
   }
 }
@@ -250,7 +257,7 @@ switch (cmd) {
       const read = readTicketLaunches(Object.keys(loops), String(ticket['id']));
       console.log(JSON.stringify(sessionTrace(ticket, read.launches, read.malformed), null, 2));
     } catch (e) {
-      console.error('trace refused: diagnostic unavailable');
+      console.error(TRACE_REFUSAL);
       process.exit(1);
     }
     break;

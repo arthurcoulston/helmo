@@ -110,9 +110,10 @@ function selectedRelease(product: 'rev' | 'helmo' | 'helmo-roadmap'): string | n
  * `install`) stay reachable on a broken selection while still being held to
  * the name they were given.
  */
-export function assertInstallation(command: string, requested?: string): void {
+export function assertInstallation(command: string, requested?: string, refusal: 'exit' | 'throw' = 'exit'): void {
   const problem = mismatch(target('unchecked'), requested);
   if (problem) {
+    if (refusal === 'throw') throw new Error(problem);
     console.error(`refusing to run '${command}': ${problem}.`);
     process.exit(1);
   }

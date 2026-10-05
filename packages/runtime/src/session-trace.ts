@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { namesResolvedInstallation, type InstallationConfig } from '@helmo/core';
 import { stateDir } from './config.js';
 import type { LaunchJournalEntry } from './launch-journal.js';
 
@@ -23,6 +24,11 @@ const SESSION_OUTCOMES = ['ok', 'transient', 'apparatus', 'failure'] as const;
 const LAUNCH_PHASES = ['intent', 'admitted', 'dispatching', 'complete', 'quarantined'] as const;
 const TICKET_STATUSES = ['open', 'in_progress', 'awaiting_human', 'done', 'cancelled'] as const;
 const EVENT_TYPES = ['created', 'updated', 'returned', 'return_withdrawn', 'answered', 'linked', 'unlinked', 'spend', 'workstream_set', 'workstream_renamed', 'hygiene_disposed', 'notice_set', 'product_completed', 'acceptance_verdict', 'release_handoff_recorded', 'acted'] as const;
+const WORK_INSTALLATION: InstallationConfig = {
+  homeKey: 'HELMO_HOME', dbKey: 'HELMO_DB', defaultHome: '.helmo', defaultDb: 'helmo.db',
+  derivedPrefix: 'dev.helmo', homePattern: /^\.helmo([-_.]|$)/, stripPattern: /^\.?helmo(?=[-_.]|$)/,
+  release: () => null,
+};
 
 const oneOf = <T extends string>(value: unknown, allowed: readonly T[]): value is T => typeof value === 'string' && allowed.includes(value as T);
 
@@ -71,6 +77,21 @@ export function readTicketLaunches(loops: string[], ticketId: string): { launche
     }
   }
   return { launches: launches.sort((a, b) => a.intent_at.localeCompare(b.intent_at)), malformed };
+}
+
+export function assertTicketIdentity(ticket: Record<string, unknown>, requested: string): void {
+  const at = requested.indexOf('@');
+  const requestedId = requested.slice(0, at);
+  const requestedInstallation = requested.slice(at + 1);
+  const installation = ticket['installation'];
+  if (!ticketIdentifier(ticket['id']) || ticket['id'] !== requestedId || !record(installation)
+    || !name(installation.label)) throw new Error('mismatched ticket history');
+  if (installation.label === requestedInstallation) return;
+  if (typeof installation.home !== 'string' || typeof installation.db !== 'string'
+    || !namesResolvedInstallation(WORK_INSTALLATION, {
+      label: installation.label, home: installation.home, db: installation.db,
+      source: 'derived', release: null,
+    }, requestedInstallation)) throw new Error('mismatched ticket history');
 }
 
 export function sessionTrace(ticket: Record<string, unknown>, launches: LaunchJournalEntry[], malformed: number): object {

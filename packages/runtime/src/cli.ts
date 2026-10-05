@@ -21,10 +21,16 @@ import { runFleet } from './supervisor.js';
 import { teamResume, teamStop } from './team-control.js';
 import { buildIntakeResult, recordIntakeResult } from './intake-preparation.js';
 import { commandName, runCommand } from './command-name.js';
-import { readTicketLaunches, sessionTrace } from './session-trace.js';
+import { assertTicketIdentity, readTicketLaunches, sessionTrace } from './session-trace.js';
 import { ticketHistory } from './helm.js';
 
 const [cmd, ...rest] = process.argv.slice(2);
+if (cmd === 'trace') {
+  process.on('uncaughtException', () => {
+    console.error('trace refused: diagnostic unavailable');
+    process.exit(1);
+  });
+}
 // `--installation <name|home>` may follow any command: it asserts which
 // installation the command is about, and a disagreement is a refusal rather
 // than a redirect (H-2473, src/install.ts). Taken out of `rest` here so that
@@ -240,6 +246,7 @@ switch (cmd) {
     }
     try {
       const ticket = ticketHistory(g, ticketRef);
+      assertTicketIdentity(ticket, ticketRef);
       const read = readTicketLaunches(Object.keys(loops), String(ticket['id']));
       console.log(JSON.stringify(sessionTrace(ticket, read.launches, read.malformed), null, 2));
     } catch (e) {

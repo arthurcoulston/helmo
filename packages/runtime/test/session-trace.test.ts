@@ -1,8 +1,9 @@
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { readTicketLaunches, sessionTrace } from '../src/session-trace.js';
+import { assertTicketIdentity, readTicketLaunches, sessionTrace } from '../src/session-trace.js';
 
 const ticket = {
   installation: { label: 'fixture.personal' }, id: 'H-7', status: 'in_progress', assignee: 'mason', action: null,
@@ -81,5 +82,33 @@ describe('session trace diagnostic', () => {
       ...ticket,
       blockers: [{ id: { prompt: 'private' }, assignee: { credential: 'private' }, needs_human: false }],
     }, [], 0)).toThrow('malformed blocker');
+  });
+
+  it('refuses a returned ticket outside the requested identity', () => {
+    expect(() => assertTicketIdentity(ticket, 'H-8@fixture.personal')).toThrow('mismatched ticket history');
+    expect(() => assertTicketIdentity({ ...ticket, installation: { label: 'other.personal' } }, 'H-7@fixture.personal')).toThrow('mismatched ticket history');
+    expect(() => assertTicketIdentity(ticket, 'H-7@fixture.personal')).not.toThrow();
+  });
+
+  it('keeps startup and response-identity refusals content-free on both streams', () => {
+    const repo = join(import.meta.dirname, '..', '..', '..');
+    const home = mkdtempSync(join(tmpdir(), 'rev-trace-cli-'));
+    const fake = join(home, 'fake-work.cjs');
+    mkdirSync(join(home, 'state', 'alpha', 'launches'), { recursive: true });
+    writeFileSync(join(home, 'roster.toml'), `[global]\nhelmo_cli = "${fake}"\nhelmo_mcp_server = "${fake}"\n[loops.alpha]\nworkstream = "test"\ncwd = "${home}"\nruntime = "mock"\n`);
+    writeFileSync(fake, `console.log(${JSON.stringify(JSON.stringify({ ...ticket, id: 'H-8' }))})`);
+    const env = { ...process.env, REV_HOME: home };
+    for (const key of Object.keys(env)) if (/^(HELMO|ROADMAP|REV|INSTALLATION)_/.test(key) && key !== 'REV_HOME') delete env[key];
+    const invoke = () => spawnSync(process.execPath, [
+      '--import', join(repo, 'node_modules', 'tsx', 'dist', 'loader.mjs'),
+      join(repo, 'packages', 'runtime', 'src', 'cli.ts'), 'trace', 'H-7@fixture.personal',
+    ], { cwd: repo, env, encoding: 'utf8' });
+    const mismatch = invoke();
+    expect(mismatch).toMatchObject({ status: 1, stdout: '', stderr: 'trace refused: diagnostic unavailable\n' });
+    writeFileSync(join(home, 'roster.toml'), 'SYNTHETIC_PRIVATE_ROSTER = [invalid');
+    const malformed = invoke();
+    expect(malformed).toMatchObject({ status: 1, stdout: '', stderr: 'trace refused: diagnostic unavailable\n' });
+    expect(malformed.stderr).not.toContain('SYNTHETIC_PRIVATE_ROSTER');
+    expect(malformed.stderr).not.toContain(home);
   });
 });

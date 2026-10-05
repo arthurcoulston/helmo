@@ -21,6 +21,8 @@ import { runFleet } from './supervisor.js';
 import { teamResume, teamStop } from './team-control.js';
 import { buildIntakeResult, recordIntakeResult } from './intake-preparation.js';
 import { commandName, runCommand } from './command-name.js';
+import { readTicketLaunches, sessionTrace } from './session-trace.js';
+import { cliError, ticketHistory } from './helm.js';
 
 const [cmd, ...rest] = process.argv.slice(2);
 // `--installation <name|home>` may follow any command: it asserts which
@@ -136,6 +138,7 @@ const COMMAND_HELP: Record<string, string> = {
   routing: `usage: ${commandName} routing`,
   status: `usage: ${commandName} status [--json]`,
   tail: `usage: ${commandName} tail <loop>`,
+  trace: `usage: ${commandName} trace <installation-qualified ticket>`,
   'session-spec': `usage: ${commandName} session-spec <seat> --session <actor stamp> [--provider claude] [--tier high] [--model M] [--cwd P] [--constitution P] [--version V]`,
   team: `usage: ${commandName} team <stop|resume> <loop|role|all> [--worker]`,
   intake: `usage: ${commandName} intake result goodplumb@<40-hex-commit>`,
@@ -229,6 +232,22 @@ function state(name: string): string {
 }
 
 switch (cmd) {
+  case 'trace': {
+    const ticketRef = rest[0];
+    if (!ticketRef || !ticketRef.includes('@')) {
+      console.error(`${COMMAND_HELP.trace}\nA qualified reference such as H-42@dev.rev is required; bare ids can collide between installations.`);
+      process.exit(1);
+    }
+    try {
+      const ticket = ticketHistory(g, ticketRef);
+      const read = readTicketLaunches(Object.keys(loops), String(ticket['id']));
+      console.log(JSON.stringify(sessionTrace(ticket, read.launches, read.malformed), null, 2));
+    } catch (e) {
+      console.error(`trace refused: ${cliError(e)}`);
+      process.exit(1);
+    }
+    break;
+  }
   case 'intake': {
     if (rest[0] !== 'result' || !rest[1] || !g.intake_preparation_checkout) {
       console.error(COMMAND_HELP.intake);
@@ -705,6 +724,7 @@ switch (cmd) {
   redeploy [--ticket <id>] [--reason "<why>"]
                            activate a committed fix: drain after in-flight iterations, come back on the new code
   tail <loop>              print the path of the loop's event trace
+  trace <ticket@install>   join one ticket to content-off launch/session metadata and Work events
 Any command also takes --installation <name|home> (or --installation=<name|home>): it asserts which
 installation the command is about, and ANY command — reads included — refuses rather than redirects
 if that disagrees with the environment.

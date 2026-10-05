@@ -67,6 +67,7 @@ rev run                 start the machine: every roster loop under the superviso
 rev run <loop>          drive one loop in the foreground (debugging; --count 1 = one iteration)
 rev stop                graceful stop-all: in-flight iterations finish, then the machine stops
 rev status              supervisor + every loop at a glance
+rev trace H-n@install   join a ticket to content-off launch/session metadata and Work events
 rev stop|resume|pace <loop>  per-loop control verbs (sentinel writes)
 gp-rev team stop|resume <loop|all>  Prime-owned GP controls; never clears foreign holds
 rev service install     survive reboots: launchd (macOS) / systemd user unit (Linux)

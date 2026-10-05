@@ -59,6 +59,17 @@ describe('get carries the ticket\'s links', () => {
     const child = JSON.parse(cli('create', '--title', 'Subtask', '--body', 'Goal: a link. Current state: none.', '--workstream', 'helmo-dev', '--type', 'ops', '--dep', ticket, '--dep-type', 'parent').stdout).id;
     expect(JSON.parse(cli('get', '--ticket', ticket).stdout).deps).toEqual({ outgoing: [], incoming: [{ from_id: child, to_id: ticket, type: 'parent' }] });
   });
+
+  it('adds history and open blocker ownership only when requested', () => {
+    const blocker = JSON.parse(cli('create', '--title', 'Review', '--body', 'Review the candidate.', '--workstream', 'helmo-dev', '--type', 'review', '--assignee', 'proof').stdout).id;
+    const s = new Store(dbPath);
+    s.linkTickets(orch, ticket, blocker, 'blocks', 'add');
+    s.close();
+    expect(JSON.parse(cli('get', '--ticket', ticket).stdout).events).toBeUndefined();
+    const history = JSON.parse(cli('get', '--ticket', ticket, '--history').stdout);
+    expect(history.events.length).toBeGreaterThan(0);
+    expect(history.blockers).toEqual([{ id: blocker, status: 'open', assignee: 'proof', needs_human: false }]);
+  });
 });
 
 describe('a flag that takes a value must be given one (H-1783)', () => {

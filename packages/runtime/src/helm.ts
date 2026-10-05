@@ -53,6 +53,10 @@ function run(g: GlobalConfig, args: string[], actor?: object, quiet = false): un
   return JSON.parse(out);
 }
 
+export function ticketHistory(g: GlobalConfig, ticket: string): Record<string, unknown> {
+  return run(g, ['get', '--ticket', ticket, '--history']) as Record<string, unknown>;
+}
+
 // The seat stamp (H-558): every write a loop session makes carries this in the
 // actor's session field, so a claim's provenance says WHICH live instance of a
 // crew name holds it — the loop's own iterations, or a desk/subagent sharing

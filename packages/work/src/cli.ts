@@ -40,7 +40,7 @@ const COMMAND_FLAGS: Record<string, readonly string[]> = {
   'rename-workstream': ['from', 'to', 'note'],
   'record-spend': ['ticket', 'tokens', 'cost-usd', 'note'],
   list: ['ready', 'status', 'workstream', 'assignee', 'limit'],
-  get: ['ticket'],
+  get: ['ticket', 'history'],
   'product-complete': ['ticket', 'artifacts', 'note'],
   'acceptance-verdict': ['ticket', 'refs', 'verdict', 'note'],
   'acceptance-check': ['ticket', 'refs'],
@@ -301,9 +301,19 @@ try {
     case 'get': {
       const id = ticketRefOpt(flag('ticket') ?? args[0]);
       if (!id) throw new HelmoError('get requires a ticket id');
+      const deps = store.getDeps(id);
+      const blockers = deps.outgoing
+        .filter((dep) => dep.type === 'blocks')
+        .map((dep) => store.getTicket(dep.to_id))
+        .filter((ticket) => !['done', 'cancelled'].includes(ticket.status))
+        .map((ticket) => ({ id: ticket.id, status: ticket.status, assignee: ticket.assignee, needs_human: ticket.needs_human }));
       // deps as the MCP get returns them: a link changes what a seat can do
       // with the ticket, and Rev's routed-state digest reads them here.
-      out({ ...store.getTicket(id), deps: store.getDeps(id), last_answer: store.lastAnswer(id), agent_chain: store.agentChain(id), product_acceptance: store.productAcceptance(id) });
+      out({
+        ...store.getTicket(id), deps, last_answer: store.lastAnswer(id),
+        agent_chain: store.agentChain(id), product_acceptance: store.productAcceptance(id),
+        ...(has('history') ? { events: store.getEvents(id), blockers } : {}),
+      });
       break;
     }
     case 'product-complete': {

@@ -935,6 +935,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   something fast. A timeout raised on a race only buys a longer red.
 - `node dist/cli.js routing` previews working-model selection without starting
   work. `usage --poll` refreshes Claude remotely and Codex from local rollouts.
+- `node dist/cli.js trace H-n@installation` is the read-only exact-key
+  diagnostic across Runtime launch journals and Work history. It requires a
+  qualified ticket reference, emits closed metadata only, and keeps observed,
+  measured-zero, not-observed, unsupported and malformed/refused distinct.
 - `npm run vendor:tokens` refreshes the vendored estate design tokens,
   `npm run vendor:avatars` the vendored crew avatar sprite, and
   `npm run vendor:reach` the vendored estate reach table; add `-- --check`

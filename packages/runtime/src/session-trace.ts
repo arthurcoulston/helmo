@@ -6,6 +6,33 @@ import type { LaunchJournalEntry } from './launch-journal.js';
 type State = 'observed' | 'measured_zero' | 'not_observed' | 'unsupported' | 'malformed/refused';
 const field = (state: State, value: unknown, source: string) => ({ state, value, source });
 
+const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
+const text = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 512;
+const timestamp = (value: unknown): value is string => text(value) && Number.isFinite(Date.parse(value));
+const identifier = (value: unknown): value is string => text(value) && /^[A-Za-z0-9._-]+:[A-Za-z0-9._-]+:[A-Za-z0-9._-]+$/.test(value);
+
+function validSession(value: unknown): value is NonNullable<LaunchJournalEntry['session']> {
+  if (!record(value) || !text(value.provider) || !text(value.model) || !timestamp(value.started_at)
+    || !timestamp(value.ended_at) || !text(value.outcome)
+    || !['observed', 'unsupported'].includes(String(value.provider_session_id_state))) return false;
+  if (value.provider_session_id !== undefined && !text(value.provider_session_id)) return false;
+  if (value.tokens !== undefined && (!Number.isFinite(value.tokens) || Number(value.tokens) < 0)) return false;
+  if (value.cost_usd !== undefined && (!Number.isFinite(value.cost_usd) || Number(value.cost_usd) < 0)) return false;
+  return true;
+}
+
+function validLaunch(value: unknown): value is LaunchJournalEntry {
+  if (!record(value) || value.format !== 1 || !identifier(value.launch_id)
+    || !['intent', 'admitted', 'dispatching', 'complete', 'quarantined'].includes(String(value.phase))
+    || !timestamp(value.intent_at)) return false;
+  if (value.ticket_id !== undefined && !/^H-\d+$/.test(String(value.ticket_id))) return false;
+  if (value.phase === 'complete' || value.phase === 'quarantined') {
+    if (!text(value.ticket_id) || !timestamp(value.completed_at ?? value.quarantined_at) || !validSession(value.session)) return false;
+  }
+  if (value.session !== undefined && !validSession(value.session)) return false;
+  return true;
+}
+
 export function readTicketLaunches(loops: string[], ticketId: string): { launches: LaunchJournalEntry[]; malformed: number } {
   const launches: LaunchJournalEntry[] = [];
   let malformed = 0;
@@ -14,8 +41,8 @@ export function readTicketLaunches(loops: string[], ticketId: string): { launche
     if (!existsSync(dir)) continue;
     for (const name of readdirSync(dir).filter(value => value.endsWith('.json'))) {
       try {
-        const value = JSON.parse(readFileSync(join(dir, name), 'utf8')) as LaunchJournalEntry;
-        if (value.format !== 1 || !value.launch_id || !['intent', 'admitted', 'dispatching', 'complete', 'quarantined'].includes(value.phase)) throw new Error('malformed');
+        const value: unknown = JSON.parse(readFileSync(join(dir, name), 'utf8'));
+        if (!validLaunch(value)) throw new Error('malformed');
         if (value.ticket_id === ticketId) launches.push(value);
       } catch { malformed += 1; }
     }

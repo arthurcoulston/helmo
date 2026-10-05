@@ -22,7 +22,7 @@ import { teamResume, teamStop } from './team-control.js';
 import { buildIntakeResult, recordIntakeResult } from './intake-preparation.js';
 import { commandName, runCommand } from './command-name.js';
 import { readTicketLaunches, sessionTrace } from './session-trace.js';
-import { cliError, ticketHistory } from './helm.js';
+import { ticketHistory } from './helm.js';
 
 const [cmd, ...rest] = process.argv.slice(2);
 // `--installation <name|home>` may follow any command: it asserts which
@@ -243,7 +243,7 @@ switch (cmd) {
       const read = readTicketLaunches(Object.keys(loops), String(ticket['id']));
       console.log(JSON.stringify(sessionTrace(ticket, read.launches, read.malformed), null, 2));
     } catch (e) {
-      console.error(`trace refused: ${cliError(e)}`);
+      console.error('trace refused: diagnostic unavailable');
       process.exit(1);
     }
     break;

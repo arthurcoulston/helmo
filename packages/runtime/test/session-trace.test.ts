@@ -1,5 +1,8 @@
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { sessionTrace } from '../src/session-trace.js';
+import { readTicketLaunches, sessionTrace } from '../src/session-trace.js';
 
 const ticket = {
   installation: { label: 'fixture.personal' }, id: 'H-7', status: 'in_progress', assignee: 'mason', action: null,
@@ -35,5 +38,21 @@ describe('session trace diagnostic', () => {
     expect(result.launches[0].provider.state).toBe('not_observed');
     expect(result.launches[0].source_revision.state).toBe('unsupported');
     expect(result.malformed_launch_records).toMatchObject({ state: 'malformed/refused', value: 2 });
+  });
+
+  it('refuses malformed nested values and incomplete complete records', () => {
+    const home = mkdtempSync(join(tmpdir(), 'rev-trace-'));
+    process.env.REV_HOME = home;
+    const launches = join(home, 'state', 'alpha', 'launches');
+    mkdirSync(launches, { recursive: true });
+    const base = { format: 1, phase: 'complete', launch_id: 'rev:alpha:1', ticket_id: 'H-7', intent_at: '2026-10-05T00:00:00.000Z', completed_at: '2026-10-05T00:00:01.000Z' };
+    writeFileSync(join(launches, 'bad-values.json'), JSON.stringify({ ...base, session: {
+      provider: { prompt: 'private' }, model: 'fixture', provider_session_id_state: 'unsupported',
+      started_at: '2026-10-05T00:00:00.000Z', ended_at: '2026-10-05T00:00:01.000Z', outcome: 'ok', tokens: { credential: 'private' }, cost_usd: 0,
+    }}));
+    writeFileSync(join(launches, 'incomplete.json'), JSON.stringify({ format: 1, phase: 'complete', launch_id: 'rev:alpha:2' }));
+    const result = readTicketLaunches(['alpha'], 'H-7');
+    expect(result.launches).toEqual([]);
+    expect(result.malformed).toBe(2);
   });
 });

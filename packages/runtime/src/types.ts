@@ -114,6 +114,7 @@ export interface SessionResult {
   tokens?: number;
   cost_usd?: number;
   outputTail: string; // last lines of session output, for traces and escalations
+  provider_session_id?: string;
 }
 
 export const SENTINELS = ['STOP', 'HOLD', 'BLOCKED', 'LIMIT', 'IDLE', 'IDLE_AT', 'RUNNING', 'PACE', 'PARKED', 'SEAT_HELD', 'BACKOFF', 'WEDGED', 'REDEPLOY'] as const;

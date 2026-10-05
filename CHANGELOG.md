@@ -11,6 +11,14 @@ consolidation imported still carried that release's notes under "Unreleased";
 this is the published wording, which is two entries and one commit reference
 longer.
 
+## Unreleased
+
+- Bind every supervised Runtime iteration to a durable content-off launch
+  record, including the provider session identifier when the provider emits
+  one, timing, outcome, measured usage and cost. The same launch identifier is
+  carried by Work events so later diagnostics can join without time or seat
+  heuristics; missing provider identity remains explicitly unsupported.
+
 ## v0.9.3 — 2026-10-05
 
 - Keep Runtime operating through transient usage-service failures by retaining

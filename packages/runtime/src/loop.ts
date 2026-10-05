@@ -15,7 +15,7 @@ import { logEvent, occupiedPid, paceAutoRelease, pidAlive, runningStamp, sClear,
 import { ancestryBroken, ancestryStamp } from './ancestry.js';
 import { runSession } from './shim.js';
 import { GlobalConfig, LoopConfig, RunChoice } from './types.js';
-import { launchGroupFile, launchSessionRunning, readLaunch, recordLaunchAdmission, recordLaunchClaim, recordLaunchDispatch, recordLaunchIntent, settleLaunch, unsettledLaunches } from './launch-journal.js';
+import { launchGroupFile, launchSessionRunning, readLaunch, recordLaunchAdmission, recordLaunchClaim, recordLaunchDispatch, recordLaunchIntent, recordLaunchSession, settleLaunch, unsettledLaunches } from './launch-journal.js';
 import { commandName } from './command-name.js';
 
 const sleep = (s: number) => new Promise((r) => setTimeout(r, s * 1000));
@@ -751,7 +751,11 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
         continue;
       }
     }
-    if (journaledLaunchId && !recordLaunchDispatch(l.name, journaledLaunchId)) {
+    if (!journaledLaunchId) {
+      recordLaunchIntent(l.name, thisLaunchId);
+      journaledLaunchId = thisLaunchId;
+    }
+    if (!recordLaunchDispatch(l.name, journaledLaunchId)) {
       logEvent(l.name, 'launch-replay', `${journaledLaunchId} already reached dispatch`);
       putDown('its launch had already reached dispatch');
       console.error(`rev: suppressed replay of launch '${journaledLaunchId}' before model dispatch.`);
@@ -761,7 +765,23 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       await sleep(g.poll_seconds);
       continue;
     }
-    const res = await runSession(g, l, prompt, model, run, claimedTicket ? journaledLaunchId ?? undefined : undefined, journaledLaunchId ? launchGroupFile(l.name, journaledLaunchId) : undefined);
+    const sessionStartedAt = new Date().toISOString();
+    const res = await runSession(g, l, prompt, model, run, journaledLaunchId ?? undefined, journaledLaunchId ? launchGroupFile(l.name, journaledLaunchId) : undefined);
+    if (journaledLaunchId) {
+      try {
+        recordLaunchSession(l.name, journaledLaunchId, {
+          provider: run.provider, model,
+          ...(res.provider_session_id ? { provider_session_id: res.provider_session_id } : {}),
+          provider_session_id_state: res.provider_session_id ? 'observed' : 'unsupported',
+          started_at: sessionStartedAt, ended_at: new Date().toISOString(), outcome: res.cls,
+          ...(res.tokens !== undefined ? { tokens: res.tokens } : {}),
+          ...(res.cost_usd !== undefined ? { cost_usd: res.cost_usd } : {}),
+        });
+        if (!admission.admissionId && !claimedTicket) settleLaunch(l.name, journaledLaunchId, res.cls === 'ok' ? 'complete' : 'quarantined');
+      } catch (e) {
+        logEvent(l.name, 'session-trace-failed', `${journaledLaunchId} ${String(e).split('\n')[0]!.slice(0, 160)}`);
+      }
+    }
     let launchTrusted = true;
 
     // A session that ended short of ok on a pool claim is not quarantined

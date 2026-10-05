@@ -31,6 +31,17 @@ export interface LaunchJournalEntry {
   dispatching_at?: string;
   completed_at?: string;
   quarantined_at?: string;
+  session?: {
+    provider: string;
+    model: string;
+    provider_session_id?: string;
+    provider_session_id_state: 'observed' | 'unsupported';
+    started_at: string;
+    ended_at: string;
+    outcome: string;
+    tokens?: number;
+    cost_usd?: number;
+  };
 }
 
 function journalDir(loop: string): string {
@@ -151,7 +162,8 @@ export function recordLaunchClaim(loop: string, launchId: string, ticketId: stri
  * turn a replay of the same immutable identity into a second model process. */
 export function recordLaunchDispatch(loop: string, launchId: string, at = new Date().toISOString()): boolean {
   const prior = readLaunch(loop, launchId);
-  if (!prior || prior.phase === 'intent') throw new Error(`Launch ${launchId} has no durable admission.`);
+  if (!prior) throw new Error(`Launch ${launchId} has no durable intent.`);
+  if (prior.phase === 'intent' && (prior.claim || prior.ticket_id || prior.workflow_attempt_id)) throw new Error(`Launch ${launchId} has no durable admission.`);
   const claim = `${entryPath(loop, launchId)}.dispatch`;
   let fd: number;
   try { fd = openSync(claim, 'wx'); }
@@ -220,9 +232,22 @@ export function launchSessionRunning(loop: string, entry: LaunchJournalEntry, no
 
 export function settleLaunch(loop: string, launchId: string, phase: 'complete' | 'quarantined', at = new Date().toISOString()): void {
   const prior = readLaunch(loop, launchId);
-  if (!prior?.admission_id && !prior?.claim) throw new Error(`Launch ${launchId} has no durable admission.`);
+  if (!prior?.admission_id && !prior?.claim && !prior?.session) throw new Error(`Launch ${launchId} has no durable admission or session result.`);
   writeDurable(entryPath(loop, launchId), {
     ...prior, phase,
     ...(phase === 'complete' ? { completed_at: at } : { quarantined_at: at }),
   });
+}
+
+/** Attach the content-off provider result to the exact durable launch. */
+export function recordLaunchSession(loop: string, launchId: string, session: NonNullable<LaunchJournalEntry['session']>): LaunchJournalEntry {
+  const prior = readLaunch(loop, launchId);
+  if (!prior || prior.phase !== 'dispatching') throw new Error(`Launch ${launchId} is not awaiting a session result.`);
+  if (prior.session) {
+    if (JSON.stringify(prior.session) !== JSON.stringify(session)) throw new Error(`Launch ${launchId} was replayed with a different session result.`);
+    return prior;
+  }
+  const entry = { ...prior, session };
+  writeDurable(entryPath(loop, launchId), entry);
+  return entry;
 }

@@ -852,9 +852,14 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   loudly. Instance data
   lives in `~/.rev/` (roster.toml, mcp/, state/<loop>/, token-log), NEVER
   in this repo — publishability is structural.
-- `launch-journal.ts` — the durable, per-loop record between workflow
-  admission and model dispatch. Rev writes an intent, expands Helmo's immutable
-  launch receipt into the exact ticket, workflow attempt, admission, definition
+- `launch-journal.ts` — the durable, per-loop record from model dispatch through
+  its content-off provider result. Every supervised iteration carries the
+  launch id as its Work actor generation; the settled record adds provider,
+  model, provider session id when observed, timing, outcome and measured
+  usage/cost, never prompts, responses, tool payloads or environment. An
+  absent provider id is stored as `unsupported`, not empty. Workflow launches
+  also expand Helmo's immutable launch receipt into the exact ticket, workflow
+  attempt, admission, definition
   revision and requirement/manifest/decision refs, then fsyncs an exclusive
   dispatch claim before starting the model process. The claim is at-most-once:
   replaying one launch id cannot start a second model process, including after

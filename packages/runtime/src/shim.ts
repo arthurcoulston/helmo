@@ -357,14 +357,16 @@ async function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string, model: 
     };
     if (res.overflow) return { rc: 78, cls: 'apparatus', outputTail: `claude output resource limit: ${res.overflow} exceeded ${SESSION_OUTPUT_CAP} bytes` };
     const stdout = res.stdout ?? '';
-    let tokens: number | undefined, cost: number | undefined, tail = stdout;
+    let tokens: number | undefined, cost: number | undefined, tail = stdout, providerSessionId: string | undefined;
     try {
       const j = JSON.parse(stdout) as Record<string, never> & {
+        session_id?: string;
         api_error_status?: number;
         usage?: { input_tokens?: number; output_tokens?: number };
         total_cost_usd?: number;
         result?: string;
       };
+      providerSessionId = j.session_id;
       // Transient-API detection: a 429 (usage window exhausted) or 529
       // (overloaded) is a park-and-retry condition, never a failure.
       if (j.api_error_status === 429 || j.api_error_status === 529) {
@@ -387,7 +389,7 @@ async function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string, model: 
       // that pass as a clean iteration.
       if ((j as { is_error?: boolean }).is_error && res.status === 0) {
         logTokens(l, model, tokens, cost, 'claude');
-        return { rc: 1, cls: 'failure', tokens, cost_usd: cost, outputTail: tail.slice(-4000) };
+        return { rc: 1, cls: 'failure', tokens, cost_usd: cost, outputTail: tail.slice(-4000), provider_session_id: providerSessionId };
       }
     } catch (e) {
       logTokens(l, model, tokens, cost, 'claude');
@@ -395,7 +397,7 @@ async function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string, model: 
     }
     logTokens(l, model, tokens, cost, 'claude');
     const rc = res.status ?? 1;
-    return { rc, cls: rc === 0 ? 'ok' : 'failure', tokens, cost_usd: cost, outputTail: `${tail}\n${res.stderr ?? ''}`.slice(-4000) };
+    return { rc, cls: rc === 0 ? 'ok' : 'failure', tokens, cost_usd: cost, outputTail: `${tail}\n${res.stderr ?? ''}`.slice(-4000), provider_session_id: providerSessionId };
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
@@ -526,7 +528,7 @@ async function runCodex(g: GlobalConfig, l: LoopConfig, prompt: string, model: s
   const limitText = run.failure && CODEX_LIMIT.test(run.failure) ? run.failure : res.status !== 0 && CODEX_LIMIT.test(res.stderr ?? '') ? (res.stderr ?? '') : null;
   if (limitText) {
     const message = limitText.slice(0, 2000);
-    return { rc: 75, cls: 'transient', limit: { status: 429, message }, tokens, cost_usd: cost, outputTail: `API limit: ${message}` };
+    return { rc: 75, cls: 'transient', limit: { status: 429, message }, tokens, cost_usd: cost, outputTail: `API limit: ${message}`, provider_session_id: run.threadId };
   }
 
   // rc 0 without a completed turn is a documented codex wart (openai/codex
@@ -536,7 +538,7 @@ async function runCodex(g: GlobalConfig, l: LoopConfig, prompt: string, model: s
   // message, so the reason Rev failed it was unrecoverable (H-2164).
   const why = rc === 0 ? '' : codexFailureLine(res.status, run);
   const tail = `${run.tail || run.failure || ''}\n${why}${res.stderr ?? ''}`.slice(-4000);
-  return { rc, cls: rc === 0 ? 'ok' : 'failure', tokens, cost_usd: cost, outputTail: tail };
+  return { rc, cls: rc === 0 ? 'ok' : 'failure', tokens, cost_usd: cost, outputTail: tail, provider_session_id: run.threadId };
 }
 
 // Mock runtime: runs a shell command with the loop's identity in env. Exists so

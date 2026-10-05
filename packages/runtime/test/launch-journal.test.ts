@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { launchGroupFile, launchSessionRunning, readLaunch, recordLaunchAdmission, recordLaunchClaim, recordLaunchDispatch, recordLaunchIntent, settleLaunch, unsettledLaunches, type LaunchReceipt } from '../src/launch-journal.js';
+import { launchGroupFile, launchSessionRunning, readLaunch, recordLaunchAdmission, recordLaunchClaim, recordLaunchDispatch, recordLaunchIntent, recordLaunchSession, settleLaunch, unsettledLaunches, type LaunchReceipt } from '../src/launch-journal.js';
 
 const receipt: LaunchReceipt = {
   id: 'admission:attempt-1:launch:7',
@@ -45,6 +45,24 @@ describe('launch journal', () => {
     // A restarted caller sees the marker written before the first model spawn.
     expect(recordLaunchDispatch('builder', receipt.launch_id, '2026-10-01T00:00:03.000Z')).toBe(false);
     expect(readLaunch('builder', receipt.launch_id)).toMatchObject({ phase: 'dispatching', dispatching_at: '2026-10-01T00:00:02.000Z' });
+  });
+
+  it('binds a content-off provider result to the exact dispatched launch', () => {
+    recordLaunchAdmission('builder', receipt);
+    recordLaunchDispatch('builder', receipt.launch_id);
+    const session = { provider: 'codex', model: 'gpt-test', provider_session_id: 'thread-7', provider_session_id_state: 'observed' as const, started_at: '2026-10-01T00:00:02.000Z', ended_at: '2026-10-01T00:00:03.000Z', outcome: 'ok', tokens: 12, cost_usd: 0 };
+    expect(recordLaunchSession('builder', receipt.launch_id, session).session).toEqual(session);
+    expect(recordLaunchSession('builder', receipt.launch_id, session).session).toEqual(session);
+    expect(() => recordLaunchSession('builder', receipt.launch_id, { ...session, provider_session_id: 'other' })).toThrow(/different session result/);
+  });
+
+  it('records an ordinary session without pretending it had workflow authority', () => {
+    const id = 'rev:builder:42:2:1001';
+    recordLaunchIntent('builder', id);
+    expect(recordLaunchDispatch('builder', id)).toBe(true);
+    recordLaunchSession('builder', id, { provider: 'claude', model: 'test', provider_session_id_state: 'unsupported', started_at: '2026-10-01T00:00:02.000Z', ended_at: '2026-10-01T00:00:03.000Z', outcome: 'failure' });
+    settleLaunch('builder', id, 'quarantined');
+    expect(readLaunch('builder', id)).toMatchObject({ phase: 'quarantined', launch_id: id, session: { provider_session_id_state: 'unsupported' } });
   });
 
   it('exposes only unsettled recovered launches and durably settles them', () => {
@@ -106,4 +124,3 @@ describe('a dead launch\'s session (H-685)', () => {
     } finally { await ended(pid); }
   });
 });
-

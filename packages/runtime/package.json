@@ -1,6 +1,6 @@
 {
   "name": "rev",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "Rev keeps agent loops turning: process supervision for autonomous agent loops driven by a Helm work record.",
   "main": "index.js",
   "scripts": {
@@ -29,7 +29,7 @@
     "gp-rev": "bin/gp-rev.js"
   },
   "dependencies": {
-    "@helmo/core": "0.9.2",
+    "@helmo/core": "0.9.3",
     "smol-toml": "^1.7.1"
   },
   "devDependencies": {

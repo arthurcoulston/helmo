@@ -11,6 +11,21 @@ consolidation imported still carried that release's notes under "Unreleased";
 this is the published wording, which is two entries and one commit reference
 longer.
 
+## v0.9.3 — 2026-10-05
+
+- Keep Runtime operating through transient usage-service failures by retaining
+  the last good reading until it ages out, honoring the configured Claude
+  allowance, isolating tests from the live usage endpoint, and waiting for a
+  host-load safety stop to finish instead of abandoning its recovery.
+- Preserve active Work claims when records are rebuilt, keep scoped wakeups
+  attached to the active workflow, and close admission and invalidation gaps
+  so a finishing workflow cannot admit or retain unauthorized follow-up work.
+- Compatible reliability correction: no store migration, MCP argument change,
+  CLI command or flag change, installation binding change, service change,
+  port change or configuration change. Consumers adopt this tag through their
+  existing installation and release workflow; publication does not upgrade an
+  installation.
+
 ## v0.9.2 — 2026-10-03
 
 - Route repeated passes with no progress to team coordination. Claiming and

@@ -6,7 +6,7 @@ import { readTicketLaunches, sessionTrace } from '../src/session-trace.js';
 
 const ticket = {
   installation: { label: 'fixture.personal' }, id: 'H-7', status: 'in_progress', assignee: 'mason', action: null,
-  deps: { outgoing: [] },
+  deps: { outgoing: [] }, blockers: [],
   events: [{ seq: 9, ts: '2026-10-05T00:00:03.000Z', event_type: 'updated', actor: { generation: 'rev:mason:1' } }],
 };
 
@@ -54,5 +54,32 @@ describe('session trace diagnostic', () => {
     const result = readTicketLaunches(['alpha'], 'H-7');
     expect(result.launches).toEqual([]);
     expect(result.malformed).toBe(2);
+  });
+
+  it('enforces closed session values and retains a pre-dispatch quarantine', () => {
+    const home = mkdtempSync(join(tmpdir(), 'rev-trace-'));
+    process.env.REV_HOME = home;
+    const launches = join(home, 'state', 'alpha', 'launches');
+    mkdirSync(launches, { recursive: true });
+    const base = { format: 1, phase: 'complete', ticket_id: 'H-7', intent_at: '2026-10-05T00:00:00.000Z', completed_at: '2026-10-05T00:00:01.000Z' };
+    const session = { provider: 'codex', model: 'gpt-test', provider_session_id_state: 'unsupported', started_at: base.intent_at, ended_at: base.completed_at, outcome: 'ok', tokens: 0, cost_usd: 0 };
+    writeFileSync(join(launches, 'provider.json'), JSON.stringify({ ...base, launch_id: 'rev:alpha:1', session: { ...session, provider: 'SYNTHETIC PRIVATE PROMPT' } }));
+    writeFileSync(join(launches, 'outcome.json'), JSON.stringify({ ...base, launch_id: 'rev:alpha:2', session: { ...session, outcome: ['ok'] } }));
+    writeFileSync(join(launches, 'quarantine.json'), JSON.stringify({ format: 1, phase: 'quarantined', launch_id: 'rev:alpha:3', ticket_id: 'H-7', claim: true, intent_at: base.intent_at, quarantined_at: base.completed_at }));
+    const result = readTicketLaunches(['alpha'], 'H-7');
+    expect(result.malformed).toBe(2);
+    expect(result.launches).toEqual([expect.objectContaining({ phase: 'quarantined', launch_id: 'rev:alpha:3' })]);
+    expect(result.launches[0]).not.toHaveProperty('session');
+  });
+
+  it('refuses malformed Work metadata instead of rendering nested content', () => {
+    expect(() => sessionTrace({
+      ...ticket,
+      events: [{ seq: 9, ts: { credential: 'private' }, event_type: { prompt: 'private' }, actor: { generation: 'rev:mason:1' } }],
+    }, [], 0)).toThrow('malformed ticket event');
+    expect(() => sessionTrace({
+      ...ticket,
+      blockers: [{ id: { prompt: 'private' }, assignee: { credential: 'private' }, needs_human: false }],
+    }, [], 0)).toThrow('malformed blocker');
   });
 });

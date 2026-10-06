@@ -114,7 +114,9 @@ nothing was claimed. Only an admitted launch is held to its ticket.
 If a scoped loop driver dies, its dispatched journal entry holds the replacement
 until the orphaned session exits. The entry's pre-launch Work cursor then lets
 recovery finish that same measured ticket window before launching again, so two
-iterations of one seat can never contribute to one attribution window.
+iterations of one seat can never contribute to one attribution window. A failed
+window read or journal settlement keeps that launch hold in place and retries;
+recovery never opens the replacement boundary on an incomplete attribution.
 
 Every Helmo-family surface accepts canonical `HELMO_INSTALLATION`, followed by
 the legacy `ROADMAP_LABEL`, `HELMO_LABEL`, and `REV_LABEL`. Precedence picks the key when one is set; two accepted keys

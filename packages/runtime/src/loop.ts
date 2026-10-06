@@ -137,18 +137,22 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
   // A kept claim's workflow admission is not quarantined either (H-687): the
   // resume revalidates it, and a quarantine would refuse the very resume
   // that keeps the work with this worker, leaving it held by nobody.
-  const runningSessions = new Set<string>();
+  const recoveryHolds = new Set<string>();
   const recoverLaunches = (only?: Set<string>): void => {
     for (const recovered of unsettledLaunches(l.name)) {
       if (recovered.phase === 'intent') continue;
       if (only && !only.has(recovered.launch_id)) continue;
       const session = launchSessionRunning(l.name, recovered);
       if (session.running) {
-        if (!runningSessions.has(recovered.launch_id)) logEvent(l.name, 'launch-session-running', `${recovered.launch_id} ${session.why}; launches held until it ends`);
-        runningSessions.add(recovered.launch_id);
+        if (!recoveryHolds.has(recovered.launch_id)) logEvent(l.name, 'launch-session-running', `${recovered.launch_id} ${session.why}; launches held until it ends`);
+        recoveryHolds.add(recovered.launch_id);
         continue;
       }
-      runningSessions.delete(recovered.launch_id);
+      // The dead process is only half the recovery boundary. Keep the hold
+      // until its measured Work window and settled journal are both durable;
+      // otherwise a transient Helmo failure lets the replacement widen that
+      // same window with its own events.
+      recoveryHolds.add(recovered.launch_id);
       try {
         if (!recovered.admission_id && !recovered.claim && recovered.event_seq_floor !== undefined) {
           recordLaunchTouched(l.name, recovered.launch_id, actorTickets(g, l, recovered.event_seq_floor));
@@ -160,6 +164,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
           logEvent(l.name, 'claim-kept', `${recovered.ticket_id ?? 'unanswered claim'} recovered ${recovered.phase}; the next launch resumes it`);
         }
         settleLaunch(l.name, recovered.launch_id, 'quarantined');
+        recoveryHolds.delete(recovered.launch_id);
         logEvent(l.name, 'launch-quarantined', `${recovered.launch_id} recovered ${recovered.phase}`);
       } catch (e) {
         logEvent(l.name, 'launch-quarantine-failed', `${recovered.launch_id} ${String(e).split('\n')[0]!.slice(0, 160)}`);
@@ -329,15 +334,15 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       }
     }
 
-    // A dead launch's session still running here (H-685): like the seat guard,
-    // this waits on a process, not on the queue, so it neither idles at a
-    // cursor nor spends an iteration. recoverLaunches settles each entry once
-    // its group has gone, and the next pass launches.
-    if (runningSessions.size) recoverLaunches(new Set(runningSessions));
-    if (runningSessions.size) {
+    // A dead launch's recovery hold (H-685): like the seat guard, this waits
+    // on the process and then on durable attribution, not on the queue, so it
+    // neither idles at a cursor nor spends an iteration. recoverLaunches
+    // settles each entry before the next pass launches.
+    if (recoveryHolds.size) recoverLaunches(new Set(recoveryHolds));
+    if (recoveryHolds.size) {
       if (!sessionHeld) {
         sessionHeld = true;
-        console.log(`rev: '${l.name}' holding launches — a session of dead launch ${[...runningSessions].join(', ')} is still running in its workspace. Polling until it ends.`);
+        console.log(`rev: '${l.name}' holding launches — recovery of dead launch ${[...recoveryHolds].join(', ')} is incomplete. Polling until it settles.`);
       }
       await sleep(g.poll_seconds);
       continue;

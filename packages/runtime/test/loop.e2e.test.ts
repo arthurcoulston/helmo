@@ -97,6 +97,24 @@ process.exit(result.status ?? 1);
   return calls;
 }
 
+function actorTicketsFailureProxy(e: Env): void {
+  const failed = join(e.home, 'actor-tickets-failed-once');
+  const proxy = join(e.home, 'actor-tickets-failure-proxy.mjs');
+  writeFileSync(proxy, `import { existsSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+const args = process.argv.slice(2);
+if (args[0] === 'actor-tickets' && !existsSync(${JSON.stringify(failed)})) {
+  writeFileSync(${JSON.stringify(failed)}, 'failed');
+  process.stderr.write('injected actor-tickets failure\\n');
+  process.exit(1);
+}
+const result = spawnSync(process.execPath, [${JSON.stringify(HELM_CLI)}, ...args], { env: process.env, stdio: 'inherit' });
+process.exit(result.status ?? 1);
+`);
+  const roster = join(e.home, 'roster.toml');
+  writeFileSync(roster, readFileSync(roster, 'utf8').replace(`helmo_cli = "${HELM_CLI}"`, `helmo_cli = "${proxy}"`));
+}
+
 // An installation that predates launch-admit: helmo-cli prints its usage text
 // and exits 1 for an unrecognized command. The live fleet still runs one.
 function unsupportedAdmissionProxy(e: Env, workflowBound = false): string {
@@ -390,6 +408,49 @@ echo launched >> $REV_HOME/sessions
     expect(events).toMatch(/launch-session-running/);
     expect(events).toMatch(/launch-session-ended/);
     expect(events.indexOf('launch-session-ended')).toBeLessThan(events.lastIndexOf('run-start'));
+  });
+
+  it('keeps the replacement held when recovered ticket attribution fails once', async () => {
+    const e = setup(`[loops.failed-recovery]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = '''
+touch $REV_HOME/model-started
+sleep 0.4
+ID=$(node ${HELM_CLI} list --ready --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
+if [ -n "$ID" ]; then
+  node ${HELM_CLI} update --ticket $ID --note "orphan claimed" --status in_progress
+  node ${HELM_CLI} update --ticket $ID --note "orphan worked"
+fi
+echo launched >> $REV_HOME/sessions
+'''
+`);
+    const id = seedTicket(e, 'Scoped recovery retries attribution');
+    const child = spawn('npx', ['tsx', REV_CLI, 'run', 'failed-recovery', '--count', '1'], {
+      env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore',
+    });
+    await waitForFile(join(e.home, 'model-started'));
+    const eventsPath = join(e.home, 'state', 'failed-recovery', 'events.log');
+    const loopPid = Number(/loop-start\s+pid=(\d+)/.exec(readFileSync(eventsPath, 'utf8'))![1]);
+    process.kill(loopPid, 'SIGKILL');
+    await stop(child);
+    actorTicketsFailureProxy(e);
+
+    rev(e, ['run', 'failed-recovery', '--count', '1']);
+
+    const dir = join(e.home, 'state', 'failed-recovery', 'launches');
+    const journals = readdirSync(dir).filter((name) => name.endsWith('.json'))
+      .map((name) => JSON.parse(readFileSync(join(dir, name), 'utf8')));
+    const recovered = journals.find((entry) => entry.phase === 'quarantined');
+    expect(recovered).toMatchObject({ touched_tickets: [{ id, events: 2 }] });
+    const events = readFileSync(eventsPath, 'utf8');
+    const failedAt = events.indexOf('launch-quarantine-failed');
+    const settledAt = events.indexOf('launch-quarantined', failedAt);
+    expect(failedAt).toBeGreaterThan(-1);
+    expect(settledAt).toBeGreaterThan(failedAt);
+    expect(events.slice(failedAt, settledAt)).not.toMatch(/run-start/);
+    expect(settledAt).toBeLessThan(events.lastIndexOf('run-start'));
   });
 
   // The gate must be inert against an installation that has no launch-admit

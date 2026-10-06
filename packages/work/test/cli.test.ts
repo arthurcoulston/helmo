@@ -404,7 +404,7 @@ describe('a flag the command has no field for (R-39 Q9)', () => {
     ok('acceptance-check', '--ticket', ticket, '--refs', '[]');
     ok('record-spend', '--ticket', ticket, '--tokens', '10', '--cost-usd', '0.01', '--note', 'metered');
     ok('update', '--ticket', ticket, '--note', 'every update flag at once', '--status', 'in_progress',
-      '--evidence-kind', 'commit', '--evidence-ref', 'helmo@' + 'a'.repeat(40), '--confidence', 'spot_check',
+      '--evidence-kind', 'commit', '--evidence-ref', 'helmo@' + 'a'.repeat(40), '--evidence-role', 'result', '--confidence', 'spot_check',
       '--uncertainty-note', 'where the doubt is', '--blast-radius', 'records', '--tokens', '10', '--cost-usd', '0.01',
       '--handoff-to', 'mason', '--not-before', '', '--takeover');
     ok('create', '--title', 'Every create flag at once', '--body', 'Goal: exercise the table. Current state: none.',
@@ -489,5 +489,36 @@ describe('attended CLI work', () => {
     expect(s.seatHolds(writer.name)[0]?.claim_actor).toEqual(writer);
     s.close();
     expect(cli('update', '--ticket', ticket, '--note', 'Verified.', '--status', 'done', '--evidence-ref', 'Fixture verification').status).toBe(0);
+  });
+});
+
+describe('an evidence item states what it is for (R-42 I5)', () => {
+  it('writes the role through --evidence-role and leaves it unset without it', () => {
+    const roled = cli('update', '--ticket', ticket, '--note', 'The contract is the result.',
+      '--evidence-kind', 'file', '--evidence-ref', 'crew:projects/r39/RESULT-ROLE-CONTRACT.md', '--evidence-role', 'result');
+    expect(roled.status, roled.stdout + roled.stderr).toBe(0);
+    const unroled = cli('update', '--ticket', ticket, '--note', 'And the run that produced it.',
+      '--evidence-kind', 'url', '--evidence-ref', 'https://example.test/run/1');
+    expect(unroled.status, unroled.stdout + unroled.stderr).toBe(0);
+
+    const s = new Store(dbPath);
+    const items = s.getTicket(ticket)!.evidence;
+    s.close();
+    // H-1782's lesson applied to this flag: the assertion is that the value
+    // LANDED, not that the command exited 0 — a flag the parser never read
+    // writes an item with no role and reports success.
+    expect(items[0]).toEqual({ kind: 'file', ref: 'crew:projects/r39/RESULT-ROLE-CONTRACT.md', role: 'result' });
+    expect(items[1]).toEqual({ kind: 'url', ref: 'https://example.test/run/1' });
+    expect('role' in items[1]!).toBe(false);
+  });
+
+  it('refuses a role the contract does not define, writing nothing', () => {
+    const refused = cli('update', '--ticket', ticket, '--note', 'Trying a role of my own.',
+      '--evidence-kind', 'commit', '--evidence-ref', 'helmo@' + 'b'.repeat(40), '--evidence-role', 'primary');
+    expect(refused.status).not.toBe(0);
+    expect(refused.stderr).toMatch(/result, supporting, review/);
+    const s = new Store(dbPath);
+    expect(s.getTicket(ticket)!.evidence).toEqual([]);
+    s.close();
   });
 });

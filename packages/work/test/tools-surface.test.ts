@@ -248,6 +248,31 @@ describe('truth-preserving record edits (R-39 Q3/Q4)', () => {
     expect(store.getTicket(t.id).title).toBe('Ship it');
     store.close();
   });
+
+  it('carries an evidence role through MCP, and refuses one the contract does not define (R-42 I5)', async () => {
+    const store = new Store(':memory:');
+    const t = store.createTicket(orch, { title: 'Ship it', body: 'Current body.', workstream: 'helmo-dev', type: 'build' });
+    const roled = await call(store, {
+      ticket_id: t.id, note: 'the commit is the result',
+      evidence: [{ kind: 'commit', ref: 'helmo@' + 'a'.repeat(40), note: 'what changed', role: 'result' }],
+    });
+    expect(roled.isError).toBe(false);
+    expect(store.getTicket(t.id).evidence[0]).toMatchObject({ role: 'result' });
+
+    // An MCP refusal arrives as content with isError, not as a throw; and the
+    // enum here is the outer gate only — the store refuses it too, for callers
+    // that never pass through this schema.
+    const seq = store.maxSeq();
+    const bad = await call(store, { ticket_id: t.id, note: 'a role of my own', evidence: [{ kind: 'url', ref: 'https://example.test/p', role: 'primary' }] });
+    expect(bad.isError).toBe(true);
+    expect(store.maxSeq()).toBe(seq);
+
+    // An existing call that omits the field is unchanged: no key appears.
+    const plain = await call(store, { ticket_id: t.id, note: 'unstated', evidence: [{ kind: 'url', ref: 'https://example.test/q' }] });
+    expect(plain.isError).toBe(false);
+    expect(store.getTicket(t.id).evidence.at(-1)).toEqual({ kind: 'url', ref: 'https://example.test/q' });
+    store.close();
+  });
 });
 
 // Steering fields carry numbers and names only. A prose field here would be

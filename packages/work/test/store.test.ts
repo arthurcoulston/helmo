@@ -2760,7 +2760,10 @@ describe('THE INVARIANT: tickets are a materialized view of events', () => {
     s.updateTicket(reviewer, { ticket_id: b.id, note: 'paid, receipt attached', status: 'in_progress' });
     s.updateTicket(reviewer, {
       ticket_id: b.id, note: 'confirmed', status: 'done',
-      evidence: [{ kind: 'url', ref: 'https://example.com/receipt' }],
+      // One roled item and one unstated one: `role` rides inside the evidence
+      // JSON with no event-schema change, so the replay has to reproduce both
+      // shapes — the field present and the field absent (R-42 §2.4).
+      evidence: [{ kind: 'url', ref: 'https://example.com/receipt', role: 'result' }, { kind: 'file', ref: '/tmp/quote.pdf' }],
       confidence: 'spot_check', uncertainty_note: 'unclear if the deposit covers AV', blast_radius: 'records', cost_usd: 2000,
     });
     triage(s, a.id);
@@ -3767,5 +3770,77 @@ describe('blocking disclosed to list callers (H-621)', () => {
     triage(s, waiting.id);
     expect(s.listTickets({ ready: true, caller: 'builder-loop' }).map((t) => t.id)).not.toContain(waiting.id);
     expect(s.listTickets({ assignee: 'builder-loop' }).map((t) => t.id)).toContain(waiting.id);
+  });
+});
+
+describe('an evidence item states what it is for (R-42 I5)', () => {
+  it('stores a role, replays it, and leaves an item without one unstated', () => {
+    const s = freshStore();
+    const t = create(s);
+    triage(s, t.id);
+    s.updateTicket(builder, {
+      ticket_id: t.id, note: 'built it', status: 'done',
+      evidence: [
+        { kind: 'commit', ref: 'helmo@' + 'a'.repeat(40), role: 'result' },
+        { kind: 'url', ref: 'https://example.test/run/1', role: 'supporting' },
+        { kind: 'file', ref: '/tmp/ward-review.md', role: 'review' },
+        { kind: 'other', ref: 'a reading nobody said the purpose of' },
+      ],
+    });
+    const stored = s.getTicket(t.id)!.evidence;
+    expect(stored.map((e) => e.role)).toEqual(['result', 'supporting', 'review', undefined]);
+    // The column is JSON and `applyUpdated` writes the whole array, so an item
+    // gains a field without touching the event schema — the proof is that the
+    // rebuild reproduces both shapes exactly.
+    const before = s.dumpState();
+    s.rebuild();
+    expect(s.dumpState()).toEqual(before);
+  });
+
+  it('refuses a role outside the contract and writes nothing', () => {
+    const s = freshStore();
+    const t = create(s);
+    triage(s, t.id);
+    expect(() =>
+      s.updateTicket(builder, {
+        ticket_id: t.id, note: 'built it',
+        evidence: [{ kind: 'commit', ref: 'helmo@' + 'a'.repeat(40), role: 'primary' as never }],
+      }),
+    ).toThrow(/role "primary".*result, supporting, review/s);
+    expect(s.getTicket(t.id)!.evidence).toEqual([]);
+  });
+
+  it('guards the role at the store, where the CLI and in-process callers arrive', () => {
+    // `kind: "test"` reached the personal store (H-884) because the zod enum at
+    // the tool boundary is not the only way in. A role must not go the same way:
+    // the refusal above comes from the store, so every caller passes it.
+    const s = freshStore();
+    const t = create(s);
+    triage(s, t.id);
+    s.updateTicket(builder, { ticket_id: t.id, note: 'closing', status: 'done', evidence: [{ kind: 'other', ref: 'x' }] });
+    // Evidence is the one append-only field a terminal ticket still takes, so
+    // the guard has to hold on that path too.
+    expect(() =>
+      s.updateTicket(reviewer, { ticket_id: t.id, note: 'late proof', evidence: [{ kind: 'url', ref: 'https://example.test/p', role: 'RESULT' as never }] }),
+    ).toThrow(/not one of result, supporting, review/);
+    expect(
+      s.updateTicket(reviewer, { ticket_id: t.id, note: 'late proof', evidence: [{ kind: 'url', ref: 'https://example.test/p', role: 'review' }] })
+        .ticket.evidence.at(-1),
+    ).toEqual({ kind: 'url', ref: 'https://example.test/p', role: 'review' });
+  });
+
+  it('corrects a mis-stated role by appending the same ref, keeping both statements', () => {
+    const s = freshStore();
+    const t = create(s);
+    triage(s, t.id);
+    const ref = 'crew:projects/r39/RESULT-ROLE-CONTRACT.md';
+    s.updateTicket(builder, { ticket_id: t.id, note: 'wrong role', evidence: [{ kind: 'file', ref, role: 'supporting' }] });
+    s.updateTicket(builder, { ticket_id: t.id, note: 'that file IS the result', evidence: [{ kind: 'file', ref, role: 'result' }] });
+    // §2.3: correction is an append. Nothing is rewritten, and which statement
+    // governs the display is the read projection's job (H-2969), not the store's.
+    expect(s.getTicket(t.id)!.evidence).toEqual([
+      { kind: 'file', ref, role: 'supporting' },
+      { kind: 'file', ref, role: 'result' },
+    ]);
   });
 });

@@ -4,7 +4,7 @@ import { namesInstallation, type Installation } from './install.js';
 import { actionFingerprint, questionFingerprint } from './presentation.js';
 import { parseSchedule } from './schedule.js';
 import {
-  ActionReport, ActionRequest, Actor, ActorKind, ACTOR_KINDS, Answer, AnswerEvent, BlastRadius, BLAST_RADII, CapacityHold, Confidence, Dep, DepType, Evidence,
+  ActionReport, ActionRequest, Actor, ActorKind, ACTOR_KINDS, Answer, AnswerEvent, BlastRadius, BLAST_RADII, CapacityHold, Confidence, Dep, DepType, Evidence, EVIDENCE_ROLES,
   HelmoError, HelmoEvent, HumanRequest, Notice, ProductAcceptance, ProductArtifact, Question, QuestionInput, ReleaseHandoff, Status, Ticket, TicketProgress, VerdictEvent, Workstream, WorkstreamInfo,
 } from './types.js';
 
@@ -2760,6 +2760,18 @@ export class Store {
       if (forbidden.length) {
         throw new HelmoError(
           `${t.id} is ${t.status} — terminal. Only append-only note and evidence are accepted; ${forbidden.join(', ')} would rewrite closed state. If follow-up work is needed, helmo_create_ticket a new one with a 'relates' link to ${t.id}.`,
+        );
+      }
+    }
+    // An evidence role is guarded here, not only at the tool boundary. The
+    // column is JSON, so a value the zod enum never saw persists silently and
+    // every later read has to cope with it — which is how `kind: "test"`
+    // (H-884) got into the personal store. The CLI and in-process callers come
+    // straight here; this is the only gate all of them pass.
+    for (const item of input.evidence ?? []) {
+      if (item.role !== undefined && !EVIDENCE_ROLES.includes(item.role)) {
+        throw new HelmoError(
+          `Evidence role "${item.role}" on ${item.ref} is not one of ${EVIDENCE_ROLES.join(', ')}. Role says what the item is FOR; leave it off rather than inventing a value, and an unstated item is shown as a purpose nobody recorded.`,
         );
       }
     }

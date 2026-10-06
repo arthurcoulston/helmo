@@ -53,6 +53,12 @@ function bodyOf(chars: number, i: number): string {
   return out.slice(0, Math.max(chars, LONG_REF.length + 16));
 }
 
+/* Every item carries a role, which is the heavier of the two shapes the store
+   can now hold and therefore the one the budget has to be measured above
+   (R-42 §2.4 back-fills nothing, so no live store shows this cost yet). The
+   last item of a row is the result and the rest divide between supporting and
+   review: a row whose every item claimed to be the result would measure the
+   same bytes while exercising none of the distinction. */
 function evidenceOf(count: number, i: number) {
   return Array.from({ length: count }, (_, n) => ({
     kind: n % 3 === 0 ? ('commit' as const) : n % 3 === 1 ? ('url' as const) : ('file' as const),
@@ -63,6 +69,7 @@ function evidenceOf(count: number, i: number) {
           ? `https://github.com/arthurcoulston/helmo/pull/${(i % 40) + 1}`
           : LONG_REF,
     note: `${SENTENCES[(i + n) % SENTENCES.length]} ${SENTENCES[(i + n + 3) % SENTENCES.length]} Ref ${n} of ${count}.`,
+    role: n === count - 1 ? ('result' as const) : n % 4 === 1 ? ('review' as const) : ('supporting' as const),
   }));
 }
 

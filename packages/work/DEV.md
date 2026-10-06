@@ -641,23 +641,28 @@ Pinned releases accept both the historical three-component layout and C1's one
   finding against an older closed ticket linked to a row that was not on the
   page. `groomStrip` now takes the set this document actually drew and sends
   the rest to `?whole=1#H-n`.
-  Its budget is measured on a record at least as heavy as a deployed one, and
-  that is a checked property, not a claim: `test/support/served-record.ts`
-  seeds 244 rows to the shape of a real store — body lengths, an evidence tail
-  that reaches 118 items on one ticket, 64-character digests — and the first
-  assertion in the budget block refuses to measure anything until the fixture
-  exceeds the numbers in `src/floor.ts`'s `REAL_RECORD` in total text, in
-  bytes per row and in the longest unbreakable run it draws. It warms each
-  document once, then requires the slowest of three bounded warm renders'
-  in-process CPU time to meet the 600 ms budget so one fast sample cannot
-  mask a miss without treating time descheduled by unrelated host load as
-  render work.
+  Its budget was measured on a record at least as heavy as a deployed one:
+  `test/support/served-record.ts` seeds 244 rows to the shape of a real store —
+  body lengths, an evidence tail that reaches 118 items on one ticket,
+  64-character digests, and since H-2968 a `role` on every evidence item —
+  against the numbers in `src/floor.ts`'s `REAL_RECORD`, warming each document
+  once and requiring the slowest of three bounded warm renders' in-process CPU
+  time to meet the 600 ms budget.
+  **Nothing runs that fixture today.** `test/view-release-floor.test.ts` and
+  `test/view-viewport-render.test.ts` were deleted with the old server-rendered
+  view in H-2939 (helmo@218e5fc), so `served-record.ts`, `CAPACITY` and
+  `REAL_RECORD` have no caller and the budget is declared rather than checked.
+  `scripts/live-floor.mjs` still reads `FLOOR` and `overBudget` against a
+  deployed origin, and `packages/shell/scripts/verify-ui.mjs` seeds its own
+  small fixture — neither is the capacity measurement. Reviving it belongs with
+  the shadcn surface that replaced the view, not with whatever change next
+  touches `floor.ts`.
   The budget it shipped with before did none of that: 300,000 bytes asserted over 80
   one-line tickets while the record it was shipped against served 2,718,020,
   nine times the ceiling, green the whole time (H-202).
   Nothing in that file opens a browser, so it cannot measure real geometry or
-  paint; `test/view-viewport-render.test.ts` does, and `scripts/live-floor.mjs`
-  does both against a deployed service. See Commands.
+  paint; `packages/shell/scripts/verify-ui.mjs` and `scripts/live-floor.mjs`
+  do, the latter against a deployed service. See Commands.
 - Evidence ref form (H-95): commit = `repo@sha` (`crew@24e8003`), one commit
   per item; file = absolute or `repo:relative/path`, never bare-relative; url
   as-is; other/draft free text. Prose belongs in the item's `note`. The point
@@ -667,7 +672,16 @@ Pinned releases accept both the historical three-component layout and C1's one
   ref that later dangles is not a defect. Evidence is a point-in-time receipt.
   The 08-06 corpus audit is archival; do not retrofit it (its rename map is in
   crew/agents/mason/workspace/h4-evidence-audit-20260806.md).
-- `types.ts` — the shared vocabulary (statuses, blast radii, confidence).
+- Evidence `role` (R-42 I5, H-2968): an optional `result` | `supporting` |
+  `review` saying what an item is FOR, independent of `kind`. Guarded in
+  `store.ts` as well as the zod enum, because the CLI and in-process callers
+  never pass the tool boundary and the column is JSON — which is how
+  `kind: "test"` (H-884) got into the personal store and stayed. Nothing is
+  back-filled: all 19,956 existing items are deliberately unstated, and the
+  read path must treat an absent role as "purpose not recorded" rather than
+  "no result". Contract: `crew:projects/r39/RESULT-ROLE-CONTRACT.md`.
+- `types.ts` — the shared vocabulary (statuses, blast radii, confidence,
+  evidence roles).
 - `install.ts` — which installation this process is (H-2472). All four entry
   points resolve it here rather than each reading `HELMO_DB` on its own, so
   they cannot disagree about the target. `HELMO_HOME` names the installation
@@ -1104,6 +1118,15 @@ URL evidence is the product result, every other evidence kind is review
 evidence, and `productAcceptance()` is the release state. The first reachable
 result is the primary 44px `View result` action; an absent URL says no product
 result is linked rather than promoting a commit or file into one.
+
+**That last rule is a guess, and it is being replaced.** Purpose was never
+recorded, so the surface read it off how the ref is spelled — which calls 2153
+closed personal tickets and 525 Good Plumb ones resultless when their result is
+a commit or a file (H-2934, measured by `tools/survey-evidence-roles.mjs`).
+`Evidence.role` now records it instead (H-2968, above); `WorkRecord.tsx` still
+filters on `kind === "url"` until H-2969 lands the read projection, at which
+point an unroled legacy item keeps exactly today's rendering and is labelled
+as inferred.
 
 A localhost URL is about the machine serving Helmo, not the phone reading it.
 It therefore ships without an `href` and becomes a link in

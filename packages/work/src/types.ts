@@ -10,6 +10,13 @@ export type BlastRadius = (typeof BLAST_RADII)[number];
 export const CONFIDENCES = ['routine', 'spot_check', 'needs_review'] as const;
 export type Confidence = (typeof CONFIDENCES)[number];
 
+/** What an evidence item is FOR, recorded rather than guessed from how its ref
+ *  is spelled. Independent of `kind`: any kind can be the result, and no role
+ *  implies a kind. Optional because nothing is back-filled — every item
+ *  written before this field exists stays unstated (R-42 §2.4). */
+export const EVIDENCE_ROLES = ['result', 'supporting', 'review'] as const;
+export type EvidenceRole = (typeof EVIDENCE_ROLES)[number];
+
 export const ACTOR_KINDS = ['agent', 'orchestrator', 'human'] as const;
 export type ActorKind = (typeof ACTOR_KINDS)[number];
 
@@ -60,9 +67,16 @@ function boundActor(override: Actor | undefined, env: Actor): Actor {
 }
 
 export interface Evidence {
+  /** How the ref is spelled, and therefore how it is rendered and checked for
+   *  reachability. Declared as five values and enforced at the tool boundary,
+   *  but the column is JSON and the personal store holds a sixth written
+   *  around that boundary (`kind: "test"`, H-884), so a read path must treat
+   *  it as an open string rather than an exhaustive union. */
   kind: 'commit' | 'file' | 'url' | 'draft' | 'other';
   ref: string;
   note?: string;
+  /** What the item is for. Absent means the purpose was never recorded. */
+  role?: EvidenceRole;
 }
 
 export interface ProductArtifact {

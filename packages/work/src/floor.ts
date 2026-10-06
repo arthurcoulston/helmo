@@ -41,13 +41,33 @@ export const REAL_RECORD = {
   bytesPerRow: { current: 10_613, whole: 13_130 },
 } as const;
 
+/** An evidence item may now state what it is for (R-42: `Evidence.role`), and
+ *  nothing is back-filled — so no live store carries one and the measurement
+ *  above cannot show what the field costs. This is the arithmetic instead: one
+ *  short string per item, `,"role":"supporting"` at its longest, on the
+ *  heaviest evidence list the real record holds. It is declared rather than
+ *  derived at the call site so the seed and the document budget grow by the
+ *  same number, and so a reader can see which part of the floor is measured
+ *  and which part is an allowance for a field the stores have not used yet. */
+export const EVIDENCE_ROLE_BYTES = 20;
+export const ROLED_EVIDENCE_ALLOWANCE = REAL_RECORD.mostEvidenceItems * EVIDENCE_ROLE_BYTES;
+
 /** What the page is built to hold. The seed in `served-record.ts` is built to
  *  this profile and asserts it exceeds REAL_RECORD before anything is timed,
- *  so the budget is measured above the record it protects, never below it. */
+ *  so the budget is measured above the record it protects, never below it.
+ *
+ *  Standing gap, noted here rather than left for the next reader to discover:
+ *  the two tests that ran that seed went with the old server-rendered view in
+ *  H-2939 (helmo@218e5fc), so nothing calls `seedCapacityRecord` today and
+ *  everything below is declared rather than checked. `live-floor.mjs` still
+ *  measures FLOOR against a deployed origin; the capacity measurement has no
+ *  runner, and reviving it belongs with the surface that replaced the view. */
 export const CAPACITY = {
   rows: 240,
-  /** Checked, not claimed: see `seedCapacityRecord`'s return value. */
-  minimumStoredTextBytes: REAL_RECORD.storedTextBytes,
+  /** What `seedCapacityRecord` has to return to be heavy enough to measure
+   *  against. The seed writes a role on every item, which is the heavier of
+   *  the two shapes the store can hold, so this carries the allowance. */
+  minimumStoredTextBytes: REAL_RECORD.storedTextBytes + ROLED_EVIDENCE_ALLOWANCE,
 } as const;
 
 export const FLOOR = {

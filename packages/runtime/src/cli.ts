@@ -9,6 +9,7 @@ import { sessionSpec } from './shim.js';
 import { LoopConfig } from './types.js';
 import { pollUsage, readCodexUsage, readUsage, refreshCodexUsage, usageLine, usagePath } from './usage.js';
 import { selectRun } from './routing.js';
+import { unservedLaneWork } from './helm.js';
 import { runLoop } from './loop.js';
 import { serviceFile, serviceInstall, serviceStart, serviceStatusLine, serviceUninstall, stalePinnedService } from './service.js';
 import { assertInstallation, requireTarget, target, targetLine } from './install.js';
@@ -224,6 +225,19 @@ function controlArg(): string[] {
 
 const listed = (names: string[]) => names.map((n) => `'${n}'`).join(', ');
 
+/** Lane work held because no live worker serves its lane, or null
+ *  when Helmo could not be read. A loop drawing work is RUNNING or IDLE. */
+function laneGaps(): ReturnType<typeof unservedLaneWork> | null {
+  try {
+    return unservedLaneWork(g, Object.values(loops), (name) => {
+      const s = state(name);
+      return s === 'RUNNING' || s === 'IDLE' ? null : s;
+    });
+  } catch {
+    return null;
+  }
+}
+
 function state(name: string): string {
   const observation = processObservation(name);
   const pid = observation.pid;
@@ -379,9 +393,10 @@ switch (cmd) {
           return {
             loop: l.name, seat: l.seat ?? l.name, pool: (l.peer_sessions?.length ?? 0) > 1,
             state: state(l.name), pid: pidAlive(l.name), pace: pending ? `pending:${pending}` : (sValue(l.name, 'PACE') ?? '1'),
-            workstream: l.workstream, project: l.project ?? null, tickets: l.tickets ?? null,
+            workstream: l.workstream, project: l.project ?? null, tickets: l.tickets ?? null, lane: l.lane ?? null,
           };
         }),
+        unserved_lanes: laneGaps(),
       }, null, 2));
       break;
     }
@@ -402,6 +417,17 @@ switch (cmd) {
       const pace = pending ? `pending:${pending}` : (sValue(name, 'PACE') ?? '1');
       console.log(`${name.padEnd(24)} ${state(name).padEnd(10)} ${String(pid).padEnd(7)} ${pace.padEnd(6)} ${loops[name].workstream}`);
     }
+    // Below the table, never in it: estate tools parse the table exactly.
+    const lanes = Object.values(loops).filter((l) => l.lane);
+    const gaps = Object.values(loops).some((l) => (l.peer_sessions?.length ?? 0) > 1) ? laneGaps() : [];
+    const laneLines = [
+      ...(lanes.length ? [`LANES: ${lanes.map((l) => `${l.lane}=${l.name}`).join('  ')}`] : []),
+      ...Object.keys(loops).filter((name) => sHas(name, 'OUT_OF_SCOPE'))
+        .map((name) => `HELD OUT OF SCOPE: ${name} ${(sGet(name, 'OUT_OF_SCOPE') ?? '').trim()}`),
+      ...(gaps === null ? ['UNSERVED LANE WORK: unreadable — Helmo did not answer']
+        : gaps.map((gap) => `UNSERVED LANE WORK: ${gap.ticket} (${gap.seat}, lane ${gap.lane}) — ${gap.reason}`)),
+    ];
+    if (laneLines.length) console.log(`\n${laneLines.join('\n')}`);
     console.log('\nSTATE: RUNNING=iteration in flight  IDLE=waiting on wake cursor  PARKED=held via PACE');
     console.log('       SEAT_HELD=standing down for another live session in this seat');
     console.log('       WEDGED=alive but cannot reach Helm — drawing no work; see the loop trace');

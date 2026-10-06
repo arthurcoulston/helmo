@@ -60,8 +60,14 @@ export function wakeDecide(c: {
   readyCount: number;
   newlyReadyCount?: number;
   resyncDue?: boolean;
+  /** A pool worker's seat holds in-progress work. Held work is not
+   *  ready, so without this a worker that went down holding a claim — parked
+   *  out of scope, say — would wait at its cursor for motion that never
+   *  comes. Its restart asks for the claim once; Helmo resumes it or idles. */
+  heldOnRestart?: boolean;
 }): boolean {
   if (c.workstream === '*') return c.changedSince;
+  if (c.firstPoll && c.heldOnRestart) return true;
   if (c.newlyReadyCount === undefined) return c.changedSince || (c.firstPoll && c.readyCount > 0);
   return c.newlyReadyCount > 0 || (c.firstPoll && c.readyCount > 0) || (Boolean(c.resyncDue) && c.readyCount > 0);
 }

@@ -203,6 +203,21 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   load, never a roster key) and claims with `--exclude-tickets`, so the
   role's general worker never takes a lane's ticket. Both keys are refused on
   a loop with no pool.
+  `lane` replaces the allowlist: Helmo routes by a ticket's `lane`
+  column, so new lane work needs no roster edit or restart. A lane worker
+  claims with `--lane` and Rev checks `scope.lane` on the receipt; a claim
+  without `--lane` gets only lane-null tickets, so the general worker needs no
+  exclusion for lane work. The roster refuses `lane` beside `tickets`, two
+  workers of one seat on one lane, and a lane on an unpooled loop.
+  `lane_null` is derived for the general worker once a sibling has a lane, and
+  only then does wake-check carry `--lane`/`--no-lane`, so a lane-less roster
+  sends Helmo exactly what it sent before. A worker whose config changed while
+  it held a claim is denied `held_out_of_scope`: no session, no release, the
+  `OUT_OF_SCOPE` sentinel names the ticket in `status`, and restoring the
+  config resumes it. A pool worker's restart pickup also wakes when its seat
+  holds work, so that restore is asked for at once rather than at the next
+  motion. `status` lists ready lane work no live worker serves
+  (`unserved_lanes` in `--json`), below the table.
   **A role is addressed as a role** (H-676). The first worker usually keeps
   the role's name, so `stop`/`resume`/`pace`/`team` resolve through
   `controlTargets` (config.ts): a seat with more than one loop, or a seat no
@@ -211,11 +226,12 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   halt is written to each worker. Anything that routes work to a role must ask
   which worker can draw it: `drawsScope` (helm.ts) says a one-worker seat
   draws its seat's work in any stream, a pool worker only in its exact
-  workstream and lane, and with an allowlist only the tickets it names — so
+  workstream and project, in its exact ticket lane, and with an
+  allowlist only the tickets it names — so
   never a newly filed escalation. The anomaly investigator is chosen with it and
   assigned by seat, never by loop name — a pool worker's own name is no
   assignee anything wakes on. `status --json` prints each loop's `seat`,
-  `pool`, `workstream`, `project` and `tickets` beside its state, for consumers outside
+  `pool`, `workstream`, `project`, `tickets` and `lane` beside its state, for consumers outside
   Rev (gp-crew's handoff guard) that must answer "can this role take this
   ticket"; the human table is unchanged because estate tools parse its header.
   **Workflow launch admission** is the last gate before a session is spent

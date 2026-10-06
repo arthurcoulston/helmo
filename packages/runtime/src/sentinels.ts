@@ -21,6 +21,8 @@ import { Sentinel } from './types.js';
 //   BACKOFF  supervisor: loop crashed; respawn pending (contents = attempt + retry time)
 //   WEDGED   rev: cannot reach Helm at all; alarm raised. NOT a halt — the loop
 //            keeps polling, because the fault is outside it and may clear.
+//   OUT_OF_SCOPE rev: a pool worker holds a ticket its current config does not
+//            cover; contents = the reason. Cleared by its next claim answer.
 //   REDEPLOY agent/operator (supervisor's dir): drain and come back on the new
 //            code. Present at startup it is the record of the restart that just
 //            happened, never a fresh ask — see redeploy.ts.

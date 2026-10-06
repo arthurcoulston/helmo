@@ -59,6 +59,7 @@ export interface CreateInput {
   not_before?: string; // withhold from ready queues until this date/instant
   needs_human?: string | false; // the one line the sitting needs; never agent-ready
   sitting_with?: string; // the agent to sit with
+  lane?: string; // the pool worker this routes to
   spawned_from?: string; // internal: set by materializeDue on instances
   due?: string; // internal: the slot this instance was spawned for
   workflow_attempt_id?: string; // immutable binding; gated starts require an atomic admission
@@ -87,6 +88,7 @@ export interface UpdateInput {
   not_before?: string | null; // '' clears the gate
   needs_human?: string | false; // the one line the sitting needs, or false to clear
   sitting_with?: string; // the agent to sit with; '' clears it
+  lane?: string | null; // '' clears the lane
   capacity_hold?: CapacityHold | null; // null releases the deliberate hold
 }
 
@@ -100,6 +102,7 @@ export interface ListFilter {
   status?: Status;
   workstream?: string;
   project?: string;
+  lane?: string | null; // exact lane; null means lane-null tickets only
   ids?: string[]; // exact ticket allowlist (H-671)
   exclude_ids?: string[]; // tickets other workers' allowlists own (H-671)
   assignee?: string;
@@ -159,6 +162,7 @@ CREATE TABLE IF NOT EXISTS tickets (
   needs_human    INTEGER NOT NULL DEFAULT 0,
   sitting        TEXT,
   sitting_with   TEXT,
+  lane           TEXT,
   capacity_hold  TEXT,
   workflow_attempt_id TEXT,
   release_handoff TEXT,
@@ -312,6 +316,17 @@ function parseNotBefore(value: string): string {
     );
   }
   return d.toISOString();
+}
+
+// A lane names the stream of work a pool worker serves, and its workspace
+//. It is checked at the door because a near-miss value is a ticket
+// no worker will ever claim: held visibly, but held.
+const LANE = /^[a-z0-9][a-z0-9-]{0,39}$/;
+export function parseLane(value: string): string {
+  if (!LANE.test(value)) {
+    throw new HelmoError(`lane "${value}" is not a lane name. Use lowercase letters, digits and hyphens, starting with a letter or digit, at most 40 characters (e.g. 'frontend').`);
+  }
+  return value;
 }
 
 // Marking a sitting says what the sitting is for, in one line (H-1761). A bare
@@ -505,6 +520,15 @@ export class Store {
     } catch {
       /* column already exists */
     }
+    // Additive migration for the lane a pool worker serves. Every
+    // existing ticket stays lane-null, which is exactly what every installed
+    // caller (no --lane) selects, so nothing it can see changes.
+    try {
+      this.db.exec('ALTER TABLE tickets ADD COLUMN lane TEXT');
+    } catch {
+      /* column already exists */
+    }
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_tickets_lane ON tickets(lane) WHERE lane IS NOT NULL');
     this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_tickets_workflow_attempt ON tickets(workflow_attempt_id) WHERE workflow_attempt_id IS NOT NULL');
   }
 
@@ -891,8 +915,13 @@ export class Store {
    * SAME project draw disjoint work only when each names the tickets it may
    * take, because a shared project tag alone lets either claim the other's.
    * `excludeTickets` is its complement for a worker with no allowlist: the
-   * tickets its siblings' allowlists own, which it must leave to them. */
-  launchClaim(actor: Actor, workstream: string, assignee: string, launchId: string, project?: string, tickets?: string[], excludeTickets?: string[]): Record<string, unknown> {
+   * tickets its siblings' allowlists own, which it must leave to them.
+   *
+   * `lane` replaces both for a worker that serves a lane: it takes
+   * only tickets carrying that lane. A call with no lane takes only lane-null
+   * tickets, so lane work never falls back to the general worker, to another
+   * lane, or to a caller installed before lanes existed. */
+  launchClaim(actor: Actor, workstream: string, assignee: string, launchId: string, project?: string, tickets?: string[], excludeTickets?: string[], lane?: string): Record<string, unknown> {
     validateActor(actor);
     if (!workstream.trim() || !assignee.trim() || !launchId.trim()) throw new HelmoError('launch-claim requires exact non-empty workstream, assignee, and launch-id values.');
     for (const list of [tickets, excludeTickets]) {
@@ -901,6 +930,10 @@ export class Store {
       }
     }
     if (tickets && excludeTickets) throw new HelmoError('launch-claim takes an allowlist or an exclusion, not both.');
+    if (lane !== undefined) {
+      parseLane(lane);
+      if (tickets) throw new HelmoError('launch-claim takes a lane or a ticket allowlist, not both: a lane worker\'s scope is the lane.');
+    }
     const allow = tickets ? [...tickets].sort() : undefined;
     const deny = excludeTickets ? [...excludeTickets].sort() : undefined;
     if (actor.name !== assignee || actor.kind !== 'agent' || !actor.session?.trim()) {
@@ -913,7 +946,9 @@ export class Store {
     }
     const worker: Actor = { ...actor, generation: launchId };
     return this.db.transaction(() => {
-      const exact = { workstream, assignee, launch_id: launchId, session: actor.session, project: project ?? null, ...(allow ? { tickets: allow } : {}), ...(deny ? { exclude_tickets: deny } : {}) };
+      // `lane` joins the scope only when passed, so a lane-less receipt is
+      // byte-identical to one written before lanes and still replays.
+      const exact = { workstream, assignee, launch_id: launchId, session: actor.session, project: project ?? null, ...(allow ? { tickets: allow } : {}), ...(deny ? { exclude_tickets: deny } : {}), ...(lane !== undefined ? { lane } : {}) };
       const priorClaim = this.db.prepare('SELECT ticket_id, claim FROM launch_claims WHERE launch_id = ?').get(launchId) as
         { ticket_id: string; claim: string } | undefined;
       if (priorClaim) {
@@ -929,9 +964,9 @@ export class Store {
         return prior;
       }
       this.refuseRetiredGeneration(worker);
-      const resumed = this.resumeExecution(worker, workstream, assignee, launchId, project, allow, deny);
+      const resumed = this.resumeExecution(worker, workstream, assignee, launchId, project, allow, deny, lane);
       if (resumed) return resumed;
-      const ticket = this.listTickets({ ready: true, workstream, caller: assignee, project, ids: allow, exclude_ids: deny, limit: 1 })[0];
+      const ticket = this.listTickets({ ready: true, workstream, caller: assignee, project, lane: lane ?? null, ids: allow, exclude_ids: deny, limit: 1 })[0];
       if (!ticket) return { admitted: false, launch_id: launchId };
       const admissionId = this.admitLaunch(ticket.id, ticket.workflow_attempt_id, launchId);
       this.updateTicket(worker, { ticket_id: ticket.id, status: 'in_progress', note: `Claimed atomically for supervised launch ${launchId}.` });
@@ -954,14 +989,21 @@ export class Store {
    *  ends the claim instead of refusing every later launch of this worker:
    *  the ticket goes back to the human, withheld from agent queues, because
    *  an attempt whose launch admission is spent cannot be admitted again. */
-  private resumeExecution(worker: Actor, workstream: string, assignee: string, launchId: string, project?: string, tickets?: string[], exclude?: string[]): Record<string, unknown> | null {
+  private resumeExecution(worker: Actor, workstream: string, assignee: string, launchId: string, project?: string, tickets?: string[], exclude?: string[], lane?: string): Record<string, unknown> | null {
     const held = this.db.prepare(`SELECT c.ticket_id, c.generation FROM execution_claims c JOIN tickets t ON t.id = c.ticket_id
       WHERE c.session = ? AND t.status = 'in_progress' AND t.assignee = ? ORDER BY c.created_at, c.ticket_id LIMIT 1`)
       .get(worker.session, assignee) as { ticket_id: string; generation: string } | undefined;
     if (!held) return null;
     const t = this.getTicket(held.ticket_id);
-    if (t.workstream !== workstream || (project !== undefined && t.project !== project) || (tickets && !tickets.includes(t.id)) || exclude?.includes(t.id)) {
-      throw new HelmoError(`launch_claim_scope_conflict ${JSON.stringify({ launch_id: launchId, held_ticket_id: t.id, workstream: t.workstream, project: t.project })}`);
+    // Assigned work may be claimed across workstreams. Preserve the
+    // worker's original scope on resume, not the ticket's accounting stream.
+    // Direct supervised claims without a launch receipt retain the old check.
+    const prior = this.db.prepare('SELECT claim FROM launch_claims WHERE launch_id = ? AND ticket_id = ?')
+      .get(held.generation, t.id) as { claim: string } | undefined;
+    const priorWorkstream = prior ? (JSON.parse(prior.claim) as { scope: { workstream: string } }).scope.workstream : t.workstream;
+    if (priorWorkstream !== workstream || (project !== undefined && t.project !== project) || (tickets && !tickets.includes(t.id)) || exclude?.includes(t.id)
+      || (t.lane ?? undefined) !== lane) {
+      throw new HelmoError(`launch_claim_scope_conflict ${JSON.stringify({ launch_id: launchId, held_ticket_id: t.id, workstream: t.workstream, project: t.project, lane: t.lane })}`);
     }
     // A held claim whose ticket is date-gated has nothing to do until the gate
     // (H-710): resuming it spent a full pass every poll and kept the worker
@@ -1018,7 +1060,7 @@ export class Store {
     const receipt = {
       admitted: true, claimed: true, resumed: true, ticket_id: t.id, workflow_attempt_id: t.workflow_attempt_id ?? null, admission_id: admissionId, launch_id: launchId,
       admission_launch_id: admission?.launch_id ?? null,
-      scope: { workstream, assignee, launch_id: launchId, session: worker.session, project: project ?? null, ...(tickets ? { tickets } : {}), ...(exclude ? { exclude_tickets: exclude } : {}) },
+      scope: { workstream, assignee, launch_id: launchId, session: worker.session, project: project ?? null, ...(tickets ? { tickets } : {}), ...(exclude ? { exclude_tickets: exclude } : {}), ...(lane !== undefined ? { lane } : {}) },
     };
     this.db.prepare('INSERT INTO launch_claims (launch_id, ticket_id, claim, created_at) VALUES (?, ?, ?, ?)').run(launchId, t.id, JSON.stringify(receipt), ts);
     return receipt;
@@ -1393,6 +1435,11 @@ export class Store {
     const routedReady = filter.ready && filter.caller && filter.workstream;
     if (filter.workstream && !routedReady) { clauses.push('workstream = ?'); params.push(filter.workstream); }
     if (filter.project) { clauses.push('project = ?'); params.push(filter.project); }
+    // Lane is ANDed over the routed-ready clause, never in place of
+    // it: a lane ticket assigned to the caller in any workstream still
+    // reaches the worker serving that lane.
+    if (filter.lane === null) clauses.push('lane IS NULL');
+    else if (filter.lane !== undefined) { clauses.push('lane = ?'); params.push(filter.lane); }
     if (filter.ids) { clauses.push(`id IN (${filter.ids.map(() => '?').join(', ')})`); params.push(...filter.ids); }
     if (filter.exclude_ids?.length) { clauses.push(`id NOT IN (${filter.exclude_ids.map(() => '?').join(', ')})`); params.push(...filter.exclude_ids); }
     if (filter.assignee) {
@@ -1883,6 +1930,9 @@ export class Store {
           labels: t.labels,
           priority: t.priority,
           assignee: t.assignee ?? undefined,
+          // The lane is routing, like the assignee: an instance of a lane
+          // template is that lane's work, not the general worker's.
+          lane: t.lane ?? undefined,
           deps: [{ to: t.id, type: 'parent' }],
           spawned_from: t.id,
           due: dueIso,
@@ -1918,7 +1968,7 @@ export class Store {
    *  transaction holds one snapshot across all of them, and the ready set is
    *  read once and reused, so newly_ready can never name a ticket missing from
    *  ready_ids. */
-  wakeCheck(seq: number, workstream?: string, assignee?: string): {
+  wakeCheck(seq: number, workstream?: string, assignee?: string, lane?: string | null): {
     max_seq: number;
     ready_count: number;
     ready_ids: string[];
@@ -1929,7 +1979,11 @@ export class Store {
   } {
     return this.db.transaction(() => {
       const maxSeq = this.maxSeq();
-      const ready = this.listTickets({ ready: true, workstream, caller: assignee, limit: 1000 });
+      // A lane narrows the wake to what that worker's launch-claim could take;
+      // null is the general pool worker. Undefined is every caller that does
+      // not claim by lane, which keeps the whole queue. Held work is already
+      // this caller's, so the lane does not narrow it.
+      const ready = this.listTickets({ ready: true, workstream, caller: assignee, lane, limit: 1000 });
       const offered = assignee ? [...ready, ...this.executableHeld(assignee)] : ready;
       const newlyReadyIds = assignee ? this.newlyReadyFrom(offered, seq, assignee) : [];
       return {
@@ -2518,6 +2572,7 @@ export class Store {
       if (input.status === 'in_progress') throw new HelmoError('A recurring template is standing work — it cannot be in_progress; its instances are.');
     }
     if (input.not_before) input = { ...input, not_before: parseNotBefore(input.not_before) };
+    if (input.lane !== undefined) parseLane(input.lane);
     if (input.workflow_attempt_id !== undefined && (!input.workflow_attempt_id.trim() || input.workflow_attempt_id.trim() !== input.workflow_attempt_id)) {
       throw new HelmoError('workflow_attempt_id must be a non-empty exact id without surrounding whitespace.');
     }
@@ -2561,6 +2616,7 @@ export class Store {
       if (input.project) payload['project'] = input.project;
       if (input.schedule) payload['schedule'] = input.schedule;
       if (input.not_before) payload['not_before'] = input.not_before;
+      if (input.lane) payload['lane'] = input.lane;
       if (sitting?.needs_human) { payload['needs_human'] = true; payload['sitting'] = sitting.sitting; payload['sitting_with'] = sitting.sitting_with; }
       if (input.spawned_from) { payload['spawned_from'] = input.spawned_from; payload['due'] = input.due; }
       if (input.workflow_attempt_id) payload['workflow_attempt_id'] = input.workflow_attempt_id;
@@ -2772,7 +2828,9 @@ export class Store {
     // Same for the date gate — '' opens it now, a date moves it (H-732).
     if (input.not_before === '') input = { ...input, not_before: null };
     else if (input.not_before) input = { ...input, not_before: parseNotBefore(input.not_before) };
-    for (const field of ['title', 'body', 'priority', 'workstream', 'project', 'not_before', 'confidence', 'uncertainty_note'] as const) {
+    if (input.lane === '') input = { ...input, lane: null };
+    else if (input.lane) parseLane(input.lane);
+    for (const field of ['title', 'body', 'priority', 'workstream', 'project', 'not_before', 'lane', 'confidence', 'uncertainty_note'] as const) {
       const v = input[field];
       if (v !== undefined && v !== (t as unknown as Record<string, unknown>)[field]) {
         diffs[field] = { from: (t as unknown as Record<string, unknown>)[field], to: v };
@@ -2792,6 +2850,13 @@ export class Store {
     if (input.workstream && input.workstream !== t.workstream && !t.assignee && input.handoff_to === undefined) {
       const seat = this.workstreamSeat(input.workstream);
       if (seat) diffs['assignee'] = { from: null, to: seat };
+    }
+    // A live claim never changes lane: the worker holding it would
+    // resume it out of scope, and its files are in that worker's workspace.
+    // Releasing it in the same call is fine — the claim ends with this write,
+    // and the required note is where the branch and next step are recorded.
+    if (diffs['lane'] && this.executionClaim(t.id) && (diffs['status']?.to ?? t.status) === 'in_progress') {
+      throw new HelmoError(`${t.id} is held by a running execution, so its lane cannot change under it. The holder releases it first (status 'open' or handoff_to), with a note naming its branch, workspace and next step — the same call may set the new lane. Nothing was written.`);
     }
     if (input.labels !== undefined && JSON.stringify(input.labels) !== JSON.stringify(t.labels)) {
       diffs['labels'] = { from: t.labels, to: input.labels };
@@ -3458,14 +3523,14 @@ export class Store {
   private applyCreated(ts: string, p: Record<string, unknown>): void {
     this.db
       .prepare(
-        `INSERT INTO tickets (id, title, body, workstream, project, type, labels, status, priority, assignee, schedule, not_before, needs_human, sitting, sitting_with, workflow_attempt_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO tickets (id, title, body, workstream, project, type, labels, status, priority, assignee, schedule, not_before, needs_human, sitting, sitting_with, lane, workflow_attempt_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         p['id'], p['title'], p['body'], p['workstream'], p['project'] ?? null, p['type'],
         JSON.stringify(p['labels'] ?? []), p['status'] ?? 'open', p['priority'] ?? 2, p['assignee'] ?? null,
         p['schedule'] ?? null, p['not_before'] ?? null, p['needs_human'] ? 1 : 0, p['sitting'] ?? null, p['sitting_with'] ?? null,
-        p['workflow_attempt_id'] ?? null, ts, ts,
+        p['lane'] ?? null, p['workflow_attempt_id'] ?? null, ts, ts,
       );
   }
 
@@ -3475,7 +3540,7 @@ export class Store {
     const params: unknown[] = [ts];
     const jsonFields = new Set(['labels', 'evidence']);
     for (const [field, d] of Object.entries(diffs)) {
-      if (!['title', 'body', 'workstream', 'project', 'type', 'labels', 'status', 'priority', 'assignee', 'evidence', 'confidence', 'uncertainty_note', 'blast_radius', 'not_before', 'needs_human', 'sitting', 'sitting_with', 'capacity_hold'].includes(field)) continue;
+      if (!['title', 'body', 'workstream', 'project', 'type', 'labels', 'status', 'priority', 'assignee', 'evidence', 'confidence', 'uncertainty_note', 'blast_radius', 'not_before', 'needs_human', 'sitting', 'sitting_with', 'lane', 'capacity_hold'].includes(field)) continue;
       sets.push(`${field} = ?`);
       params.push(
         field === 'needs_human'
@@ -3600,6 +3665,7 @@ function rowToTicket(row: Record<string, unknown>): Ticket {
     needs_human: Boolean(row['needs_human']),
     sitting: (row['sitting'] as string | null) ?? null,
     sitting_with: (row['sitting_with'] as string | null) ?? null,
+    lane: (row['lane'] as string | null) ?? null,
   };
 }
 

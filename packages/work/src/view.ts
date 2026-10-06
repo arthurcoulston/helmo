@@ -545,7 +545,7 @@ function row(t: Ticket, opts: { showDone?: boolean } = {}): string {
         ${sittingBadge(t)}
         ${noEv ? '<span class="badge critical">✱ no evidence</span>' : ''}
         ${confBadge(t)} ${blastBadge(t)} ${acceptanceBadge(t)}
-        <span class="rmeta">${esc(t.workstream)}${t.project ? ` · ${esc(t.project)}` : ''} · ${esc(t.type)}${t.assignee ? ` · ${esc(t.assignee)}` : ''} ${money(t)} · ${esc(
+        <span class="rmeta">${esc(t.workstream)}${t.project ? ` · ${esc(t.project)}` : ''} · ${esc(t.type)}${t.assignee ? ` · ${esc(t.assignee)}` : ''}${t.lane ? ` · lane ${esc(t.lane)}` : ''} ${money(t)} · ${esc(
           rel(opts.showDone ? (t.closed_at ?? t.updated_at) : t.updated_at)
         )}</span>
         ${opts.showDone ? chain(t) : ''}

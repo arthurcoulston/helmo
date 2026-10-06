@@ -66,6 +66,7 @@ function compact(t: Ticket, blockedBy: string[] = []) {
     ...(t.project ? { project: t.project } : {}),
     ...(t.schedule ? { schedule: t.schedule } : {}),
     ...(t.not_before ? { not_before: t.not_before } : {}),
+    ...(t.lane ? { lane: t.lane } : {}),
     ...(t.workflow_attempt_id ? { workflow_attempt_id: t.workflow_attempt_id } : {}),
     ...(t.needs_human ? { needs_human: t.sitting ?? true } : {}),
     ...(t.release_handoff ? { release_handoff: t.release_handoff } : {}),
@@ -112,6 +113,7 @@ export function buildServer(store: Store, envActor: Actor | null, server = new M
         ),
         needs_human: z.union([z.string(), z.literal(false)]).optional().describe('Mark this as work that needs a sitting with the human by saying, in ONE LINE, what the sitting needs — what he does and roughly what it costs him ("Two clicks in the Cloudflare dashboard to add an Email Routing rule"). That line is what he reads on his dashboard to decide what to pick up, so write it for someone who will not open the ticket. The ticket stays open and is withheld from every agent ready queue. Pass false to clear the marker.'),
         sitting_with: z.string().optional().describe('The exact agent the human should sit with. Use this with needs_human for discussion, interpretation or guided joint work; never make the human infer the agent from ticket history.'),
+        lane: z.string().optional().describe(`A lane routes a pool seat's work to the worker serving it: the worker configured with that lane claims it on its next poll, with no roster edit or restart. A lane no worker serves holds the ticket visibly and never falls back to the general worker or another lane. Lowercase slug, e.g. 'frontend'. Leave unset for the general pool. A child does not inherit its parent's lane; set it.`),
         deps: z.array(z.object({ to: z.string(), type: z.enum(DEP_TYPES) })).optional(),
         schedule: z.string().optional().describe(
           "Makes this a RECURRING TEMPLATE: 'every <N><m|h|d>' or 5-field cron (UTC). The template itself is standing work — never ready, never claimed. Due instances spawn automatically on queue reads, linked to the template via a parent dep, and a new instance is skipped while a previous one is still open. Retire the template by cancelling it.",
@@ -188,6 +190,7 @@ export function buildServer(store: Store, envActor: Actor | null, server = new M
         status: z.enum(STATUSES).optional(),
         workstream: z.string().optional(),
         project: z.string().optional().describe('Filter to tickets carrying this project tag'),
+        lane: z.string().optional().describe('Filter to tickets carrying this lane'),
         assignee: z.string().optional(),
         type: z.string().optional(),
         priority_max: z.number().int().optional(),
@@ -263,6 +266,7 @@ export function buildServer(store: Store, envActor: Actor | null, server = new M
         workstream: z.string().optional(),
         project: z.string().optional().describe("Set or change the project tag; '' clears it"),
         not_before: z.string().optional().describe("Set or move the date gate that withholds this ticket from ready queues — 'YYYY-MM-DD' or a full ISO instant; '' opens it now"),
+        lane: z.string().optional().describe(`A lane routes a pool seat's work to the worker serving it: the worker configured with that lane claims it on its next poll, with no roster edit or restart. A lane no worker serves holds the ticket visibly and never falls back to the general worker or another lane. Lowercase slug, e.g. 'frontend'. '' returns it to the general pool. A ticket held by a running execution cannot change lane until its holder releases it; the release (status 'open' or handoff_to) may set the new lane in the same call. A handoff keeps the lane unless you pass one.`),
         needs_human: z.union([z.string(), z.literal(false)]).optional().describe('Mark this as work that needs a sitting with the human by saying, in ONE LINE, what the sitting needs — what he does and roughly what it costs him ("Two clicks in the Cloudflare dashboard to add an Email Routing rule"). That line is what he reads on his dashboard to decide what to pick up, so write it for someone who will not open the ticket. The ticket stays open and is withheld from every agent ready queue. Pass false to clear the marker.'),
         sitting_with: z.string().optional().describe('The exact agent the human should sit with. Use this with needs_human for discussion, interpretation or guided joint work; never make the human infer the agent from ticket history.'),
         capacity_hold: z.object({

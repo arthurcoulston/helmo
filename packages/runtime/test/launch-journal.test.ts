@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { launchGroupFile, launchSessionRunning, readLaunch, recordLaunchAdmission, recordLaunchClaim, recordLaunchDispatch, recordLaunchIntent, recordLaunchSession, settleLaunch, unsettledLaunches, type LaunchReceipt } from '../src/launch-journal.js';
+import { launchGroupFile, launchSessionRunning, readLaunch, recordLaunchAdmission, recordLaunchClaim, recordLaunchDispatch, recordLaunchIntent, recordLaunchSession, recordLaunchTouched, settleLaunch, unsettledLaunches, type LaunchReceipt } from '../src/launch-journal.js';
 
 const receipt: LaunchReceipt = {
   id: 'admission:attempt-1:launch:7',
@@ -63,6 +63,36 @@ describe('launch journal', () => {
     recordLaunchSession('builder', id, { provider: 'claude', model: 'test', provider_session_id_state: 'unsupported', started_at: '2026-10-01T00:00:02.000Z', ended_at: '2026-10-01T00:00:03.000Z', outcome: 'failure' });
     settleLaunch('builder', id, 'quarantined');
     expect(readLaunch('builder', id)).toMatchObject({ phase: 'quarantined', launch_id: id, session: { provider_session_id_state: 'unsupported' } });
+  });
+
+  it('records the tickets a settled scoped-seat session wrote to, once', () => {
+    const id = 'rev:builder:42:3:1002';
+    recordLaunchIntent('builder', id);
+    expect(recordLaunchDispatch('builder', id)).toBe(true);
+    recordLaunchSession('builder', id, { provider: 'codex', model: 'test', provider_session_id_state: 'unsupported', started_at: '2026-10-01T00:00:02.000Z', ended_at: '2026-10-01T00:00:03.000Z', outcome: 'ok' });
+    settleLaunch('builder', id, 'complete', '2026-10-01T00:00:04.000Z');
+    // The measurement lands after the launch settles, which is the live order.
+    recordLaunchTouched('builder', id, [{ id: 'H-7', events: 3 }, { id: 'H-8', events: 1 }]);
+    expect(readLaunch('builder', id)).toMatchObject({
+      phase: 'complete', completed_at: '2026-10-01T00:00:04.000Z',
+      touched_tickets: [{ id: 'H-7', events: 3 }, { id: 'H-8', events: 1 }],
+    });
+    expect(recordLaunchTouched('builder', id, [{ id: 'H-7', events: 3 }, { id: 'H-8', events: 1 }]))
+      .toMatchObject({ touched_tickets: [{ id: 'H-7', events: 3 }, { id: 'H-8', events: 1 }] });
+    expect(() => recordLaunchTouched('builder', id, [{ id: 'H-9', events: 1 }]))
+      .toThrow('was replayed with a different touched-ticket set');
+  });
+
+  it('writes nothing when a session touched no ticket, and refuses an unjournaled launch', () => {
+    const id = 'rev:builder:42:4:1003';
+    recordLaunchIntent('builder', id);
+    expect(recordLaunchDispatch('builder', id)).toBe(true);
+    recordLaunchSession('builder', id, { provider: 'codex', model: 'test', provider_session_id_state: 'unsupported', started_at: '2026-10-01T00:00:02.000Z', ended_at: '2026-10-01T00:00:03.000Z', outcome: 'ok' });
+    settleLaunch('builder', id, 'complete');
+    expect(recordLaunchTouched('builder', id, [])).not.toHaveProperty('touched_tickets');
+    expect(readLaunch('builder', id)).not.toHaveProperty('touched_tickets');
+    expect(() => recordLaunchTouched('builder', 'rev:builder:42:9:9999', [{ id: 'H-7', events: 1 }]))
+      .toThrow('has no durable intent');
   });
 
   it('exposes only unsettled recovered launches and durably settles them', () => {

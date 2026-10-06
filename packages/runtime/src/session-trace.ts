@@ -18,6 +18,11 @@ const ticketIdentifier = (value: unknown): value is string => typeof value === '
 const sessionIdentifier = (value: unknown): value is string => typeof value === 'string'
   && value.length <= 512 && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(value);
 const finiteUsage = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0;
+const eventCount = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+/** The measured seat-window attribution: ticket ids and event counts only. */
+const touchedTickets = (value: unknown): value is { id: string; events: number }[] => Array.isArray(value)
+  && value.every(entry => record(entry) && ticketIdentifier(entry.id) && eventCount(entry.events)
+    && Object.keys(entry).length === 2);
 
 const PROVIDER_SESSION_STATES = ['observed', 'unsupported'] as const;
 const SESSION_OUTCOMES = ['ok', 'transient', 'apparatus', 'failure'] as const;
@@ -48,13 +53,22 @@ function validatedLaunch(value: unknown): LaunchJournalEntry | null {
     || !timestamp(value.intent_at)) return null;
   if (value.ticket_id !== undefined && !ticketIdentifier(value.ticket_id)) return null;
   if (value.claim !== undefined && value.claim !== true) return null;
-  if (value.phase === 'complete' && (!ticketIdentifier(value.ticket_id) || !timestamp(value.completed_at) || !validSession(value.session))) return null;
-  if (value.phase === 'quarantined' && (!ticketIdentifier(value.ticket_id) || !timestamp(value.quarantined_at))) return null;
+  if (value.touched_tickets !== undefined && !touchedTickets(value.touched_tickets)) return null;
+  // A settled launch is not required to name a ticket. A scoped seat claims
+  // inside its session and journals no ticket at all, and a claim-intent
+  // launch settles complete precisely BECAUSE nothing was claimed; calling
+  // either corrupt reported six sound live records as malformed and hid the
+  // writer gap behind them (H-2901). An ADMITTED launch is held to its
+  // ticket, because workflow admission is granted for one.
+  if (value.phase === 'complete' && !timestamp(value.completed_at)) return null;
+  if (value.phase === 'quarantined' && !timestamp(value.quarantined_at)) return null;
+  if (value.admission_id !== undefined && !ticketIdentifier(value.ticket_id)) return null;
   if (value.session !== undefined && !validSession(value.session)) return null;
   return {
     format: 1, phase: value.phase, launch_id: value.launch_id, intent_at: value.intent_at,
     ...(value.ticket_id !== undefined ? { ticket_id: value.ticket_id } : {}),
     ...(value.claim === true ? { claim: true as const } : {}),
+    ...(value.touched_tickets !== undefined ? { touched_tickets: value.touched_tickets } : {}),
     ...(value.phase === 'complete' ? { completed_at: value.completed_at as string } : {}),
     ...(value.phase === 'quarantined' ? { quarantined_at: value.quarantined_at as string } : {}),
     ...(value.session !== undefined ? { session: value.session } : {}),
@@ -72,7 +86,7 @@ export function readTicketLaunches(loops: string[], ticketId: string): { launche
         const value: unknown = JSON.parse(readFileSync(join(dir, name), 'utf8'));
         const launch = validatedLaunch(value);
         if (!launch) throw new Error('malformed');
-        if (launch.ticket_id === ticketId) launches.push(launch);
+        if (launch.ticket_id === ticketId || launch.touched_tickets?.some(t => t.id === ticketId)) launches.push(launch);
       } catch { malformed += 1; }
     }
   }
@@ -132,8 +146,16 @@ export function sessionTrace(ticket: Record<string, unknown>, launches: LaunchJo
     launches: launches.map(launch => {
       const event = events.find(value => value.generation === launch.launch_id);
       const session = launch.session;
+      // Say which association put this launch on this ticket. A claim
+      // identity is the launch's own durable key; a seat-session window is
+      // measured over the seat's Work events since this launch opened, and
+      // is reported as that and never as an exact key (H-2901).
+      const touched = launch.touched_tickets?.find(value => value.id === id);
+      const basis = launch.ticket_id === id ? 'launch_claim_identity' : touched ? 'seat_session_event_window' : null;
       return {
         launch_id: field('observed', launch.launch_id, 'runtime:launch-journal'),
+        join: field(basis ? 'observed' : 'not_observed', basis ? { basis, ticket_events: touched?.events ?? null } : null,
+          basis === 'seat_session_event_window' ? 'runtime:launch-journal:touched_tickets' : 'runtime:launch-journal:ticket_id'),
         loop_session: field('observed', launch.launch_id.split(':').slice(0, 2).join(':'), 'runtime:launch-id'),
         provider: field(session ? 'observed' : 'not_observed', session?.provider ?? null, 'runtime:launch-journal'),
         model: field(session ? 'observed' : 'not_observed', session?.model ?? null, 'runtime:launch-journal'),

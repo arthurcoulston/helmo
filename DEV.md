@@ -99,6 +99,19 @@ projection of ticket identity, ownership, blockers and event launch metadata.
 It never transports ticket bodies or event payloads; Runtime also caps every
 captured Work CLI response and turns an overflow into its content-safe refusal.
 
+A traced launch reaches its ticket by one of two bases, and every launch says
+which one. A pool worker's launch names its own ticket in the journal and
+stamps that launch id as the `generation` on each Work event it writes, so the
+join is the launch's own key. A scoped seat has neither: it claims inside its
+session, and fencing it to a generation would fence it out of the claim its
+next iteration resumes, so the loop instead journals `touched_tickets` — the
+tickets the seat session wrote to since this launch opened, the same measured
+window the meter charges. That is an attribution, not a key, and the trace
+reports it as `seat_session_event_window` rather than letting it read as one.
+A settled launch naming no ticket is sound, not malformed: a scoped iteration
+touches none, and a claim-intent launch settles complete precisely because
+nothing was claimed. Only an admitted launch is held to its ticket.
+
 Every Helmo-family surface accepts canonical `HELMO_INSTALLATION`, followed by
 the legacy `ROADMAP_LABEL`, `HELMO_LABEL`, and `REV_LABEL`. Precedence picks the key when one is set; two accepted keys
 carrying distinct values refuse at startup rather than guessing. Adding a

@@ -15,7 +15,7 @@ import { logEvent, occupiedPid, paceAutoRelease, pidAlive, runningStamp, sClear,
 import { ancestryBroken, ancestryStamp } from './ancestry.js';
 import { runSession } from './shim.js';
 import { GlobalConfig, LoopConfig, RunChoice } from './types.js';
-import { launchGroupFile, launchSessionRunning, readLaunch, recordLaunchAdmission, recordLaunchClaim, recordLaunchDispatch, recordLaunchIntent, recordLaunchSession, settleLaunch, unsettledLaunches } from './launch-journal.js';
+import { launchGroupFile, launchSessionRunning, readLaunch, recordLaunchAdmission, recordLaunchClaim, recordLaunchDispatch, recordLaunchIntent, recordLaunchSession, recordLaunchTouched, settleLaunch, unsettledLaunches } from './launch-journal.js';
 import { commandName } from './command-name.js';
 
 const sleep = (s: number) => new Promise((r) => setTimeout(r, s * 1000));
@@ -784,6 +784,13 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       } catch (e) {
         logEvent(l.name, 'session-trace-failed', `${journaledLaunchId} ${String(e).split('\n')[0]!.slice(0, 160)}`);
       }
+      // A scoped seat's Work events carry no launch generation to join on, so
+      // the journal records which tickets this launch's session actually wrote
+      // to — the same measured window the meter charges below (H-2901). Its own
+      // block, after settling, so a failure here never leaves the entry
+      // unsettled and never affects the run.
+      try { recordLaunchTouched(l.name, journaledLaunchId, actorTickets(g, l, before.max_seq)); }
+      catch (e) { logEvent(l.name, 'launch-touched-failed', `${journaledLaunchId} ${String(e).split('\n')[0]!.slice(0, 160)}`); }
     }
     let launchTrusted = true;
 

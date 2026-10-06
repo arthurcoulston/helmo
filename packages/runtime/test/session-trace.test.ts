@@ -75,6 +75,97 @@ describe('session trace diagnostic', () => {
     expect(result.launches[0]).not.toHaveProperty('session');
   });
 
+  it('joins a scoped seat\'s real launch by its measured window and labels the basis', () => {
+    const home = mkdtempSync(join(tmpdir(), 'rev-trace-scoped-'));
+    process.env.REV_HOME = home;
+    const launches = join(home, 'state', 'mason', 'launches');
+    mkdirSync(launches, { recursive: true });
+    // The live shape: a scoped seat journals no ticket_id and its Work events
+    // carry no generation, so only the measured window names the ticket.
+    const live = {
+      format: 1, phase: 'complete', launch_id: 'rev:mason:64302:1:1791258882828',
+      intent_at: '2026-10-06T03:54:45.229Z', dispatching_at: '2026-10-06T03:54:45.242Z',
+      completed_at: '2026-10-06T03:55:13.637Z',
+      touched_tickets: [{ id: 'H-7', events: 3 }],
+      session: {
+        provider: 'codex', model: 'gpt-5.6-luna', provider_session_id: '01a10f59-7dcc-7732-8273-40bedc6fbc10',
+        provider_session_id_state: 'observed', started_at: '2026-10-06T03:54:45.258Z',
+        ended_at: '2026-10-06T03:55:13.625Z', outcome: 'ok', tokens: 183351, cost_usd: 0.011784,
+      },
+    };
+    writeFileSync(join(launches, 'scoped.json'), JSON.stringify(live));
+    const read = readTicketLaunches(['mason'], 'H-7');
+    expect(read.malformed).toBe(0);
+    expect(read.launches).toHaveLength(1);
+    const result = sessionTrace({ ...ticket, events: [] }, read.launches, read.malformed) as any;
+    expect(result.malformed_launch_records).toMatchObject({ state: 'measured_zero', value: 0 });
+    expect(result.launches[0].join).toMatchObject({
+      state: 'observed', value: { basis: 'seat_session_event_window', ticket_events: 3 },
+      source: 'runtime:launch-journal:touched_tickets',
+    });
+    // A measured window is not the launch's own key, so the Work event it
+    // would have named stays not observed rather than being guessed.
+    expect(result.launches[0].work_event.state).toBe('not_observed');
+    expect(result.launches[0].provider.value).toBe('codex');
+    expect(readTicketLaunches(['mason'], 'H-8').launches).toEqual([]);
+  });
+
+  it('calls a pool launch\'s own ticket identity an exact claim join', () => {
+    const result = sessionTrace(ticket, [{
+      format: 1, phase: 'complete', launch_id: 'rev:mason:1', ticket_id: 'H-7', intent_at: '2026-10-05T00:00:00.000Z',
+      completed_at: '2026-10-05T00:00:04.000Z', session: { provider: 'codex', model: 'fixture', provider_session_id_state: 'unsupported', started_at: '2026-10-05T00:00:01.000Z', ended_at: '2026-10-05T00:00:02.000Z', outcome: 'ok' },
+    }], 0) as any;
+    expect(result.launches[0].join).toMatchObject({
+      state: 'observed', value: { basis: 'launch_claim_identity', ticket_events: null },
+      source: 'runtime:launch-journal:ticket_id',
+    });
+  });
+
+  it('accepts a settled launch that claimed nothing, and still holds an admitted one to its ticket', () => {
+    const home = mkdtempSync(join(tmpdir(), 'rev-trace-settled-'));
+    process.env.REV_HOME = home;
+    const launches = join(home, 'state', 'alpha', 'launches');
+    mkdirSync(launches, { recursive: true });
+    // Nothing was claimed, so this completes with neither ticket nor session.
+    writeFileSync(join(launches, 'nothing-claimed.json'), JSON.stringify({
+      format: 1, phase: 'complete', launch_id: 'rev:alpha:1', claim: true,
+      intent_at: '2026-10-05T00:00:00.000Z', completed_at: '2026-10-05T00:00:01.000Z',
+    }));
+    // A workflow admission is granted for one ticket; losing it IS corruption.
+    writeFileSync(join(launches, 'admitted-no-ticket.json'), JSON.stringify({
+      format: 1, phase: 'complete', launch_id: 'rev:alpha:2', admission_id: 'adm-1',
+      intent_at: '2026-10-05T00:00:00.000Z', completed_at: '2026-10-05T00:00:01.000Z',
+    }));
+    const read = readTicketLaunches(['alpha'], 'H-7');
+    expect(read.malformed).toBe(1);
+    expect(read.launches).toEqual([]);
+  });
+
+  it('refuses a measured window carrying anything but ticket ids and counts', () => {
+    const home = mkdtempSync(join(tmpdir(), 'rev-trace-touched-'));
+    process.env.REV_HOME = home;
+    const launches = join(home, 'state', 'alpha', 'launches');
+    mkdirSync(launches, { recursive: true });
+    const base = {
+      format: 1, phase: 'complete', launch_id: 'rev:alpha:1',
+      intent_at: '2026-10-05T00:00:00.000Z', completed_at: '2026-10-05T00:00:01.000Z',
+    };
+    for (const [name, touched] of [
+      ['content.json', [{ id: 'H-7', events: 1, note: 'SYNTHETIC_PRIVATE_PROMPT' }]],
+      ['value.json', [{ id: 'H-7', events: { credential: 'SYNTHETIC_PRIVATE_VALUE' } }]],
+      ['id.json', [{ id: 'SYNTHETIC_PRIVATE_PATH', events: 1 }]],
+      ['shape.json', { 'H-7': 1 }],
+    ] as [string, unknown][]) {
+      writeFileSync(join(launches, name), JSON.stringify({ ...base, launch_id: `rev:alpha:${name}:1:1`, touched_tickets: touched }));
+    }
+    const read = readTicketLaunches(['alpha'], 'H-7');
+    expect(read.malformed).toBe(4);
+    expect(read.launches).toEqual([]);
+    const trace = JSON.stringify(sessionTrace({ ...ticket, events: [] }, read.launches, read.malformed));
+    expect(trace).not.toContain('SYNTHETIC_PRIVATE_');
+    expect(trace).toContain('"malformed/refused"');
+  });
+
   it('refuses malformed Work metadata instead of rendering nested content', () => {
     expect(() => sessionTrace({
       ...ticket,

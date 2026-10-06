@@ -24,6 +24,13 @@ export interface LaunchJournalEntry {
    *  (H-574). Set at intent, because the claim may land even when this
    *  process dies before learning which ticket it got. */
   claim?: true;
+  /** Tickets this launch's session wrote to, measured by Rev over the seat
+   *  session's own Work event window. A scoped seat claims inside its session
+   *  and is deliberately not fenced to a launch generation (H-574), so its
+   *  Work events name none and this window is the only association the store
+   *  can offer. Kept apart from `ticket_id`, which is an admitted or claimed
+   *  identity, so a trace never passes the one off as the other (H-2901). */
+  touched_tickets?: { id: string; events: number }[];
   admission_id?: string;
   definition_revision?: string;
   requirement_refs?: { requirement_id: string; manifest_id: string; decision_id: string }[];
@@ -237,6 +244,24 @@ export function settleLaunch(loop: string, launchId: string, phase: 'complete' |
     ...prior, phase,
     ...(phase === 'complete' ? { completed_at: at } : { quarantined_at: at }),
   });
+}
+
+/** Record which tickets this launch's session wrote to. Written after the
+ *  session ends, so it may land on an already settled entry; the set is
+ *  immutable once written, and an empty measurement writes nothing. */
+export function recordLaunchTouched(loop: string, launchId: string, touched: { id: string; events: number }[]): LaunchJournalEntry {
+  const prior = readLaunch(loop, launchId);
+  if (!prior) throw new Error(`Launch ${launchId} has no durable intent.`);
+  if (prior.touched_tickets) {
+    if (JSON.stringify(prior.touched_tickets) !== JSON.stringify(touched)) {
+      throw new Error(`Launch journal identity ${launchId} was replayed with a different touched-ticket set.`);
+    }
+    return prior;
+  }
+  if (!touched.length) return prior;
+  const entry = { ...prior, touched_tickets: touched };
+  writeDurable(entryPath(loop, launchId), entry);
+  return entry;
 }
 
 /** Attach the content-off provider result to the exact durable launch. */

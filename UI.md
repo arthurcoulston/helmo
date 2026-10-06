@@ -178,20 +178,26 @@ reviewers check the exact candidate and full component refresh proof.
 ## Where this stands
 
 The foundation is now a standard upstream implementation. `packages/shell` is
-the official `shadcn@4.21.3` Vite project for `radix-nova` (`--base radix
---preset nova`), neutral, TSX, lucide, with `sidebar breadcrumb card badge
-alert` and their dependencies installed from the registry. Every generated
-file is byte-identical to what that CLI writes: proven by regenerating the pin
-into a throwaway directory and comparing, not by comparing with another
-project's copies. The custom DOM-adoption and CSS-rewriting bridge is gone,
-preflight and the cascade layers are upstream's, and the font baseline is the
-preset's own Geist, which is also what removes the missing-font defect. The
-header divider follows the sidebar block's own composition
-(`data-vertical:h-4 data-vertical:self-auto`), which is what removes the
-misalignment.
+the official `shadcn@4.21.3` Vite project for `--base radix --preset
+b6YWkyPAm` — Nova, Mauve, Inter, small radius, TSX, lucide — with `sidebar
+breadcrumb card badge alert collapsible` and their dependencies installed from
+the registry. Every generated file is byte-identical to what that CLI writes:
+proven by regenerating the pin into a throwaway directory and comparing, not
+by comparing with another project's copies. The custom DOM-adoption and
+CSS-rewriting bridge is gone, preflight and the cascade layers are upstream's,
+and the font baseline is the preset's own Inter, which is also what removes
+the missing-font defect. The header divider follows the sidebar block's own
+composition (`data-vertical:h-4 data-vertical:self-auto`), which is what
+removes the misalignment.
 
 `packages/shell/upstream.json` records the version, template, base, preset,
-inventory, official commands and a sha256 per generated file.
+inventory, official commands, what the preset resolves to, and a sha256 per
+generated file. The preset is an opaque code, so the generated files alone
+cannot say which one produced them: `upstream:check` asks the CLI
+(`preset resolve --json`) inside the project it just generated and fails if
+that is not `b6YWkyPAm` with no fallbacks, and the offline test carries
+Arthur's selection as a constant of its own, so a pin edited to a different
+preset and refreshed is internally consistent and still fails.
 `npm run upstream:check --workspace @helmo/shell` is the conformity proof and
 `upstream:refresh` is the refresh path; `-- --cli <version>` aims either at a
 newer release. 4.21.3 is the current latest, so the recorded evidence is a
@@ -217,13 +223,6 @@ toggles it on the `d` key. Window placement, a multi-monitor arrangement, and
 initial sidebar visibility in a popped-out window remain undecided; the
 application opens with the sidebar shown and reads no cookie back, so no
 window moves another.
-
-The configuration conflict worth deciding: `DEV.md` previously recorded the
-selection as preset `b6YWkyPAm` with Mauve and Inter. That id resolves to
-nothing in the registry, the documented presets are `nova, vega, maia, lyra,
-mira, luma, sera, rhea`, and Mauve and Inter would both be the theme overrides
-this contract forbids. The repository follows the configuration this contract
-names — `radix-nova`, neutral — and its appearance is the preset's own.
 
 ## Upstream references
 

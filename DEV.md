@@ -20,21 +20,16 @@ Read [UI.md](UI.md) before any UI design, prototype, implementation or review.
 All Helmo surfaces require a standard upstream shadcn/ui implementation with
 zero customization or deviation and a verified full component refresh/upgrade
 path. Use official setup, generated components/styling and documented composition;
-no custom theme, reset, cascade or component patches. The selected configuration is
-`radix-nova` with the neutral base colour, TSX and lucide, recorded in
-`packages/shell/upstream.json` and taken from the preset's own upstream
-defaults. UI.md governs the generated baseline, the supported setup and the
-refresh evidence. Migration must preserve existing product behavior and entry
-points. It does not authorize a new information architecture or a dashboard
-redesign.
-
-An earlier note here recorded the selection as preset `b6YWkyPAm` with Mauve
-and Inter. Neither is reachable through the documented CLI — its presets are
-`nova, vega, maia, lyra, mira, luma, sera, rhea`, that id resolves to nothing
-in the registry, and Mauve and Inter would both be exactly the theme overrides
-the zero-deviation rule forbids. Until that is decided, the configuration above
-is the one in the repository, and the appearance is the preset's own: neutral
-greys and Geist.
+no custom theme, reset, cascade or component patches. The selected
+configuration is Arthur's `--preset b6YWkyPAm` with `--base radix`, recorded
+in `packages/shell/upstream.json`: Nova, Mauve base/theme/chart colours,
+Inter, small radius, TSX and lucide, all of it the CLI's own output for that
+code. The preset is a code rather than a named style, so `upstream:check`
+asks the CLI to resolve it inside the project it generated — a configuration
+that merely agrees with itself is not evidence that it is the requested one.
+UI.md governs the generated baseline, the supported setup and the refresh
+evidence. Migration must preserve existing product behavior and entry points.
+It does not authorize a new information architecture or a dashboard redesign.
 
 ### What is migrated, and what is not
 
@@ -46,15 +41,16 @@ before reading it is the division:
 - **Generated, never edited.** `components.json`, `vite.config.ts`, the
   `tsconfig`s, `src/index.css`, `src/main.tsx`, `src/lib/utils.ts`,
   `src/hooks/`, `src/components/theme-provider.tsx` and everything under
-  `src/components/ui/`. Preflight, the cascade layers, the colour tokens and
-  Geist are all upstream's, untouched.
+  `src/components/ui/`. Preflight, the cascade layers, the Mauve tokens and
+  Inter are all upstream's, untouched.
 - **Ours.** `index.html` and `src/App.tsx` — the composition, the menu, the
   area views and the data reads. Plus `upstream.json`, `scripts/upstream.mjs`
   and `test/upstream.test.mjs`, which are the relationship with upstream
   rather than part of the product.
 
-`upstream.json` pins the CLI version, template, base, preset, component
-inventory and a sha256 per generated file, and records the official commands.
+`upstream.json` pins the CLI version, template, base, preset, what that
+preset resolves to, the component inventory and a sha256 per generated file,
+and records the official commands.
 `npm run upstream:check --workspace @helmo/shell` regenerates that exact pin
 with the official CLI into a throwaway directory and fails on any byte of
 difference; `upstream:refresh` takes upstream's version and rewrites the

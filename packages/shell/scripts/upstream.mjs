@@ -48,7 +48,23 @@ function generate(cli) {
   };
   run(['init', '--template', pin.template, '--base', pin.base, '--preset', pin.preset, '-y', '--no-monorepo', '-n', 'app'], work);
   run(['add', ...pin.components, '-y', '-o'], project);
-  return { work, project };
+  const resolve = spawnSync('npx', ['--yes', `shadcn@${cli}`, 'preset', 'resolve', '--json'], { cwd: project, encoding: 'utf8' });
+  if (resolve.status !== 0) throw new Error(`shadcn preset resolve exited ${resolve.status}: ${resolve.stderr}`);
+  return { work, project, resolved: JSON.parse(resolve.stdout) };
+}
+
+/* The preset is an opaque code, so the generated files alone cannot say which
+   one produced them. This asks the CLI, inside the project it just generated,
+   and holds it to the code Arthur chose resolving exactly — a fallback means
+   the registry answered with something adjacent instead. */
+function presetDrift(resolved) {
+  const drift = [];
+  if (resolved.code !== pin.preset) drift.push(`preset resolves as ${resolved.code}, not the requested ${pin.preset}`);
+  if (resolved.fallbacks?.length) drift.push(`preset needed fallbacks: ${resolved.fallbacks.join(', ')}`);
+  for (const [key, want] of Object.entries(pin.resolved.values)) {
+    if (resolved.values?.[key] !== want) drift.push(`${key} resolves as ${resolved.values?.[key]}, pinned as ${want}`);
+  }
+  return drift;
 }
 
 const mode = process.argv[2];
@@ -59,10 +75,12 @@ if (!['check', 'refresh'].includes(mode)) {
 }
 if (cli !== pin.cli && mode === 'check') console.log(`Comparing against shadcn@${cli}, not the pinned ${pin.cli}.`);
 
-const { work, project } = generate(cli);
+const { work, project, resolved } = generate(cli);
 try {
   const files = generatedFiles(project);
   if (mode === 'refresh') {
+    const wrong = presetDrift(resolved);
+    if (wrong.length) throw new Error(`refusing to refresh: ${wrong.join('; ')}`);
     for (const file of files) cpSync(join(project, file), join(root, file));
     pin.cli = cli;
     pin.files.manifest = Object.fromEntries(files.map((file) => [file, sha(readFileSync(join(root, file)))]));
@@ -72,7 +90,7 @@ try {
     process.exit(0);
   }
 
-  const drift = [];
+  const drift = presetDrift(resolved);
   for (const file of files) {
     const want = readFileSync(join(project, file));
     const have = read(join(root, file));
@@ -84,12 +102,12 @@ try {
     if (!files.includes(file)) drift.push(`${file}: pinned but upstream no longer generates it`);
   }
   if (drift.length) {
-    console.error(`shadcn@${cli} ${pin.style}: ${drift.length} file(s) are not the official output.`);
+    console.error(`shadcn@${cli} ${pin.style}: ${drift.length} difference(s) from the official output.`);
     for (const line of drift) console.error(`  ${line}`);
     console.error(`Run npm run upstream:refresh --workspace @helmo/shell to take upstream's version.`);
     process.exit(1);
   }
-  console.log(`shadcn@${cli} ${pin.style}: all ${files.length} generated files are byte-identical to the official output.`);
+  console.log(`shadcn@${cli} ${pin.style} (preset ${resolved.code}, no fallbacks): all ${files.length} generated files are byte-identical to the official output.`);
   console.log(`Local application code, untouched by a refresh: ${pin.files.local.join(', ')}`);
 } finally {
   rmSync(work, { recursive: true, force: true });

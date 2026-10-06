@@ -3,8 +3,24 @@
   "cli": "4.21.3",
   "template": "vite",
   "base": "radix",
-  "preset": "nova",
+  "preset": "b6YWkyPAm",
   "style": "radix-nova",
+  "resolved": {
+    "$comment": "What the official CLI reports for `preset resolve --json` in the generated project. Arthur chose the code; these are the values it decodes to, and upstream:check fails if the generated project resolves to anything else or needs a fallback.",
+    "fallbacks": [],
+    "values": {
+      "style": "nova",
+      "baseColor": "mauve",
+      "theme": "mauve",
+      "chartColor": "mauve",
+      "iconLibrary": "lucide",
+      "font": "inter",
+      "fontHeading": "inherit",
+      "radius": "small",
+      "menuAccent": "subtle",
+      "menuColor": "default"
+    }
+  },
   "components": [
     "sidebar",
     "breadcrumb",
@@ -14,7 +30,7 @@
     "collapsible"
   ],
   "commands": {
-    "install": "npx shadcn@<cli> init --template vite --base radix --preset nova -y --no-monorepo -n app",
+    "install": "npx shadcn@<cli> init --template vite --base radix --preset b6YWkyPAm -y --no-monorepo -n app",
     "add": "npx shadcn@<cli> add sidebar breadcrumb card badge alert collapsible -y -o",
     "check": "npm run upstream:check --workspace @helmo/shell",
     "refresh": "npm run upstream:refresh --workspace @helmo/shell",
@@ -45,12 +61,12 @@
       "test/upstream.test.mjs"
     ],
     "manifest": {
-      "components.json": "d0ada54e59710099b766eae59a1a35d31b717a6ec43d73a8814de1815ddc1749",
+      "components.json": "aadc5e216b8c950c431eed626d98fa5334e379f88c100942b40f2370f41202f6",
       "vite.config.ts": "4a45e37c094d0b9fc39e28512e981f628732eb5571bf42b4cf838f708c66c129",
       "tsconfig.json": "23c57da26bcec4996c4168f01187840c8ec08a1d60c2dd0edad6d984f5c33680",
       "tsconfig.app.json": "9080094cd9a121b2086148ccd1676ead6f5260850db90cee9af6f0ab02da9b5a",
       "tsconfig.node.json": "c7a65fc2be982212721c93c724ebb8f799f2e54a060447f9ad31fa27f3a5631f",
-      "src/index.css": "9bde270cb8d0493a24091df8ae292e3a2b3484f91d738fa70a037866fe206d48",
+      "src/index.css": "48f4c945e9a8fcd51c73d3dcfe402dc6f59e970a3c42452ef316ea7bec059bef",
       "src/main.tsx": "b9ba0ba551c816ee0dc6c0f17b7482494187583a416c5907b2433d163954c8b0",
       "src/lib/utils.ts": "14300d758170c270c75b057f38fedb3793a5920ea872f0477e29fb131185e8a7",
       "src/components/theme-provider.tsx": "88c52942808e8f1c5a0e64e3bf86a5d8d700ca5101646c800eca6db6cafc0e3e",

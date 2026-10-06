@@ -34,6 +34,9 @@ longer.
   condition, a new resource, extra words or a partial overlap all still reach
   the human. Relayed answers and qualified cross-installation references count
   for nothing.
+- Add `rev reload <loop|role> [--worker]`, which respawns one worker on the
+  current roster after its in-flight iteration, with no fleet drain. It never
+  clears STOP/HOLD/BLOCKED: a halt present when the loop exits keeps it down.
 
 ## v0.9.4 — 2026-10-05
 

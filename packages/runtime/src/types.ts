@@ -117,5 +117,5 @@ export interface SessionResult {
   provider_session_id?: string;
 }
 
-export const SENTINELS = ['STOP', 'HOLD', 'BLOCKED', 'LIMIT', 'IDLE', 'IDLE_AT', 'RUNNING', 'PACE', 'PARKED', 'SEAT_HELD', 'BACKOFF', 'WEDGED', 'REDEPLOY'] as const;
+export const SENTINELS = ['STOP', 'HOLD', 'BLOCKED', 'LIMIT', 'IDLE', 'IDLE_AT', 'RUNNING', 'PACE', 'PARKED', 'SEAT_HELD', 'BACKOFF', 'WEDGED', 'REDEPLOY', 'RELOAD'] as const;
 export type Sentinel = (typeof SENTINELS)[number];

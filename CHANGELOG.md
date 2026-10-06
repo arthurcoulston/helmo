@@ -13,6 +13,9 @@ longer.
 
 ## Unreleased — 0.9.5
 
+- Wrap the Runtime view's build and usage lines, so an unstamped build printing
+  its own directory can no longer lay the page out wider than a phone's
+  viewport.
 - Recover scoped-seat trace attribution after a loop driver dies by holding
   replacement work until its orphaned session exits, then finishing the dead
   launch's measured ticket window from its durable pre-launch cursor.

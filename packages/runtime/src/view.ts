@@ -296,7 +296,7 @@ ${ESTATE_TOKENS}
     .st-LIMIT, .st-PARKED, .st-BACKOFF { color: var(--warn-text); } .st-STOP, .st-HOLD { color: var(--ink-3); }
     .st-halted { color: var(--ink-3); }
     .trace { font-family: ui-monospace, monospace; font-size: 11px; color: var(--ink-2); }
-    .usage { font-family: ui-monospace, monospace; font-size: 12px; color: var(--ink-2); margin: 0 0 12px; }
+    .usage { font-family: ui-monospace, monospace; font-size: 12px; color: var(--ink-2); margin: 0 0 12px; overflow-wrap: anywhere; }
     .usage.warning { color: var(--warn-text); } .usage.critical { color: var(--critical); font-weight: 600; }
     .blockreason { font-weight: 400; font-size: 12px; color: var(--critical); }
     .idlereason { font-weight: 400; font-size: 12px; color: var(--ink-3); }

@@ -27,6 +27,14 @@ describe('view accessibility', () => {
     expect(view).not.toContain('color: var(--ink-4)');
   });
 
+  it('wraps the provenance line, which carries a filesystem path', () => {
+    // An unstamped build prints its own directory, and a monospace path has no
+    // break opportunity: on a phone the paragraph laid out 426px wide in a
+    // 326px box and took the whole document to 458px (H-2923). Same rule, and
+    // the same reason, as the title line above.
+    expect(view).toMatch(/\.usage \{[^}]*overflow-wrap: anywhere;/);
+  });
+
   it('polls in place and yields while a reader has keyboard focus', () => {
     expect(view).toContain('document.activeElement !== document.body');
     expect(view).toContain('current.replaceWith(replacement)');

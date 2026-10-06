@@ -346,10 +346,17 @@ test('the app listener serves every product and aggregate health', async (t) => 
     child.on('error', reject);
   });
 
-  for (const [path, title] of [['/', '<title>Helmo</title>'], ['/roadmap', '<title>Roadmap</title>'], ['/run', '<title>Rev</title>']]) {
+  for (const [path, title] of [['/', '<title>Helmo</title>'], ['/roadmap', '<title>Helmo</title>'], ['/run', '<title>Helmo</title>']]) {
     const response = await fetch(`${origin}${path}`);
     assert.equal(response.status, 200, path);
     assert.match(await response.text(), new RegExp(title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), path);
+  }
+  for (const area of ['work', 'roadmap', 'runtime']) {
+    const response = await fetch(`${origin}/api/v1/${area}`);
+    assert.equal(response.status, 200, area);
+    const document = await response.json();
+    assert.equal(document.api, 'helmo/v1');
+    assert.equal(document.area, area);
   }
   const health = await fetch(`${origin}/health.json`);
   assert.equal(health.status, 200);

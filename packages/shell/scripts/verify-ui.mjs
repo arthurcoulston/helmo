@@ -4,12 +4,16 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Store as RoadmapStore } from '../../roadmap/dist/store.js';
-import { Store } from '../../work/dist/store.js';
+import { assertBuilt } from '../../../scripts/build.mjs';
 import { launchBrowser } from '../../work/scripts/browser.mjs';
 import { env } from '../../cli/test/installation.mjs';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
+assertBuilt(root);
+const core = await import('../../core/dist/index.js');
+assert.equal(typeof core.uiRequest, 'function', 'The compiled core is stale. Prepare and build this exact ref in a disposable checkout before running verify:ui; never rebuild a shared installation.');
+const { Store } = await import('../../work/dist/store.js');
+const { Store: RoadmapStore } = await import('../../roadmap/dist/store.js');
 const dir = mkdtempSync(join(tmpdir(), 'helmo-ui-proof-'));
 for (const name of ['work', 'roadmap', 'runtime', 'shots']) mkdirSync(join(dir, name));
 copyFileSync(join(root, 'packages/runtime/examples/roster.toml'), join(dir, 'runtime/roster.toml'));

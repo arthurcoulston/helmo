@@ -212,7 +212,10 @@ are removed. Product behavior lives in `App.tsx`, `WorkRecord.tsx`,
 `RoadmapView.tsx`, `TeamView.tsx` and `RuntimeView.tsx`; generated components,
 hooks, theme provider and styles remain untouched official output.
 
-The browser verification is `npm run verify:ui --workspace @helmo/shell`.
+The browser verification runs after `npm run prepare:cold && npm run build`
+in a disposable checkout of the exact commit: `npm run verify:ui --workspace @helmo/shell`.
+Never run it against the shared checkout's intentionally unchanged compiled
+artifacts or rebuild that checkout as a workaround.
 It uses synthetic stores and the managed headless browser, exercising actual
 answers, copies, disclosures, two simultaneous windows, stale-answer refusal,
 embedded sizing, failed refreshes, keyboard table scrolling and both themes at

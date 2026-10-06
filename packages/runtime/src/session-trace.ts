@@ -53,7 +53,8 @@ function validatedLaunch(value: unknown): LaunchJournalEntry | null {
     || !timestamp(value.intent_at)) return null;
   if (value.ticket_id !== undefined && !ticketIdentifier(value.ticket_id)) return null;
   if (value.claim !== undefined && value.claim !== true) return null;
-  if (value.event_seq_floor !== undefined && (!Number.isSafeInteger(value.event_seq_floor) || value.event_seq_floor < 0)) return null;
+  if (value.event_seq_floor !== undefined
+    && (typeof value.event_seq_floor !== 'number' || !Number.isSafeInteger(value.event_seq_floor) || value.event_seq_floor < 0)) return null;
   if (value.touched_tickets !== undefined && !touchedTickets(value.touched_tickets)) return null;
   // A settled launch is not required to name a ticket. A scoped seat claims
   // inside its session and journals no ticket at all, and a claim-intent

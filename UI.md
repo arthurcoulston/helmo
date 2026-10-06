@@ -36,6 +36,29 @@ table feature to the product. The sidebar must be hideable using its existing
 shadcn/ui capability; the trigger remains accessible. A space critique is not
 authorization to replace the navigation framework.
 
+## Header and separate windows
+
+The sidebar show/hide trigger shares one compact header row with the current
+view title and breadcrumb, when present, following the
+[shadcn sidebar blocks](https://ui.shadcn.com/blocks/sidebar). Do not give the
+menu toggle a separate row. Hiding the sidebar reclaims its complete column:
+no collapsed icon rail or reserved navigation gutter remains. Use the standard
+offcanvas collapse behavior; the trigger stays in the existing view header.
+
+Every page has an upper-right icon control in that same header row to open
+the current page in a separate window. Use the shared shadcn icon Button and
+Tooltip with an accessible name such as "Open in new window". Preserve the
+current view context, including applicable filters and scope, and keep the
+original window in place. Navigation and sidebar changes in one window must
+not unexpectedly change another monitoring window.
+
+Request the new window directly from the user's click. Browser preferences
+and popup policies control the final window/tab behavior; verify the actual
+supported desktop browsers and provide a usable fallback if opening is
+blocked. Opening the page must not perform work actions or submit forms.
+Initial sidebar visibility in the new window, automatic window placement,
+and a particular multi-monitor arrangement have not been decided.
+
 ## Preserve the product while aligning it
 
 Keep the agreed information architecture, theme, product meanings and working

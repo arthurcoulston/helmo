@@ -24,6 +24,9 @@ role names, then that area's `DEV.md`. Nothing else here.
 - **Coding / dev session** — working on Helmo itself: read `DEV.md` for what
   the whole product shares, then the `DEV.md` of the area you are changing
   (`packages/work`, `packages/roadmap`, `packages/runtime`, `packages/core`).
+  Before designing, prototyping, implementing or reviewing any Helmo UI, also
+  read `UI.md`. shadcn/ui is the required component foundation across the app;
+  matching its colors or tokens alone is not component adoption.
 - **Agent using Helmo as a tool** (MCP or CLI from anywhere else): the tool
   descriptions are self-sufficient; read nothing here.
 - **Loop sessions** never start here — Runtime launches them in their own

@@ -13,6 +13,15 @@ internals, and a dev session reads this one first and then that one.
 | Core | `packages/core` | `@helmo/core` | this file |
 | Front command | `packages/cli` | `helmo` | this file |
 
+## UI component contract
+
+Read [UI.md](UI.md) before any UI design, prototype, implementation or review.
+All Helmo surfaces use shadcn/ui components and their documented composition
+patterns. The shared token seam described below is theme integration only;
+the legacy hand-written views are not evidence of component compliance.
+Migration must preserve existing product behavior and entry points. It does
+not authorize a new information architecture or a dashboard redesign.
+
 ## What `packages/cli` owns
 
 `packages/cli` is the whole of `helmo`: one table of groups, and a dispatch that
@@ -193,7 +202,7 @@ in one of them is a defect in all three:
 
 Product-wide documents live at the root and exist once: `README.md`,
 `LICENSE`, `SECURITY.md`, `THIRD_PARTY_NOTICES.md`, `CHANGELOG.md`,
-`VERSIONING.md`, `AGENTS.md` (with `CLAUDE.md` as its shim), `AGENT-INSTALL.md`,
+`VERSIONING.md`, `AGENTS.md` (with `CLAUDE.md` as its shim), `UI.md`, `AGENT-INSTALL.md`,
 `INSTALLATIONS.md`, `ENTRY-POINTS.md`, `ISOLATION-CHECKS.md`,
 `COMPATIBILITY.md` and this file.
 `scripts/build.test.mjs` asserts that set is present and unduplicated — a

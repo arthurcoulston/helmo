@@ -87,41 +87,13 @@ describe('Ready honors the same gates as the work queue', () => {
       });
     });
 
-    const html = await (await fetch(`http://127.0.0.1:${port}/`)).text();
-    const section = (name: string) => {
-      const start = html.indexOf(`<h2>${name}</h2>`);
-      expect(start, `the ${name} section is missing`).toBeGreaterThan(-1);
-      const end = html.indexOf('</section>', start);
-      return html.slice(start, end);
-    };
-    const readySection = section('Ready');
-    const blockedSection = section('Blocked');
-    const has = (where: string, t: { id: string }) => where.includes(`id="${t.id}"`);
-
-    // Offered: nothing stands between an agent and these.
-    expect(has(readySection, plain)).toBe(true);
-    expect(has(readySection, blocker)).toBe(true);
-    // A live bounded release is a real release — the queue offers it, so the page does.
-    expect(has(readySection, released)).toBe(true);
-
-    // Withheld, not hidden: every gate the queue applies lands on the blocked side.
-    for (const t of [indefinite, expired, dated, waiting]) {
-      expect(has(readySection, t), `${t.id} must not be offered as ready`).toBe(false);
-      expect(has(blockedSection, t), `${t.id} belongs under Blocked`).toBe(true);
-    }
-
-    // A held ticket says why it is held, where the operator is looking.
-    expect(blockedSection).toContain('⏸ on hold · The infrastructure project is parked.');
-    expect(blockedSection).toContain('⏸ on hold · Held with an expired release.');
-    expect(readySection).not.toContain('⏸ on hold');
-
-    // The stats are the same reading: three offered, four withheld.
-    expect(html).toContain('<div class="stat "><div class="stat-n">3</div><div class="stat-l">ready</div></div>');
-    expect(html).toContain('<div class="stat "><div class="stat-n">4</div><div class="stat-l">blocked</div></div>');
-
-    // A sitting is the operator's, and stays a hero card rather than a row.
-    expect(has(readySection, sitting)).toBe(false);
-    expect(has(blockedSection, sitting)).toBe(false);
-    expect(html).toContain('Two minutes in the dashboard to flip one switch.');
+    const data = (await (await fetch(`http://127.0.0.1:${port}/api/v1/work`)).json()).data;
+    const group = (id: string) => data.record.rows.find((row: { id: string }) => row.id === id)?.display.group;
+    for (const t of [plain, blocker, released]) expect(group(t.id)).toBe('ready');
+    for (const t of [indefinite, expired, dated, waiting]) expect(group(t.id)).toBe('blocked');
+    expect(data.record.rows.filter((row: { display: { group: string } }) => row.display.group === 'ready')).toHaveLength(3);
+    expect(data.record.rows.filter((row: { display: { group: string } }) => row.display.group === 'blocked')).toHaveLength(4);
+    expect(data.awaiting.sittings.some((row: { id: string }) => row.id === sitting.id)).toBe(true);
+    expect(data.record.rows.find((row: { id: string }) => row.id === indefinite.id).capacity_hold.reason).toBe('The infrastructure project is parked.');
   });
 });

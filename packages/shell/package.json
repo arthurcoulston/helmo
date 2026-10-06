@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test test/*.test.mjs",
     "upstream:check": "node scripts/upstream.mjs check",
-    "upstream:refresh": "node scripts/upstream.mjs refresh"
+    "upstream:refresh": "node scripts/upstream.mjs refresh",
+    "verify:ui": "node scripts/verify-ui.mjs"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.3.0",

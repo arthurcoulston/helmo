@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { installationLine, requestedInstallation, requireInstallation } from './install.js';
 import { Store } from './store.js';
 import { Project } from './types.js';
-import { loaded } from './build.js';
+import { loaded, running } from './build.js';
 
 const install = requireInstallation(process.env, undefined, requestedInstallation(process.argv.slice(2)));
 loaded();
@@ -24,7 +24,7 @@ export function roadmapHealth() {
 }
 
 export function roadmapSnapshot() {
-  return { installation: store.installationIdentity(), projects: store.dumpState()['projects'] as Project[], ranked: store.rankProjects(), objectives: store.listObjectives(), bets: store.listBets() };
+  return { installation: store.installationIdentity(), running: running(), projects: store.dumpState()['projects'] as Project[], ranked: store.rankProjects(), objectives: store.listObjectives(), bets: store.listBets() };
 }
 
 export function roadmapRequest(req: IncomingMessage, res: ServerResponse) {

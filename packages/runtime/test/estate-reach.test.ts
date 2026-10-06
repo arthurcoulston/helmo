@@ -23,7 +23,7 @@ const view = readFileSync(new URL('../src/view.ts', import.meta.url), 'utf8');
 /** The surfaces the view actually links to, read out of the view rather than
  *  restated here — a link added to another surface is covered the day it is
  *  written, and one removed stops being checked. */
-const linked = [...view.matchAll(/reachLink\('([^']+)'/g)].map((m) => m[1]);
+const linked = [...view.matchAll(/ESTATE_REACH\['([^']+)'\]/g)].map((m) => m[1]);
 
 /** Runs the page's script the way a browser would, against a stubbed origin
  *  and a stubbed anchor. `new Function` shadows `location` and `document` with
@@ -100,14 +100,6 @@ describe('vendored estate reach table', () => {
       expect(runScript(host, [{ href: 'http://localhost:4400/', reach: '/s/helmo-view/' }])).toEqual([
         'http://localhost:4400/',
       ]);
-  });
-
-  it('puts the script after the links it rewrites', () => {
-    // A script above the anchors finds none and rewrites nothing — no error,
-    // no warning, and a page that looks exactly like a working one.
-    const script = view.indexOf('<script>${REACH_SCRIPT}</script>');
-    expect(script).toBeGreaterThan(-1);
-    for (const m of view.matchAll(/\$\{reachLink\(/g)) expect(m.index).toBeLessThan(script);
   });
 
   it('carries nothing that would close its own script tag', () => {

@@ -203,16 +203,25 @@ preset and refreshed is internally consistent and still fails.
 newer release. 4.21.3 is the current latest, so the recorded evidence is a
 same-version full refresh, not a version-upgrade claim.
 
-**Overview, Team and Work are migrated; Roadmap and Runtime are not.** Those
-two remain complete documents rendered by their own handlers — and with the
-bridge removed they now carry no sidebar and no cross-area navigation at all.
-That is the stated temporary state of `H-2938@dev.rev` and `H-2939@dev.rev`,
-and it is why this foundation is a preview for review rather than a build to
-deploy: deploying it would leave two of five pages with no route to the other
-four. Work's requests, record lists, history, evidence, copy references and refresh
-now use the same application on unified, standalone and embedded entry points
-(H-2937). Its hand-styled renderer has been removed. A shadcn/ui shell around bespoke
-inner views still does not close the alignment audit.
+**All five areas now use the same standard application.** Overview, Work,
+Roadmap, Team and Runtime share the official sidebar and components. Work,
+Roadmap and Runtime standalone entry points serve that same built document;
+`?section=awaiting` draws only the awaiting family and reports its count and
+height to a same-origin embedding parent. All three legacy HTML/CSS renderers
+are removed. Product behavior lives in `App.tsx`, `WorkRecord.tsx`,
+`RoadmapView.tsx`, `TeamView.tsx` and `RuntimeView.tsx`; generated components,
+hooks, theme provider and styles remain untouched official output.
+
+The browser verification is `npm run verify:ui --workspace @helmo/shell`.
+It uses synthetic stores and the managed headless browser, exercising actual
+answers, copies, disclosures, two simultaneous windows, stale-answer refusal,
+embedded sizing, failed refreshes, keyboard table scrolling and both themes at
+390, 640 and 1280 pixels. `HELMO_AXE_SOURCE` may name an installed axe-core
+script for a WCAG A/AA audit of every rendered layout. API tests retain
+readiness, blocked-sitting, nonce/fingerprint and installation-isolation
+coverage. Removed source-string tests described the superseded HTML/CSS, not
+the browser's behavior; they do not define the new component structure.
+
 `H-2940@dev.rev` and `H-2941@dev.rev` are the independent integrated reviews.
 
 Two things in the build are upstream's behavior rather than product decisions,

@@ -60,12 +60,12 @@ upstream's real output rather than a snapshot of it that could quietly age.
 `test/upstream.test.mjs` is the offline half: it checks the manifest, so an
 edit to generated source is a test failure.
 
-**Overview, Team and Work are in this application.** Roadmap and Runtime are
-still each a complete document rendered by their own handler, with their own
-stylesheet — and now, with the old injection bridge gone, with no sidebar and
-no cross-area navigation at all. H-2938 and H-2939 move them in. Until they
-land this foundation is a preview to look at, not a build to deploy: deploying
-it would leave two of five pages with no way to reach the other four.
+**Every area is in this application.** Roadmap's server-ranked groups, charter,
+claims and lazy history are composed in `RoadmapView.tsx`; Runtime's complete
+status projection uses the official Table in `RuntimeView.tsx`. Team profiles
+are fetched only from configured roster members and shown in standard
+Collapsible components; a missing profile is an explicit Alert. All standalone
+entries serve the same application with navigation limited to their API areas.
 
 Work's record sections, bounded terminal history, full-record link, hash
 bookmarks, copy controls, evidence and lazy event history are in the application
@@ -93,7 +93,7 @@ no access-control headers — a cross-origin page can post the request but can
 never read the reply.
 
 The server's whole part is handing over built files. `appRequest` answers
-`/overview`, `/team` and `/work` with `dist/index.html`; `shellRequest` answers
+`/`, `/overview`, `/team`, `/work`, `/roadmap` and `/run` with `dist/index.html`; `shellRequest` answers
 `/assets/<name>` from `dist/assets/`, matching the name rather than joining it
 so a request can only ever name a file Vite emitted. The area each document
 draws comes from `location.pathname` in the browser, and its content from the

@@ -196,11 +196,12 @@ describe('served current release handoff', () => {
         }
       });
     });
-    const html = await (await fetch(`http://127.0.0.1:${port}/?section=awaiting`)).text();
-    expect(html).toContain('Ten minutes deciding whether to make this repository public.');
-    expect(html).toMatch(/Release decision — with <span class="actor">.*?mason<\/span>/s);
-    expect(html).not.toContain('choosing a colour');
-    expect(html).not.toMatch(/Release decision — with <span class="actor">.*?herald<\/span>/s);
+    const data = (await (await fetch(`http://127.0.0.1:${port}/api/v1/work`)).json()).data.awaiting;
+    const card = data.sittings.find((item: { release: boolean }) => item.release);
+    expect(card.sitting).toBe('Ten minutes deciding whether to make this repository public.');
+    expect(card.sitting_with).toBe('mason');
+    expect(JSON.stringify(data)).not.toContain('choosing a colour');
+
   });
 });
 
@@ -233,11 +234,11 @@ describe('served stale release handoff', () => {
         }
       });
     });
-    const awaiting = await (await fetch(`http://127.0.0.1:${port}/?section=awaiting`)).text();
-    expect(awaiting).toContain('data-count="0"');
-    const full = await (await fetch(`http://127.0.0.1:${port}/`)).text();
-    expect(full).toContain('release handoff stale');
-    expect(full).toContain('product completion moved');
-    expect(full).not.toContain('Release decision');
+    const data = (await (await fetch(`http://127.0.0.1:${port}/api/v1/work`)).json()).data;
+    expect(data.awaiting.sittings).toHaveLength(0);
+    const row = data.record.rows.find((item: { release_handoff?: { current: boolean } }) => item.release_handoff?.current === false);
+    expect(row.display.group).toBe('blocked');
+    expect(row.release_handoff.stale_reason).toContain('product completion moved');
+
   });
 });

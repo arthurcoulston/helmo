@@ -164,7 +164,7 @@ describe('both entry points reach one installation through its home (H-2472)', (
       });
     });
 
-    const html = await (await fetch(`http://127.0.0.1:${port}/`)).text();
+    const html = await (await fetch(`http://127.0.0.1:${port}/api/v1/roadmap`)).text();
     expect(html).toContain(title);
     expect(line).toContain(`install: ${installation(env({ ROADMAP_HOME: home })).label}`);
   });

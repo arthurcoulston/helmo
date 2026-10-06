@@ -24,7 +24,7 @@ describe('a current impediment outranks a later sitting', () => {
   const dir = mkdtempSync(join(tmpdir(), 'helmo-sitting-'));
   const db = join(dir, 'helmo.db');
   let view: ChildProcess | null = null;
-  let html = '';
+  let data: any;
 
   afterAll(() => {
     view?.kill();
@@ -127,62 +127,23 @@ describe('a current impediment outranks a later sitting', () => {
       });
     });
 
-    html = await (await fetch(`http://127.0.0.1:${port}/`)).text();
+    data = (await (await fetch(`http://127.0.0.1:${port}/api/v1/work`)).json()).data;
   });
-
-  const section = (name: string) => {
-    const start = html.indexOf(`<h2>${name}</h2>`);
-    expect(start, `the ${name} section is missing`).toBeGreaterThan(-1);
-    const end = html.indexOf('</section>', start);
-    return html.slice(start, end);
-  };
-  const has = (where: string, t: { id: string }) => where.includes(`id="${t.id}"`);
-
-  it('draws a sitting he cannot reach under Blocked, naming its prerequisite', () => {
-    const blocked = section('Blocked');
-    const awaiting = section('Awaiting you');
+  const row = (id: string) => data.record.rows.find((r: { id: string }) => r.id === id);
+  it('withholds impeded sittings and names the actual impediment', () => {
     for (const t of [behindOne, behindTwo, gatedSitting, heldSitting]) {
-      expect(has(awaiting, t), `${t.id} must not read as awaiting him`).toBe(false);
-      expect(has(blocked, t), `${t.id} belongs under Blocked`).toBe(true);
+      expect(row(t.id).display.group).toBe('blocked');
+      expect(data.awaiting.sittings.some((r: { id: string }) => r.id === t.id)).toBe(false);
     }
-    // The impediment is what the row says first, and it is the real one.
-    expect(blocked, 'the row names the prerequisite that is actually unfinished').toContain(`⛔ waits on ${prereq.id}`);
-    expect(blocked).toContain('⏰ not before 2099-01-01');
-    expect(blocked).toContain('⏸ on hold · Permit Power is parked pending the directive.');
+    expect(row(behindOne.id).display.waits_on).toContain(prereq.id);
+    expect(row(gatedSitting.id).not_before).toBe('2099-01-01T00:00:00.000Z');
+    expect(row(heldSitting.id).display.held).toBe(true);
+    expect(row(heldSitting.id).sitting).toContain('A decision once the stream restarts.');
   });
-
-  it('keeps the later human step as secondary detail rather than losing it', () => {
-    const blocked = section('Blocked');
-    expect(blocked).toContain('🪑 then a sitting');
-    expect(blocked).not.toContain('🪑 needs a sitting');
-    // The line he would act on is retained, one disclosure below the row.
-    expect(blocked).toContain('Half an hour reading the proposal and saying yes or no.');
-    expect(blocked).toContain('A decision once the stream restarts.');
-  });
-
-  // Not a control — this passed before the change too. It is the guard that
-  // says the demotion did not take the reachable cases with it.
-  it('still shows work that is genuinely his to do now', () => {
-    const awaiting = section('Awaiting you');
-    expect(has(awaiting, reachable)).toBe(true);
-    expect(has(awaiting, behindCleared), 'a cleared blocker returns the sitting to him').toBe(true);
-    expect(has(awaiting, question), 'a question he can answer now resolves its own blocker').toBe(true);
-    expect(awaiting).toContain('Two clicks in the Cloudflare dashboard to add one routing rule.');
-    expect(awaiting).toContain('Five minutes now that the build is up.');
-  });
-
-  it('counts what awaits him the same way it draws it', () => {
-    // Three reachable: the plain sitting, the cleared one, and the question.
-    expect(html).toContain('<div class="stat hot"><div class="stat-n">3</div><div class="stat-l">await you</div></div>');
-    expect(html).toContain('data-count="3"');
-    // Four impeded: two behind prerequisites, one gated, one held.
-    expect(html).toContain('<div class="stat "><div class="stat-n">4</div><div class="stat-l">blocked</div></div>');
-  });
-
-  it('leaves terminal records terminal', () => {
-    const done = section('Done');
-    expect(has(done, closed)).toBe(true);
-    expect(has(section('Blocked'), closed)).toBe(false);
-    expect(has(section('Awaiting you'), closed)).toBe(false);
+  it('keeps reachable sittings and decisions actionable, and terminal records terminal', () => {
+    for (const t of [reachable, behindCleared]) expect(data.awaiting.sittings.some((r: { id: string }) => r.id === t.id)).toBe(true);
+    expect(data.awaiting.decisions.some((r: { id: string }) => r.id === question.id)).toBe(true);
+    expect(data.awaiting.sittings.length + data.awaiting.decisions.length).toBe(3);
+    expect(row(closed.id).display.group).toBe('done');
   });
 });

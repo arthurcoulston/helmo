@@ -27,11 +27,12 @@
     "card",
     "badge",
     "alert",
-    "collapsible"
+    "collapsible",
+    "table"
   ],
   "commands": {
     "install": "npx shadcn@<cli> init --template vite --base radix --preset b6YWkyPAm -y --no-monorepo -n app",
-    "add": "npx shadcn@<cli> add sidebar breadcrumb card badge alert collapsible -y -o",
+    "add": "npx shadcn@<cli> add sidebar breadcrumb card badge alert collapsible table -y -o",
     "check": "npm run upstream:check --workspace @helmo/shell",
     "refresh": "npm run upstream:refresh --workspace @helmo/shell",
     "upgrade": "npm run upstream:refresh --workspace @helmo/shell -- --cli <newer version>"
@@ -60,7 +61,9 @@
       "scripts/upstream.mjs",
       "test/upstream.test.mjs",
       "src/WorkRecord.tsx",
-      "src/RoadmapView.tsx"
+      "src/RoadmapView.tsx",
+      "src/RuntimeView.tsx",
+      "src/TeamView.tsx"
     ],
     "manifest": {
       "components.json": "aadc5e216b8c950c431eed626d98fa5334e379f88c100942b40f2370f41202f6",
@@ -79,11 +82,12 @@
       "src/components/ui/card.tsx": "8ad3a18d36bda0598dc0e9aa96ea22854944d5443ee4946f1d173815e115375f",
       "src/components/ui/collapsible.tsx": "eb4ee2a9ddb3c566c509753a79e4f4c9425d9f8474d55f61f8c8694928b6a509",
       "src/components/ui/input.tsx": "75418e030b2a54dd017ac0f4588db4bbdbabca7525e88bbc9d84cb3e18bcb905",
-      "src/components/ui/separator.tsx": "b5b5460e5337c2d5f361c1512001615b2e5eacb38c7449a4418bb9ddb47c4bba",
-      "src/components/ui/sheet.tsx": "9af6a0da7258746624346506c3ff98c9e300ceb10ef17ca079a1c8c5d5090814",
-      "src/components/ui/sidebar.tsx": "67f7d7e97d70feb5de0f32d38cd3548c57e1912167ef48a65bf1bd722c267208",
+      "src/components/ui/separator.tsx": "42aa6209fe9bec178e4009cf042c16f7e8730bfc4edbc0c39972c1f0482e7d19",
+      "src/components/ui/sheet.tsx": "549678370096804f5acd0895fcbd58084b45ac80f28197887377038d8266ddd3",
+      "src/components/ui/sidebar.tsx": "a0ebdc2eecc0ac620d56b77b30bc059d5a1f3c77e614586e45a73dfc31b55851",
       "src/components/ui/skeleton.tsx": "4c2af7fa9c645358a0fb188779deab6f0b981733b62befc25e18aaebea1350dc",
-      "src/components/ui/tooltip.tsx": "fc4380a53b7c847ff3d692c320f8d889eaaf3d6878dcba1da926ec4ab3a7c037",
+      "src/components/ui/table.tsx": "749b0501e97591f8d7c9ef81366d636e4b47857a15a28e6cf3b87841232e74bf",
+      "src/components/ui/tooltip.tsx": "e94530dd6877132d5eda73f6fb0d217f345477232f140f2ca6e024d790177f6a",
       "src/hooks/use-mobile.ts": "ad0936f84f1df79d3697bfbff9c18f8ad58431c1cbaf2359c6a853b0fcc9f28b"
     }
   },

@@ -1,3 +1,5 @@
+import { TeamView, type TeamData } from "./TeamView"
+import { RuntimeView, type RuntimeData } from "./RuntimeView"
 import * as React from "react"
 import { RoadmapView, type RoadmapData } from "./RoadmapView"
 import { CopyReference, TicketDetails, WorkRecord, type WorkRecordData } from "./WorkRecord"
@@ -76,10 +78,6 @@ type Destination = {
   rendered: boolean
 }
 
-/* `rendered` says which areas this application draws. Roadmap and Runtime are
-   still served as their own documents by their own handlers until H-2938 and
-   H-2939 move them here; the menu links to them so navigation keeps working,
-   and leaving them is a full page load out of this application. */
 const DESTINATIONS: Destination[] = [
   {
     id: "overview",
@@ -108,7 +106,7 @@ const DESTINATIONS: Destination[] = [
     label: "Runtime",
     href: "/run",
     icon: ActivityIcon,
-    rendered: false,
+    rendered: true,
   },
 ]
 
@@ -355,7 +353,7 @@ function RecordingStatus({ recording }: { recording: Recording }) {
 /** Each card names its own kind, in the same place, in words. The reader
  *  settles "what is being asked of me" from the chip, not from the control. */
 function KindChip({ children }: { children: React.ReactNode }) {
-  return <Badge variant="outline">{children}</Badge>
+  return <Badge variant="outline" className="whitespace-normal">{children}</Badge>
 }
 
 function RequestMeta({ request }: { request: AwaitingCommon }) {
@@ -622,7 +620,7 @@ function SittingCard({ request }: { request: Sitting }) {
             {request.sitting_with ? ` — with ${request.sitting_with}` : ""}
           </KindChip>
           {request.waits_on.length ? (
-            <Badge variant="secondary">
+            <Badge variant="secondary" className="whitespace-normal">
               ⛔ waits on {request.waits_on.join(", ")}
             </Badge>
           ) : null}
@@ -658,9 +656,9 @@ function AwaitingYou({ awaiting }: { awaiting: Awaiting }) {
       data-helmo-section="awaiting"
       data-count={count}
     >
-      <h3 className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+      <h2 className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
         Awaiting you
-      </h3>
+      </h2>
       {count ? (
         <div className="flex flex-col gap-3">
           {awaiting.decisions.map((request) => (
@@ -718,7 +716,7 @@ function Loading() {
   )
 }
 
-function AreaView({ area }: { area: Destination }) {
+function AreaView({ area, areas }: { area: Destination; areas: string[] }) {
   const selected = useFragment()
   const state = useArea(area.id, selected)
 
@@ -740,6 +738,16 @@ function AreaView({ area }: { area: Destination }) {
     )
   }
 
+  const provenance = state.data as { installation?: { id?: string; label?: string }; running?: { state: string; commit?: string; dirty?: boolean; detail: string } }
+  return <>
+    {state.warning ? <Alert variant="destructive"><AlertTitle>Refresh failed</AlertTitle><AlertDescription>Showing the last good reading from {state.readAt}: {state.warning}</AlertDescription></Alert> : null}
+    <AreaContent area={area} state={state} selected={selected} areas={areas} />
+    <p className="text-muted-foreground text-xs">Refreshed {state.readAt} · updates every 15 seconds{provenance.installation?.id ? ` · installation ${provenance.installation.id}` : ""}</p>
+    {provenance.running && typeof provenance.running.state === "string" ? <Collapsible><CollapsibleTrigger asChild><Button variant="ghost" size="sm">Build details</Button></CollapsibleTrigger><CollapsibleContent className="text-muted-foreground pt-2 text-xs [overflow-wrap:anywhere]">Running {provenance.running.commit?.slice(0, 7) ?? "unstamped"}{provenance.running.dirty ? " (dirty)" : ""} · {provenance.running.state} · {provenance.running.detail}</CollapsibleContent></Collapsible> : null}
+  </>
+}
+
+function AreaContent({ area, state, selected, areas }: { area: Destination; state: Extract<AreaState, { status: "ready" }>; selected: string; areas: string[] }) {
   const rows = state.records
   const empty = (
     <p className="text-sm text-muted-foreground">
@@ -767,11 +775,13 @@ function AreaView({ area }: { area: Destination }) {
     const record = (state.data as { record?: WorkRecordData }).record
     if (!record) return <Alert variant="destructive"><AlertTitle>Could not read the work record</AlertTitle><AlertDescription>The server returned no record sections.</AlertDescription></Alert>
     return <>
-      {state.warning ? <Alert variant="destructive"><AlertTitle>Refresh failed</AlertTitle><AlertDescription>Showing the last good reading from {state.readAt}: {state.warning}</AlertDescription></Alert> : null}
       <WorkView awaiting={awaiting} record={record} selected={selected} />
-      <p className="text-muted-foreground text-xs">Refreshed {state.readAt} · updates every 15 seconds</p>
     </>
   }
+
+  if (area.id === "team") return <TeamView data={state.data as TeamData} />
+
+  if (area.id === "runtime") return <RuntimeView data={state.data as RuntimeData} workAvailable={areas.includes("work")} />
 
   if (area.id === "roadmap") return <RoadmapView data={state.data as RoadmapData} selected={selected} />
 
@@ -780,9 +790,9 @@ function AreaView({ area }: { area: Destination }) {
       <>
         <p className="text-sm text-muted-foreground">4 areas</p>
         <section className="flex flex-col gap-3">
-          <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+          <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
             Areas
-          </h3>
+          </h2>
           {rows.length ? (
             <CardGrid>
               {rows.slice(0, 4).map((record, index) => (
@@ -795,9 +805,9 @@ function AreaView({ area }: { area: Destination }) {
         </section>
         <Separator />
         <section className="flex flex-col gap-2">
-          <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+          <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
             Current work
-          </h3>
+          </h2>
           <p className="text-sm">
             <a className="underline underline-offset-4" href="/work">
               Open Work for decisions, actions, progress and evidence.
@@ -880,6 +890,23 @@ function OpenInNewWindow() {
   )
 }
 
+function Embedded({ children }: { children: React.ReactNode }) {
+  const root = React.useRef<HTMLElement>(null)
+  React.useEffect(() => {
+    if (window.parent === window || !root.current) return
+    const report = () => window.parent.postMessage({
+      type: "helmo:section-size", section: "awaiting",
+      count: Number(root.current?.querySelector("[data-count]")?.getAttribute("data-count") ?? 0),
+      height: root.current?.scrollHeight ?? 0,
+    }, location.origin)
+    const observer = new ResizeObserver(report)
+    observer.observe(root.current)
+    report()
+    return () => observer.disconnect()
+  }, [])
+  return <main ref={root} className="p-4 [overflow-wrap:anywhere]">{children}</main>
+}
+
 export function App() {
   const [config, setConfig] = React.useState<{ areas: string[]; defaultArea: string } | null>(null)
   const [error, setError] = React.useState("")
@@ -893,7 +920,7 @@ export function App() {
   if (!config) return <div className="p-4"><Loading /></div>
   const area = activeArea(config.defaultArea)
   if (new URLSearchParams(location.search).get("section") === "awaiting") {
-    return <TooltipProvider><main className="p-4"><AreaView area={area} /></main></TooltipProvider>
+    return <TooltipProvider><Embedded><AreaView area={area} areas={config.areas} /></Embedded></TooltipProvider>
   }
 
   return (
@@ -945,9 +972,9 @@ export function App() {
               <OpenInNewWindow />
             </div>
           </header>
-          <div className="flex flex-1 flex-col gap-4 p-4">
-            <h2 className="text-lg font-medium">{area.label}</h2>
-            <AreaView area={area} />
+          <div className="flex min-w-0 flex-1 flex-col gap-4 p-4 [overflow-wrap:anywhere]">
+            <h1 className="text-lg font-medium">{area.label}</h1>
+            <AreaView area={area} areas={config.areas} />
           </div>
         </SidebarInset>
       </SidebarProvider>

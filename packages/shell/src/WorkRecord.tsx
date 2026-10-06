@@ -13,7 +13,7 @@ type Row = {
   id: string; title: string; status: string; workstream: string; type: string
   project?: string; assignee?: string; lane?: string; priority: number
   schedule?: string; not_before?: string; sitting?: string; confidence?: string
-  blast_radius?: string; capacity_hold?: { reason: string }
+  release_handoff?: { current: boolean; stale_reason?: string }; blast_radius?: string; capacity_hold?: { reason: string }
   updated_at: string; closed_at?: string; tokens_total: number; cost_usd_total: number
   evidence: Evidence[]
   display: {
@@ -84,9 +84,9 @@ export function TicketDetails({ id, revision }: { id: string; revision?: string 
     {!data ? <p className="text-muted-foreground">Loading record…</p> : <>
       <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{data.ticket.body}</p>
       {data.ticket.uncertainty_note ? <Alert><AlertTitle>Where the doubt is</AlertTitle><AlertDescription>{data.ticket.uncertainty_note}</AlertDescription></Alert> : null}
-      {deps.length ? <div className="flex flex-wrap gap-2">{deps.map((d, i) => <Badge key={i} variant="outline" asChild><a href={`/?whole=1#${d.id}`}>{d.type} {d.id}</a></Badge>)}</div> : null}
+      {deps.length ? <div className="flex flex-wrap gap-2">{deps.map((d, i) => <Badge key={i} variant="outline" asChild><a href={`?whole=1#${d.id}`}>{d.type} {d.id}</a></Badge>)}</div> : null}
       <div className="flex flex-col gap-3" aria-label={`${id} history`}>
-        <h4 className="font-medium">History</h4>
+        <h3 className="font-medium">History</h3>
         {data.events.filter((e) => !["linked", "unlinked"].includes(e.event_type)).map((event) => <div key={event.seq} className="border-l pl-3">
           <p className="text-muted-foreground text-xs"><time dateTime={event.ts}>{time(event.ts)}</time> · {event.actor.name} · {event.event_type === "answered" && event.actor.session === "dashboard" ? "answered from the dashboard" : event.event_type.replaceAll("_", " ")}</p>
           <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{event.payload.note ?? event.payload.question ?? event.payload.answer ?? ""}</p>
@@ -144,15 +144,16 @@ function RecordRow({ row, selected }: { row: Row; selected: string }) {
         </CollapsibleTrigger>
       </div>
       <div className="flex flex-wrap gap-1 px-3 pb-3">
-        {row.priority !== 2 ? <Badge variant={row.priority === 0 ? "destructive" : "secondary"}>P{row.priority}</Badge> : null}
-        {d.waits_on.length ? <Badge variant="outline">Waits on {d.waits_on.join(", ")}</Badge> : null}
-        {d.held ? <Badge variant="outline">On hold · {row.capacity_hold?.reason}</Badge> : null}
+        {row.priority !== 2 ? <Badge variant="outline">P{row.priority}</Badge> : null}
+        {row.release_handoff?.current === false ? <Badge variant="outline" className="whitespace-normal">Release handoff stale · {row.release_handoff.stale_reason ?? "readiness changed"}</Badge> : null}
+        {d.waits_on.length ? <Badge variant="outline" className="whitespace-normal">Waits on {d.waits_on.join(", ")}</Badge> : null}
+        {d.held ? <Badge variant="outline" className="whitespace-normal">On hold · {row.capacity_hold?.reason}</Badge> : null}
         {d.gated ? <Badge variant="outline">Not before {row.not_before}</Badge> : null}
-        {row.schedule ? <Badge variant="outline">Recurring · {row.schedule}</Badge> : null}
+        {row.schedule ? <Badge variant="outline" className="whitespace-normal">Recurring · {row.schedule}</Badge> : null}
         {row.confidence && row.confidence !== "routine" ? <Badge variant="secondary">{row.confidence.replaceAll("_", " ")}</Badge> : null}
         {row.blast_radius && row.blast_radius !== "none" ? <Badge variant="outline">{row.blast_radius}</Badge> : null}
-        {d.acceptance.state !== "not_requested" ? <Badge variant={d.acceptance.state === "failed" ? "destructive" : "secondary"}>Acceptance {d.acceptance.reason === "contested" ? "contested" : d.acceptance.state}</Badge> : null}
-        {row.status === "done" && !row.evidence.length ? <Badge variant="destructive">No evidence</Badge> : null}
+        {d.acceptance.state !== "not_requested" ? <Badge variant="outline">Acceptance {d.acceptance.reason === "contested" ? "contested" : d.acceptance.state}</Badge> : null}
+        {row.status === "done" && !row.evidence.length ? <Badge variant="outline">No evidence</Badge> : null}
       </div>
       <CollapsibleContent>
         <CardContent className="flex flex-col gap-4 border-t pt-4">
@@ -187,7 +188,7 @@ export function WorkRecord({ data, selected }: { data: WorkRecordData; selected:
     {GROUPS.map(([key, label]) => {
       const rows = data.rows.filter((r) => r.display.group === key)
       return rows.length ? <section key={key} className="flex flex-col gap-2" aria-label={label}>
-        <h3 className="text-muted-foreground text-xs font-medium uppercase tracking-wide">{label} · {rows.length}</h3>
+        <h2 className="text-muted-foreground text-xs font-medium uppercase tracking-wide">{label} · {rows.length}</h2>
         {rows.map((row) => <RecordRow key={row.id} row={row} selected={selected} />)}
       </section> : null
     })}

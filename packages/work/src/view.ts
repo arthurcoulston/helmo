@@ -208,6 +208,7 @@ export function workSnapshot(options: { whole?: boolean; ticket?: string } = {})
   return {
     installation: store.installationIdentity(),
     records: complete,
+    running: running(),
     awaiting: awaitingDocument(),
     record: {
       whole: Boolean(options.whole),

@@ -218,7 +218,7 @@ describe('every entry point reaches one installation through its home (H-2472)',
         res((m as { port: number }).port);
       });
     });
-    const html = await (await fetch(`http://127.0.0.1:${port}/`)).text();
+    const html = await (await fetch(`http://127.0.0.1:${port}/api/v1/work`)).text();
     expect(html).toContain(title);
     expect(line).toContain(`install: ${installation(env({ HELMO_HOME: home })).label}`);
   });

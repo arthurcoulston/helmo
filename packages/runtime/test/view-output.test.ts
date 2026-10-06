@@ -109,12 +109,11 @@ afterAll(async () => {
 });
 
 describe('view idle reasons (H-954)', () => {
-  it('presents all three bounded reasons in the HTML view', async () => {
-    const html = await (await request('/')).text();
-    for (const reason of Object.values(reasons)) expect(html).toContain(reason);
-    expect(html).toContain('SEAT_HELD');
-    expect(html).toContain("another live session ('desk') holds H-891");
-    expect(html).toContain('href="http://localhost:4420/" data-reach="http://localhost:4400/work"');
+  it('serves the standard application and preserves the explicit Work link in its data', async () => {
+    expect(await (await request('/')).text()).toContain('<div id="root"></div>');
+    const data = (await (await request('/api/v1/runtime')).json()).data;
+    expect(data.work_link.local).toBe('http://localhost:4420/');
+    for (const row of data.loops) for (const field of ['state', 'runtime', 'model', 'pace', 'spend', 'recent_events']) expect(row).toHaveProperty(field);
   });
 
   it('presents all three bounded reasons in /health.json', async () => {

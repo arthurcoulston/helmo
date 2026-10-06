@@ -39,17 +39,6 @@ describe('vendored estate avatars', () => {
     expect(missing).toEqual([]);
   });
 
-  it('composes a symbol at the one kind rev draws', () => {
-    // The seam nothing else watches. The grid test above only compares the
-    // sprite against itself, so a sprite that stopped composing `agent`
-    // entirely would pass it and take every mark off this page. The kind is
-    // read out of the view rather than restated here: a rename that missed
-    // this file would otherwise leave the check passing on the old word.
-    const kind = /const LOOP_KIND = '([a-z]+)'/.exec(view)?.[1] ?? '';
-    expect(kind).not.toBe('');
-    expect([...AVATAR_KINDS] as string[]).toContain(kind);
-  });
-
   it('rests that kind on the roster refusing a loop with no constitution', () => {
     // Rev asserts `agent` for every row, which is the one thing the estate's
     // rule says not to do — so it has to rest on the record, and this is the
@@ -66,35 +55,6 @@ describe('vendored estate avatars', () => {
     );
     process.env['REV_HOME'] = home;
     expect(() => loadRoster()).toThrow(/missing 'constitution'/);
-  });
-
-  it('emits a crew mark from exactly one place, and that place emits the name too', () => {
-    // The rule the avatar set ships under (H-713): a crew hue is a retrieval
-    // accelerator, never an identifier, because ten members cannot have ten
-    // mutually distinguishable hues. A mark must therefore never appear without
-    // its name. That is enforced by there being ONE function that draws one,
-    // and that function taking the name it prints — so this holds the page to
-    // the shape rather than trusting whoever adds the next surface.
-    const uses = [...view.matchAll(/href="#crew-/g)];
-    expect(uses).toHaveLength(1);
-    const body = /function actor\([^)]*\)[^{]*\{([\s\S]*?)\n\}/.exec(view)?.[1] ?? '';
-    expect(body).toContain('href="#crew-');
-    expect(body).toContain('${esc(name)}');
-  });
-
-  it('inlines the sprite into the page it serves', () => {
-    // Cross-document `<use>` is not what this page does: the symbols have to be
-    // in the document that references them. Drop this one interpolation and
-    // every mark on the page disappears at once, with tsc clean, every other
-    // test green and the view serving 200.
-    //
-    // Anchored inside the served template, not the file: the import alone
-    // satisfies "the name appears in view.ts" while the page ships without it.
-    const html = view.slice(view.indexOf('res.end(`<!doctype html>'));
-    expect(html).toContain('${ESTATE_AVATARS}');
-    // And after the stylesheet closes, not inside it — a sprite emitted into
-    // <style> is invisible in exactly the same silent way.
-    expect(html.indexOf('${ESTATE_AVATARS}')).toBeGreaterThan(html.indexOf('</style>'));
   });
 
   it('does not mistake the frames themselves for a mark', () => {

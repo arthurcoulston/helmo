@@ -47,43 +47,6 @@ describe('vendored estate avatars', () => {
     expect([...ACTOR_KINDS].filter((k) => !(AVATAR_KINDS as readonly string[]).includes(k))).toEqual([]);
   });
 
-  it('emits a crew mark from exactly one place, and that place emits the name too', () => {
-    // The rule the avatar set ships under (H-713): a crew hue is a retrieval
-    // accelerator, never an identifier, because ten members cannot have ten
-    // mutually distinguishable hues. A mark must therefore never appear without
-    // its name. That is enforced by there being ONE function that draws one,
-    // and that function taking the name it prints — so this holds the page to
-    // the shape rather than trusting whoever adds the next surface.
-    const uses = [...view.matchAll(/href="#crew-/g)];
-    expect(uses).toHaveLength(1);
-    const body = /function actor\([^)]*\)[^{]*\{([\s\S]*?)\n\}/.exec(view)?.[1] ?? '';
-    expect(body).toContain('href="#crew-');
-    expect(body).toContain('${esc(name)}');
-  });
-
-  it('inlines the sprite into the page', () => {
-    // Cross-document `<use>` is not what this page does: the symbols have to be
-    // in the document that references them. Drop this one interpolation and
-    // every mark on the page disappears at once, with tsc clean, every other
-    // test green and the view serving 200.
-    const body = view.slice(view.indexOf('<body>'), view.indexOf('</body>'));
-    expect(body).toContain('${ESTATE_AVATARS}');
-  });
-
-  it('draws the ship-next decider from the contract, not from the store-wide fallback', () => {
-    // The one attribution on this page that would silently lose its mark. Arthur
-    // never writes to the roadmap himself — an orchestrator relays his call — so
-    // `actorKinds()` has no entry for him and the fallback renders him bare.
-    // Passing the kind is not asserting one: setShipNext refuses a write with no
-    // `decided_by` and names it "the human who made the call" (pinned in
-    // test/store.test.ts), so the schema is where the kind comes from.
-    // Lazy, and anchored on the closing `)}</b>`: the call nests a paren of its
-    // own, so a `[^)]*` class stops at the wrong one and matches nothing — which
-    // reads as this check firing when it is only failing to look.
-    const line = /decided by <b>\$\{actor\(([\s\S]*?)\)\}<\/b>/.exec(view)?.[1] ?? '';
-    expect(line).toContain("'human'");
-  });
-
   it('does not mistake the frames themselves for a mark', () => {
     // `crew-frame-agent` matches the composed id shape exactly and is not a
     // mark. Recognising a composed symbol by its body — it lays a frame under a

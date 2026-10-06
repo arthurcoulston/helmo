@@ -15,7 +15,7 @@ describe('managed browser isolation', () => {
   });
 
   it('keeps every browser entrypoint on the shared launcher', () => {
-    for (const path of ['test/view-viewport-render.test.ts', 'scripts/live-floor.mjs', 'scripts/screenshot.mjs']) {
+    for (const path of ['../shell/scripts/verify-ui.mjs', 'scripts/live-floor.mjs', 'scripts/screenshot.mjs']) {
       const source = readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
       expect(source, path).toMatch(/import .*launchBrowser.*from/);
       expect(source, path).not.toMatch(/chromium\.launch|channel\s*:|executablePath\s*:/);

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +13,11 @@ const root = fileURLToPath(new URL('../../../', import.meta.url));
 const dir = mkdtempSync(join(tmpdir(), 'helmo-ui-proof-'));
 for (const name of ['work', 'roadmap', 'runtime', 'shots']) mkdirSync(join(dir, name));
 copyFileSync(join(root, 'packages/runtime/examples/roster.toml'), join(dir, 'runtime/roster.toml'));
+mkdirSync(join(dir, 'runtime/constitutions'));
+writeFileSync(join(dir, 'runtime/constitutions/example-worker.md'), 'A fixture member profile with a clear responsibility.');
+mkdirSync(join(dir, 'runtime/state/example-worker'), { recursive: true });
+writeFileSync(join(dir, 'runtime/state/example-worker/BLOCKED'), 'reason=The fixture needs a prerequisite before work can resume.');
+writeFileSync(join(dir, 'runtime/state/example-worker/events.log'), '2026-10-06 fixture event: a complete recent trace.\n');
 const actor = { name: 'fixture', kind: 'orchestrator', model: 'fixture', version: 'fixture' };
 const store = new Store(join(dir, 'work/helmo.db'));
 const create = (title, extra = {}) => store.createTicket(actor, { title, body: `Full record for ${title}`, type: 'build', workstream: 'fixture', labels: ['acct:direction'], ...extra });
@@ -37,6 +42,12 @@ roadmap.recordClaim(actor, { project_id: project.id, kind: 'value', level: 'high
 roadmap.recordClaim(actor, { project_id: project.id, kind: 'effort', size: 'M', predicted_usd: 20, reason: 'A finite set of existing screens.' });
 roadmap.setShipNext(actor, { project_id: project.id, decided_by: 'Fixture operator', reason: 'The foundation is the next work.' });
 
+const choice = create('Choose between the stored options');
+store.returnToHuman(actor, choice.id, { situation: 'Both options are valid.', question: 'Which option should be used?', recommendation: 'First', options: [{ label: 'First', consequence: 'Use the first path.' }, { label: 'Second', consequence: 'Use the second path.' }] });
+const action = create('Report the completed action');
+store.requestAction(actor, action.id, { situation: 'A fixture action is due.', action: 'Complete the fixture action.', why_human: 'The fixture operator performs it.' });
+const sitting = create('A sitting is a conversation', { needs_human: 'Discuss this with the fixture member.', sitting_with: 'fixture' });
+
 const child = spawn(process.execPath, [join(root, 'packages/cli/bin/serve.js')], {
   env: env({ HELMO_HOME: join(dir, 'work'), ROADMAP_HOME: join(dir, 'roadmap'), REV_HOME: join(dir, 'runtime'), HELMO_APP_PORT: '0', HELMO_OPERATOR: 'fixture-operator' }),
   stdio: ['ignore', 'pipe', 'pipe'],
@@ -57,6 +68,7 @@ try {
   browser = await launchBrowser();
   const context = await browser.newContext({ permissions: ['clipboard-read', 'clipboard-write'] });
   const page = await context.newPage();
+  page.setDefaultTimeout(15000);
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(`${origin}/work`);
@@ -78,9 +90,45 @@ try {
   await page.goto(`${origin}/?section=awaiting`);
   await page.getByText(decision.title, { exact: true }).waitFor();
   assert.equal(await page.locator('[data-sidebar="sidebar"]').count(), 0, 'embedded reading carries no full navigation');
-  await page.getByRole('button', { name: 'Ratify recommendation', exact: true }).click();
-  await page.getByText('Queue is empty.', { exact: false }).waitFor();
+  await page.locator(`#${decision.id}`).getByRole('button', { name: 'Ratify recommendation', exact: true }).click();
+  await page.locator(`#${decision.id}`).waitFor({ state: 'detached' });
   assert.equal(store.getTicket(decision.id).status, 'open');
+  await page.goto(`${origin}/work`);
+  await page.locator(`#${sitting.id}`).waitFor();
+  assert.equal(await page.locator(`#${sitting.id}`).getByRole('button').count(), 1, 'a sitting offers only copying, no answer control');
+  const option = page.locator(`#${choice.id}`).getByRole('button', { name: /Second/ });
+  await option.focus(); await page.keyboard.press('Enter');
+  await page.locator(`#${choice.id}`).getByRole('button', { name: 'Ratify recommendation' }).waitFor({ state: 'detached' });
+  assert.equal(store.lastAnswer(choice.id).chosen_option, 'Second');
+  await page.locator(`#${action.id}`).getByRole('button', { name: 'I’ve done it' }).click();
+  await page.locator(`#${action.id}`).getByRole('button', { name: 'I’ve done it' }).waitFor({ state: 'detached' });
+  assert.equal(store.getTicket(action.id).action, null);
+  const stale = create('Two windows see the same pending decision');
+  store.returnToHuman(actor, stale.id, { situation: 'One answer is allowed.', question: 'Use this result?', recommendation: 'Use it.' });
+  await page.goto(`${origin}/work?whole=1#${stale.id}`);
+  await page.locator(`#${stale.id}`).waitFor();
+  const popupPromise = page.waitForEvent('popup');
+  await page.getByRole('button', { name: 'Open in new window' }).click();
+  const popup = await popupPromise;
+  await popup.waitForLoadState();
+  assert.equal(popup.url(), page.url());
+  await popup.locator(`#${stale.id}`).getByRole('button', { name: 'Ratify recommendation' }).click();
+  await popup.locator(`#${stale.id}`).getByRole('button', { name: 'Ratify recommendation' }).waitFor({ state: 'detached' });
+  const refused = page.waitForResponse((response) => response.url().endsWith('/answer') && response.request().method() === 'POST');
+  await page.locator(`#${stale.id}`).getByRole('button', { name: 'Ratify recommendation' }).click();
+  const refusal = await refused;
+  assert.equal(refusal.status(), 400, 'a resolved question cannot be answered again');
+  await page.getByRole('status').filter({ hasText: (await refusal.json()).error }).waitFor();
+  assert.equal(store.getEvents(stale.id).filter((e) => e.event_type === 'answered').length, 1);
+  await popup.close();
+  await page.evaluate(() => window.open = () => null);
+  await page.getByRole('button', { name: 'Open in new window' }).click();
+  await page.getByRole('link', { name: /Your browser blocked the window/ }).waitFor();
+  await page.goto(`${origin}/work`);
+  await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true }));
+  await page.getByRole('button', { name: `Copy ${ready.id}`, exact: true }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('status').filter({ hasText: `${ready.id} copied` }).waitFor();
   await page.goto(`${origin}/roadmap#${project.id}`);
   await page.getByText(project.body, { exact: true }).waitFor();
   await page.getByText(/decided by Fixture operator/).waitFor();
@@ -88,19 +136,57 @@ try {
   await page.getByText(/ship next set/).waitFor();
   await page.getByRole('button', { name: `Copy ${project.id}`, exact: true }).click();
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), project.id);
-  for (const area of ['work', 'roadmap']) for (const theme of ['light', 'dark']) for (const width of [390, 640, 1280]) {
+  await page.goto(`${origin}/run`);
+  await page.getByRole('table', { name: 'Loop status', exact: true }).waitFor();
+  await page.getByText('BLOCKED', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Recent events for example-worker' }).click();
+  await page.getByText(/a complete recent trace/).waitFor();
+  await page.getByRole('button', { name: 'Build and installation details' }).click();
+  await page.getByText(/supervisor: not running/).waitFor();
+  await page.goto(`${origin}/team`);
+  await page.getByRole('button', { name: 'Profile for example-worker' }).click();
+  await page.getByText('A fixture member profile with a clear responsibility.', { exact: true }).waitFor();
+  for (const area of ['overview', 'work', 'roadmap', 'team', 'run']) for (const theme of ['light', 'dark']) for (const width of [390, 640, 1280]) {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`${origin}/${area}`);
-    await page.getByRole('heading', { name: area === 'work' ? /Ready ·/ : /Ship next ·/ }).waitFor();
+    await page.getByText(/Refreshed .*updates every/).waitFor();
     await page.evaluate((value) => document.documentElement.className = value, theme);
     await page.waitForTimeout(250);
     const measure = await page.evaluate(() => ({ font: getComputedStyle(document.body).fontFamily, overflow: document.documentElement.scrollWidth - innerWidth }));
     assert.match(measure.font, /Inter/);
     assert.ok(measure.overflow <= 1, `${theme} ${width}: ${measure.overflow}px overflow`);
+    if (process.env.HELMO_AXE_SOURCE && existsSync(process.env.HELMO_AXE_SOURCE)) {
+      await page.addScriptTag({ path: process.env.HELMO_AXE_SOURCE });
+      const audit = await page.evaluate(async () => (await window.axe.run(document, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21aa'] } })).violations.map((v) => ({ id: v.id, nodes: v.nodes.map((n) => ({ target: n.target, failureSummary: n.failureSummary })) })));
+      assert.deepEqual(audit, [], `${area} ${theme} ${width} accessibility violations: ${JSON.stringify(audit)}`);
+    }
     await page.screenshot({ path: join(dir, `shots/${area}-${theme}-${width}.png`), fullPage: true, animations: 'disabled' });
   }
+  // A real iframe receives both its count and size without a second renderer.
+  await page.goto(`${origin}/work`);
+  await page.evaluate(() => {
+    window.sectionReports = [];
+    window.addEventListener('message', (e) => { if (e.origin === location.origin && e.data?.type === 'helmo:section-size') window.sectionReports.push(e.data); });
+    const iframe = document.createElement('iframe'); iframe.src = '/?section=awaiting'; document.body.appendChild(iframe);
+  });
+  await page.waitForFunction(() => window.sectionReports?.some((r) => r.count === 1 && r.height > 100));
+  // Failed polling keeps actual content and announces the last good reading.
+  await page.goto(`${origin}/roadmap`);
+  await page.getByText(project.body, { exact: true }).waitFor();
+  await page.route('**/api/v1/roadmap', (route) => route.fulfill({ status: 503, body: 'fixture unavailable' }));
+  await page.getByText('Refresh failed', { exact: true }).waitFor({ timeout: 20000 });
+  assert.equal(await page.getByText(project.body, { exact: true }).count(), 1);
+  await page.reload();
+  await page.getByText('Could not read roadmap', { exact: true }).waitFor();
+  await page.unroute('**/api/v1/roadmap');
+  // Keyboard scrolling keeps the table, not the entire document, moving.
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.goto(`${origin}/run`);
+  await page.getByRole('table', { name: 'Loop status', exact: true }).focus();
+  await page.keyboard.press('ArrowRight'); await page.waitForTimeout(250);
+  assert.ok(await page.locator('[data-slot="table-container"]').evaluate((el) => el.scrollLeft > 0));
   assert.deepEqual(errors, []);
-  console.log(`Work records, hash bookmarks, history, held state, copy, focused refresh, embedded answer, Inter and all six layouts verified. Evidence: ${dir}`);
+  console.log(`All five areas, record history, held state, copy, focused refresh, embedded answer, runtime trace, team profiles, Inter and all 30 layouts verified. Evidence: ${dir}`);
   writeFileSync(join(dir, 'result.json'), JSON.stringify({ origin, artifacts: dir, errors, verified: new Date().toISOString() }, null, 2));
 } finally {
   await browser?.close();

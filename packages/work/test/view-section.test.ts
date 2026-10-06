@@ -95,48 +95,17 @@ describe('Awaiting-you section route', () => {
 
     expect(response, 'the view never came up').not.toBeNull();
     expect(response!.status).toBe(200);
-    const html = await response!.text();
-    expect(html).toContain('class="section-reading" data-helmo-section="awaiting" data-count="2"');
-    expect(html).toContain('<section class="hero" data-helmo-section="awaiting" data-count="2">');
-    expect(html).toContain('class="qcard"');
-    expect(html).toContain('<span class="opt-letter">a</span>yes');
-    expect(html).toContain('<span class="opt-letter">b</span>no');
-    expect(html).toContain('class="option choice" data-choice="a"');
-    expect(html).toContain('class="option choice" data-choice="b"');
-    expect(html).toContain('yes — one renderer keeps the meanings together.');
-    expect(html).toContain('If unanswered: The landing stays split.');
-    expect(html).toContain('last &lt;recorded&gt; &amp; update');
-    expect(html).toContain('Ratify recommendation');
-    expect(html).toContain('class="scard"');
-    expect(html).toContain('Two clicks in the Cloudflare dashboard: add an Email Routing rule.');
-    // The sitting speaks for itself in the card; the body stays behind the
-    // disclosure, where a "why this exists" paragraph belongs.
-    expect(html).toContain('<span class="decision-label sits">You do, together</span>Two clicks');
-    // The kind is named on the card, which is what tells it from a decision.
-    expect(html).toContain('<span class="kind sits">🪑 Needs a sitting</span>');
-    expect(html).not.toContain('Review the parked work');
-    expect(html).not.toContain('<header class="top">');
-    expect(html).not.toContain('Needs grooming');
-    expect(html).not.toContain('In motion</h2>');
-
+    expect(await response!.text()).toContain('<div id="root"></div>');
+    const data = (await (await fetch(`http://127.0.0.1:${port}/api/v1/work`)).json()).data;
+    expect(data.awaiting.decisions).toHaveLength(1);
+    expect(data.awaiting.sittings).toHaveLength(1);
+    expect(data.awaiting.decisions[0].recommendation).toBe('yes — one renderer keeps the meanings together.');
+    expect(data.awaiting.decisions[0].options.map((option: { letter: string }) => option.letter)).toEqual(['a', 'b']);
+    expect(data.record.rows.find((row: { id: string }) => row.id === held.id).display.group).toBe('blocked');
     const unknown = await fetch(`http://127.0.0.1:${port}/?section=missing`);
     expect(unknown.status).toBe(404);
-
-    const whole = await (await fetch(`http://127.0.0.1:${port}/`)).text();
-    expect(whole).toContain('Choose the front door');
-    // The held sitting is not awaiting him — but it IS on the whole page, under
-    // Blocked, saying what is actually holding it. This line used to assert it
-    // appeared nowhere at all, which is what the page really did and was a
-    // defect the test had recorded rather than a rule (H-202).
-    expect(whole).toContain('Review the parked work');
-    expect(whole.slice(whole.indexOf('<h2>Blocked</h2>'))).toContain('⏸ on hold · Another stream is active.');
-    expect(whole).not.toContain('Workstream steering');
-    expect(whole).not.toContain('done means');
-
-    const nonce = html.match(/data-answer="([0-9a-f]{32})"/)?.[1];
-    const fingerprint = html.match(/data-ask="([0-9a-f]{16})"/)?.[1];
-    expect(nonce).toBeTruthy();
-    expect(fingerprint).toBeTruthy();
+    const nonce = data.awaiting.token;
+    const fingerprint = data.awaiting.decisions[0].fingerprint;
     const stale = await fetch(`http://127.0.0.1:${port}/answer`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', [ANSWER_HEADER]: nonce! },
@@ -166,11 +135,8 @@ describe('Awaiting-you section route', () => {
       name: 'arthur', kind: 'human', session: 'dashboard',
     });
     inspect.close();
-    const after = await (await fetch(url)).text();
-    expect(after).not.toContain(`data-ticket="${ticket.id}"`);
-    // The sitting outlives the answered question — the section is not empty
-    // just because the questions are gone.
-    expect(after).toContain('data-count="1"');
-    expect(after).toContain('class="scard"');
+    const after = (await (await fetch(`http://127.0.0.1:${port}/api/v1/work`)).json()).data.awaiting;
+    expect(after.decisions).toHaveLength(0);
+    expect(after.sittings).toHaveLength(1);
   });
 });

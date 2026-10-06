@@ -1,3 +1,5 @@
+The current dashboard is `packages/shell/src/RuntimeView.tsx`, composed from the unmodified official shadcn Table, Badge, Card and Collapsible. `src/view.ts` owns the state/reason, model, pace, spend, usage, build and recent-event JSON projection and serves the shared application on standalone routes. Historical token, sprite, HTML and DOM-refresh notes below describe the removed renderer.
+
 # DEV — coding context for rev
 
 Rev keeps agent loops turning: process supervision for autonomous loops

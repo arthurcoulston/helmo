@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readFileSync } from 'node:fs';
 import { appConfig, startAppServer } from '../app-server.mjs';
 import { appRequest, shellRequest } from '../../app/server.mjs';
 import { workHealth, workListening, workRequest, workSnapshot } from '../../work/dist/view.js';
@@ -22,7 +23,7 @@ function check(name, read) {
 let origin = null;
 function teamSnapshot() {
   const { loops } = loadRoster();
-  return { loops: Object.values(loops).map((loop) => ({ name: loop.seat ?? loop.name, state: 'configured', detail: loop.workstream, links: [{ label: 'Profile', href: `file://${loop.constitution}` }] })) };
+  return { loops: Object.values(loops).map((loop) => ({ name: loop.seat ?? loop.name, state: 'configured', detail: loop.workstream, id: loop.name, profile: `/api/v1/team/members/${encodeURIComponent(loop.name)}` })) };
 }
 function overviewSnapshot() {
   const work=workSnapshot(), roadmap=roadmapSnapshot(), runtime=runtimeSnapshot();
@@ -48,7 +49,17 @@ const running = await startAppServer(appConfig(), (request, response) => {
     if (/^\/api\/v1\/work(?:[/?]|$)/.test(request.url ?? '')) return workRequest(request, response);
     if (/^\/api\/v1\/roadmap(?:[/?]|$)/.test(request.url ?? '')) return roadmapRequest(request, response);
     if (request.url === '/api/v1/runtime') return runtimeRequest(request, response);
-    if (request.url === '/api/v1/overview' || request.url === '/api/v1/team') {
+    const member = /^\/api\/v1\/team\/members\/([^/?]+)$/.exec(request.url ?? '');
+    if (member) {
+      const loop = loadRoster().loops[decodeURIComponent(member[1])];
+      if (!loop) { response.writeHead(404, JSON_HEADERS); response.end(JSON.stringify({ error: 'Unknown team member' })); return; }
+      try {
+        const body = loop.constitution ? readFileSync(loop.constitution, 'utf8') : 'No profile is configured.';
+        response.writeHead(200, JSON_HEADERS); response.end(apiJson('team', { name: loop.seat ?? loop.name, body }));
+      } catch { response.writeHead(503, JSON_HEADERS); response.end(JSON.stringify({ error: 'The configured profile cannot be read.' })); }
+      return;
+    }
+    if (request.url === '/api/v1/overview'  || request.url === '/api/v1/team') {
       const area=request.url.endsWith('/team')?'team':'overview';
       const document_=appDocuments[area]();
       response.writeHead(200,JSON_HEADERS);
@@ -56,11 +67,7 @@ const running = await startAppServer(appConfig(), (request, response) => {
       return;
     }
     if (appRequest(request, response)) return;
-    // Still their own documents, outside the shadcn application, until H-2938
-    // and H-2939 move them in. `/work` reaches here only for its write routes
-    // and anything below it — the application answers the area itself now
-    // (H-2936) — and `/` keeps serving Work's own document until H-2937 brings
-    // the record lists a `#H-n` bookmark resolves against.
+    // Compatibility subroutes retain their backend behavior.
     if (at(request, '/roadmap')) return roadmapRequest(request, response);
     if (at(request, '/run')) return runtimeRequest(request, response);
     if (at(request, '/work')) return workRequest(request, response);

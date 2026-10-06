@@ -94,7 +94,7 @@ export function RoadmapView({ data, selected }: { data: RoadmapData; selected: s
     {shipNext.length >= 3 ? <Alert><AlertTitle>A growing work phase</AlertTitle><AlertDescription>What here is close enough to move to watching?</AlertDescription></Alert> : null}
     {groups.map((group, index) => <React.Fragment key={group.title}>
       {group.rows.length || index < 3 ? <section className="flex flex-col gap-2" aria-label={group.title}>
-        <h3 className="text-muted-foreground text-xs font-medium uppercase tracking-wide">{group.title} · {group.rows.length}</h3>
+        <h2 className="text-muted-foreground text-xs font-medium uppercase tracking-wide">{group.title} · {group.rows.length}</h2>
         {group.rows.map((r) => <ProjectRow key={r.project.id} project={r.project} ranked={"rank" in r ? r as Ranked : undefined} selected={selected} hasObjectives={data.objectives.length > 0} />)}
         {!group.rows.length ? <p className="text-muted-foreground text-sm">{index === 0 ? "Nothing has the go-ahead. The ranked list is waiting for your call." : "No projects in this section."}</p> : null}
       </section> : null}

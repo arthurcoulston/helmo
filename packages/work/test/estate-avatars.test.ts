@@ -46,30 +46,6 @@ describe('vendored estate avatars', () => {
     expect([...ACTOR_KINDS].filter((k) => !(AVATAR_KINDS as readonly string[]).includes(k))).toEqual([]);
   });
 
-  it('emits a crew mark from exactly one place, and that place emits the name too', () => {
-    // The rule the avatar set ships under (H-713): a crew hue is a retrieval
-    // accelerator, never an identifier, because ten members cannot have ten
-    // mutually distinguishable hues. A mark must therefore never appear without
-    // its name. That is enforced by there being ONE function that draws one,
-    // and that function taking the name it prints — so this holds the page to
-    // the shape rather than trusting whoever adds the next surface.
-    const uses = [...view.matchAll(/href="#crew-/g)];
-    expect(uses).toHaveLength(1);
-    const body = /function actor\([^)]*\)[^{]*\{([\s\S]*?)\n\}/.exec(view)?.[1] ?? '';
-    expect(body).toContain('href="#crew-');
-    expect(body).toContain('${esc(name)}');
-  });
-
-  it('inlines the sprite into the page', () => {
-    // Cross-document `<use>` is not what this page does: the symbols have to be
-    // in the document that references them. Drop this one interpolation and
-    // every mark on the board disappears at once, with tsc clean, every other
-    // test green and the page serving 200.
-    // Both complete documents — the full dashboard and its awaiting-only
-    // reading — must carry the symbols their shared renderers reference.
-    expect([...view.matchAll(/\$\{ESTATE_AVATARS\}/g)]).toHaveLength(2);
-  });
-
   it('does not mistake the frames themselves for a mark', () => {
     // `crew-frame-agent` matches the composed id shape exactly and is not a
     // mark. Recognising a composed symbol by its body — it lays a frame under a

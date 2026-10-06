@@ -26,8 +26,8 @@ const SEED = { name: 'helmo-orchestrator', kind: 'orchestrator', model: 'test', 
 // table: the port each surface was reached at, and the route on the one app
 // that now answers for it. `was` is documentation; `route` is behavior.
 const RETIRED = [
-  { was: 4410, route: '/roadmap', title: '<title>Roadmap</title>' },
-  { was: 4500, route: '/run', title: '<title>Rev</title>' },
+  { was: 4410, route: '/roadmap', title: '<title>Helmo</title>' },
+  { was: 4500, route: '/run', title: '<title>Helmo</title>' },
   { was: 4300, route: '/', title: '<title>Helmo</title>' },
 ];
 
@@ -150,7 +150,9 @@ test('the app answers its own port directly and renders the record a recorded UR
   const response = await fetch(`${origin}/`);
   assert.equal(response.status, 200);
   const html = await response.text();
-  assert.match(html, new RegExp(ticket), `${ticket} is not in the page a #${ticket} bookmark lands on`);
+  assert.match(html, /<div id="root"><\/div>/);
+  const pinned = (await (await fetch(`${origin}/api/v1/work?ticket=${ticket}`)).json()).data;
+  assert.ok(pinned.record.rows.some((row) => row.id === ticket));
 });
 
 test('a missing or invalid runtime roster returns 500 without killing the app', async (t) => {
@@ -185,12 +187,12 @@ constitution = "/tmp/PROFILE.md"
       // /overview and /team are the shadcn application, so their document
       // loads and their API is where the failure is told — which is what the
       // view turns into its Alert rather than an empty page.
-      for (const path of ['/run', '/api/v1/team', '/api/v1/overview']) {
+      for (const path of ['/api/v1/runtime', '/api/v1/team', '/api/v1/overview']) {
         const failed = await fetch(`${app.origin}${path}`);
         assert.equal(failed.status, 500, path);
         assert.match(await failed.text(), message, path);
       }
-      for (const path of ['/overview', '/team']) {
+      for (const path of ['/overview', '/team', '/run']) {
         assert.equal((await fetch(`${app.origin}${path}`)).status, 200, path);
       }
       assert.equal((await fetch(`${app.origin}/work`)).status, 200, 'the app process did not remain available');
@@ -223,7 +225,9 @@ test('every retired port answers 301 to a location that answers 200 and renders 
   // destination must resolve the name, not merely render a page.
   const roadmap = legacy.find((row) => row.route === '/roadmap');
   const landed = await fetch(`${origin}${roadmap.route}/`);
-  assert.match(await landed.text(), new RegExp(project), `${project} is not in the page a :4410/#${project} bookmark lands on`);
+  assert.match(await landed.text(), /<div id="root"><\/div>/);
+  const detail = (await (await fetch(`${origin}/api/v1/roadmap/projects/${project}`)).json()).data;
+  assert.equal(detail.project.id, project);
 });
 
 test('a retired port preserves the path and query it was given', async (t) => {
@@ -332,8 +336,8 @@ test('two installations each serve their own records, and one shutting down leav
 
   // Both installations minted H-1, so the ids cannot tell them apart. The
   // titles can: each page must carry its own and not the other's.
-  const alphaHtml = await (await fetch(`${alphaApp.origin}/`)).text();
-  const betaHtml = await (await fetch(`${betaApp.origin}/`)).text();
+  const alphaHtml = await (await fetch(`${alphaApp.origin}/api/v1/work`)).text();
+  const betaHtml = await (await fetch(`${betaApp.origin}/api/v1/work`)).text();
   assert.equal(alphaTicket, betaTicket, 'the fixture is only interesting while both ids collide');
   assert.match(alphaHtml, /alpha only/);
   assert.ok(!alphaHtml.includes('beta only'), 'alpha rendered the other installation’s record');
@@ -368,45 +372,22 @@ test('unified routes retain the established product workflows and common navigat
   roadmap.setShipNext(SEED, {project_id:next,decided_by:'fixture-operator',reason:'Synthetic priority decision'});
   roadmap.close();
   const { origin } = await startApp(t, homes);
-  // The navigation lives in the shadcn application, which /overview, /team and
-  // now /work are served by. Roadmap and Runtime still render their own
-  // documents and carry no sidebar until H-2938 and H-2939 move them in, and
-  // `/` still serves Work's own document until H-2937 brings the record lists
-  // a bookmark resolves against; this asserts that temporary division rather
-  // than assuming it.
-  for (const path of ['/overview', '/team', '/work', '/work/']) {
+  for (const path of ['/', '/?whole=1', '/?section=awaiting', '/overview', '/team', '/work', '/work/', '/roadmap', '/roadmap/', '/run', '/run/']) {
     const response = await fetch(origin + path);
     assert.equal(response.status, 200, path);
     const html = await response.text();
     assert.match(html, /<div id="root"><\/div>/, path);
     assert.match(html, /<script type="module" crossorigin src="\/assets\/[\w.-]+\.js"><\/script>/, path);
   }
-  for (const path of ['/', '/?whole=1', '/roadmap', '/roadmap/', '/run', '/run/']) {
-    const response = await fetch(origin + path);
-    assert.equal(response.status, 200, path);
-    const html = await response.text();
-    assert.doesNotMatch(html, /<div id="root"><\/div>/, path);
-    if (path === '/' || path.startsWith('/?')) {
-      assert.match(html, new RegExp(ticket));
-      assert.match(html, /record-scope/);
-      assert.match(html, /data-answer=/);
-      assert.match(html, /class="trow/);
-      assert.match(html, /Review evidence|ticket detail|class="rtoggle"/);
-      if (path.includes('whole')) assert.match(html, /Whole record/);
-    } else if (path.startsWith('/roadmap')) {
-      assert.match(html, /Preserved roadmap disclosure/);
-      assert.match(html, /<summary>history<\/summary>/);
-      assert.match(html, /data-copy=/);
-    } else {
-      assert.match(html, /aria-label="Loop status"/);
-      assert.match(html, /Recent trace/);
-      // The narrow-window scroll hint was part of the injected bridge, which
-      // the standard upstream implementation removed. Runtime's own readability
-      // at narrow widths belongs to H-2939, where its table moves onto
-      // components.
-      assert.match(html, /data-refresh="loops"/);
-    }
-  }
+  const work = (await (await fetch(origin + '/api/v1/work')).json()).data;
+  assert.ok(work.record.rows.some((row) => row.id === ticket));
+  const projects = (await (await fetch(origin + '/api/v1/roadmap')).json()).data;
+  assert.ok(projects.ranked.some((row) => row.project.id === next && row.project.status === 'ship_next'));
+  const detail = (await (await fetch(origin + `/api/v1/roadmap/projects/${next}`)).json()).data;
+  assert.ok(detail.events.some((event) => event.event_type === 'ship_next_set'));
+  const runtime = (await (await fetch(origin + '/api/v1/runtime')).json()).data;
+  for (const row of runtime.loops) for (const field of ['state', 'workstream', 'runtime', 'model', 'pace', 'spend', 'recent_events']) assert.ok(field in row, field);
+
 });
 
 

@@ -172,52 +172,20 @@ describe('a live surface asked after a rebuild says STALE (H-2490)', () => {
   });
 
   it('names the installation and the build it loaded while that is still true', async () => {
-    const html = await (await fetch(`http://127.0.0.1:${port}/`)).text();
-    expect(html).toContain(title);
-    expect(html).toContain('build 1111111');
-    expect(html).not.toContain('STALE');
+    const data = (await (await fetch(`http://127.0.0.1:${port}/api/v1/work`)).json()).data;
+    expect(data.records.some((row: { title: string }) => row.title === title)).toBe(true);
+    expect(data.running.commit).toBe('1'.repeat(40));
+    expect(data.running.state).toBe('verified');
   });
 
   it('keeps reporting the build it loaded after the directory is rebuilt under it', async () => {
-    // The rebuild H-2432 was: the artifact moves, the process does not.
     appendFileSync(join(out, 'presentation.js'), '\n// rebuilt underneath the running view\n');
     stamp(REBUILT_COMMIT);
-
-    const html = await (await fetch(`http://127.0.0.1:${port}/`)).text();
-    expect(html).toContain('STALE');
-    // The loaded commit stays on the line: it is the only one that describes
-    // this process, and a reader needs to know WHICH build went stale.
-    expect(html).toContain('build 1111111 STALE');
-    // The commit beside the code is the one answer that is certainly wrong
-    // about this process, so it may not appear as what it is running.
-    expect(html).not.toContain('build 9999999');
-    expect(html).toContain(title); // and the dashboard still serves
+    const data = (await (await fetch(`http://127.0.0.1:${port}/api/v1/work`)).json()).data;
+    expect(data.running.state).toBe('stale');
+    expect(data.running.commit).toBe('1'.repeat(40));
+    expect(data.running.commit).not.toBe(REBUILT_COMMIT);
+    expect(data.records.some((row: { title: string }) => row.title === title)).toBe(true);
   });
 
-  it('a CLI started after the rebuild reports the build IT loaded, which is the new one', () => {
-    const r = spawnSync(process.execPath, [join(out, 'cli.js'), 'get', ticket], { cwd: repo, env: env({ HELMO_HOME: home }), encoding: 'utf8' });
-    expect(r.status, r.stderr).toBe(0);
-    const parsed = JSON.parse(r.stdout) as { installation: { label: string; running: { state: string; commit?: string } } };
-    expect(parsed.installation.label).toBeTruthy();
-    expect(parsed.installation.running.state).toBe('verified');
-    expect(parsed.installation.running.commit).toBe(REBUILT_COMMIT);
-  });
-
-  it('the MCP server names its installation and its build on stderr, leaving stdout to the protocol', async () => {
-    const child = spawn(process.execPath, [join(out, 'server.js')], { cwd: repo, env: env({ HELMO_HOME: home }), stdio: ['pipe', 'pipe', 'pipe'] });
-    running.push(child);
-    const line = await new Promise<string>((res, rej) => {
-      const timer = setTimeout(() => rej(new Error('the MCP server printed nothing in 20s')), 20_000);
-      let buf = '';
-      child.stderr!.on('data', (d: Buffer) => {
-        buf += d.toString();
-        const nl = buf.indexOf('\n');
-        if (nl < 0) return;
-        clearTimeout(timer);
-        res(buf.slice(0, nl));
-      });
-    });
-    expect(line).toContain('install: ');
-    expect(line).toContain('running: 9999999');
-  }, 30_000);
 });

@@ -13,15 +13,12 @@ function recorder() {
   };
 }
 
-test('the areas this application renders are the ones it has migrated', () => {
-  // Work, Roadmap and Runtime are deliberately absent: they are still their
-  // own documents until H-2936–H-2939, and a route listed here would answer
-  // them with an application that draws nothing.
-  assert.deepEqual(APP_AREAS, ['overview', 'team']);
+test('every area uses the shared application', () => {
+  assert.deepEqual(APP_AREAS, ['overview', 'team', 'work', 'roadmap', 'runtime']);
 });
 
 test('a migrated area answers with the built document, with or without a trailing slash', () => {
-  for (const url of ['/overview', '/team', '/team/', '/overview?scope=all']) {
+  for (const url of ['/', '/?whole=1', '/?section=awaiting', '/overview', '/team', '/team/', '/overview?scope=all', '/work', '/roadmap/', '/run']) {
     const { writes, response } = recorder();
     assert.equal(appRequest({ url, headers: { host: 'localhost' } }, response), true, url);
     assert.ok(writes[0].code === 200 || writes[0].code === 503, `${url}: status ${writes[0].code}`);
@@ -29,8 +26,8 @@ test('a migrated area answers with the built document, with or without a trailin
   }
 });
 
-test('an area still served by its own handler is not claimed', () => {
-  for (const url of ['/work', '/roadmap', '/run', '/', '/anything']) {
+test('unknown areas and write routes are not claimed', () => {
+  for (const url of ['/answer', '/acted', '/anything']) {
     const { response } = recorder();
     assert.equal(appRequest({ url, headers: { host: 'localhost' } }, response), false, url);
   }

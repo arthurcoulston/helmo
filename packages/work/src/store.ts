@@ -535,26 +535,50 @@ export class Store {
     this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_tickets_workflow_attempt ON tickets(workflow_attempt_id) WHERE workflow_attempt_id IS NOT NULL');
 
     // H-392 migration: older answers reopened the ticket but left the legacy
-    // sitting marker materialized. Clear it only when the latest genuine
-    // resume answer is newer than the event that established the marker;
-    // a later, independent sitting remains untouched, and so does a current
-    // release handoff, whose sitting has its own lifecycle. Replay below
-    // derives the same result from those historical events.
+    // needs_human / sitting markers materialized. Clear each one only when the
+    // latest genuine resume answer is newer than the event that established
+    // THAT marker; a later, independent marker remains untouched, and so does
+    // a current release handoff, whose sitting has its own lifecycle.
+    //
+    // This must derive exactly what `resumeAnswered` derives on replay, or the
+    // rows stop being a materialized view of the log (H-2971). Three things
+    // that divergence cost us, all measured on the live stores:
+    //   - a `status = 'open'` filter here, absent on replay, left four closed
+    //     personal tickets holding needs_human = 1 that the log clears;
+    //   - one shared recency guard keyed only on needs_human events cleared a
+    //     Good Plumb sitting that a LATER event had established (H-513), so
+    //     the guards are now per-field;
+    //   - replay only clears for a LEGACY answer (no `clear_sitting` bit) or
+    //     an explicit true, so an explicit false must not clear here either.
+    const legacyResumeAnswer = `
+      EXISTS (
+        SELECT 1 FROM events a
+         WHERE a.ticket_id = tickets.id AND a.event_type = 'answered'
+           AND COALESCE(json_extract(a.payload, '$.resolution'), 'resume') = 'resume'
+           AND COALESCE(json_extract(a.payload, '$.clear_sitting'), 1) = 1
+           AND a.seq > COALESCE((
+             SELECT MAX(m.seq) FROM events m
+              WHERE m.ticket_id = tickets.id AND (%MARKER%)
+           ), 0)
+      )`;
+    const noCurrentHandoff = `(release_handoff IS NULL OR COALESCE(json_extract(release_handoff, '$.current'), 0) = 0)`;
     this.db.exec(`
-      UPDATE tickets SET needs_human = 0, sitting = NULL, sitting_with = NULL
-       WHERE status = 'open' AND needs_human = 1
-         AND (release_handoff IS NULL OR COALESCE(json_extract(release_handoff, '$.current'), 0) = 0)
-         AND EXISTS (
-           SELECT 1 FROM events a
-            WHERE a.ticket_id = tickets.id AND a.event_type = 'answered'
-              AND COALESCE(json_extract(a.payload, '$.resolution'), 'resume') = 'resume'
-              AND a.seq > COALESCE((
-                SELECT MAX(m.seq) FROM events m
-                 WHERE m.ticket_id = tickets.id
-                   AND ((m.event_type = 'created' AND json_extract(m.payload, '$.needs_human') = 1)
-                     OR (m.event_type = 'updated' AND json_extract(m.payload, '$.diffs.needs_human.to') = 1))
-              ), 0)
-         )
+      UPDATE tickets SET needs_human = 0
+       WHERE needs_human = 1 AND ${noCurrentHandoff}
+         AND ${legacyResumeAnswer.replace(
+           '%MARKER%',
+           `(m.event_type = 'created' AND json_extract(m.payload, '$.needs_human') = 1)
+            OR (m.event_type = 'updated' AND json_extract(m.payload, '$.diffs.needs_human.to') = 1)`,
+         )}
+    `);
+    this.db.exec(`
+      UPDATE tickets SET sitting = NULL, sitting_with = NULL
+       WHERE (sitting IS NOT NULL OR sitting_with IS NOT NULL) AND ${noCurrentHandoff}
+         AND ${legacyResumeAnswer.replace(
+           '%MARKER%',
+           `(m.event_type = 'created' AND json_extract(m.payload, '$.sitting') IS NOT NULL)
+            OR (m.event_type = 'updated' AND json_extract(m.payload, '$.diffs.sitting.to') IS NOT NULL)`,
+         )}
     `);
   }
 
@@ -3511,11 +3535,18 @@ export class Store {
           case 'hygiene_disposed':
             this.applyHygieneDisposed(ev.ts, ev.ticket_id, ev.actor, ev.payload);
             break;
+          // `linkTickets` stamps the FROM ticket's updated_at after the edge;
+          // replaying the edge alone left the row behind whenever a link was
+          // the last write a ticket ever saw — 38 of the 43 drifting rows
+          // across the two live stores (H-2971). `createTicket`'s own deps
+          // share the created event's ts, so stamping there changes nothing.
           case 'linked':
             this.applyLinked(ev.ticket_id, ev.payload['to'] as string, ev.payload['type'] as DepType, true);
+            this.db.prepare('UPDATE tickets SET updated_at = ? WHERE id = ?').run(ev.ts, ev.ticket_id);
             break;
           case 'unlinked':
             this.applyLinked(ev.ticket_id, ev.payload['to'] as string, ev.payload['type'] as DepType, false);
+            this.db.prepare('UPDATE tickets SET updated_at = ? WHERE id = ?').run(ev.ts, ev.ticket_id);
             break;
         }
       }

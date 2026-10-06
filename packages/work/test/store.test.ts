@@ -2780,6 +2780,37 @@ describe('THE INVARIANT: tickets are a materialized view of events', () => {
     const after = s.dumpState();
     expect(after).toEqual(before);
   });
+
+  // H-2971: the lifecycle above links early and writes again afterwards, which
+  // hides the gap. When a link is the LAST write a ticket sees, its row keeps
+  // the link's stamp and the replay has to reproduce it — 38 of the 43
+  // drifting rows across the two live stores were exactly this.
+  it('rebuild() reproduces updated_at when a link is the last write (H-2971)', () => {
+    // The whole suite runs inside a millisecond or two, which is the other
+    // reason this went unseen: without a tick, the link's stamp and the write
+    // before it are the same string and an unstamped replay looks correct.
+    const tick = () => { const t = Date.now(); while (Date.now() === t) { /* spin one ms */ } };
+    const s = freshStore();
+    const a = create(s, { title: 'Gala venue' });
+    const b = create(s, { title: 'Deposit decision' });
+    s.updateTicket(builder, { ticket_id: a.id, note: 'some earlier write' });
+    const beforeLink = s.getTicket(a.id).updated_at;
+    tick();
+    s.linkTickets(builder, a.id, b.id, 'blocks', 'add');
+    expect(s.getTicket(a.id).updated_at).not.toBe(beforeLink);
+
+    const linked = s.dumpState();
+    s.rebuild();
+    expect(s.dumpState()).toEqual(linked);
+
+    // and again with the removal as the final write
+    tick();
+    s.linkTickets(builder, a.id, b.id, 'blocks', 'remove');
+    expect(s.getTicket(a.id).updated_at).not.toBe(linked.tickets.find((t) => t.id === a.id)!.updated_at);
+    const unlinked = s.dumpState();
+    s.rebuild();
+    expect(s.dumpState()).toEqual(unlinked);
+  });
 });
 
 /** How long each holder below keeps the write lock after announcing it. The
@@ -3250,6 +3281,67 @@ describe('answered sitting migration (H-392)', () => {
       const after = new Store(path);
       expect(after.getTicket(stale.id)).toMatchObject({ status: 'open', needs_human: false, sitting: null, sitting_with: null });
       expect(after.getTicket(later.id)).toMatchObject({ needs_human: true, sitting: 'Twenty minutes choosing between the two drafts.' });
+      const migrated = after.dumpState();
+      after.rebuild();
+      expect(after.dumpState()).toEqual(migrated);
+      after.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // H-2971: the migration cleared only `status = 'open'` rows, so a ticket
+  // answered and then closed kept a needs_human = 1 the log clears. Four live
+  // personal tickets were in exactly this state.
+  it('clears the stale marker on a ticket that was answered and then closed', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'helmo-sitting-migrate-closed-'));
+    const path = join(dir, 'helmo.db');
+    try {
+      const before = new Store(path);
+      const t = create(before, { needs_human: 'Ten minutes with the operator to decide the retention window.' });
+      before.returnToHuman(builder, t.id, q);
+      before.answerTicket(orch, t.id, { answer: 'Keep thirty days.', resolution: 'resume' });
+      before.updateTicket(builder, { ticket_id: t.id, note: 'done', status: 'done', evidence: [{ kind: 'file', ref: '/tmp/x' }] });
+      const db = (before as unknown as { db: Database.Database }).db;
+      db.prepare('UPDATE tickets SET needs_human = 1 WHERE id = ?').run(t.id);
+      db.prepare("UPDATE events SET payload = json_remove(payload, '$.clear_sitting') WHERE event_type = 'answered'").run();
+      before.close();
+
+      const after = new Store(path);
+      expect(after.getTicket(t.id)).toMatchObject({ status: 'done', needs_human: false });
+      const migrated = after.dumpState();
+      after.rebuild();
+      expect(after.dumpState()).toEqual(migrated);
+      after.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // H-2971: one shared recency guard keyed on needs_human events let the
+  // migration null a sitting that a LATER event had established — Good Plumb's
+  // H-513. The guards are per-field now, so this sitting has to survive.
+  it('keeps a sitting established after the answer, even while clearing needs_human', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'helmo-sitting-migrate-later-'));
+    const path = join(dir, 'helmo.db');
+    try {
+      const before = new Store(path);
+      const t = create(before, { needs_human: 'Ten minutes on the retention window.', sitting_with: builder.name });
+      before.returnToHuman(builder, t.id, q);
+      before.answerTicket(orch, t.id, { answer: 'Keep thirty days.', resolution: 'resume' });
+      const db = (before as unknown as { db: Database.Database }).db;
+      // What the pre-H-392 release left behind: the answer did not clear it.
+      db.prepare("UPDATE tickets SET needs_human = 1, sitting = 'Ten minutes on the retention window.', sitting_with = ? WHERE id = ?").run(builder.name, t.id);
+      db.prepare("UPDATE events SET payload = json_remove(payload, '$.clear_sitting') WHERE event_type = 'answered'").run();
+      // needs_human is already set, so this moves the SITTING only — the shape
+      // that the single needs_human-keyed guard could not see.
+      before.updateTicket(orch, { ticket_id: t.id, note: 'the sitting moved on', needs_human: 'Twenty minutes choosing between the two drafts.' });
+      expect(before.getEvents(t.id).at(-1)!.payload['diffs']).toMatchObject({ sitting: { to: 'Twenty minutes choosing between the two drafts.' } });
+      expect(before.getEvents(t.id).at(-1)!.payload['diffs']).not.toHaveProperty('needs_human');
+      before.close();
+
+      const after = new Store(path);
+      expect(after.getTicket(t.id).sitting).toBe('Twenty minutes choosing between the two drafts.');
       const migrated = after.dumpState();
       after.rebuild();
       expect(after.dumpState()).toEqual(migrated);

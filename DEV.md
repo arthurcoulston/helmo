@@ -273,7 +273,14 @@ in one of them is a defect in all three:
 
 - **Append-only event log, materialized state.** `rebuild()` is the invariant
   and the tests enforce it: every side effect of a write lives in an `apply*`
-  function, or replay silently diverges.
+  function, or replay silently diverges. Two ways that went wrong on live data
+  (H-2971), both worth recognising before you add a writer: a writer that
+  stamps a row *outside* its `apply*` (`linkTickets` touching `updated_at`
+  after `applyLinked`), and an open-time migration that repairs rows with no
+  event at all — a second writer replay cannot see, so its predicate has to
+  derive exactly what replay derives, per field. Suite drift hides both: the
+  tests run inside a millisecond, so an unstamped `updated_at` looks correct
+  unless the case forces the clock on.
 - **`.immediate()` write transactions**, never deferred.
 - **Actor provenance on every write**, recorded and checked as an assertion —
   never authenticated. The stores record who claimed to write; they do not

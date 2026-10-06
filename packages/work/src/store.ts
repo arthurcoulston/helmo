@@ -530,6 +530,29 @@ export class Store {
     }
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_tickets_lane ON tickets(lane) WHERE lane IS NOT NULL');
     this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_tickets_workflow_attempt ON tickets(workflow_attempt_id) WHERE workflow_attempt_id IS NOT NULL');
+
+    // H-392 migration: older answers reopened the ticket but left the legacy
+    // sitting marker materialized. Clear it only when the latest genuine
+    // resume answer is newer than the event that established the marker;
+    // a later, independent sitting remains untouched, and so does a current
+    // release handoff, whose sitting has its own lifecycle. Replay below
+    // derives the same result from those historical events.
+    this.db.exec(`
+      UPDATE tickets SET needs_human = 0, sitting = NULL, sitting_with = NULL
+       WHERE status = 'open' AND needs_human = 1
+         AND (release_handoff IS NULL OR COALESCE(json_extract(release_handoff, '$.current'), 0) = 0)
+         AND EXISTS (
+           SELECT 1 FROM events a
+            WHERE a.ticket_id = tickets.id AND a.event_type = 'answered'
+              AND COALESCE(json_extract(a.payload, '$.resolution'), 'resume') = 'resume'
+              AND a.seq > COALESCE((
+                SELECT MAX(m.seq) FROM events m
+                 WHERE m.ticket_id = tickets.id
+                   AND ((m.event_type = 'created' AND json_extract(m.payload, '$.needs_human') = 1)
+                     OR (m.event_type = 'updated' AND json_extract(m.payload, '$.diffs.needs_human.to') = 1))
+              ), 0)
+         )
+    `);
   }
 
   close(): void {
@@ -1290,6 +1313,55 @@ export class Store {
       }
     }
     return answered;
+  }
+
+  /** A human's answer to this same ask on a connected ticket (H-390, narrowed
+   *  by H-994). Connected means parent/source/related or cited by id in the
+   *  title, body, situation or question; a qualified ref (H-n@other) names
+   *  another installation's ticket and connects nothing here. Same means every
+   *  field of the ask — situation, question, recommendation, options and
+   *  if_unanswered — is identical, case, Unicode and whitespace included:
+   *  prose and identifiers share these fields, and folding either merges
+   *  distinct resources (H-1047). Nothing is inferred from prose, so a changed
+   *  condition, an added action or a different resource is a new ask. The answer must be by a human, not relayed, and must be the latest
+   *  answer anywhere in the connected set: any later answer may have changed
+   *  or withdrawn it, and telling which is the inference this refuses to
+   *  make. Two rounds of matching actions, resources and conditions by
+   *  keyword certified asks that were not the same (H-1005, H-1040); a guard
+   *  that misses a paraphrase costs a meeting slot, one that swallows a new
+   *  decision costs the human his say. */
+  priorDecision(ticketId: string, ask: Question): { ticket: string; answer: Answer; at: string; by: string } | null {
+    const ticket = this.getTicket(ticketId);
+    const cited = `${ticket.title}\n${ticket.body}\n${ask.situation}\n${ask.question}`.match(/\bH-\d+\b(?!@)/g) ?? [];
+    const linked = this.db.prepare(
+      "SELECT to_id AS id FROM deps WHERE from_id = ? AND type IN ('parent','discovered_from','relates') UNION SELECT from_id AS id FROM deps WHERE to_id = ? AND type = 'relates'",
+    ).all(ticketId, ticketId) as { id: string }[];
+    const ids = [...new Set([ticketId, ...cited, ...linked.map((r) => r.id)])];
+    const rows = this.db
+      .prepare(`SELECT ticket_id, event_type, actor, payload, ts FROM events WHERE ticket_id IN (${ids.map(() => '?').join(',')}) AND event_type IN ('returned', 'return_withdrawn', 'answered') ORDER BY seq`)
+      .all(...ids) as { ticket_id: string; event_type: string; actor: string; payload: string; ts: string }[];
+    const same = (q: Question) => JSON.stringify([
+      q.situation, q.question, q.recommendation, q.if_unanswered ?? null,
+      q.options?.map((o) => [o.label, o.consequence]) ?? null,
+    ]);
+    const key = same(ask);
+    const pending = new Map<string, boolean>();
+    let prior: { ticket: string; answer: Answer; at: string; by: string } | null = null;
+    for (const r of rows) {
+      if (r.event_type === 'returned') {
+        const req = JSON.parse(r.payload) as HumanRequest;
+        pending.set(r.ticket_id, req.kind !== 'action' && same(req as Question) === key);
+      } else if (r.event_type === 'return_withdrawn') {
+        pending.delete(r.ticket_id);
+      } else {
+        const by = JSON.parse(r.actor) as Actor;
+        prior = pending.get(r.ticket_id) && by.kind === 'human'
+          ? { ticket: r.ticket_id, answer: JSON.parse(r.payload) as Answer, at: r.ts, by: by.name }
+          : null;
+        pending.delete(r.ticket_id);
+      }
+    }
+    return prior;
   }
 
   agentChain(ticketId: string): string[] {
@@ -3024,6 +3096,13 @@ export class Store {
           `${t.id} has already had this exact ask answered — ${already.by} answered it at ${already.at}: "${said.length > 200 ? `${said.slice(0, 200)}…` : said}"${already.answer.chosen_option ? ` (chose: ${already.answer.chosen_option})` : ''}. Read it with helmo_get_ticket (last_answer) and act on it; asking again spends a meeting slot on a decision already made. If you do still need the human, say what is new: a situation that accounts for that answer and names what it left open. A byte-identical re-ask is the signature of a session that did not see the answer land, not of a second question.`,
         );
       }
+      const prior = this.priorDecision(t.id, stored);
+      if (prior) {
+        const said = prior.answer.answer.replace(/\s+/g, ' ').trim();
+        throw new HelmoError(
+          `${t.id} repeats an ask whose answer is already recorded on ${prior.ticket} — ${prior.by} answered it at ${prior.at}: "${said.length > 200 ? `${said.slice(0, 200)}…` : said}"${prior.answer.chosen_option ? ` (chose: ${prior.answer.chosen_option})` : ''}. Read it with helmo_get_ticket on ${prior.ticket} and act on it. If something has changed since — a condition, a resource, an action — say so in the situation; that is a new ask and reaches the human.`,
+        );
+      }
       const ts = now();
       this.append(ts, t.id, 'returned', actor, { ...stored, outcome_owner: t.assignee } as unknown as Record<string, unknown>);
       this.db
@@ -3107,9 +3186,13 @@ export class Store {
       const assignee = resolution === 'resume' ? this.workstreamSeat(t.workstream) : null;
       if (resolution === 'resume' && t.workflow_attempt_id) this.admitWorkflow(t.id, t.workflow_attempt_id, 'answer_resume');
       if (resolution !== 'resume') this.refuseQuarantinedWorkflowMutation(t.id, `answer_${resolution}`);
-      this.append(ts, t.id, 'answered', actor, { ...a, resolution, assignee } as unknown as Record<string, unknown>);
+      // An answer completes the one operator interaction represented by both
+      // legacy shapes (H-392). Other gates are independent columns/links and
+      // remain, as does a current release handoff's own sitting.
+      const clearSitting = resolution === 'resume' && t.needs_human && !t.release_handoff?.current;
+      this.append(ts, t.id, 'answered', actor, { ...a, resolution, assignee, clear_sitting: clearSitting } as unknown as Record<string, unknown>);
       if (resolution === 'resume') {
-        this.db.prepare("UPDATE tickets SET status = 'open', assignee = ?, question = NULL, updated_at = ? WHERE id = ?").run(assignee, ts, t.id);
+        this.resumeAnswered(t.id, assignee, clearSitting, ts);
       } else {
         this.db
           .prepare('UPDATE tickets SET status = ?, assignee = NULL, question = NULL, updated_at = ?, closed_at = ? WHERE id = ?')
@@ -3304,8 +3387,12 @@ export class Store {
           case 'answered': {
             const res = (ev.payload['resolution'] as string) ?? 'resume';
             if (res === 'resume') {
-              this.db.prepare("UPDATE tickets SET status = 'open', assignee = ?, question = NULL, updated_at = ? WHERE id = ?")
-                .run(ev.payload['assignee'] ?? null, ev.ts, ev.ticket_id);
+              // Historical answer events predate the explicit bit (H-392). They
+              // still complete a legacy combined question/sitting interaction,
+              // unless the sitting belongs to a current release handoff.
+              const bit = ev.payload['clear_sitting'];
+              const clearSitting = bit === undefined ? !this.getTicket(ev.ticket_id).release_handoff?.current : Boolean(bit);
+              this.resumeAnswered(ev.ticket_id, (ev.payload['assignee'] as string | null) ?? null, clearSitting, ev.ts);
             } else {
               this.db
                 .prepare('UPDATE tickets SET status = ?, assignee = NULL, question = NULL, updated_at = ?, closed_at = ? WHERE id = ?')
@@ -3432,6 +3519,17 @@ export class Store {
     if (!row && this.installation.source !== 'derived') {
       this.db.prepare("INSERT INTO meta (key, value) VALUES ('installation_name', ?)").run(this.installation.label);
     }
+  }
+
+  private resumeAnswered(id: string, assignee: string | null, clearSitting: boolean, ts: string): void {
+    const clear = clearSitting ? 1 : 0;
+    this.db.prepare(
+      `UPDATE tickets SET status = 'open', assignee = ?, question = NULL,
+         needs_human = CASE WHEN ? THEN 0 ELSE needs_human END,
+         sitting = CASE WHEN ? THEN NULL ELSE sitting END,
+         sitting_with = CASE WHEN ? THEN NULL ELSE sitting_with END,
+         updated_at = ? WHERE id = ?`,
+    ).run(assignee, clear, clear, clear, ts, id);
   }
 
   private workstreamSeat(name: string): string | null {

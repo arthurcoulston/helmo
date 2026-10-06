@@ -181,7 +181,13 @@ Pinned releases accept both the historical three-component layout and C1's one
   string saying what the sitting is for and roughly what it costs him, stored as
   `sitting` and rendered as the card's ask; `false` clears both, and
   `sitting_with` alongside it names the agent to sit with (R-42 I13) and clears
-  with them. A bare `true`
+  with them. A genuine `resume` answer on a ticket carrying both a question
+  and a sitting completes that one operator interaction (H-392): the answered
+  event records `clear_sitting` and clears all three, leaving date, dependency
+  and capacity gates intact, and a current release handoff's sitting (which
+  has its own lifecycle) untouched. Replay applies the same transition, and a
+  one-time migration clears a sitting an earlier answer left behind only when
+  that answer is newer than the event that marked it. A bare `true`
   is refused, the way `return_to_human` refuses a return with no question — a
   marker with nothing to say drew a row that read like backlog, and five
   sittings went unnoticed. The line is a field and never the body's first
@@ -329,6 +335,11 @@ Pinned releases accept both the historical three-component layout and C1's one
   every agent** (triage duty, evidence rules, question quality); treat
   description edits as seriously as code — they are guidance-as-deployed, and
   they live here and only here so local and remote agents can never drift.
+  The return contract also treats an ownership/scope refusal from one tool as
+  evidence about that tool only: agents must resolve supported contribution or
+  maintenance routes and finish team preparation before escalating a concrete
+  human remainder, without widening that route into merge, publication,
+  sovereign writes or scanner bypass.
   Every tool's arguments go through `strict()`, so an undeclared key is refused
   during validation instead of stripped (R-39 Q9): handed a raw shape the SDK
   wraps it in a plain object, and `capacity_hold` on a create or a misspelled
@@ -828,6 +839,21 @@ Pinned releases accept both the historical three-component layout and C1's one
   returning, which binds only the agent taught — a refusal binds every caller.
   It cannot wedge a ticket: a situation that accounts for the answer is a
   different fingerprint.
+  H-390 (narrowed by H-994) carries the same refusal to connected work:
+  parent/source/related tickets and tickets cited by id in the title, body,
+  situation or question, but never through a qualified ref (H-n@other), which
+  names another installation's ticket. There the same words still mean the
+  same ask, so a sibling session replaying a decision made on its source is
+  refused. Only an ask whose every field is identical, case, Unicode and
+  whitespace included, matches: the same fields carry resource names, and
+  folding them merged distinct objects (H-1047); a formatting-only repeat
+  reaching the human is the accepted cost. Only
+  an original human answer counts, never an orchestrator relay; and the match
+  must be the latest answer anywhere in the connected set, because a later one
+  may have changed or withdrawn it. It reads no meaning from prose. Two
+  earlier versions that matched actions, resources and conditions by keyword
+  suppressed asks that were not the same (H-1005, H-1040); a missed paraphrase
+  costs a meeting slot, a swallowed decision costs the human his say.
 - Product acceptance is opt-in and exact-ref: no completion is
   `not_requested`; a completion without a current verdict is `pending`; FAIL is
   `failed`; only a current non-author PASS is `accepted`. A caller checking a

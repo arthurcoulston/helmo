@@ -77,6 +77,20 @@ describe('immutable release handoffs', () => {
     expect(s.dumpState()).toEqual(before);
   });
 
+  it('an answered question leaves a current release handoff sitting in place (H-392)', () => {
+    const s = new Store(':memory:');
+    const { technical } = handoff(s);
+    s.returnToHuman(mason, technical.ticket.id, {
+      situation: 'The release notes name two possible dates.', question: 'Which date goes in the notes?', recommendation: 'Use the later date.',
+    });
+    s.answerTicket({ name: 'operator', kind: 'human' }, technical.ticket.id, { answer: 'Use the later date.', resolution: 'resume' });
+    const expected = { needs_human: true, sitting: expect.stringContaining('repository public'), sitting_with: 'mason', release_handoff: expect.objectContaining({ current: true }) };
+    expect(s.getTicket(technical.ticket.id)).toMatchObject(expected);
+    const before = s.dumpState();
+    s.rebuild();
+    expect(s.dumpState()).toEqual(before);
+  });
+
   it('refuses an acceptance snapshot that moved before the atomic record', () => {
     const s = new Store(':memory:');
     const technical = accepted(s, 'Release Helmo', proof);

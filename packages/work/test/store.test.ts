@@ -1152,6 +1152,40 @@ describe('return to human / answer', () => {
     expect(s.lastAnswer(t.id)?.chosen_option).toBe('pay');
   });
 
+  it('answer clears the legacy sitting marker but preserves unrelated holds through replay (H-392)', () => {
+    const s = freshStore();
+    const hold = { reason: 'Preserve reserve.', provenance: 'capacity review', reconsider_when: 'posture changes' };
+    const t = create(s, {
+      needs_human: 'Ten minutes with the operator to make the recorded decision.',
+      sitting_with: builder.name,
+      not_before: '2099-01-01',
+      assignee: builder.name,
+    });
+    s.updateTicket(orch, { ticket_id: t.id, note: 'capacity also constrains the work', capacity_hold: hold });
+    s.returnToHuman(builder, t.id, q);
+    s.answerTicket(orch, t.id, { answer: 'Proceed after the other holds clear.', resolution: 'resume' });
+    expect(s.getEvents(t.id).find((e) => e.event_type === 'answered')?.payload).toMatchObject({ clear_sitting: true });
+    const expected = {
+      status: 'open', assignee: null, needs_human: false, sitting: null, sitting_with: null,
+      not_before: '2099-01-01T00:00:00.000Z', capacity_hold: hold,
+    };
+    expect(s.getTicket(t.id)).toMatchObject(expected);
+    s.rebuild();
+    expect(s.getTicket(t.id)).toMatchObject(expected);
+    expect(s.listTickets({ ready: true, caller: builder.name }).map((x) => x.id)).not.toContain(t.id);
+  });
+
+  it('keeps a sitting marked after the answer (H-392)', () => {
+    const s = freshStore();
+    const t = create(s);
+    s.returnToHuman(builder, t.id, q);
+    s.answerTicket(orch, t.id, { answer: 'Proceed.', resolution: 'resume' });
+    expect(s.getEvents(t.id).find((e) => e.event_type === 'answered')?.payload).toMatchObject({ clear_sitting: false });
+    s.updateTicket(orch, { ticket_id: t.id, note: 'a new sitting', needs_human: 'Twenty minutes choosing between the two drafts.' });
+    s.rebuild();
+    expect(s.getTicket(t.id)).toMatchObject({ needs_human: true, sitting: 'Twenty minutes choosing between the two drafts.' });
+  });
+
   it('refuses an answer whose expected question is not the one on the ticket (H-1053)', () => {
     // The check lives inside the write transaction because the caller's read
     // and its write are two moments: a dashboard card can be answered and
@@ -1303,6 +1337,151 @@ describe('return to human / answer', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  describe('a connected ticket repeating an answered ask (H-390, H-994)', () => {
+    const arthur: Actor = { name: 'arthur', kind: 'human' };
+    const ask = (recommendation = 'amend commit abc123', situation = 'Commit abc123 needs repair.') =>
+      ({ situation, question: 'May we proceed?', recommendation });
+    // An answered ask on one ticket and a follow-up ticket citing it.
+    function answered(s: Store, answer = 'Approved.', original = ask(), by: Actor = arthur) {
+      const source = create(s, { title: 'Repair the fixture' });
+      s.returnToHuman(builder, source.id, original);
+      s.answerTicket(by, source.id, { answer, resolution: 'resume' });
+      return source;
+    }
+    const follow = (s: Store, ...cited: string[]) => create(s, { body: `See ${cited.join(' and ')}.` });
+
+    it('refuses the identical ask on a cited ticket and quotes the answer', () => {
+      const s = freshStore();
+      const source = answered(s, 'Approved; keep the author.');
+      const next = follow(s, source.id);
+      expect(() => s.returnToHuman(builder, next.id, ask()))
+        .toThrow(new RegExp(`already recorded on ${source.id}.*Approved; keep the author`));
+      expect(s.getTicket(next.id).status).toBe('open');
+    });
+
+    // Prose and resource names share these fields, so no folding: a
+    // formatting-only repeat reaching the human is the accepted cost (H-1047).
+    it.each([
+      ['case', 'delete object invoices/ClientA.pdf', 'delete object invoices/clienta.pdf'],
+      ['Unicode compatibility', 'delete object reports/\u2460.csv', 'delete object reports/1.csv'],
+      ['internal whitespace', 'delete object "reports/a  b.csv"', 'delete object "reports/a b.csv"'],
+      ['surrounding whitespace', 'amend commit abc123', ' amend commit abc123'],
+    ])('treats a difference in %s as a different ask (H-1047)', (_label, original, next) => {
+      const s = freshStore();
+      const source = answered(s, 'Approved.', ask(original));
+      expect(s.returnToHuman(builder, follow(s, source.id).id, ask(next)).status).toBe('awaiting_human');
+    });
+
+    it('connects nothing through a qualified ref to another installation (H-1047)', () => {
+      const s = freshStore();
+      const source = answered(s);
+      const next = create(s, { body: `See ${source.id}@fixture.other.` });
+      expect(s.returnToHuman(builder, next.id, ask()).status).toBe('awaiting_human');
+      // The same id unqualified is a local citation.
+      expect(() => s.returnToHuman(builder, follow(s, source.id).id, ask())).toThrow(/already recorded/);
+    });
+
+    it('refuses the identical ask on a related ticket and repeats a refusal as readily as an approval', () => {
+      const s = freshStore();
+      const source = answered(s, 'No. Keep commit abc123 unchanged.');
+      const linked = create(s);
+      s.linkTickets(builder, linked.id, source.id, 'relates', 'add');
+      expect(() => s.returnToHuman(builder, linked.id, ask())).toThrow(/already recorded/);
+    });
+
+    // The answer's condition is not re-judged: the identical ask is the one
+    // the human already answered, and the refusal hands his condition back
+    // to the agent as a dependency, as the same-ticket refusal does (H-2126).
+    it('refuses the identical ask under a conditional answer and quotes the condition back', () => {
+      const s = freshStore();
+      const source = answered(s, 'Approved only after review.');
+      expect(() => s.returnToHuman(builder, follow(s, source.id).id, ask())).toThrow(/"Approved only after review\."/);
+    });
+
+    it('lets any changed field reach the human', () => {
+      const s = freshStore();
+      const source = answered(s);
+      for (const changed of [
+        ask('amend commit def456'),
+        ask('amend commit abc123', 'Commit abc123 needs repair before H-99 settles.'),
+        { ...ask(), question: 'May we proceed now?' },
+        { ...ask(), if_unanswered: 'The release slips a week.' },
+        { ...ask(), options: [{ label: 'amend', consequence: 'history changes' }, { label: 'leave', consequence: 'the defect stays' }] },
+      ]) expect(s.returnToHuman(builder, follow(s, source.id).id, changed).status).toBe('awaiting_human');
+    });
+
+    it('does not reach unconnected work', () => {
+      const s = freshStore();
+      answered(s);
+      expect(s.returnToHuman(builder, create(s).id, ask()).status).toBe('awaiting_human');
+    });
+
+    it('counts only an original human answer, not a relay or an agent', () => {
+      const s = freshStore();
+      for (const by of [orch, builder]) {
+        const source = answered(s, 'Arthur approved it.', ask(), by);
+        expect(s.returnToHuman(builder, follow(s, source.id).id, ask()).status).toBe('awaiting_human');
+      }
+    });
+
+    it('lets a later answer anywhere in the connected set reopen the ask', () => {
+      const s = freshStore();
+      const source = answered(s);
+      // A later answer on the same source, even to a different ask.
+      s.returnToHuman(builder, source.id, ask('keep the release date'));
+      s.answerTicket(arthur, source.id, { answer: 'Fine.', resolution: 'resume' });
+      expect(s.returnToHuman(builder, follow(s, source.id).id, ask()).status).toBe('awaiting_human');
+      // A later answer on another cited ticket, and a relayed one.
+      for (const by of [arthur, orch]) {
+        const granted = answered(s);
+        const other = create(s);
+        s.returnToHuman(builder, other.id, ask('reconsider permission for commit abc123'));
+        s.answerTicket(by, other.id, { answer: 'Noted.', resolution: 'resume' });
+        expect(s.returnToHuman(builder, follow(s, granted.id, other.id).id, ask()).status).toBe('awaiting_human');
+      }
+    });
+
+    it('does not pair an answer with an ask that was withdrawn before it', () => {
+      const s = freshStore();
+      const source = create(s);
+      const asked = s.returnToHuman(builder, source.id, ask());
+      s.withdrawHumanReturn(builder, source.id, questionFingerprint(asked.question!), 'builder-loop', 'asked before preparing');
+      s.returnToHuman(builder, source.id, ask('amend commit def456'));
+      s.answerTicket(arthur, source.id, { answer: 'Approved.', resolution: 'resume' });
+      expect(s.returnToHuman(builder, follow(s, source.id).id, ask()).status).toBe('awaiting_human');
+    });
+
+    // Cyber's authority probes against the earlier keyword designs: every one
+    // is a new or withdrawn decision and must reach the human.
+    it.each([
+      ['an added action (H-1005 1)', 'Approved.', ask(), ask('amend and publish commit abc123')],
+      ['a condition omitted (H-1005 3)', 'Approved only after review.', ask(), ask('amend commit abc123 before review')],
+      ['a condition in the original situation only (H-1040 1)', 'Approved.', ask('amend commit abc123', 'Commit abc123 may be amended only after review.'), ask('amend commit abc123 before review')],
+      ['a reversed predicate (H-1040 2)', 'Approved if review passes.', ask(), ask('amend commit abc123 if review fails')],
+      ['a waived condition (H-1040 3)', 'Approved only after review.', ask(), ask('amend commit abc123; review is waived')],
+      ['unrecognized conditional phrasing (H-1040 4)', 'Approved contingent on review.', ask(), ask('amend commit abc123 before review')],
+      ['an unrecognized added action (H-1040 7)', 'Approved.', ask(), ask('amend and merge commit abc123')],
+      ['a preserved condition restated (H-1040 control, now asked)', 'Approved only after review.', ask(), ask('amend commit abc123 after review')],
+    ])('asks again for %s', (_label, answer, original, next) => {
+      const s = freshStore();
+      const source = answered(s, answer, original);
+      expect(s.returnToHuman(builder, follow(s, source.id).id, next).status).toBe('awaiting_human');
+    });
+
+    it.each([
+      ['Revoked; do not amend commit abc123. (H-1005 2)'],
+      ['Cancel my previous approval for commit abc123. (H-1040 5)'],
+      ["I no longer approve this; don't amend commit abc123. (H-1040 6)"],
+    ])('asks again after a withdrawal on a second cited ticket: %s', (withdrawal) => {
+      const s = freshStore();
+      const source = answered(s);
+      const other = create(s);
+      s.returnToHuman(builder, other.id, ask('reconsider permission for commit abc123'));
+      s.answerTicket(arthur, other.id, { answer: withdrawal, resolution: 'resume' });
+      expect(s.returnToHuman(builder, follow(s, source.id, other.id).id, ask()).status).toBe('awaiting_human');
+    });
   });
 
   it('answersSince replays answers from a cursor and can narrow to one session (H-936)', () => {
@@ -2971,6 +3150,40 @@ describe('human sitting gate migration (H-1028)', () => {
       expect(after.getTicket(t.id).needs_human).toBe(false);
       after.updateTicket(orch, { ticket_id: t.id, note: 'Arthur needs to be present', needs_human: 'Arthur has to be at the keyboard for this one.' });
       expect(after.withHumanPending('reviewer-loop')).toEqual([t.id]);
+      after.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('answered sitting migration (H-392)', () => {
+  const q = { situation: 'Two retention windows fit the stated need.', question: 'Which window?', recommendation: 'Keep thirty days.' };
+  it('clears a sitting an older answer left behind, and only that one', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'helmo-sitting-migrate-'));
+    const path = join(dir, 'helmo.db');
+    try {
+      const before = new Store(path);
+      const stale = create(before, { needs_human: 'Ten minutes with the operator to decide the retention window.', sitting_with: builder.name });
+      before.returnToHuman(builder, stale.id, q);
+      before.answerTicket(orch, stale.id, { answer: 'Keep thirty days.', resolution: 'resume' });
+      const later = create(before);
+      before.returnToHuman(builder, later.id, q);
+      before.answerTicket(orch, later.id, { answer: 'Proceed.', resolution: 'resume' });
+      before.updateTicket(orch, { ticket_id: later.id, note: 'a new sitting', needs_human: 'Twenty minutes choosing between the two drafts.' });
+      // Reproduce what a release without the transition wrote: the sitting
+      // survives the answer and the event carries no clear_sitting bit.
+      const db = (before as unknown as { db: Database.Database }).db;
+      db.prepare("UPDATE tickets SET needs_human = 1, sitting = 'Ten minutes with the operator to decide the retention window.', sitting_with = ? WHERE id = ?").run(builder.name, stale.id);
+      db.prepare("UPDATE events SET payload = json_remove(payload, '$.clear_sitting') WHERE event_type = 'answered'").run();
+      before.close();
+
+      const after = new Store(path);
+      expect(after.getTicket(stale.id)).toMatchObject({ status: 'open', needs_human: false, sitting: null, sitting_with: null });
+      expect(after.getTicket(later.id)).toMatchObject({ needs_human: true, sitting: 'Twenty minutes choosing between the two drafts.' });
+      const migrated = after.dumpState();
+      after.rebuild();
+      expect(after.dumpState()).toEqual(migrated);
       after.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });

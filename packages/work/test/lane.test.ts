@@ -252,6 +252,24 @@ describe('waking by lane (H-824)', () => {
     expect(s.wakeCheck(seq, 'goodplumb', builder.name, 'harness')).toMatchObject({ ready_count: 0 });
     expect(s.wakeCheck(seq, 'goodplumb', builder.name).ready_ids.sort()).toEqual([prep.id, general.id].sort());
   });
+
+  it('wakes a lane worker when an open ticket is moved into its lane (H-804)', () => {
+    const s = new Store(':memory:');
+    const moved = file(s);
+    const idle = s.maxSeq();
+    expect(s.wakeCheck(idle, 'goodplumb', builder.name, 'harness')).toMatchObject({ ready_count: 0, newly_ready_ids: [] });
+    s.updateTicket(orch, { ticket_id: moved.id, lane: 'harness', note: 'Route to the harness lane.' });
+    expect(s.wakeCheck(idle, 'goodplumb', builder.name, 'harness')).toMatchObject({ ready_ids: [moved.id], newly_ready_ids: [moved.id] });
+    // The cursor after the move has seen it, and a later note is no new edge.
+    const after = s.maxSeq();
+    s.updateTicket(orch, { ticket_id: moved.id, note: 'Still for the harness lane.' });
+    expect(s.wakeCheck(after, 'goodplumb', builder.name, 'harness').newly_ready_ids).toEqual([]);
+    // Moving it back to the general pool wakes the general worker, not the lane.
+    const back = s.maxSeq();
+    s.updateTicket(orch, { ticket_id: moved.id, lane: '', note: 'Back to the general pool.' });
+    expect(s.wakeCheck(back, 'goodplumb', builder.name, null).newly_ready_ids).toEqual([moved.id]);
+    expect(s.wakeCheck(back, 'goodplumb', builder.name, 'harness')).toMatchObject({ ready_count: 0, newly_ready_ids: [] });
+  });
 });
 
 describe('lane through the MCP surface (H-824)', () => {

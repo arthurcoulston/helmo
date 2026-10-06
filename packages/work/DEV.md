@@ -106,7 +106,9 @@ Pinned releases accept both the historical three-component layout and C1's one
   same call. Handoffs and relabels leave the lane alone, and a recurring
   template's instances carry its lane. `wake-check --lane L | --no-lane`
   narrows the wake to the same set; without either it keeps the whole queue
-  for seats that do not claim by lane.
+  for seats that do not claim by lane. Moving an open ticket into a lane (or
+  back to the pool) is a readiness edge for the worker that now takes it, so
+  the move wakes that worker instead of waiting for its hourly resync (H-804).
   A server whose `HELMO_ACTOR` carries `generation` is supervised:
   `writingActor` refuses caller-stated name/kind/session/generation that
   conflict and inherits omitted ones; outside it a stated generation refuses.

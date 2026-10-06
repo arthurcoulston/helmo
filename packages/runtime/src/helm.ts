@@ -497,10 +497,10 @@ export function actorSelfSpend(g: GlobalConfig, l: LoopConfig, sinceSeq: number)
 
 // Spend is written by Rev (the meter), not the loop's agent — the agent
 // never saw its own usage, and the provenance should say who measured.
-export function recordSpend(g: GlobalConfig, ticketId: string, tokens: number | undefined, cost: number | undefined, note: string): void {
+export function recordSpend(g: GlobalConfig, ticketId: string, tokens: number | undefined, cost: number | undefined, costBasis: 'provider_reported_metered' | 'api_equivalent_estimate' | 'legacy_mixed_unknown', note: string): void {
   const args = ['record-spend', '--ticket', ticketId, '--note', note];
   if (tokens) args.push('--tokens', String(tokens));
-  if (cost) args.push('--cost-usd', String(cost));
+  if (cost !== undefined) args.push('--cost-usd', String(cost), '--cost-basis', costBasis);
   run(g, args, revActor());
 }
 

@@ -92,6 +92,9 @@ export interface UpdateInput {
   capacity_hold?: CapacityHold | null; // null releases the deliberate hold
 }
 
+export const COST_BASES = ['provider_reported_metered', 'api_equivalent_estimate', 'legacy_mixed_unknown'] as const;
+export type CostBasis = typeof COST_BASES[number];
+
 export type ReleaseHandoffInput = Omit<ReleaseHandoff, 'seq' | 'ts' | 'actor' | 'current' | 'stale_reason'> & {
   ticket_id: string;
 };
@@ -2979,13 +2982,16 @@ export class Store {
    *  terminal tickets: a harness meters a session only after it ends, by which
    *  time the loop has usually closed its ticket. Bookkeeping, not motion —
    *  it never changes status, assignee, or updated_at. */
-  recordSpend(actor: Actor, ticketId: string, input: { tokens?: number; cost_usd?: number; note: string }): Ticket {
+  recordSpend(actor: Actor, ticketId: string, input: { tokens?: number; cost_usd?: number; cost_basis?: CostBasis; note: string }): Ticket {
     validateActor(actor);
-    if (!input.tokens && !input.cost_usd) {
+    if (input.tokens === undefined && input.cost_usd === undefined) {
       throw new HelmoError('record-spend requires tokens and/or cost_usd — an empty spend record is noise.');
     }
     if (!input.note?.trim()) {
       throw new HelmoError('note is required on record-spend: say what session this spend came from and how it was attributed.');
+    }
+    if (input.cost_basis && !COST_BASES.includes(input.cost_basis)) {
+      throw new HelmoError(`cost_basis must be one of: ${COST_BASES.join(', ')}.`);
     }
     rejectSwallowedMarkup({ note: input.note });
     this.getTicket(ticketId);
@@ -3010,11 +3016,37 @@ export class Store {
       };
       if (clamped.length) process.stderr.write(`helmo record-spend ${ticketId}: ${clamped.join('; ')}\n`);
       if (tokens) payload['tokens'] = tokens;
-      if (cost) payload['cost_usd'] = cost;
+      if (cost !== undefined) {
+        payload['cost_usd'] = cost;
+        payload['cost_basis'] = input.cost_basis ?? 'legacy_mixed_unknown';
+      }
       this.append(now(), ticketId, 'spend', actor, payload);
       this.applySpend(ticketId, payload);
       return this.getTicket(ticketId);
     }).immediate();
+  }
+
+  usageDisclosure(ticketId: string): {
+    tokens: { value: number; basis: string; coverage: string };
+    dollars: { value: number | null; basis: string; coverage: string };
+  } {
+    const ticket = this.getTicket(ticketId);
+    const rows = this.db.prepare(
+      "SELECT payload FROM events WHERE ticket_id = ? AND json_type(payload, '$.cost_usd') IS NOT NULL ORDER BY seq",
+    ).all(ticket.id) as { payload: string }[];
+    const bases = new Set(rows.map(({ payload }) => {
+      const basis = (JSON.parse(payload) as Record<string, unknown>)['cost_basis'];
+      return COST_BASES.includes(basis as CostBasis) ? basis as CostBasis : 'legacy_mixed_unknown';
+    }));
+    const basis = bases.size === 0 ? 'not_recorded' : bases.size === 1 ? [...bases][0]! : 'mixed';
+    return {
+      tokens: { value: ticket.tokens_total, basis: 'recorded', coverage: 'reported or harness-metered events only; unmetered work is excluded' },
+      dollars: {
+        value: rows.length ? ticket.cost_usd_total : null,
+        basis,
+        coverage: 'recorded cost_usd events only; desk and other unmetered work are excluded',
+      },
+    };
   }
 
   /** Record that a hygiene finding was examined and dealt with, so sweeps stop

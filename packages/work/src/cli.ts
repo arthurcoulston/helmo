@@ -38,7 +38,7 @@ const COMMAND_FLAGS: Record<string, readonly string[]> = {
   workstream: ['name'],
   'workstream-set': ['name', 'budget-usd', 'seat'],
   'rename-workstream': ['from', 'to', 'note'],
-  'record-spend': ['ticket', 'tokens', 'cost-usd', 'note'],
+  'record-spend': ['ticket', 'tokens', 'cost-usd', 'cost-basis', 'note'],
   list: ['ready', 'status', 'workstream', 'assignee', 'lane', 'limit'],
   get: ['ticket', 'history', 'trace'],
   'product-complete': ['ticket', 'artifacts', 'note'],
@@ -286,6 +286,7 @@ try {
       const t = store.recordSpend(actor(), ticketRef('ticket'), {
         tokens: flag('tokens') !== undefined ? Number(flag('tokens')) : undefined,
         cost_usd: flag('cost-usd') !== undefined ? Number(flag('cost-usd')) : undefined,
+        cost_basis: flag('cost-basis') as never,
         note: req('note'),
       });
       out({ id: t.id, tokens_total: t.tokens_total, cost_usd_total: t.cost_usd_total });
@@ -475,7 +476,7 @@ try {
   actor-activity --name A --since-seq N [--session S] [--advancing] (did this actor/session write events?)
   actor-tickets  --name A --since-seq N [--session S]          (which tickets, most-touched first)
   actor-spend    --name A --since-seq N [--session S]          (self-reported spend in the window, total + by_ticket)
-  record-spend   --ticket H-n [--tokens N] [--cost-usd X] --note N   (metered spend; terminal tickets accepted)
+  record-spend   --ticket H-n [--tokens N] [--cost-usd X --cost-basis provider_reported_metered|api_equivalent_estimate|legacy_mixed_unknown] --note N
   list           [--ready] [--status S] [--workstream W] [--assignee A] [--lane L] [--limit N]
   get            <ticket-id>
   action         --ticket H-n --situation S --action A --why-human W [--if-unanswered C]

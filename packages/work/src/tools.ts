@@ -75,13 +75,6 @@ function compact(t: Ticket, blockedBy: string[] = []) {
   };
 }
 
-function usageDisclosure(t: Ticket) {
-  return {
-    tokens: { value: t.tokens_total, basis: 'recorded', coverage: 'reported or harness-metered events only; unmetered work is excluded' },
-    dollars: { value: t.cost_usd_total, basis: 'legacy_mixed_unknown', coverage: 'recorded cost_usd events only; unmetered work is excluded' },
-  };
-}
-
 export function buildServer(store: Store, envActor: Actor | null, server = new McpServer({ name: 'helmo', version: HELMO_VERSION })): McpServer {
   const resolveActor = (override?: Actor): Actor => writingActor(override, envActor);
 
@@ -160,7 +153,7 @@ export function buildServer(store: Store, envActor: Actor | null, server = new M
         const ws = store.getWorkstreamInfo(t.workstream);
         const base = {
           ...t,
-          usage_disclosure: usageDisclosure(t),
+          usage_disclosure: store.usageDisclosure(t.id),
           // The reference to quote elsewhere. `id` stays bare, so every caller
           // reading it is unaffected; `ref` is the spelling that survives being
           // carried to another installation, because there it refuses (H-2502).

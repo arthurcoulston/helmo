@@ -37,6 +37,9 @@ Pinned releases accept both the historical three-component layout and C1's one
 - `store.ts` — the heart: SQLite store (better-sqlite3), append-only event log
   with a global `seq` cursor (Rev's wake signal rides on it), ticket
   materialization, blocking/ready computation, actor validation. Stop
+  Cost readings retain their source basis on each spend event. A missing basis
+  remains legacy mixed/unknown; a recorded zero remains an observed reading,
+  while no cost event is disclosed as not recorded rather than numeric zero.
   Workflow enforcement has an additive, instance-local persistence seam
   (H-429): immutable JSON definition revisions plus normalized run, attempt,
   manifest, requirement, decision, admission and terminal-outcome tables.

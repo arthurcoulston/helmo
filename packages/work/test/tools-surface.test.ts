@@ -296,14 +296,24 @@ describe('the steering surface after the workstream goal was retired (H-1186)', 
     store.close();
   });
 
-  it('labels historical usage basis and coverage without turning missing into zero', async () => {
+  it('distinguishes missing, measured zero, known sources, and mixed historical usage', async () => {
     const store = new Store(':memory:');
     const t = store.createTicket(orch, { title: 'Check usage', body: 'No measured usage yet.', workstream: 'helmo-dev', type: 'review' });
     const client = await connect(store);
-    const res = await client.callTool({ name: 'helmo_get_ticket', arguments: { ticket_id: t.id } });
-    const usage = JSON.parse((res.content as { text: string }[])[0]!.text).result.usage_disclosure;
-    expect(usage.dollars).toEqual({ value: 0, basis: 'legacy_mixed_unknown', coverage: 'recorded cost_usd events only; unmetered work is excluded' });
+    const read = async () => JSON.parse((await client.callTool({ name: 'helmo_get_ticket', arguments: { ticket_id: t.id } }).then((res) => (res.content as { text: string }[])[0]!.text))).result.usage_disclosure;
+    let usage = await read();
+    expect(usage.dollars).toMatchObject({ value: null, basis: 'not_recorded' });
     expect(usage.tokens.coverage).toContain('unmetered work is excluded');
+    store.recordSpend(orch, t.id, { cost_usd: 0, cost_basis: 'provider_reported_metered', note: 'measured zero' });
+    usage = await read();
+    expect(usage.dollars).toMatchObject({ value: 0, basis: 'provider_reported_metered' });
+    store.recordSpend(orch, t.id, { cost_usd: 2, cost_basis: 'api_equivalent_estimate', note: 'subscription usage at API prices' });
+    usage = await read();
+    expect(usage.dollars).toMatchObject({ value: 2, basis: 'mixed' });
+    expect(usage.dollars.coverage).toContain('unmetered work are excluded');
+    const legacy = store.createTicket(orch, { title: 'Legacy usage', body: 'Recorded before basis capture.', workstream: 'helmo-dev', type: 'review' });
+    store.recordSpend(orch, legacy.id, { cost_usd: 3, note: 'historical writer without a basis' });
+    expect(store.usageDisclosure(legacy.id).dollars).toMatchObject({ value: 3, basis: 'legacy_mixed_unknown' });
     await client.close();
     store.close();
   });

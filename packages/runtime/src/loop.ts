@@ -920,13 +920,13 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
               (primaryGuess
                 ? `; net of ${primaryGuess.tokens} tokens / $${primaryGuess.cost_usd.toFixed(2)} the agent self-reported here (the meter is authoritative)`
                 : '') + '.';
-            recordSpend(g, primary!.id, tokens, cost, note);
+            recordSpend(g, primary!.id, tokens, cost, (run.billing ?? 'metered') === 'subscription' ? 'api_equivalent_estimate' : 'provider_reported_metered', note);
             logEvent(l.name, 'spend', `iter=${i} ticket=${primary!.id} tokens=${tokens} cost=${cost}`);
           }
           for (const t of self.by_ticket) {
             if (t.id === primary!.id) continue;
             recordSpend(
-              g, t.id, -t.tokens, -t.cost_usd,
+              g, t.id, -t.tokens, -t.cost_usd, 'legacy_mixed_unknown',
               `Reconciled by Rev: loop '${l.name}' iteration ${i} self-reported ${t.tokens} tokens / $${t.cost_usd.toFixed(2)} here; cancelled — the metered session is charged to ${primary!.id}.`,
             );
             logEvent(l.name, 'spend', `iter=${i} ticket=${t.id} tokens=${-t.tokens} cost=${-t.cost_usd}`);

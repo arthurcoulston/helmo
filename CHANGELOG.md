@@ -19,6 +19,14 @@ longer.
 - Recover scoped-seat trace attribution after a loop driver dies by holding
   replacement work until its orphaned session exits, then finishing the dead
   launch's measured ticket window from its durable pre-launch cursor.
+- Return a ticket to its seat's queue when an answer resolves a question on a
+  ticket that also carried a sitting marker: the answer is the operator
+  interaction that marker asked for, so it no longer stays withheld from every
+  agent until someone clears the marker by hand. A sitting marked after the
+  answer, and a current release handoff's own sitting, are left in place.
+- Say in the return-to-human tool itself that a tool refusing a resource proves
+  only that tool's scope, so supported contribution and maintenance routes are
+  finished before the concrete remainder reaches a person.
 
 ## v0.9.4 — 2026-10-05
 

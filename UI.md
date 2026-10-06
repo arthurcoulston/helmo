@@ -209,10 +209,9 @@ bridge removed they now carry no sidebar and no cross-area navigation at all.
 That is the stated temporary state of `H-2938@dev.rev` and `H-2939@dev.rev`,
 and it is why this foundation is a preview for review rather than a build to
 deploy: deploying it would leave two of five pages with no route to the other
-four. Work is migrated in two halves: `H-2936@dev.rev` moved its decision,
-action and sitting controls, and `H-2937@dev.rev` brings its record lists and
-history — until that lands, `/` still serves Work's own document for the
-bookmarks that resolve against those lists. A shadcn/ui shell around bespoke
+four. Work's requests, record lists, history, evidence, copy references and refresh
+now use the same application on unified, standalone and embedded entry points
+(H-2937). Its hand-styled renderer has been removed. A shadcn/ui shell around bespoke
 inner views still does not close the alignment audit.
 `H-2940@dev.rev` and `H-2941@dev.rev` are the independent integrated reviews.
 

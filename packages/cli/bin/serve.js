@@ -45,7 +45,7 @@ const running = await startAppServer(appConfig(), (request, response) => {
       response.end(JSON.stringify({ ok, checks }));
       return;
     }
-    if (request.url === '/api/v1/work') return workRequest(request, response);
+    if (/^\/api\/v1\/work(?:[/?]|$)/.test(request.url ?? '')) return workRequest(request, response);
     if (request.url === '/api/v1/roadmap') return roadmapRequest(request, response);
     if (request.url === '/api/v1/runtime') return runtimeRequest(request, response);
     if (request.url === '/api/v1/overview' || request.url === '/api/v1/team') {

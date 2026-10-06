@@ -43,7 +43,7 @@ before reading it is the division:
   `src/hooks/`, `src/components/theme-provider.tsx` and everything under
   `src/components/ui/`. Preflight, the cascade layers, the Mauve tokens and
   Inter are all upstream's, untouched.
-- **Ours.** `index.html` and `src/App.tsx` — the composition, the menu, the
+- **Ours.** `index.html`, `src/App.tsx` and domain view modules — the composition, the menu, the
   area views and the data reads. Plus `upstream.json`, `scripts/upstream.mjs`
   and `test/upstream.test.mjs`, which are the relationship with upstream
   rather than part of the product.
@@ -67,12 +67,18 @@ no cross-area navigation at all. H-2938 and H-2939 move them in. Until they
 land this foundation is a preview to look at, not a build to deploy: deploying
 it would leave two of five pages with no way to reach the other four.
 
-Work arrived in two halves. H-2936 moved the three things that can be awaiting
-the operator — a decision, an action and a sitting — and H-2937 brings the
-record lists and history. While that is true, `/work` is the application and
-`/` still serves Work's own document, because a `#H-n` bookmark resolves
-against the lists H-2937 owns. That is two renderings of the same records on
-purpose, and it ends when H-2937 lands.
+Work's record sections, bounded terminal history, full-record link, hash
+bookmarks, copy controls, evidence and lazy event history are in the application
+(H-2937). `WorkRecord.tsx` owns that composition. The server supplies grouping,
+readiness, the terminal bound and request fingerprints. Fifteen-second JSON
+refreshes keep keyed disclosures and keyboard focus; a failed refresh retains
+the last good reading and says so.
+
+The Work-only entry and `?section=awaiting` now serve the same built application.
+`@helmo/core/ui` serves its unchanged document and assets and advertises which
+areas that listener provides at `/api/v1/ui`. The embedded reading displays only
+the awaiting family. Work's obsolete HTML, CSS and DOM-replacement refresh are
+removed; there is no second rendering to drift.
 
 What the application cannot compute, and so reads from `/api/v1/work`'s
 `awaiting` key: the option letters (one function letters every surface, so

@@ -1,4 +1,5 @@
 import * as React from "react"
+import { CopyReference, TicketDetails, WorkRecord, type WorkRecordData } from "./WorkRecord"
 import {
   ActivityIcon,
   ChevronRightIcon,
@@ -110,8 +111,8 @@ const DESTINATIONS: Destination[] = [
   },
 ]
 
-function activeArea() {
-  const path = window.location.pathname.replace(/\/$/, "")
+function activeArea(defaultArea: string) {
+  const path = window.location.pathname.replace(/\/$/, "") || DESTINATIONS.find((d) => d.id === defaultArea)!.href
   return DESTINATIONS.find((d) => d.rendered && d.href === path) ?? DESTINATIONS[0]
 }
 
@@ -132,46 +133,49 @@ function records(data: unknown): Record_[] {
 
 type AreaState =
   | { status: "loading" }
-  /* `data` as well as `records`, because Work's requests are not records:
-     they are the same rows presented, with the letters and fingerprints only
-     the server can produce. An area that needs more than a record list reads
-     its own key off the document rather than widening `Record_`. */
-  | { status: "ready"; records: Record_[]; data: unknown }
+  | { status: "ready"; records: Record_[]; data: unknown; readAt: string; warning?: string }
   | { status: "error"; message: string }
 
-function useArea(area: string): AreaState {
-  const [state, setState] = React.useState<AreaState>({ status: "loading" })
-
+function useFragment() {
+  const [id, setId] = React.useState(location.hash.slice(1))
   React.useEffect(() => {
-    let live = true
-    setState({ status: "loading" })
-    fetch(`/api/v1/${area}`, { headers: { accept: "application/json" } })
-      .then(async (response) => {
-        if (!response.ok) {
-          throw new Error(`${response.status} ${response.statusText}`)
-        }
-        const document_ = await response.json()
-        if (document_.api !== "helmo/v1" || document_.area !== area) {
-          throw new Error("unexpected API document")
-        }
-        return document_.data as unknown
-      })
-      .then((data) => {
-        if (live) setState({ status: "ready", records: records(data), data })
-      })
-      .catch((error: unknown) => {
-        if (live) {
-          setState({
-            status: "error",
-            message: error instanceof Error ? error.message : String(error),
-          })
-        }
-      })
-    return () => {
-      live = false
-    }
-  }, [area])
+    const changed = () => setId(location.hash.slice(1))
+    window.addEventListener("hashchange", changed)
+    return () => window.removeEventListener("hashchange", changed)
+  }, [])
+  return id
+}
 
+function useArea(area: string, selected: string): AreaState {
+  const [state, setState] = React.useState<AreaState>({ status: "loading" })
+  React.useEffect(() => {
+    const controller = new AbortController()
+    let pending = false
+    async function read() {
+      if (pending) return
+      pending = true
+      try {
+        const query = new URLSearchParams()
+        if (area === "work") {
+          if (new URLSearchParams(location.search).get("whole") === "1") query.set("whole", "1")
+          if (/^H-\d+$/.test(selected)) query.set("ticket", selected)
+        }
+        const response = await fetch(`/api/v1/${area}${query.size ? `?${query}` : ""}`, { headers: { accept: "application/json" }, signal: controller.signal })
+        if (!response.ok) throw new Error(`${response.status} ${response.statusText}`)
+        const document_ = await response.json()
+        if (document_.api !== "helmo/v1" || document_.area !== area) throw new Error("Unexpected API document")
+        if (!controller.signal.aborted) setState({ status: "ready", records: records(document_.data), data: document_.data, readAt: new Date().toLocaleTimeString() })
+      } catch (error) {
+        if (!controller.signal.aborted) setState((old) => {
+          const message = error instanceof Error ? error.message : String(error)
+          return old.status === "ready" ? { ...old, warning: message } : { status: "error", message }
+        })
+      } finally { pending = false }
+    }
+    void read()
+    const timer = window.setInterval(read, 15_000)
+    return () => { controller.abort(); clearInterval(timer) }
+  }, [area, selected])
   return state
 }
 
@@ -356,7 +360,8 @@ function KindChip({ children }: { children: React.ReactNode }) {
 function RequestMeta({ request }: { request: AwaitingCommon }) {
   return (
     <div className="text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-      <span className="font-mono">{request.id}</span>
+      <a className="font-mono" href={`#${request.id}`}>{request.id}</a>
+      <CopyReference value={request.id} />
       <span>{request.workstream}</span>
       {request.project ? <span>{request.project}</span> : null}
       {/* "none" is the default and saying it on every card is noise: the
@@ -658,13 +663,13 @@ function AwaitingYou({ awaiting }: { awaiting: Awaiting }) {
       {count ? (
         <div className="flex flex-col gap-3">
           {awaiting.decisions.map((request) => (
-            <DecisionCard key={request.id} request={request} awaiting={awaiting} />
+            <div key={request.id} className="flex flex-col gap-1"><DecisionCard request={request} awaiting={awaiting} /><RequestHistory id={request.id} /></div>
           ))}
           {awaiting.actions.map((request) => (
-            <ActionCard key={request.id} request={request} awaiting={awaiting} />
+            <div key={request.id} className="flex flex-col gap-1"><ActionCard request={request} awaiting={awaiting} /><RequestHistory id={request.id} /></div>
           ))}
           {awaiting.sittings.map((request) => (
-            <SittingCard key={request.id} request={request} />
+            <div key={request.id} className="flex flex-col gap-1"><SittingCard request={request} /><RequestHistory id={request.id} /></div>
           ))}
         </div>
       ) : (
@@ -680,51 +685,20 @@ function AwaitingYou({ awaiting }: { awaiting: Awaiting }) {
   )
 }
 
-const TERMINAL = new Set(["done", "cancelled"])
+function RequestHistory({ id }: { id: string }) {
+  const [open, setOpen] = React.useState(false)
+  return <Collapsible open={open} onOpenChange={setOpen}>
+    <CollapsibleTrigger asChild><Button variant="ghost" size="sm">Record and history for {id}</Button></CollapsibleTrigger>
+    <CollapsibleContent className="pt-3">{open ? <TicketDetails id={id} /> : null}</CollapsibleContent>
+  </Collapsible>
+}
 
-/** Work: the requests awaiting the operator, then the live record.
- *
- *  The grid below the hero is the foundation's generic record rendering, and
- *  it is temporary — H-2937 brings Work's own lists, its history and its
- *  copyable references. Until then it is deliberately bounded to live rows: a
- *  closed record runs to thousands here, and the terminal tail is part of the
- *  history that packet owns rather than something to approximate now. */
-function WorkView({ awaiting, records }: { awaiting: Awaiting; records: Record_[] }) {
-  const heroes = new Set(
-    [...awaiting.decisions, ...awaiting.actions, ...awaiting.sittings].map(
-      (request) => request.id
-    )
-  )
-  const live = records.filter(
-    (record) => !TERMINAL.has(record.status ?? "") && !heroes.has(record.id ?? "")
-  )
-  const closed = records.filter((record) => TERMINAL.has(record.status ?? ""))
-
-  return (
-    <>
-      <AwaitingYou awaiting={awaiting} />
-      <Separator />
-      <section className="flex flex-col gap-3">
-        <h3 className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
-          In the record
-        </h3>
-        <p className="text-muted-foreground text-sm">
-          {live.length} live record{live.length === 1 ? "" : "s"}
-          {closed.length
-            ? `, and ${closed.length} closed that this view does not draw yet`
-            : ""}
-          .
-        </p>
-        {live.length ? (
-          <CardGrid>
-            {live.map((record, index) => (
-              <RecordCard key={record.id ?? index} record={record} />
-            ))}
-          </CardGrid>
-        ) : null}
-      </section>
-    </>
-  )
+function WorkView({ awaiting, record, selected }: { awaiting: Awaiting; record: WorkRecordData; selected: string }) {
+  return <>
+    <AwaitingYou awaiting={awaiting} />
+    <Separator />
+    <WorkRecord data={record} selected={selected} />
+  </>
 }
 
 function CardGrid({ children }: { children: React.ReactNode }) {
@@ -744,7 +718,8 @@ function Loading() {
 }
 
 function AreaView({ area }: { area: Destination }) {
-  const state = useArea(area.id)
+  const selected = useFragment()
+  const state = useArea(area.id, selected)
 
   if (state.status === "loading") {
     return (
@@ -787,7 +762,14 @@ function AreaView({ area }: { area: Destination }) {
         </Alert>
       )
     }
-    return <WorkView awaiting={awaiting} records={rows} />
+    if (new URLSearchParams(location.search).get("section") === "awaiting") return <AwaitingYou awaiting={awaiting} />
+    const record = (state.data as { record?: WorkRecordData }).record
+    if (!record) return <Alert variant="destructive"><AlertTitle>Could not read the work record</AlertTitle><AlertDescription>The server returned no record sections.</AlertDescription></Alert>
+    return <>
+      {state.warning ? <Alert variant="destructive"><AlertTitle>Refresh failed</AlertTitle><AlertDescription>Showing the last good reading from {state.readAt}: {state.warning}</AlertDescription></Alert> : null}
+      <WorkView awaiting={awaiting} record={record} selected={selected} />
+      <p className="text-muted-foreground text-xs">Refreshed {state.readAt} · updates every 15 seconds</p>
+    </>
   }
 
   if (area.id === "overview") {
@@ -896,7 +878,20 @@ function OpenInNewWindow() {
 }
 
 export function App() {
-  const area = activeArea()
+  const [config, setConfig] = React.useState<{ areas: string[]; defaultArea: string } | null>(null)
+  const [error, setError] = React.useState("")
+  React.useEffect(() => {
+    fetch("/api/v1/ui").then(async (r) => {
+      if (!r.ok) throw new Error(`Could not read navigation (${r.status})`)
+      return r.json()
+    }).then(setConfig).catch((e: Error) => setError(e.message))
+  }, [])
+  if (error) return <div className="p-4"><Alert variant="destructive"><AlertTitle>Could not open Helmo</AlertTitle><AlertDescription>{error}</AlertDescription></Alert></div>
+  if (!config) return <div className="p-4"><Loading /></div>
+  const area = activeArea(config.defaultArea)
+  if (new URLSearchParams(location.search).get("section") === "awaiting") {
+    return <TooltipProvider><main className="p-4"><AreaView area={area} /></main></TooltipProvider>
+  }
 
   return (
     <TooltipProvider>
@@ -909,7 +904,7 @@ export function App() {
             <SidebarGroup>
               <SidebarGroupContent>
                 <SidebarMenu>
-                  {DESTINATIONS.map((destination) => (
+                  {DESTINATIONS.filter((destination) => config.areas.includes(destination.id)).map((destination) => (
                     <SidebarMenuItem key={destination.id}>
                       <SidebarMenuButton
                         asChild

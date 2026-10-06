@@ -1,5 +1,25 @@
 # DEV — coding context for helmo
 
+## Current UI (H-2937)
+
+The Work UI is React composition of the official shadcn components in
+`../shell/src/App.tsx` and `WorkRecord.tsx`; root `UI.md` governs the exact
+preset. `src/view.ts` now serves JSON and the shared built application via
+`@helmo/core/ui`, including the standalone view and embedded awaiting reading.
+The old server-rendered HTML, bespoke CSS and DOM-replacement refresh are gone.
+Earlier renderer details below are historical; they describe the behavior to
+preserve, not permission to restore that implementation.
+
+`/api/v1/work` retains its original records and request projection and adds a
+server-grouped `record` with every live ticket and the newest 20 terminal rows.
+`?whole=1` includes all rows; `?ticket=H-n` includes an older bookmarked row.
+`/api/v1/work/tickets/H-n` returns the record, dependencies and event history on
+expansion. Readiness and consent fingerprints remain server-owned. The client
+polls at 15 seconds and preserves focus/disclosures, retaining and visibly
+marking a last good reading if refresh fails. The browser proof is
+`node packages/shell/scripts/verify-ui.mjs` from a built disposable root.
+
+
 Helmo is the shared work record for a human operator and their agents: tickets
 that agents write and the human reads. The human never edits — steering happens in
 orchestrator meetings and the read-only view. Product intent:

@@ -25,7 +25,7 @@ function Reference({ id }: { id: string }) {
   return <span className="inline-flex items-center gap-1"><a className="font-mono text-xs" href={`#${id}`}>{id}</a><CopyReference value={id} /></span>
 }
 function ClaimLine({ claim }: { claim: Claim }) {
-  return <p className="text-sm"><span className="font-medium">{claim.kind} {claim.level ?? claim.size}{claim.predicted_usd != null ? ` · $${claim.predicted_usd} predicted` : ""}</span> — {claim.reason} <span className="text-muted-foreground">({claim.author}, {when(claim.ts)})</span></p>
+  return <p className="text-sm"><span className="font-medium">{claim.kind} {claim.level ?? claim.size}{claim.predicted_usd != null ? ` · $${claim.predicted_usd} planned usage estimate` : ""}</span> — {claim.reason} <span className="text-muted-foreground">({claim.author}, {when(claim.ts)})</span></p>
 }
 function ProjectRow({ project, ranked, selected, hasObjectives }: { project: Project; ranked?: Ranked; selected: string; hasObjectives: boolean }) {
   const [open, setOpen] = React.useState(project.status === "ship_next" || selected === project.id)
@@ -57,7 +57,7 @@ function ProjectRow({ project, ranked, selected, hasObjectives }: { project: Pro
         {ranked?.blocked_by.length ? <Badge variant="outline" className="whitespace-normal">Waits on {ranked.blocked_by.join(", ")}</Badge> : null}
         {hasObjectives && ranked && !ranked.citations.length ? <Badge variant="outline">Advances nothing stated</Badge> : null}
         <span className="text-muted-foreground text-xs">Updated {when(project.updated_at)}</span>
-        {project.actual_usd ? <span className="text-muted-foreground text-xs">${project.actual_usd.toFixed(2)} metered</span> : null}
+        <span className="text-muted-foreground text-xs">${project.actual_usd.toFixed(2)} recorded usage estimate · excludes unmetered work</span>
       </div>
       <CollapsibleContent><CardContent className="flex flex-col gap-4 border-t pt-4">
         {error ? <Alert variant="destructive"><AlertTitle>Could not refresh this record</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}

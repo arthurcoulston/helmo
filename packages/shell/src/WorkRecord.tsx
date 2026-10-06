@@ -159,7 +159,7 @@ function RecordRow({ row, selected }: { row: Row; selected: string }) {
         <CardContent className="flex flex-col gap-4 border-t pt-4">
           {d.progress ? <p className="text-sm">Last recorded update {time(d.progress.at)} by {d.progress.actor.name}: {d.progress.note}</p> : null}
           {row.sitting ? <p className="text-sm">Needs a sitting: {row.sitting}</p> : null}
-          {row.tokens_total || row.cost_usd_total ? <p className="text-muted-foreground text-xs">{row.tokens_total.toLocaleString()} tokens · ${row.cost_usd_total.toFixed(2)} recorded cost</p> : null}
+          <p className="text-muted-foreground text-xs">{row.tokens_total.toLocaleString()} recorded tokens · ${row.cost_usd_total.toFixed(2)} recorded usage estimate · historical basis may be mixed; unmetered work is excluded</p>
           {d.chain.length ? <p className="text-muted-foreground text-xs">{d.chain.join(" → ")}</p> : null}
           {row.status === "done" ? <Results row={row} /> : null}
           {open ? <TicketDetails id={row.id} revision={row.updated_at} /> : null}

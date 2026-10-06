@@ -585,13 +585,14 @@ function escalationTitle(l: LoopConfig): string {
  *  drain and the fleet-start that answered it both live. */
 export function redeployLanded(
   g: GlobalConfig, ticketId: string, r: { by: string; reason: string }, pid: number, eventsPath: string,
+  actor?: Record<string, unknown>,
 ): void {
   run(g, [
     'update', '--ticket', ticketId,
     '--note',
     `Rev redeployed the fleet to activate this work: the supervisor drained, the service manager started it again on the new code, and it is running as pid ${pid}. Asked for by ${r.by} — ${r.reason}.`,
     '--evidence-kind', 'file', '--evidence-ref', eventsPath,
-  ], revActor());
+  ], actor ?? revActor());
 }
 
 /** A redeploy that never came back is a total outage, and the loops that would

@@ -33,6 +33,7 @@ export interface RedeployRequest {
   by: string;
   reason: string;
   ticket?: string;
+  actor?: Record<string, unknown>;
   requested_at: string;
 }
 
@@ -43,6 +44,7 @@ function serialize(r: RedeployRequest): string {
   return [
     `by=${line(r.by)}`,
     `ticket=${r.ticket ?? ''}`,
+    `actor=${r.actor ? encodeURIComponent(JSON.stringify(r.actor)) : ''}`,
     `requested_at=${r.requested_at}`,
     `reason=${line(r.reason)}`,
     '',
@@ -62,6 +64,7 @@ export function readRedeploy(): RedeployRequest | null {
     by: f.get('by') || 'unknown',
     reason: f.get('reason') || 'no reason recorded',
     ticket: f.get('ticket') || undefined,
+    actor: f.get('actor') ? JSON.parse(decodeURIComponent(f.get('actor')!)) as Record<string, unknown> : undefined,
     requested_at: f.get('requested_at') || new Date().toISOString(),
   };
 }
@@ -97,7 +100,7 @@ export function reportRedeployLanded(g: GlobalConfig, r: RedeployRequest, pid: n
       logEvent(SUP, 'redeploy-note-skipped', `ticket=${r.ticket} is ${status}; the landing stands in the redeploy-done line above`);
       return;
     }
-    redeployLanded(g, r.ticket, r, pid, eventsPath());
+    redeployLanded(g, r.ticket, r, pid, eventsPath(), r.actor);
   } catch (e) {
     logEvent(SUP, 'redeploy-note-failed', `ticket=${r.ticket} ${cliError(e)}`.slice(0, 300));
   }

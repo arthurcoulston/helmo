@@ -342,6 +342,7 @@ switch (cmd) {
       by: flag('by') ?? process.env['REV_LOOP'] ?? cliActor().label,
       reason: flag('reason') ?? 'activate committed changes',
       ticket: flag('ticket'),
+      actor: process.env['HELMO_ACTOR'] ? JSON.parse(process.env['HELMO_ACTOR']) as Record<string, unknown> : undefined,
       requested_at: new Date().toISOString(),
     });
     console.log(

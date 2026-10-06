@@ -13,6 +13,9 @@ longer.
 
 ## Unreleased
 
+- Add `rev reload <loop|role> [--worker]`, which respawns one worker on the
+  current roster after its in-flight iteration, with no fleet drain. It never
+  clears STOP/HOLD/BLOCKED: a halt present when the loop exits keeps it down.
 - Recover scoped-seat trace attribution after a loop driver dies by holding
   replacement work until its orphaned session exits, then finishing the dead
   launch's measured ticket window from its durable pre-launch cursor.

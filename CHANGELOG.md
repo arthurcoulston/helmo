@@ -21,6 +21,10 @@ longer.
   one, timing, outcome, measured usage and cost. The same launch identifier is
   carried by Work events so later diagnostics can join without time or seat
   heuristics; missing provider identity remains explicitly unsupported.
+- Preserve the requesting actor through an autonomous fleet redeploy so its
+  landing note reaches the ticket that asked for the restart, and keep ordinary
+  scoped-seat claims usable across traced iterations while retaining generation
+  fencing for preclaimed pool work.
 
 ## v0.9.3 — 2026-10-05
 

@@ -140,8 +140,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
   const runningSessions = new Set<string>();
   const recoverLaunches = (only?: Set<string>): void => {
     for (const recovered of unsettledLaunches(l.name)) {
-      if (!recovered.admission_id && !recovered.claim) continue;
-      if (recovered.claim && recovered.phase === 'intent') continue;
+      if (recovered.phase === 'intent') continue;
       if (only && !only.has(recovered.launch_id)) continue;
       const session = launchSessionRunning(l.name, recovered);
       if (session.running) {
@@ -151,6 +150,9 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       }
       runningSessions.delete(recovered.launch_id);
       try {
+        if (!recovered.admission_id && !recovered.claim && recovered.event_seq_floor !== undefined) {
+          recordLaunchTouched(l.name, recovered.launch_id, actorTickets(g, l, recovered.event_seq_floor));
+        }
         if (recovered.admission_id && !recovered.claim) {
           launchQuarantine(g, recovered.admission_id, recovered.launch_id, `Rev recovered an unsettled ${recovered.phase} launch after process restart.`);
         }
@@ -752,7 +754,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       }
     }
     if (!journaledLaunchId) {
-      recordLaunchIntent(l.name, thisLaunchId);
+      recordLaunchIntent(l.name, thisLaunchId, undefined, undefined, before.max_seq);
       journaledLaunchId = thisLaunchId;
     }
     if (!recordLaunchDispatch(l.name, journaledLaunchId)) {

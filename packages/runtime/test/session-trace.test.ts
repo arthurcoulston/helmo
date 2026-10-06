@@ -75,6 +75,19 @@ describe('session trace diagnostic', () => {
     expect(result.launches[0]).not.toHaveProperty('session');
   });
 
+  it('refuses a completed dispatched launch with no session result', () => {
+    const home = mkdtempSync(join(tmpdir(), 'rev-trace-dispatched-'));
+    process.env.REV_HOME = home;
+    const launches = join(home, 'state', 'alpha', 'launches');
+    mkdirSync(launches, { recursive: true });
+    writeFileSync(join(launches, 'lost.json'), JSON.stringify({
+      format: 1, phase: 'complete', launch_id: 'rev:alpha:lost', intent_at: '2026-10-05T00:00:00.000Z',
+      dispatching_at: '2026-10-05T00:00:00.100Z', completed_at: '2026-10-05T00:00:01.000Z',
+      touched_tickets: [{ id: 'H-7', events: 1 }], event_seq_floor: 4,
+    }));
+    expect(readTicketLaunches(['alpha'], 'H-7')).toEqual({ launches: [], malformed: 1 });
+  });
+
   it('joins a scoped seat\'s real launch by its measured window and labels the basis', () => {
     const home = mkdtempSync(join(tmpdir(), 'rev-trace-scoped-'));
     process.env.REV_HOME = home;

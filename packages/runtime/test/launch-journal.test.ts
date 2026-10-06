@@ -65,6 +65,14 @@ describe('launch journal', () => {
     expect(readLaunch('builder', id)).toMatchObject({ phase: 'quarantined', launch_id: id, session: { provider_session_id_state: 'unsupported' } });
   });
 
+  it('retains the event floor and can quarantine a dispatched session whose driver died', () => {
+    const id = 'rev:builder:42:dead:1001';
+    recordLaunchIntent('builder', id, undefined, '2026-10-01T00:00:00.000Z', 17);
+    expect(recordLaunchDispatch('builder', id)).toBe(true);
+    settleLaunch('builder', id, 'quarantined');
+    expect(readLaunch('builder', id)).toMatchObject({ phase: 'quarantined', event_seq_floor: 17 });
+  });
+
   it('records the tickets a settled scoped-seat session wrote to, once', () => {
     const id = 'rev:builder:42:3:1002';
     recordLaunchIntent('builder', id);

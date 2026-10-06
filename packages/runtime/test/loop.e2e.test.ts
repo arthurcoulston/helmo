@@ -353,6 +353,45 @@ mock_cmd = "touch $REV_HOME/model-started; sleep 0.2; echo launched >> $REV_HOME
     expect(events).not.toMatch(/run-end.*ok/);
   });
 
+  it('holds a replacement behind an orphaned scoped session and finishes its ticket window', async () => {
+    const e = setup(`[loops.killed-scoped]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = '''
+touch $REV_HOME/model-started
+sleep 0.4
+ID=$(node ${HELM_CLI} list --ready --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
+if [ -n "$ID" ]; then
+  node ${HELM_CLI} update --ticket $ID --note "orphan claimed" --status in_progress
+  node ${HELM_CLI} update --ticket $ID --note "orphan worked"
+fi
+echo launched >> $REV_HOME/sessions
+'''
+`);
+    const id = seedTicket(e, 'Scoped work survives its driver');
+    const child = spawn('npx', ['tsx', REV_CLI, 'run', 'killed-scoped', '--count', '1'], {
+      env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore',
+    });
+    await waitForFile(join(e.home, 'model-started'));
+    const eventsPath = join(e.home, 'state', 'killed-scoped', 'events.log');
+    const loopPid = Number(/loop-start\s+pid=(\d+)/.exec(readFileSync(eventsPath, 'utf8'))![1]);
+    process.kill(loopPid, 'SIGKILL');
+    await stop(child);
+
+    rev(e, ['run', 'killed-scoped', '--count', '1']);
+
+    const dir = join(e.home, 'state', 'killed-scoped', 'launches');
+    const journals = readdirSync(dir).filter((name) => name.endsWith('.json'))
+      .map((name) => JSON.parse(readFileSync(join(dir, name), 'utf8')));
+    const recovered = journals.find((entry) => entry.phase === 'quarantined');
+    expect(recovered).toMatchObject({ touched_tickets: [{ id, events: 2 }] });
+    const events = readFileSync(eventsPath, 'utf8');
+    expect(events).toMatch(/launch-session-running/);
+    expect(events).toMatch(/launch-session-ended/);
+    expect(events.indexOf('launch-session-ended')).toBeLessThan(events.lastIndexOf('run-start'));
+  });
+
   // The gate must be inert against an installation that has no launch-admit
   // command — reading its usage text as a refusal would stop ordinary work.
   // It still asks on every pass so a later workflow candidate cannot inherit

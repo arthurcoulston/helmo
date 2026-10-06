@@ -11,6 +11,12 @@ consolidation imported still carried that release's notes under "Unreleased";
 this is the published wording, which is two entries and one commit reference
 longer.
 
+## Unreleased
+
+- Recover scoped-seat trace attribution after a loop driver dies by holding
+  replacement work until its orphaned session exits, then finishing the dead
+  launch's measured ticket window from its durable pre-launch cursor.
+
 ## v0.9.4 — 2026-10-05
 
 - Keep session traces available for large real ticket histories by transporting

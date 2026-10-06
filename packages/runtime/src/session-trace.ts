@@ -53,6 +53,7 @@ function validatedLaunch(value: unknown): LaunchJournalEntry | null {
     || !timestamp(value.intent_at)) return null;
   if (value.ticket_id !== undefined && !ticketIdentifier(value.ticket_id)) return null;
   if (value.claim !== undefined && value.claim !== true) return null;
+  if (value.event_seq_floor !== undefined && (!Number.isSafeInteger(value.event_seq_floor) || value.event_seq_floor < 0)) return null;
   if (value.touched_tickets !== undefined && !touchedTickets(value.touched_tickets)) return null;
   // A settled launch is not required to name a ticket. A scoped seat claims
   // inside its session and journals no ticket at all, and a claim-intent
@@ -62,12 +63,14 @@ function validatedLaunch(value: unknown): LaunchJournalEntry | null {
   // ticket, because workflow admission is granted for one.
   if (value.phase === 'complete' && !timestamp(value.completed_at)) return null;
   if (value.phase === 'quarantined' && !timestamp(value.quarantined_at)) return null;
+  if (value.phase === 'complete' && value.dispatching_at !== undefined && value.session === undefined) return null;
   if (value.admission_id !== undefined && !ticketIdentifier(value.ticket_id)) return null;
   if (value.session !== undefined && !validSession(value.session)) return null;
   return {
     format: 1, phase: value.phase, launch_id: value.launch_id, intent_at: value.intent_at,
     ...(value.ticket_id !== undefined ? { ticket_id: value.ticket_id } : {}),
     ...(value.claim === true ? { claim: true as const } : {}),
+    ...(value.event_seq_floor !== undefined ? { event_seq_floor: value.event_seq_floor } : {}),
     ...(value.touched_tickets !== undefined ? { touched_tickets: value.touched_tickets } : {}),
     ...(value.phase === 'complete' ? { completed_at: value.completed_at as string } : {}),
     ...(value.phase === 'quarantined' ? { quarantined_at: value.quarantined_at as string } : {}),

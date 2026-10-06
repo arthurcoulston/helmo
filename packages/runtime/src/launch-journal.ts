@@ -18,6 +18,10 @@ export interface LaunchJournalEntry {
   phase: 'intent' | 'admitted' | 'dispatching' | 'complete' | 'quarantined';
   launch_id: string;
   intent_at: string;
+  /** Work event cursor immediately before this launch. It lets restart
+   *  recovery finish the same measured attribution window after an orphaned
+   *  scoped session exits, before any replacement session can start. */
+  event_seq_floor?: number;
   ticket_id?: string;
   workflow_attempt_id?: string;
   /** A pool worker's launch, which holds a Helmo claim from before dispatch
@@ -98,7 +102,7 @@ export function unsettledLaunches(loop: string): LaunchJournalEntry[] {
 }
 
 export function recordLaunchIntent(
-  loop: string, launchId: string, identity?: { ticketId: string; workflowAttemptId: string } | { claim: true }, at = new Date().toISOString(),
+  loop: string, launchId: string, identity?: { ticketId: string; workflowAttemptId: string } | { claim: true }, at = new Date().toISOString(), eventSeqFloor?: number,
 ): LaunchJournalEntry {
   const existing = readLaunch(loop, launchId);
   if (existing && identity && 'claim' in identity) {
@@ -113,6 +117,7 @@ export function recordLaunchIntent(
   }
   const entry: LaunchJournalEntry = {
     format: 1, phase: 'intent', launch_id: launchId, intent_at: at,
+    ...(eventSeqFloor !== undefined ? { event_seq_floor: eventSeqFloor } : {}),
     ...(identity && 'claim' in identity ? { claim: true as const } : {}),
     ...(identity && !('claim' in identity) ? { ticket_id: identity.ticketId, workflow_attempt_id: identity.workflowAttemptId } : {}),
   };
@@ -239,7 +244,7 @@ export function launchSessionRunning(loop: string, entry: LaunchJournalEntry, no
 
 export function settleLaunch(loop: string, launchId: string, phase: 'complete' | 'quarantined', at = new Date().toISOString()): void {
   const prior = readLaunch(loop, launchId);
-  if (!prior?.admission_id && !prior?.claim && !prior?.session) throw new Error(`Launch ${launchId} has no durable admission or session result.`);
+  if (!prior?.admission_id && !prior?.claim && !prior?.session && prior?.phase !== 'dispatching') throw new Error(`Launch ${launchId} has no durable admission, dispatch, or session result.`);
   writeDurable(entryPath(loop, launchId), {
     ...prior, phase,
     ...(phase === 'complete' ? { completed_at: at } : { quarantined_at: at }),

@@ -10,8 +10,7 @@ export const BUILD_ARTIFACTS = [
   'packages/work/dist/BUILD.json',
   'packages/roadmap/dist/BUILD.json',
   'packages/runtime/dist/BUILD.json',
-  'packages/shell/dist/shell.js',
-  'packages/shell/dist/shell.css',
+  'packages/shell/dist/index.html',
 ];
 
 export function assertBuildRoot(root) {

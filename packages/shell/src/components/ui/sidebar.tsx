@@ -1,19 +1,11 @@
-// VENDORED — do not edit. Source: the estate repo, src/components/ui/sidebar.tsx
-// Refresh: node scripts/vendor-estate-components.mjs
-// Drift is a test failure: npm test (skipped, loudly, with no estate checkout)
-//
-// shadcn/ui source, style radix-nova, retaining its MIT notice in
-// THIRD_PARTY_NOTICES.md. The estate is where this estate agreed that
-// configuration (R-11); Helmo vendors it so it stays publishable alone.
-
 "use client"
 
 import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
+import { cn } from "cn"
 import { Slot } from "radix-ui"
 
 import { useIsMobile } from "@/hooks/use-mobile"
-import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Separator } from "@/components/ui/separator"

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { appConfig, startAppServer } from '../app-server.mjs';
-import { appRequest, serveProduct, shellRequest } from '../../app/server.mjs';
+import { appRequest, shellRequest } from '../../app/server.mjs';
 import { workHealth, workListening, workRequest, workSnapshot } from '../../work/dist/view.js';
 import { roadmapHealth, roadmapRequest, roadmapSnapshot } from '../../roadmap/dist/view.js';
 import { runtimeRequest, runtimeSnapshot } from '../../runtime/dist/view.js';
@@ -34,7 +34,7 @@ function overviewSnapshot() {
     ...work.records,
   ] };
 }
-const appDocuments={overview:overviewSnapshot,work:workSnapshot,roadmap:roadmapSnapshot,team:teamSnapshot,runtime:runtimeSnapshot};
+const appDocuments={overview:overviewSnapshot,team:teamSnapshot};
 const running = await startAppServer(appConfig(), (request, response) => {
   try {
     if (shellRequest(request, response)) return;
@@ -55,11 +55,13 @@ const running = await startAppServer(appConfig(), (request, response) => {
       response.end(apiJson(area,document_));
       return;
     }
-    if (at(request, '/roadmap')) return serveProduct(request, response, roadmapRequest, 'roadmap');
-    if (at(request, '/run')) return serveProduct(request, response, runtimeRequest, 'runtime');
-    if (at(request, '/work')) return serveProduct(request, response, workRequest, 'work');
-    if (request.url === '/' || request.url?.startsWith('/?') || request.url === '/answer' || request.url === '/acted') return serveProduct(request, response, workRequest, 'work');
-    if (appRequest(request,response,appDocuments)) return;
+    if (appRequest(request, response)) return;
+    // Still their own documents, outside the shadcn application, until
+    // H-2936–H-2939 move them in.
+    if (at(request, '/roadmap')) return roadmapRequest(request, response);
+    if (at(request, '/run')) return runtimeRequest(request, response);
+    if (at(request, '/work')) return workRequest(request, response);
+    if (request.url === '/' || request.url?.startsWith('/?') || request.url === '/answer' || request.url === '/acted') return workRequest(request, response);
     response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
     response.end('Unknown Helmo app route.\n');
   } catch (error) {

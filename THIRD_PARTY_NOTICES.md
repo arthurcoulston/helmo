@@ -3,9 +3,10 @@
 Helmo carries two copies of work that shadcn/ui owns. The vendored estate
 design tokens — the copies the Work, Roadmap and Runtime views inline —
 include values derived from it. The application shell
-(`packages/shell/src/components/ui/`) is its component source, vendored
-verbatim from the estate shell, which is where this estate's shadcn
-configuration (style `radix-nova`, base colour neutral) was agreed.
+(`packages/shell/`) is its generated source: the official `shadcn` CLI's
+output for style `radix-nova`, base colour neutral, installed from the
+registry and unmodified. `packages/shell/upstream.json` records the exact
+version and inventory.
 
 ## shadcn/ui
 

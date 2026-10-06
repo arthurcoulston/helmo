@@ -177,27 +177,50 @@ reviewers check the exact candidate and full component refresh proof.
 
 ## Where this stands
 
-The first shell preview uses real components but does not meet the standard
-upstream implementation requirement. It has a custom DOM/CSS compatibility
-layer, a missing font baseline and a misaligned header divider. It is not an
-accepted foundation. Everything inside it — Work's rows,
-requests and disclosures, Roadmap's list, Runtime's table, the app page's
-cards — is still hand-written HTML each product renders for itself. The
-remaining foundation and app cards belong to `H-2933@dev.rev`; Work requests
-and records to `H-2936@dev.rev` and `H-2937@dev.rev`; Roadmap to
-`H-2938@dev.rev`; Runtime to `H-2939@dev.rev`. Independent integrated reviews
-are `H-2940@dev.rev` and `H-2941@dev.rev`. A shadcn/ui outer shell around
-bespoke inner views does not close that audit. `DEV.md` records the existing
-implementation and its rejected-foundation status for a coding session.
+The foundation is now a standard upstream implementation. `packages/shell` is
+the official `shadcn@4.21.3` Vite project for `radix-nova` (`--base radix
+--preset nova`), neutral, TSX, lucide, with `sidebar breadcrumb card badge
+alert` and their dependencies installed from the registry. Every generated
+file is byte-identical to what that CLI writes: proven by regenerating the pin
+into a throwaway directory and comparing, not by comparing with another
+project's copies. The custom DOM-adoption and CSS-rewriting bridge is gone,
+preflight and the cascade layers are upstream's, and the font baseline is the
+preset's own Geist, which is also what removes the missing-font defect. The
+header divider follows the sidebar block's own composition
+(`data-vertical:h-4 data-vertical:self-auto`), which is what removes the
+misalignment.
 
-The current preview starts with the sidebar shown in every window. That is
-an implementation default for Arthur to review in `H-2932@dev.rev`, not an
-agreed product decision. Independent window state is required: one window's
-trigger never moves another's. The component currently writes its
-`sidebar_state` cookie, and nothing reads it back. Window placement and a
-particular multi-monitor arrangement remain undecided. H-2932 records the
-preview review and standard-upstream direction; H-2933 replaces the foundation
-before the surface migrations proceed.
+`packages/shell/upstream.json` records the version, template, base, preset,
+inventory, official commands and a sha256 per generated file.
+`npm run upstream:check --workspace @helmo/shell` is the conformity proof and
+`upstream:refresh` is the refresh path; `-- --cli <version>` aims either at a
+newer release. 4.21.3 is the current latest, so the recorded evidence is a
+same-version full refresh, not a version-upgrade claim.
+
+**Overview and Team are migrated; Work, Roadmap and Runtime are not.** They
+remain complete documents rendered by their own handlers — and with the bridge
+removed they now carry no sidebar and no cross-area navigation at all. That is
+the stated temporary state of `H-2936@dev.rev`, `H-2937@dev.rev`,
+`H-2938@dev.rev` and `H-2939@dev.rev`, and it is why this foundation is a
+preview for review rather than a build to deploy: deploying it would leave
+three of five pages with no route to the other four. A shadcn/ui shell around
+bespoke inner views still does not close the alignment audit.
+`H-2940@dev.rev` and `H-2941@dev.rev` are the independent integrated reviews.
+
+Two things in the build are upstream's behavior rather than product decisions,
+kept because keeping the generated files unmodified is the requirement: the
+template's theme provider stores a light/dark choice in `localStorage` and
+toggles it on the `d` key. Window placement, a multi-monitor arrangement, and
+initial sidebar visibility in a popped-out window remain undecided; the
+application opens with the sidebar shown and reads no cookie back, so no
+window moves another.
+
+The configuration conflict worth deciding: `DEV.md` previously recorded the
+selection as preset `b6YWkyPAm` with Mauve and Inter. That id resolves to
+nothing in the registry, the documented presets are `nova, vega, maia, lyra,
+mira, luma, sera, rhea`, and Mauve and Inter would both be the theme overrides
+this contract forbids. The repository follows the configuration this contract
+names — `radix-nova`, neutral — and its appearance is the preset's own.
 
 ## Upstream references
 

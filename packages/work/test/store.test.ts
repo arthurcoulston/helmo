@@ -1419,6 +1419,129 @@ describe('return to human / answer', () => {
     }
   });
 
+  describe('a connected ticket repeating an answered ask (H-390, H-994)', () => {
+    const arthur: Actor = { name: 'arthur', kind: 'human' };
+    const ask = (recommendation = 'amend commit abc123', situation = 'Commit abc123 needs repair.') =>
+      ({ situation, question: 'May we proceed?', recommendation });
+    // An answered ask on one ticket and a follow-up ticket citing it.
+    function answered(s: Store, answer = 'Approved.', original = ask(), by: Actor = arthur) {
+      const source = create(s, { title: 'Repair the fixture' });
+      s.returnToHuman(builder, source.id, original);
+      s.answerTicket(by, source.id, { answer, resolution: 'resume' });
+      return source;
+    }
+    const follow = (s: Store, ...cited: string[]) => create(s, { body: `See ${cited.join(' and ')}.` });
+
+    it('refuses the identical ask on a cited ticket, ignoring case and whitespace, and quotes the answer', () => {
+      const s = freshStore();
+      const source = answered(s, 'Approved; keep the author.');
+      const next = follow(s, source.id);
+      expect(() => s.returnToHuman(builder, next.id, ask('Amend  commit ABC123', 'commit abc123 needs repair.')))
+        .toThrow(new RegExp(`already recorded on ${source.id}.*Approved; keep the author`));
+      expect(s.getTicket(next.id).status).toBe('open');
+    });
+
+    it('refuses the identical ask on a related ticket and repeats a refusal as readily as an approval', () => {
+      const s = freshStore();
+      const source = answered(s, 'No. Keep commit abc123 unchanged.');
+      const linked = create(s);
+      s.linkTickets(builder, linked.id, source.id, 'relates', 'add');
+      expect(() => s.returnToHuman(builder, linked.id, ask())).toThrow(/already recorded/);
+    });
+
+    // The answer's condition is not re-judged: the identical ask is the one
+    // the human already answered, and the refusal hands his condition back
+    // to the agent as a dependency, as the same-ticket refusal does (H-2126).
+    it('refuses the identical ask under a conditional answer and quotes the condition back', () => {
+      const s = freshStore();
+      const source = answered(s, 'Approved only after review.');
+      expect(() => s.returnToHuman(builder, follow(s, source.id).id, ask())).toThrow(/"Approved only after review\."/);
+    });
+
+    it('lets any changed field reach the human', () => {
+      const s = freshStore();
+      const source = answered(s);
+      for (const changed of [
+        ask('amend commit def456'),
+        ask('amend commit abc123', 'Commit abc123 needs repair before H-99 settles.'),
+        { ...ask(), question: 'May we proceed now?' },
+        { ...ask(), if_unanswered: 'The release slips a week.' },
+        { ...ask(), options: [{ label: 'amend', consequence: 'history changes' }, { label: 'leave', consequence: 'the defect stays' }] },
+      ]) expect(s.returnToHuman(builder, follow(s, source.id).id, changed).status).toBe('awaiting_human');
+    });
+
+    it('does not reach unconnected work', () => {
+      const s = freshStore();
+      answered(s);
+      expect(s.returnToHuman(builder, create(s).id, ask()).status).toBe('awaiting_human');
+    });
+
+    it('counts only an original human answer, not a relay or an agent', () => {
+      const s = freshStore();
+      for (const by of [orch, builder]) {
+        const source = answered(s, 'Arthur approved it.', ask(), by);
+        expect(s.returnToHuman(builder, follow(s, source.id).id, ask()).status).toBe('awaiting_human');
+      }
+    });
+
+    it('lets a later answer anywhere in the connected set reopen the ask', () => {
+      const s = freshStore();
+      const source = answered(s);
+      // A later answer on the same source, even to a different ask.
+      s.returnToHuman(builder, source.id, ask('keep the release date'));
+      s.answerTicket(arthur, source.id, { answer: 'Fine.', resolution: 'resume' });
+      expect(s.returnToHuman(builder, follow(s, source.id).id, ask()).status).toBe('awaiting_human');
+      // A later answer on another cited ticket, and a relayed one.
+      for (const by of [arthur, orch]) {
+        const granted = answered(s);
+        const other = create(s);
+        s.returnToHuman(builder, other.id, ask('reconsider permission for commit abc123'));
+        s.answerTicket(by, other.id, { answer: 'Noted.', resolution: 'resume' });
+        expect(s.returnToHuman(builder, follow(s, granted.id, other.id).id, ask()).status).toBe('awaiting_human');
+      }
+    });
+
+    it('does not pair an answer with an ask that was withdrawn before it', () => {
+      const s = freshStore();
+      const source = create(s);
+      const asked = s.returnToHuman(builder, source.id, ask());
+      s.withdrawHumanReturn(builder, source.id, questionFingerprint(asked.question!), 'builder-loop', 'asked before preparing');
+      s.returnToHuman(builder, source.id, ask('amend commit def456'));
+      s.answerTicket(arthur, source.id, { answer: 'Approved.', resolution: 'resume' });
+      expect(s.returnToHuman(builder, follow(s, source.id).id, ask()).status).toBe('awaiting_human');
+    });
+
+    // Cyber's authority probes against the earlier keyword designs: every one
+    // is a new or withdrawn decision and must reach the human.
+    it.each([
+      ['an added action (H-1005 1)', 'Approved.', ask(), ask('amend and publish commit abc123')],
+      ['a condition omitted (H-1005 3)', 'Approved only after review.', ask(), ask('amend commit abc123 before review')],
+      ['a condition in the original situation only (H-1040 1)', 'Approved.', ask('amend commit abc123', 'Commit abc123 may be amended only after review.'), ask('amend commit abc123 before review')],
+      ['a reversed predicate (H-1040 2)', 'Approved if review passes.', ask(), ask('amend commit abc123 if review fails')],
+      ['a waived condition (H-1040 3)', 'Approved only after review.', ask(), ask('amend commit abc123; review is waived')],
+      ['unrecognized conditional phrasing (H-1040 4)', 'Approved contingent on review.', ask(), ask('amend commit abc123 before review')],
+      ['an unrecognized added action (H-1040 7)', 'Approved.', ask(), ask('amend and merge commit abc123')],
+      ['a preserved condition restated (H-1040 control, now asked)', 'Approved only after review.', ask(), ask('amend commit abc123 after review')],
+    ])('asks again for %s', (_label, answer, original, next) => {
+      const s = freshStore();
+      const source = answered(s, answer, original);
+      expect(s.returnToHuman(builder, follow(s, source.id).id, next).status).toBe('awaiting_human');
+    });
+
+    it.each([
+      ['Revoked; do not amend commit abc123. (H-1005 2)'],
+      ['Cancel my previous approval for commit abc123. (H-1040 5)'],
+      ["I no longer approve this; don't amend commit abc123. (H-1040 6)"],
+    ])('asks again after a withdrawal on a second cited ticket: %s', (withdrawal) => {
+      const s = freshStore();
+      const source = answered(s);
+      const other = create(s);
+      s.returnToHuman(builder, other.id, ask('reconsider permission for commit abc123'));
+      s.answerTicket(arthur, other.id, { answer: withdrawal, resolution: 'resume' });
+      expect(s.returnToHuman(builder, follow(s, source.id, other.id).id, ask()).status).toBe('awaiting_human');
+    });
+  });
+
   it('answersSince replays answers from a cursor and can narrow to one session (H-936)', () => {
     const s = freshStore();
     const dash: Actor = { name: 'arthur', kind: 'human', session: 'dashboard' };

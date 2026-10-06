@@ -39,7 +39,14 @@ function fail(e: unknown): { content: { type: 'text'; text: string }[]; isError:
 }
 
 function compact(p: Project) {
-  return { id: p.id, title: p.title, status: p.status, actual_usd: p.actual_usd, updated_at: p.updated_at };
+  return {
+    id: p.id, title: p.title, status: p.status, actual_usd: p.actual_usd, updated_at: p.updated_at,
+    usage_disclosure: {
+      value: p.actual_usd,
+      basis: 'ticket_cost_usd_rollup_legacy_mixed_unknown',
+      coverage: 'tagged tickets with recorded cost_usd only; desk and other unmetered work are excluded',
+    },
+  };
 }
 
 export function buildServer(
@@ -326,7 +333,7 @@ export function buildServer(
     'roadmap_record_actual',
     {
       description:
-        `Record the metered actual cost for a project — the rollup of cost_usd across its Helmo tickets (query them by the ticket 'project' tag). Absolute total, not a delta; the sweep recomputes and re-records it. Never self-report a guess: this figure is what makes effort predictions falsifiable, and it must come from Helmo's meter.`,
+        `Record the project usage estimate — the rollup of recorded cost_usd across its Helmo tickets (query them by the ticket 'project' tag). Historical cost_usd can have mixed or unknown basis, and desk or otherwise unmetered work is excluded; this is not an invoice. Absolute total, not a delta; the sweep recomputes and re-records it. Never self-report a guess.`,
       inputSchema: strict({
         project_id: z.string(),
         actual_usd: z.number().min(0),

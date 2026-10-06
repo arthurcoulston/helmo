@@ -24,7 +24,15 @@ export function roadmapHealth() {
 }
 
 export function roadmapSnapshot() {
-  return { installation: store.installationIdentity(), running: running(), projects: store.dumpState()['projects'] as Project[], ranked: store.rankProjects(), objectives: store.listObjectives(), bets: store.listBets() };
+  const projects = (store.dumpState()['projects'] as Project[]).map((project) => ({
+    ...project,
+    usage_disclosure: {
+      value: project.actual_usd,
+      basis: 'ticket_cost_usd_rollup_legacy_mixed_unknown',
+      coverage: 'tagged tickets with recorded cost_usd only; desk and other unmetered work are excluded',
+    },
+  }));
+  return { installation: store.installationIdentity(), running: running(), projects, ranked: store.rankProjects(), objectives: store.listObjectives(), bets: store.listBets() };
 }
 
 export function roadmapRequest(req: IncomingMessage, res: ServerResponse) {

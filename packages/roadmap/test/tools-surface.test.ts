@@ -16,6 +16,18 @@ async function connect(store: Store) {
 }
 
 describe('undeclared MCP arguments (R-41)', () => {
+  it('labels project dollars as a partial mixed-basis rollup', async () => {
+    const store = new Store(':memory:');
+    store.createProject(actor, { title: 'Visible project' });
+    const client = await connect(store);
+    const response = await client.callTool({ name: 'roadmap_list_projects', arguments: {} });
+    const project = JSON.parse((response.content as { text: string }[])[0]!.text).result.projects[0];
+    expect(project.usage_disclosure).toMatchObject({ value: 0, basis: 'ticket_cost_usd_rollup_legacy_mixed_unknown' });
+    expect(project.usage_disclosure.coverage).toContain('unmetered work are excluded');
+    await client.close();
+    store.close();
+  });
+
   it('refuses an undeclared write field before recording anything', async () => {
     const store = new Store(':memory:');
     const client = await connect(store);

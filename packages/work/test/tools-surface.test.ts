@@ -296,6 +296,18 @@ describe('the steering surface after the workstream goal was retired (H-1186)', 
     store.close();
   });
 
+  it('labels historical usage basis and coverage without turning missing into zero', async () => {
+    const store = new Store(':memory:');
+    const t = store.createTicket(orch, { title: 'Check usage', body: 'No measured usage yet.', workstream: 'helmo-dev', type: 'review' });
+    const client = await connect(store);
+    const res = await client.callTool({ name: 'helmo_get_ticket', arguments: { ticket_id: t.id } });
+    const usage = JSON.parse((res.content as { text: string }[])[0]!.text).result.usage_disclosure;
+    expect(usage.dollars).toEqual({ value: 0, basis: 'legacy_mixed_unknown', coverage: 'recorded cost_usd events only; unmetered work is excluded' });
+    expect(usage.tokens.coverage).toContain('unmetered work is excluded');
+    await client.close();
+    store.close();
+  });
+
   it('exposes zero as uncapped without a negative remainder (H-267)', async () => {
     const store = new Store(':memory:');
     const t = store.createTicket(orch, { title: 'Build the importer', body: 'Goal: import CSVs. Current state: not started.', workstream: 'helmo-dev', type: 'build' });

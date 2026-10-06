@@ -217,7 +217,10 @@ export function workSnapshot(options: { whole?: boolean; ticket?: string } = {})
       hygiene: store.hygiene(),
       rows: selected.map((t) => {
         const acceptance = store.productAcceptance(t.id);
-        return { ...t, display: {
+        return { ...t, usage_disclosure: {
+          tokens: { value: t.tokens_total, basis: 'recorded', coverage: 'reported or harness-metered events only; unmetered work is excluded' },
+          dollars: { value: t.cost_usd_total, basis: 'legacy_mixed_unknown', coverage: 'recorded cost_usd events only; unmetered work is excluded' },
+        }, display: {
           group: group(t), waits_on: blockedBy(t), gated: gated(t), held: held(t),
           acceptance: { state: acceptance.state, reason: acceptance.reason },
           progress: progress.get(t.id) ?? null,

@@ -20,8 +20,10 @@ Read [UI.md](UI.md) before any UI design, prototype, implementation or review.
 All Helmo surfaces require a standard upstream shadcn/ui implementation with
 zero customization or deviation and a verified full component refresh/upgrade
 path. Use official setup, generated components/styling and documented composition;
-no custom theme, reset, cascade or component patches. UI.md governs the exact
-baseline and evidence. The legacy token seam and shell adapter described below
+no custom theme, reset, cascade or component patches. Arthur's selected preset
+is `b6YWkyPAm` with explicit Radix: Nova, Mauve, Inter, small radius and Lucide.
+UI.md governs the exact generated baseline, supported workspace setup and
+refresh evidence. The legacy token seam and shell adapter described below
 are current implementation facts to replace, not an approved foundation.
 Migration must preserve existing product behavior and entry points. It does
 not authorize a new information architecture or a dashboard redesign.

@@ -12,13 +12,21 @@ compatible with full upstream upgrades, with zero customization or deviation.
 This supersedes the earlier permission for estate-specific styling and the
 compatibility wrapper used by the first shell preview.
 
-Use the official installation and registry workflow for one recorded upstream
-version and preset. The selected configuration remains `radix-nova`, neutral,
-TypeScript/TSX and lucide; use that preset's upstream defaults. Install directly
+Use the official installation and registry workflow. Arthur selected
+[`--preset b6YWkyPAm`](https://ui.shadcn.com/create?preset=b6YWkyPAm) on
+2026-10-06 (H-2957@dev.rev). It resolves to Nova; Mauve base, theme and chart
+colors; Inter; small radius; Lucide; default menu color; subtle menu accent;
+and an inherited heading font. Retain the existing Radix primitive explicitly
+with `--base radix`: this preset code does not encode the primitive base.
+The resulting style is `radix-nova`, with TypeScript/TSX and CSS variables.
+This replaces the earlier neutral/system-font configuration.
+
+Zero customization means no deviations from this official generated preset.
+Its selected font, colors and radius are the approved baseline. Install directly
 from upstream, without an estate checkout as an intermediate source or upgrade
 dependency. Keep generated component source and styling unmodified. Do not add
-custom fonts, theme tokens, CSS resets, cascade-layer changes, selector rewrites,
-style overrides or patched component behavior.
+font/theme overrides, custom CSS resets, cascade-layer changes, selector
+rewrites, style overrides or patched component behavior.
 
 Compose the application through documented shadcn components, props, variants
 and block patterns in the standard React/Tailwind setup. The framework owns the
@@ -31,7 +39,39 @@ the exact conflict for a decision instead of inventing a local exception.
 
 A matching appearance, a component import or equality with another project's
 copies does not establish compliance. The comparison baseline is the recorded
-official registry output for the selected configuration.
+official CLI output for the selected configuration, including its supported
+alias/import and workspace transformations, not raw pre-transformation registry
+bytes. Record the CLI version, retrieval date, resolved preset, lockfile and
+generated-source hashes: pinning the CLI alone does not freeze remote registry
+content.
+
+### Official setup and workspace integration
+
+The clean reference was generated with shadcn 4.21.3 using
+`init --template vite --base radix --preset b6YWkyPAm --no-monorepo` in a
+disposable directory. This is the reference recipe, not a command to overwrite
+the Helmo repository. Use the official Vite/React/Tailwind v4 installation in
+the frontend workspace. Keep its complete generated CSS imports, preset tokens,
+base layer and font application, including the Inter package import and
+`html` font baseline. Keep the standard `shadcn/tailwind.css` dependency; do not
+eject it or hand-inline it. Use the generated Vite theme provider and its root
+theme classes. Do not create a separate theme mechanism for embedded or
+portalled content.
+
+Configure `components.json` with the actual CSS path and supported aliases;
+leave `tailwind.config` blank for Tailwind v4. A single frontend workspace can
+own the UI components; unrelated backend packages need no shadcn scaffold. If
+UI code is shared across frontend workspaces, follow the official monorepo
+aliases/exports and component routing, keep style/icon/baseColor consistent,
+and run the CLI from the consuming app. Do not rename/rebuild the whole
+repository to imitate a starter's directory names.
+
+For an existing initialized frontend, `shadcn apply b6YWkyPAm` is the official
+preset migration command; inspect its effects in a disposable copy first.
+Changing only `components.json`, or applying only theme/font, does not establish
+full preset adoption. `shadcn preset resolve --json` must report `b6YWkyPAm`
+with no fallbacks. For a fresh replacement frontend, initialize with the exact
+preset and base above, then compose existing application behavior using it.
 
 ### Full upstream refresh and upgrades
 
@@ -39,8 +79,14 @@ shadcn distributes source code; upgrading the CLI or dependencies alone does
 not update every installed component. Record the upstream version, preset,
 component inventory and official refresh/upgrade commands. Prove in a disposable
 copy that the entire installed component set can be refreshed without restoring
-local patches, then build and exercise the application. When an actual newer
-upstream version is available, test that upgrade and its documented migrations;
+local patches, then build and exercise the application. Use the explicit
+installed component inventory with `shadcn add <names...> --dry-run` / `--diff`,
+then `--overwrite --yes` after reviewing the disposable result. `--all` means
+all available registry components, not just those installed. Track registry
+helpers/dependencies too; keep domain composition outside generated UI files
+so an overwrite does not erase application behavior. Reconcile preset CSS and
+documented migrations as well as components and package dependencies. When an
+actual newer upstream version is available, test that upgrade and its documented migrations;
 reinstalling the same version is refresh evidence, not a version-upgrade claim.
 Future upstream breaking changes can require documented application migrations.
 Compatibility means following that supported path without maintaining a fork.
@@ -71,6 +117,11 @@ view title and breadcrumb, when present, following the
 menu toggle a separate row. Hiding the sidebar reclaims its complete column:
 no collapsed icon rail or reserved navigation gutter remains. Use the standard
 offcanvas collapse behavior; the trigger stays in the existing view header.
+Use the selected generation's upstream header composition, including the
+separator alignment. The inspected `radix-nova/sidebar-07` page uses
+`data-vertical:h-4 data-vertical:self-auto` on its vertical separator; the
+rejected preview omitted the alignment part. Follow the whole documented
+composition rather than patching the generated Separator source.
 
 Every page has an upper-right icon control in that same header row to open
 the current page in a separate window. Use the shared shadcn icon Button and
@@ -153,6 +204,10 @@ before the surface migrations proceed.
 - [Components and code distribution](https://ui.shadcn.com/docs)
 - [Installation for Vite](https://ui.shadcn.com/docs/installation/vite)
 - [CLI](https://ui.shadcn.com/docs/cli)
+- [components.json](https://ui.shadcn.com/docs/components-json)
+- [Monorepo integration](https://ui.shadcn.com/docs/monorepo)
+- [Theming](https://ui.shadcn.com/docs/theming)
+- [Vite dark mode](https://ui.shadcn.com/docs/dark-mode/vite)
 - [Sidebar (Radix)](https://ui.shadcn.com/docs/components/radix/sidebar)
 - [Table](https://ui.shadcn.com/docs/components/table)
 - [Data Table](https://ui.shadcn.com/docs/components/data-table)

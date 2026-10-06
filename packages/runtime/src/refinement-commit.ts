@@ -141,6 +141,8 @@ export async function refinementProof(checkout: string, commit: string, path: st
 
 export interface RefinementCommitOptions {
   origin: string; checkout: string; stateFile: string;
+  /** Overwritten after every pass with its time, pid, outcome and claim status, so an idle pass is still visible (H-1087). */
+  lastRunFile?: string;
   executorId?: string; executorVersion?: string; secret?: () => string;
   request?: typeof fetch;
 }
@@ -151,11 +153,21 @@ let running: Promise<RefinementPassResult> | null = null;
 /** One bounded pass: deliver an owned pushed commit, or claim, commit and deliver one job. */
 export function refinementCommitPass(options: RefinementCommitOptions): Promise<RefinementPassResult> {
   if (running) return running;
-  running = runPass(options).finally(() => { running = null; });
+  const seen: { claim?: number } = {};
+  const record = (outcome: { result: RefinementPassResult } | { error: string }) => {
+    // Evidence only: a failed write must never change what the pass reports.
+    try {
+      if (options.lastRunFile) atomicJson(options.lastRunFile, { at: new Date().toISOString(), pid: process.pid, ...outcome, ...seen });
+    } catch { /* the next pass tries again */ }
+  };
+  running = runPass(options, seen)
+    .then((result) => { record({ result }); return result; },
+      (error: unknown) => { record({ error: String(error).replace(/\s+/g, ' ').slice(0, 200) }); throw error; })
+    .finally(() => { running = null; });
   return running;
 }
 
-async function runPass(options: RefinementCommitOptions): Promise<RefinementPassResult> {
+async function runPass(options: RefinementCommitOptions, seen: { claim?: number }): Promise<RefinementPassResult> {
   const request = options.request ?? fetch;
   const secret = (options.secret ?? keychainSecret)();
   const executor = { executorId: options.executorId ?? 'goodplumb-rev', executorVersion: options.executorVersion ?? '1' };
@@ -165,6 +177,7 @@ async function runPass(options: RefinementCommitOptions): Promise<RefinementPass
     return deliver(options, post, JSON.parse(readFileSync(options.stateFile, 'utf8')) as Pending);
   }
   const claimed = await post('claim', {});
+  seen.claim = claimed.status;
   if (claimed.status === 204 || claimed.status === 409) return 'idle';
   if (!claimed.ok) throw new Error(`refinement claim refused (${claimed.status})`);
   const candidate = await claimed.json() as Partial<RefinementEnvelope>;

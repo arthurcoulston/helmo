@@ -395,6 +395,7 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
         origin: g.intake_preparation_origin,
         checkout: g.intake_preparation_checkout,
         stateFile: join(dir, 'refinement-commit.json'),
+        lastRunFile: join(dir, 'refinement-commit-last.json'),
       }).then((result) => {
         if (result !== 'idle') logEvent(SUP, 'refinement-commit', `result=${result}`);
       }).catch((error) => logEvent(SUP, 'refinement-commit-error', String(error).replace(/\s+/g, ' ').slice(0, 200)));

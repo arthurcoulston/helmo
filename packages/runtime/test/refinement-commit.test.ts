@@ -67,6 +67,23 @@ describe('refinement commit executor', () => {
     }
   });
 
+  it('records every pass, idle or failing, in the last-run file (H-1087)', async () => {
+    const r = repos();
+    const lastRunFile = join(r.stateFile, '..', 'refinement-commit-last.json');
+    const idle = harness([[204, null]]);
+    expect(await refinementCommitPass({ ...options(idle.request, r), lastRunFile })).toBe('idle');
+    const first = JSON.parse(readFileSync(lastRunFile, 'utf8'));
+    expect(first).toMatchObject({ pid: process.pid, result: 'idle', claim: 204 });
+    expect(Date.now() - Date.parse(first.at)).toBeLessThan(60_000);
+    expect(existsSync(r.stateFile)).toBe(false);
+
+    const refused = harness([[401, { error: 'unauthorized' }]]);
+    await expect(refinementCommitPass({ ...options(refused.request, r), lastRunFile })).rejects.toThrow(/401/);
+    const second = JSON.parse(readFileSync(lastRunFile, 'utf8'));
+    expect(second).toMatchObject({ pid: process.pid, claim: 401, error: expect.stringMatching(/refused \(401\)/) });
+    expect(second).not.toHaveProperty('result');
+  });
+
   it('commits the exact words on the job branch only, and proves them with raw Git objects', async () => {
     const r = repos();
     const head = git(r.checkout, 'rev-parse', 'HEAD');

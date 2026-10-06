@@ -64,15 +64,34 @@ upstream's real output rather than a snapshot of it that could quietly age.
 `test/upstream.test.mjs` is the offline half: it checks the manifest, so an
 edit to generated source is a test failure.
 
-**Only Overview and Team are in this application.** Work, Roadmap and Runtime
-are still each a complete document rendered by their own handler, with their
-own stylesheet — and now, with the old injection bridge gone, with no sidebar
-and no cross-area navigation at all. H-2936–H-2939 move them in. Until they
+**Overview, Team and Work are in this application.** Roadmap and Runtime are
+still each a complete document rendered by their own handler, with their own
+stylesheet — and now, with the old injection bridge gone, with no sidebar and
+no cross-area navigation at all. H-2938 and H-2939 move them in. Until they
 land this foundation is a preview to look at, not a build to deploy: deploying
-it would leave three of five pages with no way to reach the other four.
+it would leave two of five pages with no way to reach the other four.
+
+Work arrived in two halves. H-2936 moved the three things that can be awaiting
+the operator — a decision, an action and a sitting — and H-2937 brings the
+record lists and history. While that is true, `/work` is the application and
+`/` still serves Work's own document, because a `#H-n` bookmark resolves
+against the lists H-2937 owns. That is two renderings of the same records on
+purpose, and it ends when H-2937 lands.
+
+What the application cannot compute, and so reads from `/api/v1/work`'s
+`awaiting` key: the option letters (one function letters every surface, so
+"b" means one option whether Arthur is reading the page or a relayed phone
+queue), the request fingerprints (the consent tokens the write routes re-check
+inside their transaction — a browser rebuilding one would be a second
+implementation of a security boundary), and which kind of card each row is.
+The per-boot answer nonce is in that document too: the application's own page
+is a built file with nothing of ours injected into it, so the token has
+nowhere else to arrive, and the gate is unweakened because this server sends
+no access-control headers — a cross-origin page can post the request but can
+never read the reply.
 
 The server's whole part is handing over built files. `appRequest` answers
-`/overview` and `/team` with `dist/index.html`; `shellRequest` answers
+`/overview`, `/team` and `/work` with `dist/index.html`; `shellRequest` answers
 `/assets/<name>` from `dist/assets/`, matching the name rather than joining it
 so a request can only ever name a file Vite emitted. The area each document
 draws comes from `location.pathname` in the browser, and its content from the

@@ -197,14 +197,17 @@ inventory, official commands and a sha256 per generated file.
 newer release. 4.21.3 is the current latest, so the recorded evidence is a
 same-version full refresh, not a version-upgrade claim.
 
-**Overview and Team are migrated; Work, Roadmap and Runtime are not.** They
-remain complete documents rendered by their own handlers — and with the bridge
-removed they now carry no sidebar and no cross-area navigation at all. That is
-the stated temporary state of `H-2936@dev.rev`, `H-2937@dev.rev`,
-`H-2938@dev.rev` and `H-2939@dev.rev`, and it is why this foundation is a
-preview for review rather than a build to deploy: deploying it would leave
-three of five pages with no route to the other four. A shadcn/ui shell around
-bespoke inner views still does not close the alignment audit.
+**Overview, Team and Work are migrated; Roadmap and Runtime are not.** Those
+two remain complete documents rendered by their own handlers — and with the
+bridge removed they now carry no sidebar and no cross-area navigation at all.
+That is the stated temporary state of `H-2938@dev.rev` and `H-2939@dev.rev`,
+and it is why this foundation is a preview for review rather than a build to
+deploy: deploying it would leave two of five pages with no route to the other
+four. Work is migrated in two halves: `H-2936@dev.rev` moved its decision,
+action and sitting controls, and `H-2937@dev.rev` brings its record lists and
+history — until that lands, `/` still serves Work's own document for the
+bookmarks that resolve against those lists. A shadcn/ui shell around bespoke
+inner views still does not close the alignment audit.
 `H-2940@dev.rev` and `H-2941@dev.rev` are the independent integrated reviews.
 
 Two things in the build are upstream's behavior rather than product decisions,

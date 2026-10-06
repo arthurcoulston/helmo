@@ -136,6 +136,14 @@ test('the app answers its own port directly and renders the record a recorded UR
   const overview = await (await fetch(`${origin}/api/v1/overview`)).json();
   assert.ok(overview.data.records.some(record => record.id === ticket), 'Overview API preserves its existing record projection');
 
+  // Work is drawn by the application now, so the record a reader sees on
+  // /work comes from this document rather than from the HTML (H-2936). The
+  // `#H-n` reading below still lands on Work's own document, which `/` serves
+  // until H-2937.
+  const work = await (await fetch(`${origin}/api/v1/work`)).json();
+  assert.ok(work.data.records.some(record => record.id === ticket), 'the work API no longer carries the record the view draws');
+  assert.ok(work.data.awaiting, 'the work API carries no awaiting family for the view to draw');
+
   // `:4400/#H-n` reaches the server as `/`: the fragment is resolved in the
   // page. So "the recorded URL still works" is two readings — the document
   // answers 200, and the record it names is in it.
@@ -360,23 +368,25 @@ test('unified routes retain the established product workflows and common navigat
   roadmap.setShipNext(SEED, {project_id:next,decided_by:'fixture-operator',reason:'Synthetic priority decision'});
   roadmap.close();
   const { origin } = await startApp(t, homes);
-  // The navigation lives in the shadcn application, which only /overview and
-  // /team are served by yet. Work, Roadmap and Runtime still render their own
-  // documents and carry no sidebar until H-2936–H-2939 move them in; this
-  // asserts that temporary division rather than assuming it.
-  for (const path of ['/overview', '/team']) {
+  // The navigation lives in the shadcn application, which /overview, /team and
+  // now /work are served by. Roadmap and Runtime still render their own
+  // documents and carry no sidebar until H-2938 and H-2939 move them in, and
+  // `/` still serves Work's own document until H-2937 brings the record lists
+  // a bookmark resolves against; this asserts that temporary division rather
+  // than assuming it.
+  for (const path of ['/overview', '/team', '/work', '/work/']) {
     const response = await fetch(origin + path);
     assert.equal(response.status, 200, path);
     const html = await response.text();
     assert.match(html, /<div id="root"><\/div>/, path);
     assert.match(html, /<script type="module" crossorigin src="\/assets\/[\w.-]+\.js"><\/script>/, path);
   }
-  for (const path of ['/', '/work', '/work/', '/work?whole=1', '/roadmap', '/roadmap/', '/run', '/run/']) {
+  for (const path of ['/', '/?whole=1', '/roadmap', '/roadmap/', '/run', '/run/']) {
     const response = await fetch(origin + path);
     assert.equal(response.status, 200, path);
     const html = await response.text();
     assert.doesNotMatch(html, /<div id="root"><\/div>/, path);
-    if (path === '/' || path.startsWith('/work')) {
+    if (path === '/' || path.startsWith('/?')) {
       assert.match(html, new RegExp(ticket));
       assert.match(html, /record-scope/);
       assert.match(html, /data-answer=/);
@@ -400,6 +410,15 @@ test('unified routes retain the established product workflows and common navigat
 });
 
 
+// The decision, action and sitting controls moved onto the application
+// (H-2936), so what the operator's click sends is now assembled from
+// /api/v1/work rather than scraped out of Work's own HTML. Every protection
+// these assertions held is held here against the same routes: the page that
+// draws the control changed, the contract it posts against did not.
+//
+// One addition the HTML surface never asserted: the STALE fingerprint. A wrong
+// nonce proves the CSRF gate; a stale fingerprint proves the other half — that
+// consent belongs to the question that was drawn and not to the ticket id.
 test('decisions and actions work through the unified app with their original protections', async (t) => {
   const homes = installation(t);
   const store = new WorkStore(join(homes.HELMO_HOME, 'helmo.db'));
@@ -409,19 +428,41 @@ test('decisions and actions work through the unified app with their original pro
   store.returnToHuman(SEED, decision.id, { situation: 'Fixture choice', question: 'Proceed?', recommendation: 'Proceed', options: [{label:'Proceed',consequence:'Fixture continues'},{label:'Wait',consequence:'Fixture waits'}] });
   const action = create('Confirm the fixture action');
   store.requestAction(SEED, action.id, { situation: 'Fixture action', action: 'Complete the fixture', why_human: 'Synthetic test', if_unanswered: 'Fixture waits' });
+  const sitting = create('Sit with the builder about the fixture');
+  store.updateTicket(SEED, { ticket_id: sitting.id, note: 'Needs a sitting', needs_human: 'Twenty minutes at the desk', sitting_with: 'mason' });
   const { origin } = await startApp(t, homes, [], { HELMO_OPERATOR: 'fixture-operator' });
-  const html = await (await fetch(origin + '/work')).text();
-  assert.match(html, /class="ratify"/);
-  assert.match(html, /class="acted"/);
-  const nonce = html.match(/data-answer="([^"]+)"/)[1];
-  const question = html.match(/data-ask="([^"]+)"/)[1];
-  const act = html.match(/data-act="([^"]+)"/)[1];
+
+  // The area's document is the built application, and everything the controls
+  // need is in its API: the per-boot token, the option letters, and one
+  // fingerprint per request.
+  assert.match(await (await fetch(origin + '/work')).text(), /<div id="root"><\/div>/);
+  const awaiting = (await (await fetch(origin + '/api/v1/work')).json()).data.awaiting;
+  assert.equal(awaiting.operator, 'fixture-operator');
+  const drawn = awaiting.decisions.find((row) => row.id === decision.id);
+  const asked = awaiting.actions.find((row) => row.id === action.id);
+  const sat = awaiting.sittings.find((row) => row.id === sitting.id);
+  assert.deepEqual(drawn.options.map((option) => option.letter), ['a', 'b']);
+  assert.equal(drawn.recommendation, 'Proceed');
+  assert.equal(asked.why_human, 'Synthetic test');
+  // A sitting is offered with no fingerprint at all, because it carries no
+  // control: there is nothing on that card a click could send.
+  assert.equal(sat.sitting_with, 'mason');
+  assert.equal(sat.fingerprint, undefined);
+
+  const nonce = awaiting.token;
   const post = (path, payload, token = nonce) => fetch(origin + path, { method: 'POST', headers: {'content-type':'application/json',origin,'x-helmo-answer':token}, body:JSON.stringify(payload) });
-  const answer = {ticket_id:decision.id,ratify:true,question_fingerprint:question};
+  const answer = {ticket_id:decision.id,ratify:true,question_fingerprint:drawn.fingerprint};
   assert.notEqual((await post('/answer', answer, 'wrong')).status, 200);
+  assert.equal(store.getTicket(decision.id).status, 'awaiting_human');
+  // The question on screen is not the one on the ticket now.
+  const stale = await post('/answer', {...answer, question_fingerprint: 'f'.repeat(16)});
+  assert.equal(stale.status, 409);
+  assert.match((await stale.json()).error, /reload/);
   assert.equal(store.getTicket(decision.id).status, 'awaiting_human');
   assert.equal((await post('/answer', answer)).status, 200);
   assert.equal(store.lastAnswer(decision.id).chosen_option, 'Proceed');
-  assert.equal((await post('/work/acted', {ticket_id:action.id,done:true,action_fingerprint:act})).status, 200);
+  // The write routes still live below /work, which the application's own
+  // relative post resolves to.
+  assert.equal((await post('/work/acted', {ticket_id:action.id,done:true,action_fingerprint:asked.fingerprint})).status, 200);
   assert.ok(store.getEvents(action.id).some(event => event.event_type === 'acted'));
 });

@@ -5,14 +5,19 @@
    of ours on the page — the framework owns the page styling, and each area's
    content is React in packages/shell/src/App.tsx reading /api/v1/<area>.
 
-   Work, Roadmap and Runtime are NOT in ROUTES: they are still served as their
-   own complete documents by their own handlers, outside this application,
-   until H-2936–H-2939 move them in. Those three therefore carry no sidebar and
-   no cross-area navigation at all, which is why this foundation is a preview
-   to look at and not a build to deploy. */
+   Roadmap and Runtime are NOT in ROUTES: they are still served as their own
+   complete documents by their own handlers, outside this application, until
+   H-2938 and H-2939 move them in. Those two therefore carry no sidebar and no
+   cross-area navigation at all, which is why this is still a preview to look
+   at and not a build to deploy.
+
+   `/work` IS in ROUTES (H-2936), and `/` is not: the historical landing path
+   still serves Work's own document, because the record lists and history a
+   `#H-n` bookmark resolves against are H-2937's packet. Until it lands, the
+   two renderings of Work coexist on purpose. */
 import { readFileSync } from 'node:fs';
 
-const ROUTES = new Map([['/overview', 'overview'], ['/team', 'team']]);
+const ROUTES = new Map([['/overview', 'overview'], ['/team', 'team'], ['/work', 'work']]);
 const DIST = new URL('../shell/dist/', import.meta.url);
 
 const TYPES = new Map([

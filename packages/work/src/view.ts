@@ -301,6 +301,24 @@ function actionableSitting(t: Ticket): boolean {
   return t.needs_human;
 }
 
+/** The awaiting-you family, split by what each row actually holds.
+ *
+ *  Factored out when the shadcn application started drawing these cards
+ *  (H-2936): the split is the part that is easy to get subtly wrong — an
+ *  action-pending ticket leaves `question` null on purpose, and a sitting is
+ *  open work the operator cannot reach rather than work awaiting him — so one
+ *  function feeds both renderings. Two copies would eventually disagree about
+ *  which card a ticket is, and the control on the card is what differs. */
+function awaitingFamily(all: Ticket[]): { decisions: Ticket[]; actions: Ticket[]; sittings: Ticket[] } {
+  const awaiting = all.filter((t) => t.status === 'awaiting_human');
+  const live = all.filter((t) => t.status === 'open' && !t.schedule);
+  return {
+    actions: awaiting.filter((t) => t.action),
+    decisions: awaiting.filter((t) => !t.action),
+    sittings: live.filter((t) => actionableSitting(t) && !impeded(t)),
+  };
+}
+
 function blockedBy(t: Ticket): string[] {
   return store
     .getDeps(t.id)
@@ -627,8 +645,8 @@ function page(wholeRecord = false, section: 'awaiting' | null = null): string {
   // takes everything that is not an action — including a row with no readable
   // request — so the split is exhaustive and no awaiting ticket can fall out
   // of the page while still being counted on it.
-  const actions = awaiting.filter((t) => t.action);
-  const decisions = awaiting.filter((t) => !t.action);
+  const family = awaitingFamily(all);
+  const { decisions, actions } = family;
   const motion = by('in_progress');
   const standing = by('open').filter((t) => t.schedule); // recurring templates (H-22)
   const live = by('open').filter((t) => !t.schedule);
@@ -645,7 +663,7 @@ function page(wholeRecord = false, section: 'awaiting' | null = null): string {
   // This is also what stops a held sitting falling out of the page entirely:
   // it used to be excluded from "Awaiting you" for being held and from the
   // agent sections for needing a human, and was drawn nowhere at all.
-  const withHuman = live.filter((t) => actionableSitting(t) && !impeded(t));
+  const withHuman = family.sittings;
   const open = live.filter((t) => !actionableSitting(t));
   const ready = open.filter((t) => !impeded(t));
   const blocked = live.filter(impeded);
@@ -1193,8 +1211,97 @@ export function workHealth() {
   return { installation: store.installationIdentity(), store: dbPath };
 }
 
+/** The awaiting-you family as JSON, for the application that draws these
+ *  cards (H-2936).
+ *
+ *  The fields a reader could compute for itself are left to it; the three the
+ *  browser must NOT compute are here:
+ *
+ *  - The FINGERPRINT. It is the consent token the write routes check inside
+ *    their transaction (H-1053), and its canonical form lives in exactly one
+ *    place. A browser that rebuilt it would be a second implementation of a
+ *    security boundary, drifting silently until a stale question answered as
+ *    a fresh one.
+ *  - The LETTERS. Arthur says "b" in a meeting and whoever relays it may be
+ *    reading the phone queue rather than this page (H-939), so one function
+ *    letters every surface.
+ *  - WHICH KIND of card a row is, from `awaitingFamily`.
+ *
+ *  `token` is the per-boot answer nonce (H-145). Carrying it in this document
+ *  rather than in the page is what the standard upstream application needs —
+ *  its document is a built file with nothing of ours injected into it — and it
+ *  costs the gate nothing: this server sends no access-control headers, so a
+ *  cross-origin page can post the request but can never read the reply, and
+ *  the nonce stays unreadable to exactly the callers it was keeping out. */
+function awaitingDocument() {
+  const all = recordTickets(store.listTickets({ limit: -1 }));
+  const { decisions, actions, sittings } = awaitingFamily(all);
+  const common = (t: Ticket) => ({
+    id: t.id,
+    title: t.title,
+    workstream: t.workstream,
+    project: t.project ?? null,
+    priority: t.priority,
+    blast_radius: t.blast_radius ?? null,
+    updated_at: t.updated_at,
+  });
+  return {
+    // Null says answering is off, which is the difference between a card with
+    // controls and a card to read. The name is what the page says it answers
+    // as, so a reader can see whose decision it is about to record.
+    operator,
+    token: answerNonce,
+    decisions: decisions.map((t) => {
+      const a = t.question ? ask(t.question) : null;
+      // Awaiting with neither a decision nor an action: nothing legal writes
+      // it, an imported row can carry it, and the page it is drawn nowhere on
+      // is the one failure the operator cannot recover from (see
+      // `unreadableCard`). Said out loud here too.
+      if (!a) return { ...common(t), unreadable: true as const };
+      return {
+        ...common(t),
+        fingerprint: a.fingerprint,
+        question: a.question,
+        recommendation: a.recommendation,
+        situation: a.situation,
+        ...(a.options ? { options: a.options } : {}),
+        ...(a.if_unanswered ? { if_unanswered: a.if_unanswered } : {}),
+      };
+    }),
+    actions: actions.map((t) => {
+      const r = t.action!;
+      return {
+        ...common(t),
+        fingerprint: actionFingerprint(r),
+        action: r.action,
+        why_human: r.why_human,
+        situation: r.situation,
+        ...(r.if_unanswered ? { if_unanswered: r.if_unanswered } : {}),
+      };
+    }),
+    // No fingerprint and no token use: a sitting carries no control, because
+    // the response to a sitting happens in the sitting and a button here would
+    // be a way to report one without having had it.
+    sittings: sittings.map((t) => {
+      const release = t.release_handoff?.current ? t.release_handoff : null;
+      return {
+        ...common(t),
+        release: Boolean(release),
+        sitting: release?.decision ?? t.sitting ?? null,
+        sitting_with: release?.sitting_with ?? t.sitting_with ?? null,
+        ...(release ? { why_human: release.why_human } : {}),
+        waits_on: blockedBy(t),
+      };
+    }),
+  };
+}
+
 export function workSnapshot() {
-  return { installation: store.installationIdentity(), records: store.listTickets({ limit: -1 }) };
+  return {
+    installation: store.installationIdentity(),
+    records: store.listTickets({ limit: -1 }),
+    awaiting: awaitingDocument(),
+  };
 }
 
 export function workRequest(req: IncomingMessage, res: ServerResponse) {

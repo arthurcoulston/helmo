@@ -56,8 +56,11 @@ const running = await startAppServer(appConfig(), (request, response) => {
       return;
     }
     if (appRequest(request, response)) return;
-    // Still their own documents, outside the shadcn application, until
-    // H-2936–H-2939 move them in.
+    // Still their own documents, outside the shadcn application, until H-2938
+    // and H-2939 move them in. `/work` reaches here only for its write routes
+    // and anything below it — the application answers the area itself now
+    // (H-2936) — and `/` keeps serving Work's own document until H-2937 brings
+    // the record lists a `#H-n` bookmark resolves against.
     if (at(request, '/roadmap')) return roadmapRequest(request, response);
     if (at(request, '/run')) return runtimeRequest(request, response);
     if (at(request, '/work')) return workRequest(request, response);

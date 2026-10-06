@@ -238,7 +238,98 @@ mock_cmd = "true"
     }
   });
 
-  it('turns a human resume answer into a healthy running loop and closes the escalation (H-1038)', { timeout: 150000 }, async () => {
+  // A reload respawns one loop on the current roster and never clears a halt
+  // (H-891). The roster edit changes what the mock runs, so the new marker
+  // proves the respawned child read the roster again; the sibling's pid proves
+  // the rest of the fleet was not drained.
+  it('reload respawns one loop on the edited roster after its turn, leaving siblings running (H-891)', { timeout: 90000 }, async () => {
+    const roster = (marker: string) => `[loops.solo]
+workstream = "ws-solo"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = '''
+sleep 2
+touch "$REV_HOME/${marker}"
+'''
+
+[loops.sibling]
+workstream = "ws-sibling"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = "true"
+`;
+    const e = setup(roster('v1'));
+    const { proc } = startFleet(e);
+    try {
+      await waitFor(() => loopPid(e, 'solo') !== null && loopPid(e, 'sibling') !== null, 'both loops up');
+      const solo1 = loopPid(e, 'solo')!;
+      const sibling1 = loopPid(e, 'sibling')!;
+      await waitFor(() => existsSync(join(e.home, 'v1')), 'v1 session ran');
+
+      const rosterPath = join(e.home, 'roster.toml');
+      writeFileSync(rosterPath, readFileSync(rosterPath, 'utf8').replace('"$REV_HOME/v1"', '"$REV_HOME/v2"'));
+      expect(rev(e, ['reload', 'solo'])).toMatch(/Reload requested for 'solo'/);
+
+      await waitFor(() => {
+        const p = loopPid(e, 'solo');
+        return p !== null && p !== solo1;
+      }, 'solo respawned with a new pid');
+      // An idle loop keeps its IDLE cursor across the respawn, as it should, so
+      // give it work: the session it runs is the edited roster's.
+      helm(e, ['create', '--title', 'wake solo', '--body', 'x', '--workstream', 'ws-solo', '--type', 'ops']);
+      await waitFor(() => existsSync(join(e.home, 'v2')), 'respawned loop runs the edited roster');
+      expect(loopPid(e, 'sibling')).toBe(sibling1);
+      const log = readFileSync(join(e.home, 'state', 'supervisor', 'events.log'), 'utf8');
+      expect(log).toMatch(/reload\s+loop=solo pid=/);
+      expect(log).toMatch(/exit\s+loop=solo code=143 action=respawn wait=0s \(reload\)/);
+      expect(log).not.toMatch(/\bdrain\b/);
+      expect(existsSync(join(e.home, 'state', 'solo', 'RELOAD'))).toBe(false);
+    } finally {
+      proc.kill('SIGKILL');
+    }
+  });
+
+  // The race H-841 named: a halt set by someone else while the reload is in
+  // flight. The STOP/HOLD lands after the supervisor has asked the loop to exit
+  // and before the turn ends; the loop must stay down with the marker intact.
+  for (const halt of ['STOP', 'HOLD'] as const) {
+    it(`a ${halt} set by someone else during a reload survives it and keeps the loop down (H-891)`, { timeout: 90000 }, async () => {
+      const e = setup(`[loops.solo]
+workstream = "ws-solo"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = '''
+touch "$REV_HOME/in-turn"
+sleep 15
+touch "$REV_HOME/turn-done"
+'''
+`);
+      const { proc } = startFleet(e);
+      const events = () => readFileSync(join(e.home, 'state', 'supervisor', 'events.log'), 'utf8');
+      try {
+        await waitFor(() => existsSync(join(e.home, 'in-turn')), 'session mid-turn');
+        const pid1 = loopPid(e, 'solo')!;
+        rev(e, ['reload', 'solo']);
+        await waitFor(() => /reload\s+loop=solo/.test(events()), 'supervisor acted on the reload');
+        expect(existsSync(join(e.home, 'turn-done'))).toBe(false); // still mid-operation
+
+        const marker = join(e.home, 'state', 'solo', halt);
+        writeFileSync(marker, 'by=someone-else\n');
+
+        await waitFor(() => loopPid(e, 'solo') === null, 'loop exited after its turn');
+        expect(existsSync(join(e.home, 'turn-done'))).toBe(true); // the turn finished, not killed
+        await sleep(3000); // several polls: it must NOT come back on its own
+        expect(loopPid(e, 'solo')).toBe(null);
+        expect(readFileSync(marker, 'utf8')).toBe('by=someone-else\n');
+        expect(events()).toMatch(/exit\s+loop=solo code=143 action=await_clearance \(reload\)/);
+        expect(pid1).toBeGreaterThan(0);
+      } finally {
+        proc.kill('SIGKILL');
+      }
+    });
+  }
+
+  it('turns a human resume answer into a healthy running loop and closes the escalation (H-1038)',{ timeout: 150000 }, async () => {
     const e = setup(`[loops.resume-loop]
 workstream = "rev-test"
 cwd = "/tmp"

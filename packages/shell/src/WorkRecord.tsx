@@ -6,7 +6,12 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 
-type Evidence = { kind: string; ref: string; note?: string }
+type Evidence = { kind: string; ref: string; note?: string; role?: string }
+// Index into the row's own `evidence` array, with what the projection knows
+// about that item's purpose. The server sends places, not copies of the
+// items, so the heaviest evidence list does not cost the document twice.
+type ResultRole = { at: number; inferred?: true; corrected?: true }
+type ResultDisplay = { primary: ResultRole | null; others: ResultRole[]; supporting: ResultRole[]; review: ResultRole[]; unstated: ResultRole[] }
 type Event = { seq: number; ts: string; event_type: string; actor: { name: string; session?: string }; payload: { note?: string; question?: string; answer?: string } }
 type Detail = { ticket: { body: string; uncertainty_note?: string }; events: Event[]; deps: { outgoing: { type: string; to_id: string }[]; incoming: { type: string; from_id: string }[] } }
 type Row = {
@@ -19,6 +24,7 @@ type Row = {
   display: {
     group: string; waits_on: string[]; gated: boolean; held: boolean; chain: string[]
     acceptance: { state: string; reason: string }
+    result: ResultDisplay
     progress: { at: string; note: string; actor: { name: string } } | null
   }
 }
@@ -96,28 +102,69 @@ export function TicketDetails({ id, revision }: { id: string; revision?: string 
   </div>
 }
 
+/** Where a ref can be opened from, for the device currently looking at the
+ *  dashboard. A property of this viewing, never of the evidence (contract
+ *  §2.5): `elsewhere` is a web address this device cannot reach, and `null` is
+ *  a ref no browser opens at all — a commit or a path is not unreachable, it
+ *  is simply not a link. The rule itself is unchanged: an http(s) URL whose
+ *  host is not a loopback name, unless the dashboard is itself on loopback. */
+function target(ref: string): string | "elsewhere" | null {
+  const loopback = ["localhost", "127.0.0.1", "::1", "[::1]"]
+  try {
+    const url = new URL(ref)
+    if (!["http:", "https:"].includes(url.protocol)) return null
+    return loopback.includes(location.hostname) || !loopback.includes(url.hostname) ? ref : "elsewhere"
+  } catch { return null }
+}
+
+/** One evidence item, written out. `action` draws the single prominent control
+ *  the record offers; everything else is a plain link or plain text, because a
+ *  second identical button is the thing that made prominence meaningless. */
+function Reference({ item, role, action }: { item?: Evidence; role: ResultRole; action?: boolean }) {
+  // A place the row's own evidence array cannot answer draws nothing. The two
+  // always come from the same row of the same response, so this only fires if
+  // a projection disagrees with the array it indexes — and drawing one item
+  // short beats throwing out of the render and blanking the record.
+  if (!item) return null
+  const where = target(item.ref)
+  const link = where !== null && where !== "elsewhere" ? where : undefined
+  return <div className="flex flex-wrap items-center gap-2">
+    {action && link ? <Button variant="outline" size="sm" asChild><a href={link}>View result</a></Button> : null}
+    {!(action && link) ? <span className="break-words [overflow-wrap:anywhere]">
+      <span className="text-muted-foreground">{item.kind} </span>
+      {link ? <a className="underline underline-offset-4" href={link}>{item.ref}</a> : <span className="font-mono text-xs">{item.ref}</span>}
+    </span> : null}
+    {where === "elsewhere" ? <span className="text-muted-foreground">Not reachable from this device</span> : null}
+    {!link ? <CopyReference value={item.ref} /> : null}
+    {item.note ? <span className="text-muted-foreground">{item.note}</span> : null}
+    {role.inferred ? <Badge variant="outline">Purpose not recorded</Badge> : null}
+    {role.corrected ? <Badge variant="outline">Role corrected</Badge> : null}
+  </div>
+}
+
+/** What the work produced, read from the `display.result` projection rather
+ *  than from how each ref happens to be spelled (R-42, H-2969). The predicate
+ *  this replaced promoted every URL to the result and demoted every commit and
+ *  file to review evidence, so 2,153 closed personal-estate tickets with
+ *  evidence read "No product result linked". */
 function Results({ row }: { row: Row }) {
-  const local = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(location.hostname)
-  const urls = row.evidence.filter((e) => e.kind === "url")
-  const other = row.evidence.filter((e) => e.kind !== "url")
+  const r = row.display.result
+  const at = (place: ResultRole) => row.evidence[place.at]
+  const group = (label: string, places: ResultRole[]) => places.length ? <div aria-label={label} className="flex flex-col gap-1">
+    <span className="font-medium">{label}</span>
+    {places.map((place, i) => <Reference key={i} item={at(place)} role={place} />)}
+  </div> : null
   return <div className="flex flex-col gap-3 text-sm">
-    <div className="flex flex-wrap items-center gap-2" aria-label="Product result">
-      <span className="font-medium">Product result</span>
-      {urls.length ? urls.map((e, i) => {
-        let href: string | undefined
-        try {
-          const url = new URL(e.ref)
-          if (["http:", "https:"].includes(url.protocol) && (local || !["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname))) href = e.ref
-        } catch { /* preserve the reference as text */ }
-        return <span key={i} className="flex flex-wrap items-center gap-2">
-          {href ? <Button variant="outline" size="sm" asChild><a href={href}>View result</a></Button> : <span>Result available on the estate machine: {e.ref}</span>}
-          {e.note ? <span className="text-muted-foreground">{e.note}</span> : null}
-        </span>
-      }) : <span className="text-muted-foreground">No product result linked</span>}
+    <div aria-label="Result" className="flex flex-col gap-1">
+      <span className="font-medium">{r.others.length ? `Result · ${r.others.length + 1} recorded` : "Result"}</span>
+      {r.primary
+        ? <Reference item={at(r.primary)} role={r.primary} action />
+        : <span className="text-muted-foreground">No result recorded{r.unstated.length ? ` — purpose was not recorded for ${r.unstated.length} item${r.unstated.length === 1 ? "" : "s"} of evidence` : ""}</span>}
+      {r.others.map((place, i) => <Reference key={i} item={at(place)} role={place} />)}
     </div>
-    <div aria-label="Review evidence"><span className="font-medium">Review evidence</span>
-      {other.length ? other.map((e, i) => <p key={i} className="break-words [overflow-wrap:anywhere]">{e.kind}: {e.note ?? e.ref} <span className="text-muted-foreground">{e.note ? e.ref : ""}</span></p>) : <p className="text-muted-foreground">No review evidence linked</p>}
-    </div>
+    {group("Supporting", r.supporting)}
+    {group("Review", r.review)}
+    {r.primary ? group("Purpose not recorded", r.unstated) : r.unstated.map((place, i) => <Reference key={i} item={at(place)} role={place} />)}
     <p>Release review: {row.display.acceptance.state.replaceAll("_", " ")}</p>
   </div>
 }

@@ -13,6 +13,20 @@ longer.
 
 ## Unreleased — 0.9.5
 
+- Show the result a ticket actually produced, whatever it is. A closed row used
+  to decide what the work produced from how the ref was *spelled* — every URL
+  was the result, every commit and file was review evidence — which described
+  2,153 closed tickets on the personal estate and 525 on Good Plumb as having
+  produced nothing, when what they produced was a commit or a file. An evidence
+  item now records its purpose (`role`: `result`, `supporting` or `review`,
+  independent of `kind`), and the row reads that: a commit or a file is as
+  prominent as a URL, several results are shown as several results with the
+  latest carrying the action, a supporting link no longer competes with the
+  result, and a result this device cannot reach stays the result — shown as not
+  reachable from here, with its ref copyable — instead of vanishing. Nothing is
+  back-filled: an item written before the field keeps exactly its old rendering
+  and says the purpose was never recorded.
+
 - Give every Helmo page one navigation: a shadcn/ui sidebar that hides
   completely — no icon rail, no reserved gutter — behind a trigger sharing one
   compact header row with the view's title and a new upper-right control that

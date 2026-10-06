@@ -14,7 +14,7 @@ import { actedRequest } from './acted.js';
 import { answerRequest } from './answer.js';
 import { loaded, running } from './build.js';
 import { installationLine, requestedInstallation, requireInstallation } from './install.js';
-import { actionFingerprint, ask, CLOSED_TAIL, recordTickets } from './presentation.js';
+import { actionFingerprint, ask, CLOSED_TAIL, recordTickets, resultDisplay } from './presentation.js';
 import { Store } from './store.js';
 import { Ticket } from './types.js';
 
@@ -220,6 +220,7 @@ export function workSnapshot(options: { whole?: boolean; ticket?: string } = {})
         return { ...t, usage_disclosure: store.usageDisclosure(t.id), display: {
           group: group(t), waits_on: blockedBy(t), gated: gated(t), held: held(t),
           acceptance: { state: acceptance.state, reason: acceptance.reason },
+          result: resultDisplay(t.evidence),
           progress: progress.get(t.id) ?? null,
           chain: ['done', 'cancelled'].includes(t.status) ? store.agentChain(t.id) : [],
         } };

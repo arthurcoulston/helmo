@@ -10,7 +10,7 @@
     "build": "vite build",
     "dev": "vite",
     "typecheck": "tsc --noEmit",
-    "test": "node --test test/*.test.mjs",
+    "test": "TSX_TSCONFIG_PATH=tsconfig.app.json node --import tsx --test test/*.test.mjs",
     "upstream:check": "node scripts/upstream.mjs check",
     "upstream:refresh": "node scripts/upstream.mjs refresh",
     "verify:ui": "node scripts/verify-ui.mjs"
@@ -33,6 +33,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^6",
+    "tsx": "^4.23.5",
     "typescript": "~6.0.2",
     "vite": "^8"
   }

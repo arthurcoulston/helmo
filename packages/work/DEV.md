@@ -1111,29 +1111,59 @@ is actually demonstrated. The roadmap ships the same control, spelled the same
 way (`helmo-roadmap/src/view.ts`); it has no browser in its toolchain, so it
 asserts the shape and leans on this repo for the behaviour.
 
-## Opening a result (R-42 I5, H-2422)
+## Opening a result (R-42 I5, H-2422, H-2968, H-2969)
 
 A closed row separates three things that used to read as one evidence tail:
-URL evidence is the product result, every other evidence kind is review
-evidence, and `productAcceptance()` is the release state. The first reachable
-result is the primary 44px `View result` action; an absent URL says no product
-result is linked rather than promoting a commit or file into one.
+what the work produced, evidence about it, and `productAcceptance()`'s release
+state.
 
-**That last rule is a guess, and it is being replaced.** Purpose was never
-recorded, so the surface read it off how the ref is spelled — which calls 2153
-closed personal tickets and 525 Good Plumb ones resultless when their result is
-a commit or a file (H-2934, measured by `tools/survey-evidence-roles.mjs`).
-`Evidence.role` now records it instead (H-2968, above); `WorkRecord.tsx` still
-filters on `kind === "url"` until H-2969 lands the read projection, at which
-point an unroled legacy item keeps exactly today's rendering and is labelled
-as inferred.
+**The first version guessed, and the guess was usually wrong.** It read purpose
+off how the ref was *spelled* — every `kind: "url"` became the result, every
+commit and file became review evidence. `tools/survey-evidence-roles.mjs`
+measured what that cost on the live stores: 2,153 closed personal-estate
+tickets and 525 Good Plumb ones carried evidence and were displayed as "No
+product result linked", because what they produced was a commit or a file
+(H-2934). 221 and 296 more drew a row of identical `View result` buttons with
+nothing saying which to open.
 
-A localhost URL is about the machine serving Helmo, not the phone reading it.
-It therefore ships without an `href` and becomes a link in
-`enableDeviceLocalResults()` only when the page itself is on localhost. A
-remote reader sees `Result available on the estate machine` and cannot be sent
-to their own device's port. The same hydration runs after the 15-second body
-replacement, or a link would work only until the first refresh.
+Purpose is recorded now. `Evidence.role` (H-2968) is `result`, `supporting` or
+`review`, independent of `kind`; `resultDisplay()` in `src/presentation.ts`
+reads it and `view.ts` serves it as `display.result` on every row; the shell's
+`Results()` draws that instead of filtering on `kind`. The contract the three
+implement is `crew:projects/r39/RESULT-ROLE-CONTRACT.md`, and its §3 table is
+the acceptance — every row of it is a test in
+`test/view-result-role.test.ts` (the projection and the served document) and in
+`packages/shell/test/work-result.test.mjs` (what a reader sees).
+
+Four things about the read path are load-bearing, and each was a defect
+somewhere before it was a rule:
+
+- **`kind` and `role` are open strings, not unions.** `evidence` is a JSON
+  column and the enums are enforced at the tool boundary, so the personal store
+  holds a `kind: "test"` written around it (H-884). An exhaustive five-value
+  switch has a real record it cannot classify. An unreadable `role` is treated
+  the same way: it is listed, never promoted.
+- **Nothing is back-filled.** All 19,956 existing items predate the field, so an
+  item with no `role` gets a frozen, labelled fallback — the same
+  `kind === "url"` guess, marked *purpose not recorded* — and that is the only
+  thing it is ever used for. It is never applied to an item that carries a
+  role, never to a ref another item has stated a role for, and never extended.
+  A recorded result also outranks an inferred one for the action, so appending
+  the pushed-to-GitHub URL after a roled commit does not hand the button to the
+  guess.
+- **The projection carries places, not copies.** `display.result` holds indices
+  into the row's own `evidence` array. The heaviest evidence list the real
+  record holds is 118 items and the whole-record document already sits at 2.7MB
+  against `floor.ts`'s 4.2MB ceiling; a second copy of every item would spend
+  that headroom on nothing the client cannot already read.
+- **Reachability decorates the result; it never reassigns it.** Whether a ref
+  opens is a property of the device doing the looking, so the projection is the
+  same answer for every reader and the shell's `target()` decides. A localhost
+  URL is about the machine serving Helmo, not the phone reading it: read
+  remotely it stays the result, says *Not reachable from this device*, and
+  renders its ref copyable. Read from localhost the same record is a link. That
+  is why the reader-facing proof server-renders rather than driving a browser —
+  `verify-ui.mjs` always looks from loopback, where case 6(b) cannot happen.
 
 ## Reading a title (R-42 I4, H-2476)
 

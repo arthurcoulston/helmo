@@ -35,6 +35,17 @@ for (let i = 0; i < 24; i++) {
   store.updateTicket(actor, { ticket_id: t.id, status: 'done', note: `Finished outcome ${i}`, evidence: [{ kind: 'url', ref: 'https://example.com/result', note: 'The result' }], confidence: 'routine' });
   oldest ??= t;
 }
+// A result that is a commit, with a file supporting it (R-42 contract §3.5):
+// the built bundle has to show the commit as what the work produced. Every row
+// of that table is proved from source in `test/work-result.test.mjs`; this one
+// case is here because only a real browser on the built app proves the bundle
+// carries the change at all.
+const operational = create('An operational change states its own result');
+store.updateTicket(actor, { ticket_id: operational.id, status: 'done', note: 'Changed the running system.', confidence: 'routine', evidence: [
+  { kind: 'commit', ref: 'helmo@76f395d', role: 'result', note: 'What changed' },
+  { kind: 'file', ref: '~/.helmo/rev.json', role: 'supporting' },
+] });
+
 const decision = create('A decision awaiting the operator');
 store.returnToHuman(actor, decision.id, { situation: 'Fixture situation', question: 'Use the standard baseline?', recommendation: 'Use the selected baseline.' });
 
@@ -91,6 +102,12 @@ try {
   await page.getByText(`Full record for ${oldest.title}`, { exact: true }).waitFor();
   await page.getByRole('link', { name: 'View result', exact: true }).waitFor();
   assert.equal(await page.getByRole('link', { name: 'View result', exact: true }).getAttribute('href'), 'https://example.com/result');
+  await page.goto(`${origin}/work?whole=1#${operational.id}`);
+  const operationalRow = page.locator(`#${operational.id}`);
+  await operationalRow.getByText('commit helmo@76f395d', { exact: true }).waitFor();
+  assert.equal(await operationalRow.getByText('No result recorded').count(), 0, 'a commit result must not read as no result');
+  assert.equal(await operationalRow.getByRole('link', { name: 'View result', exact: true }).count(), 0, 'a commit is not something a browser opens');
+  assert.equal(await operationalRow.getByText('~/.helmo/rev.json', { exact: true }).count(), 1);
   await page.goto(`${origin}/?section=awaiting`);
   await page.getByText(decision.title, { exact: true }).waitFor();
   assert.equal(await page.locator('[data-sidebar="sidebar"]').count(), 0, 'embedded reading carries no full navigation');

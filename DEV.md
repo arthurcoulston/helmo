@@ -17,13 +17,16 @@ internals, and a dev session reads this one first and then that one.
 ## UI component contract
 
 Read [UI.md](UI.md) before any UI design, prototype, implementation or review.
-All Helmo surfaces use shadcn/ui components and their documented composition
-patterns. The shared token seam described below is theme integration only;
-the legacy hand-written views are not evidence of component compliance.
+All Helmo surfaces require a standard upstream shadcn/ui implementation with
+zero customization or deviation and a verified full component refresh/upgrade
+path. Use official setup, generated components/styling and documented composition;
+no custom theme, reset, cascade or component patches. UI.md governs the exact
+baseline and evidence. The legacy token seam and shell adapter described below
+are current implementation facts to replace, not an approved foundation.
 Migration must preserve existing product behavior and entry points. It does
 not authorize a new information architecture or a dashboard redesign.
 
-### What is migrated, and what is not
+### Current preview — rejected as the implementation foundation
 
 `packages/shell` is the first increment and it covers the **chrome only**: the
 navigation sidebar, the one header row that carries the trigger, the view
@@ -31,7 +34,7 @@ title and the Open-in-new-window control. Those are real shadcn/ui components
 — `SidebarProvider`, `Sidebar`, `SidebarTrigger`, `SidebarInset`, `Button`,
 `Tooltip`, `Separator`, and `Sheet` under them at phone width — vendored from
 the estate shell, which is where this estate's configuration (`radix-nova`,
-neutral, lucide, tsx) was agreed. `scripts/vendor-estate-components.mjs`
+neutral, lucide, tsx) was agreed. `packages/shell/scripts/vendor-estate-components.mjs`
 refreshes the copies and `--check` reports drift, the same seam
 `vendor-estate-tokens.mjs` already uses for the colours.
 
@@ -43,7 +46,11 @@ claim about them: a shadcn outer shell around bespoke inner views does not
 close that audit, and this file saying so is what stops the next session
 reading a sidebar as a finished migration.
 
-### How the shell meets a product document
+### Existing compatibility bridge — to be replaced
+
+The following describes the unaccepted preview for migration context. Do not
+extend or preserve this adapter as the standard implementation: use the
+official setup and composition required by UI.md, retaining product behavior.
 
 The server does not render the shell. Each product renders its own complete
 document exactly as it did before; `serveProduct` injects the shell's
@@ -242,10 +249,11 @@ in one of them is a defect in all three:
   never authenticated. The stores record who claimed to write; they do not
   verify real-world identity.
 - **The markup gate** at the door, rejecting mangled tool-call writes (H-71).
-- **One vendored estate design-token source** in `core`, rather than a runtime
-  dependency on the private estate repository. Every view imports that public
-  copy; the drift tests skip visibly when the estate source is absent, because
-  a check that quietly passes when its input is missing can never go red.
+- **Legacy design tokens** currently come from a vendored estate source in
+  `core`. This describes the existing views, not the UI target: UI.md requires
+  upstream preset styling with zero customization. Replace the estate token
+  dependency as those views migrate; an estate drift check does not establish
+  upstream compliance.
 
 ## Documents
 

@@ -172,10 +172,18 @@ constitution = "/tmp/PROFILE.md"
     await t.test(name, async (t) => {
       const homes = { HELMO_HOME: fixture(t), ROADMAP_HOME: fixture(t), REV_HOME };
       const app = await startApp(t, homes);
-      for (const path of ['/run', '/overview', '/team', '/api/v1/team', '/api/v1/overview']) {
+      // The roster failure reaches a reader through whatever renders the
+      // area. /run is still its own document, so it answers 500 itself;
+      // /overview and /team are the shadcn application, so their document
+      // loads and their API is where the failure is told — which is what the
+      // view turns into its Alert rather than an empty page.
+      for (const path of ['/run', '/api/v1/team', '/api/v1/overview']) {
         const failed = await fetch(`${app.origin}${path}`);
         assert.equal(failed.status, 500, path);
         assert.match(await failed.text(), message, path);
+      }
+      for (const path of ['/overview', '/team']) {
+        assert.equal((await fetch(`${app.origin}${path}`)).status, 200, path);
       }
       assert.equal((await fetch(`${app.origin}/work`)).status, 200, 'the app process did not remain available');
     });
@@ -352,17 +360,22 @@ test('unified routes retain the established product workflows and common navigat
   roadmap.setShipNext(SEED, {project_id:next,decided_by:'fixture-operator',reason:'Synthetic priority decision'});
   roadmap.close();
   const { origin } = await startApp(t, homes);
+  // The navigation lives in the shadcn application, which only /overview and
+  // /team are served by yet. Work, Roadmap and Runtime still render their own
+  // documents and carry no sidebar until H-2936–H-2939 move them in; this
+  // asserts that temporary division rather than assuming it.
+  for (const path of ['/overview', '/team']) {
+    const response = await fetch(origin + path);
+    assert.equal(response.status, 200, path);
+    const html = await response.text();
+    assert.match(html, /<div id="root"><\/div>/, path);
+    assert.match(html, /<script type="module" crossorigin src="\/assets\/[\w.-]+\.js"><\/script>/, path);
+  }
   for (const path of ['/', '/work', '/work/', '/work?whole=1', '/roadmap', '/roadmap/', '/run', '/run/']) {
     const response = await fetch(origin + path);
     assert.equal(response.status, 200, path);
     const html = await response.text();
-    // The common navigation is the shell's sidebar now, so what the server
-    // owes every route is the shell's assets and its destination list — the
-    // five areas are in the configuration, not in a strip each page draws.
-    assert.match(html, /<link rel="stylesheet" href="\/shell\/shell\.css">/, path);
-    assert.match(html, /<script type="module" src="\/shell\/shell\.js"><\/script>/, path);
-    const config = JSON.parse(/id="helmo-shell-config">([^]*?)<\/script>/.exec(html)[1].replaceAll('\\u003c', '<'));
-    assert.deepEqual(config.destinations.map((d) => d.href), ['/overview', '/work', '/roadmap', '/team', '/run'], path);
+    assert.doesNotMatch(html, /<div id="root"><\/div>/, path);
     if (path === '/' || path.startsWith('/work')) {
       assert.match(html, new RegExp(ticket));
       assert.match(html, /record-scope/);
@@ -377,8 +390,10 @@ test('unified routes retain the established product workflows and common navigat
     } else {
       assert.match(html, /aria-label="Loop status"/);
       assert.match(html, /Recent trace/);
-      assert.match(html, /aria-describedby="helmo-runtime-scroll"/);
-      assert.match(html, /Scroll sideways for runtime, pace, spend and recent trace/);
+      // The narrow-window scroll hint was part of the injected bridge, which
+      // the standard upstream implementation removed. Runtime's own readability
+      // at narrow widths belongs to H-2939, where its table moves onto
+      // components.
       assert.match(html, /data-refresh="loops"/);
     }
   }

@@ -1327,6 +1327,55 @@ export class Store {
     return answered;
   }
 
+  /** A human's answer to this same ask on a connected ticket (H-390, narrowed
+   *  by H-994). Connected means parent/source/related or cited by id in the
+   *  title, body, situation or question; a qualified ref (H-n@other) names
+   *  another installation's ticket and connects nothing here. Same means every
+   *  field of the ask — situation, question, recommendation, options and
+   *  if_unanswered — is identical, case, Unicode and whitespace included:
+   *  prose and identifiers share these fields, and folding either merges
+   *  distinct resources (H-1047). Nothing is inferred from prose, so a changed
+   *  condition, an added action or a different resource is a new ask. The answer must be by a human, not relayed, and must be the latest
+   *  answer anywhere in the connected set: any later answer may have changed
+   *  or withdrawn it, and telling which is the inference this refuses to
+   *  make. Two rounds of matching actions, resources and conditions by
+   *  keyword certified asks that were not the same (H-1005, H-1040); a guard
+   *  that misses a paraphrase costs a meeting slot, one that swallows a new
+   *  decision costs the human his say. */
+  priorDecision(ticketId: string, ask: Question): { ticket: string; answer: Answer; at: string; by: string } | null {
+    const ticket = this.getTicket(ticketId);
+    const cited = `${ticket.title}\n${ticket.body}\n${ask.situation}\n${ask.question}`.match(/\bH-\d+\b(?!@)/g) ?? [];
+    const linked = this.db.prepare(
+      "SELECT to_id AS id FROM deps WHERE from_id = ? AND type IN ('parent','discovered_from','relates') UNION SELECT from_id AS id FROM deps WHERE to_id = ? AND type = 'relates'",
+    ).all(ticketId, ticketId) as { id: string }[];
+    const ids = [...new Set([ticketId, ...cited, ...linked.map((r) => r.id)])];
+    const rows = this.db
+      .prepare(`SELECT ticket_id, event_type, actor, payload, ts FROM events WHERE ticket_id IN (${ids.map(() => '?').join(',')}) AND event_type IN ('returned', 'return_withdrawn', 'answered') ORDER BY seq`)
+      .all(...ids) as { ticket_id: string; event_type: string; actor: string; payload: string; ts: string }[];
+    const same = (q: Question) => JSON.stringify([
+      q.situation, q.question, q.recommendation, q.if_unanswered ?? null,
+      q.options?.map((o) => [o.label, o.consequence]) ?? null,
+    ]);
+    const key = same(ask);
+    const pending = new Map<string, boolean>();
+    let prior: { ticket: string; answer: Answer; at: string; by: string } | null = null;
+    for (const r of rows) {
+      if (r.event_type === 'returned') {
+        const req = JSON.parse(r.payload) as HumanRequest;
+        pending.set(r.ticket_id, req.kind !== 'action' && same(req as Question) === key);
+      } else if (r.event_type === 'return_withdrawn') {
+        pending.delete(r.ticket_id);
+      } else {
+        const by = JSON.parse(r.actor) as Actor;
+        prior = pending.get(r.ticket_id) && by.kind === 'human'
+          ? { ticket: r.ticket_id, answer: JSON.parse(r.payload) as Answer, at: r.ts, by: by.name }
+          : null;
+        pending.delete(r.ticket_id);
+      }
+    }
+    return prior;
+  }
+
   agentChain(ticketId: string): string[] {
     const rows = this.db.prepare('SELECT actor FROM events WHERE ticket_id = ? ORDER BY seq').all(ticketId) as { actor: string }[];
     const chain: string[] = [];
@@ -3028,6 +3077,13 @@ export class Store {
         const said = already.answer.answer.replace(/\s+/g, ' ').trim();
         throw new HelmoError(
           `${t.id} has already had this exact ask answered — ${already.by} answered it at ${already.at}: "${said.length > 200 ? `${said.slice(0, 200)}…` : said}"${already.answer.chosen_option ? ` (chose: ${already.answer.chosen_option})` : ''}. Read it with helmo_get_ticket (last_answer) and act on it; asking again spends a meeting slot on a decision already made. If you do still need the human, say what is new: a situation that accounts for that answer and names what it left open. A byte-identical re-ask is the signature of a session that did not see the answer land, not of a second question.`,
+        );
+      }
+      const prior = this.priorDecision(t.id, stored);
+      if (prior) {
+        const said = prior.answer.answer.replace(/\s+/g, ' ').trim();
+        throw new HelmoError(
+          `${t.id} repeats an ask whose answer is already recorded on ${prior.ticket} — ${prior.by} answered it at ${prior.at}: "${said.length > 200 ? `${said.slice(0, 200)}…` : said}"${prior.answer.chosen_option ? ` (chose: ${prior.answer.chosen_option})` : ''}. Read it with helmo_get_ticket on ${prior.ticket} and act on it. If something has changed since — a condition, a resource, an action — say so in the situation; that is a new ask and reaches the human.`,
         );
       }
       const ts = now();

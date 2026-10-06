@@ -837,6 +837,21 @@ Pinned releases accept both the historical three-component layout and C1's one
   returning, which binds only the agent taught — a refusal binds every caller.
   It cannot wedge a ticket: a situation that accounts for the answer is a
   different fingerprint.
+  H-390 (narrowed by H-994) carries the same refusal to connected work:
+  parent/source/related tickets and tickets cited by id in the title, body,
+  situation or question, but never through a qualified ref (H-n@other), which
+  names another installation's ticket. There the same words still mean the
+  same ask, so a sibling session replaying a decision made on its source is
+  refused. Only an ask whose every field is identical, case, Unicode and
+  whitespace included, matches: the same fields carry resource names, and
+  folding them merged distinct objects (H-1047); a formatting-only repeat
+  reaching the human is the accepted cost. Only
+  an original human answer counts, never an orchestrator relay; and the match
+  must be the latest answer anywhere in the connected set, because a later one
+  may have changed or withdrawn it. It reads no meaning from prose. Two
+  earlier versions that matched actions, resources and conditions by keyword
+  suppressed asks that were not the same (H-1005, H-1040); a missed paraphrase
+  costs a meeting slot, a swallowed decision costs the human his say.
 - Product acceptance is opt-in and exact-ref: no completion is
   `not_requested`; a completion without a current verdict is `pending`; FAIL is
   `failed`; only a current non-author PASS is `accepted`. A caller checking a

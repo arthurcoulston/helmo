@@ -27,6 +27,13 @@ longer.
 - Say in the return-to-human tool itself that a tool refusing a resource proves
   only that tool's scope, so supported contribution and maintenance routes are
   finished before the concrete remainder reaches a person.
+- Refuse a return to the human when the identical ask was already answered by
+  a human on a connected ticket — a parent, source or related dep, or one cited
+  by id in the ask — and hand that answer back instead. Every field is compared
+  byte for byte, with no case, Unicode or whitespace folding, so a changed
+  condition, a new resource, extra words or a partial overlap all still reach
+  the human. Relayed answers and qualified cross-installation references count
+  for nothing.
 
 ## v0.9.4 — 2026-10-05
 

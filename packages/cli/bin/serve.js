@@ -46,7 +46,7 @@ const running = await startAppServer(appConfig(), (request, response) => {
       return;
     }
     if (/^\/api\/v1\/work(?:[/?]|$)/.test(request.url ?? '')) return workRequest(request, response);
-    if (request.url === '/api/v1/roadmap') return roadmapRequest(request, response);
+    if (/^\/api\/v1\/roadmap(?:[/?]|$)/.test(request.url ?? '')) return roadmapRequest(request, response);
     if (request.url === '/api/v1/runtime') return runtimeRequest(request, response);
     if (request.url === '/api/v1/overview' || request.url === '/api/v1/team') {
       const area=request.url.endsWith('/team')?'team':'overview';

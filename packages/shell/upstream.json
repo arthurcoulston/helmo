@@ -59,7 +59,8 @@
       "upstream.json",
       "scripts/upstream.mjs",
       "test/upstream.test.mjs",
-      "src/WorkRecord.tsx"
+      "src/WorkRecord.tsx",
+      "src/RoadmapView.tsx"
     ],
     "manifest": {
       "components.json": "aadc5e216b8c950c431eed626d98fa5334e379f88c100942b40f2370f41202f6",

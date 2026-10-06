@@ -1,3 +1,5 @@
+The current UI is `packages/shell/src/RoadmapView.tsx`, served by the shared core UI handler in both unified and standalone readings. `src/view.ts` owns the data API, including server-ranked projects and lazy project history. The previous HTML/CSS renderer has been removed; historical styling notes below describe the superseded implementation.
+
 # DEV — coding context for helmo-roadmap
 
 Shared installation and qualified-reference mechanics live in `packages/core`.

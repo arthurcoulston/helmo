@@ -4,6 +4,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { Store as RoadmapStore } from '../../roadmap/dist/store.js';
 import { Store } from '../../work/dist/store.js';
 import { launchBrowser } from '../../work/scripts/browser.mjs';
 import { env } from '../../cli/test/installation.mjs';
@@ -27,6 +28,14 @@ for (let i = 0; i < 24; i++) {
 }
 const decision = create('A decision awaiting the operator');
 store.returnToHuman(actor, decision.id, { situation: 'Fixture situation', question: 'Use the standard baseline?', recommendation: 'Use the selected baseline.' });
+
+const roadmap = new RoadmapStore(join(dir, 'roadmap/roadmap.db'));
+const project = roadmap.createProject(actor, { title: 'The complete standard UI foundation', status: 'ready', body: 'Preserve the full project record while using standard components.' });
+const objective = roadmap.setCharterItem(actor, { shape: 'objective', statement: 'A clear foundation', source: 'Fixture charter', horizon: 'near', rank: 1 });
+roadmap.cite(actor, { project_id: project.id, objective_id: objective.id, claim: 'A consistent interface makes the work legible.' });
+roadmap.recordClaim(actor, { project_id: project.id, kind: 'value', level: 'high', reason: 'Every operator reading benefits.' });
+roadmap.recordClaim(actor, { project_id: project.id, kind: 'effort', size: 'M', predicted_usd: 20, reason: 'A finite set of existing screens.' });
+roadmap.setShipNext(actor, { project_id: project.id, decided_by: 'Fixture operator', reason: 'The foundation is the next work.' });
 
 const child = spawn(process.execPath, [join(root, 'packages/cli/bin/serve.js')], {
   env: env({ HELMO_HOME: join(dir, 'work'), ROADMAP_HOME: join(dir, 'roadmap'), REV_HOME: join(dir, 'runtime'), HELMO_APP_PORT: '0', HELMO_OPERATOR: 'fixture-operator' }),
@@ -72,16 +81,23 @@ try {
   await page.getByRole('button', { name: 'Ratify recommendation', exact: true }).click();
   await page.getByText('Queue is empty.', { exact: false }).waitFor();
   assert.equal(store.getTicket(decision.id).status, 'open');
-  for (const theme of ['light', 'dark']) for (const width of [390, 640, 1280]) {
+  await page.goto(`${origin}/roadmap#${project.id}`);
+  await page.getByText(project.body, { exact: true }).waitFor();
+  await page.getByText(/decided by Fixture operator/).waitFor();
+  await page.getByRole('button', { name: 'History', exact: true }).click();
+  await page.getByText(/ship next set/).waitFor();
+  await page.getByRole('button', { name: `Copy ${project.id}`, exact: true }).click();
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), project.id);
+  for (const area of ['work', 'roadmap']) for (const theme of ['light', 'dark']) for (const width of [390, 640, 1280]) {
     await page.setViewportSize({ width, height: 900 });
-    await page.goto(`${origin}/work`);
-    await page.getByRole('heading', { name: /Ready ·/ }).waitFor();
+    await page.goto(`${origin}/${area}`);
+    await page.getByRole('heading', { name: area === 'work' ? /Ready ·/ : /Ship next ·/ }).waitFor();
     await page.evaluate((value) => document.documentElement.className = value, theme);
     await page.waitForTimeout(250);
     const measure = await page.evaluate(() => ({ font: getComputedStyle(document.body).fontFamily, overflow: document.documentElement.scrollWidth - innerWidth }));
     assert.match(measure.font, /Inter/);
     assert.ok(measure.overflow <= 1, `${theme} ${width}: ${measure.overflow}px overflow`);
-    await page.screenshot({ path: join(dir, `shots/work-${theme}-${width}.png`), fullPage: true, animations: 'disabled' });
+    await page.screenshot({ path: join(dir, `shots/${area}-${theme}-${width}.png`), fullPage: true, animations: 'disabled' });
   }
   assert.deepEqual(errors, []);
   console.log(`Work records, hash bookmarks, history, held state, copy, focused refresh, embedded answer, Inter and all six layouts verified. Evidence: ${dir}`);
@@ -90,4 +106,5 @@ try {
   await browser?.close();
   child.kill('SIGTERM');
   store.close();
+  roadmap.close();
 }

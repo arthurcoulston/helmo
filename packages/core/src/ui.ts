@@ -12,7 +12,7 @@ const ROUTES: Record<string, string> = { '/overview': 'overview', '/work': 'work
  * standalone entry advertises only the area its backend can actually serve. */
 export function uiRequest(req: IncomingMessage, res: ServerResponse, config: { areas: string[]; defaultArea: string }): boolean {
   if (req.method && !['GET', 'HEAD'].includes(req.method)) return false;
-  const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+  const url = new URL(req.url ?? '/', `http://${req.headers?.host ?? 'localhost'}`);
   if (url.pathname === '/api/v1/ui') {
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
     res.end(JSON.stringify(config));

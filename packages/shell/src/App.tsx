@@ -1,4 +1,5 @@
 import * as React from "react"
+import { RoadmapView, type RoadmapData } from "./RoadmapView"
 import { CopyReference, TicketDetails, WorkRecord, type WorkRecordData } from "./WorkRecord"
 import {
   ActivityIcon,
@@ -99,7 +100,7 @@ const DESTINATIONS: Destination[] = [
     label: "Roadmap",
     href: "/roadmap",
     icon: MapIcon,
-    rendered: false,
+    rendered: true,
   },
   { id: "team", label: "Team", href: "/team", icon: UsersIcon, rendered: true },
   {
@@ -771,6 +772,8 @@ function AreaView({ area }: { area: Destination }) {
       <p className="text-muted-foreground text-xs">Refreshed {state.readAt} · updates every 15 seconds</p>
     </>
   }
+
+  if (area.id === "roadmap") return <RoadmapView data={state.data as RoadmapData} selected={selected} />
 
   if (area.id === "overview") {
     return (

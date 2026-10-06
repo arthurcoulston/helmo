@@ -8,6 +8,7 @@ import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync, chmodS
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { HELMO_CLI as HELM_CLI, HELMO_SERVER, HELMO_STORE } from './helmo.js';
+import { readTicketLaunches } from '../src/session-trace.js';
 
 const { Store } = await import(HELMO_STORE);
 
@@ -451,6 +452,44 @@ fi
     // which is not a refusal and is not recorded as a decision.
     expect(events.match(/launch-admitted/g)).toHaveLength(1);
     expect(events).not.toMatch(/launch-denied|launch-admit-unsupported/);
+  });
+
+  it('journals which tickets a scoped seat\'s session wrote to, so a trace can find it (H-2901)', () => {
+    // A scoped seat is given no launch generation to stamp on its Work events
+    // (H-574), so the journal's measured window is the only thing that can put
+    // this session on this ticket. The desk writes under a different session
+    // id, which must stay out of that window.
+    const e = setup(`[loops.traced-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = '''
+set -e
+ID=$(node ${HELM_CLI} list --ready --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
+if [ -n "$ID" ]; then
+  node ${HELM_CLI} update --ticket $ID --note "claimed by mock" --status in_progress
+  node ${HELM_CLI} update --ticket $ID --note "worked by mock"
+  SIDE=$(node ${HELM_CLI} list --ready --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
+  HELMO_ACTOR='{"name":"traced-loop","kind":"agent","model":"mock","version":"0.1","session":"desk"}' node ${HELM_CLI} update --ticket $SIDE --note "desk note"
+  echo "rev-mock-usage tokens=10 cost_usd=0.01"
+fi
+'''
+`);
+    const id = seedTicket(e, 'Traced mock work item');
+    const side = seedTicket(e, 'Written by a desk session under the same seat name');
+    rev(e, ['run', 'traced-loop', '--count', '1']);
+
+    const dir = join(e.home, 'state', 'traced-loop', 'launches');
+    const journal = JSON.parse(readFileSync(join(dir, readdirSync(dir).find((name) => name.endsWith('.json'))!), 'utf8'));
+    expect(journal).toMatchObject({ phase: 'complete', touched_tickets: [{ id, events: 2 }] });
+    expect(journal).not.toHaveProperty('ticket_id');
+    expect(journal.touched_tickets.map((t: { id: string }) => t.id)).not.toContain(side);
+
+    process.env['REV_HOME'] = e.home;
+    const read = readTicketLaunches(['traced-loop'], id);
+    expect(read.malformed).toBe(0);
+    expect(read.launches).toHaveLength(1);
+    expect(readTicketLaunches(['traced-loop'], side).launches).toEqual([]);
   });
 
   it('stands down while a desk session holds work in its name, resumes when the seat clears (H-558)', async () => {

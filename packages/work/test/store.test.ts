@@ -1432,13 +1432,35 @@ describe('return to human / answer', () => {
     }
     const follow = (s: Store, ...cited: string[]) => create(s, { body: `See ${cited.join(' and ')}.` });
 
-    it('refuses the identical ask on a cited ticket, ignoring case and whitespace, and quotes the answer', () => {
+    it('refuses the identical ask on a cited ticket and quotes the answer', () => {
       const s = freshStore();
       const source = answered(s, 'Approved; keep the author.');
       const next = follow(s, source.id);
-      expect(() => s.returnToHuman(builder, next.id, ask('Amend  commit ABC123', 'commit abc123 needs repair.')))
+      expect(() => s.returnToHuman(builder, next.id, ask()))
         .toThrow(new RegExp(`already recorded on ${source.id}.*Approved; keep the author`));
       expect(s.getTicket(next.id).status).toBe('open');
+    });
+
+    // Prose and resource names share these fields, so no folding: a
+    // formatting-only repeat reaching the human is the accepted cost (H-1047).
+    it.each([
+      ['case', 'delete object invoices/ClientA.pdf', 'delete object invoices/clienta.pdf'],
+      ['Unicode compatibility', 'delete object reports/\u2460.csv', 'delete object reports/1.csv'],
+      ['internal whitespace', 'delete object "reports/a  b.csv"', 'delete object "reports/a b.csv"'],
+      ['surrounding whitespace', 'amend commit abc123', ' amend commit abc123'],
+    ])('treats a difference in %s as a different ask (H-1047)', (_label, original, next) => {
+      const s = freshStore();
+      const source = answered(s, 'Approved.', ask(original));
+      expect(s.returnToHuman(builder, follow(s, source.id).id, ask(next)).status).toBe('awaiting_human');
+    });
+
+    it('connects nothing through a qualified ref to another installation (H-1047)', () => {
+      const s = freshStore();
+      const source = answered(s);
+      const next = create(s, { body: `See ${source.id}@fixture.other.` });
+      expect(s.returnToHuman(builder, next.id, ask()).status).toBe('awaiting_human');
+      // The same id unqualified is a local citation.
+      expect(() => s.returnToHuman(builder, follow(s, source.id).id, ask())).toThrow(/already recorded/);
     });
 
     it('refuses the identical ask on a related ticket and repeats a refusal as readily as an approval', () => {

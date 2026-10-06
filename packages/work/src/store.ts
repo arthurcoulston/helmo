@@ -1329,11 +1329,13 @@ export class Store {
 
   /** A human's answer to this same ask on a connected ticket (H-390, narrowed
    *  by H-994). Connected means parent/source/related or cited by id in the
-   *  title, body, situation or question. Same means every field of the ask —
-   *  situation, question, recommendation, options and if_unanswered — agrees
-   *  once case and whitespace are ignored; nothing is inferred from prose, so
-   *  a changed condition, an added action or a different resource is a new
-   *  ask. The answer must be by a human, not relayed, and must be the latest
+   *  title, body, situation or question; a qualified ref (H-n@other) names
+   *  another installation's ticket and connects nothing here. Same means every
+   *  field of the ask — situation, question, recommendation, options and
+   *  if_unanswered — is identical, case, Unicode and whitespace included:
+   *  prose and identifiers share these fields, and folding either merges
+   *  distinct resources (H-1047). Nothing is inferred from prose, so a changed
+   *  condition, an added action or a different resource is a new ask. The answer must be by a human, not relayed, and must be the latest
    *  answer anywhere in the connected set: any later answer may have changed
    *  or withdrawn it, and telling which is the inference this refuses to
    *  make. Two rounds of matching actions, resources and conditions by
@@ -1342,7 +1344,7 @@ export class Store {
    *  decision costs the human his say. */
   priorDecision(ticketId: string, ask: Question): { ticket: string; answer: Answer; at: string; by: string } | null {
     const ticket = this.getTicket(ticketId);
-    const cited = `${ticket.title}\n${ticket.body}\n${ask.situation}\n${ask.question}`.match(/\bH-\d+\b/g) ?? [];
+    const cited = `${ticket.title}\n${ticket.body}\n${ask.situation}\n${ask.question}`.match(/\bH-\d+\b(?!@)/g) ?? [];
     const linked = this.db.prepare(
       "SELECT to_id AS id FROM deps WHERE from_id = ? AND type IN ('parent','discovered_from','relates') UNION SELECT from_id AS id FROM deps WHERE to_id = ? AND type = 'relates'",
     ).all(ticketId, ticketId) as { id: string }[];
@@ -1350,10 +1352,10 @@ export class Store {
     const rows = this.db
       .prepare(`SELECT ticket_id, event_type, actor, payload, ts FROM events WHERE ticket_id IN (${ids.map(() => '?').join(',')}) AND event_type IN ('returned', 'return_withdrawn', 'answered') ORDER BY seq`)
       .all(...ids) as { ticket_id: string; event_type: string; actor: string; payload: string; ts: string }[];
-    const same = (q: Question) => {
-      const norm = (v: string | undefined) => (v ?? '').normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
-      return JSON.stringify([q.situation, q.question, q.recommendation, q.if_unanswered, ...(q.options ?? []).flatMap((o) => [o.label, o.consequence])].map(norm));
-    };
+    const same = (q: Question) => JSON.stringify([
+      q.situation, q.question, q.recommendation, q.if_unanswered ?? null,
+      q.options?.map((o) => [o.label, o.consequence]) ?? null,
+    ]);
     const key = same(ask);
     const pending = new Map<string, boolean>();
     let prior: { ticket: string; answer: Answer; at: string; by: string } | null = null;

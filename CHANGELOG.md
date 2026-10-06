@@ -11,7 +11,7 @@ consolidation imported still carried that release's notes under "Unreleased";
 this is the published wording, which is two entries and one commit reference
 longer.
 
-## Unreleased
+## v0.9.4 — 2026-10-05
 
 - Keep session traces available for large real ticket histories by transporting
   only the Work identity, ownership, blockers and launch-link metadata they

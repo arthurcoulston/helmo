@@ -1,7 +1,13 @@
 # Helmo Roadmap — Product Description
 
-Open source, self-hosted, agent-platform agnostic. A sibling to Helmo, not a
-part of it: the two are built to work as one system and to work alone.
+Open source, self-hosted, agent-platform agnostic.
+
+**Current contract:** Roadmap is one of Helmo's three areas — one product, one
+version, one checkout (`README.md`, `VERSIONING.md`). What survived
+consolidation is the *store* separation: the two databases stay separate and
+unmigrated, and each area still reads alone. This document describes the
+roadmap as designed when it was a sibling product; read its product framing as
+history and `DEV.md` as the as-built record.
 
 ## Premise
 
@@ -42,22 +48,25 @@ both first-class projects and neither is privileged.
 
 ## Relationship to Helmo
 
-Separate products, separate stores, separate views. Together they read as one
-system; apart, each stands alone. The seam is three small additions to Helmo,
-each independently useful to a Helmo-only user:
+Separate stores, separate views. Together they read as one system; apart,
+each stands alone. (Written when these were separate products; the stores and
+views still are.) The seam was three small additions to Helmo, each
+independently useful to a Helmo-only user — two of them survive:
 
 1. An optional `project` tag on a ticket — another grouping string alongside
    `workstream`. Useful alone; doubles as the join key.
 2. A `project` filter on the ticket query, following from (1).
-3. A **standing notice** that rides along on ticket-queue responses, the way
-   workstream goals and budgets already do. Helmo carries a one-line current
-   priority with its provenance and knows nothing about what wrote it.
+3. **Retired (H-1126).** A standing notice was to ride along on ticket-queue
+   responses, carrying a one-line current priority. Arthur's ruling is that the
+   roadmap itself carries the shipping order, so a hand-maintained copy of it on
+   every queue read only drifts; `ship_next` is read where it is written. See
+   `DEV.md`, "The Helmo seam".
 
 Dependency runs one way: the roadmap is a *client* of Helmo's MCP and degrades
 gracefully without it. Progress and actual cost for a project are read back by
-querying Helmo's tickets, never self-reported. The one place influence flows
-the other way is the standing notice, and it flows through a hook that is
-roadmap-agnostic by construction.
+querying Helmo's tickets, never self-reported. The one place influence was to
+flow the other way was the standing notice, and retiring it (H-1126) leaves the
+dependency one-way with no exception.
 
 ## The object
 

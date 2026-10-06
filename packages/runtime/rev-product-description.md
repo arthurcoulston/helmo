@@ -2,6 +2,13 @@
 
 Open source, self-hosted, runtime-neutral. **Rev keeps agent loops turning.**
 
+**Current contract:** Rev is Helmo's Runtime area — one product, one version,
+one checkout (`README.md`, `VERSIONING.md`), and since the UI consolidation
+every area's readings are served by the one standard application. This document
+describes Rev as designed when it was a separate product alongside Helm; read
+its product framing as history, and the root `DEV.md` plus this package's
+`DEV.md` as the as-built record. Where the two disagree, the `DEV.md` wins.
+
 Rev is process supervision for autonomous AI agent loops that draw their work from a
 [Helm](https://github.com/TBD/helm) work record. Helm is where the human steers — the record of
 what needs doing, what happened, and what awaits a decision. Rev is the engine room: it decides
@@ -127,8 +134,8 @@ control, not as a required ceremony.
 A read-only local web view (deliberately plain first, like Helm's): every loop's state, last
 iteration and wake reason, failure streaks, pace, and spend — the at-a-glance answer to "is the
 machine healthy," replacing terminal status tables. Where a row references work (a BLOCKED loop's
-escalation ticket), it deep-links into Helm's dashboard. The two views stay separate products:
-Helm shows the work; Rev shows the machine.
+escalation ticket), it deep-links into Work's dashboard. The two views stay distinct readings
+of one product: Work shows the work; Runtime shows the machine.
 
 ## The runtime shim
 
@@ -152,9 +159,11 @@ and the docs say so where an operator meets it.
 
 TypeScript/Node, matching Helm: shared contributor stack, testable supervision logic (the
 prototype's pure decision functions — respawn policy, velocity translation, failure classification —
-become unit-tested modules), first-class JSON/TOML handling, and direct read-only SQLite access for
-the zero-token wake query. Process control (detached process groups, signal cascades, graceful
-drain) is owned by a small, carefully tested core. The v0 store integration is Helm-native;
+become unit-tested modules) and first-class JSON/TOML handling. The zero-token wake query goes
+through Work's CLI (`helmo-cli wake-check`), not its SQLite: the runtime never reads the work
+record's store, and `packages/runtime`'s `prebuild` fails the build on an import that would (root
+`DEV.md`, "Boundaries the build enforces"). Process control (detached process groups, signal
+cascades, graceful drain) is owned by a small, carefully tested core. The v0 store integration is Helm-native;
 the seam is one module so other work sources remain possible later without an abstraction tax now.
 
 ## Scope
@@ -179,9 +188,10 @@ beyond having a shim. macOS and Linux.
 
 ## Open questions
 
-1. **Wake query coupling** — direct read-only SQLite against Helm's store file (fast, but couples to
-   schema) vs. a `helm` CLI query (clean contract, tracked Helm-side). Lean: CLI, with direct-read as
-   a fallback optimization.
+1. **Wake query coupling** — *resolved, CLI.* The question was direct read-only SQLite against
+   Helm's store file (fast, but couples to schema) vs. a CLI query (clean contract). It went to the
+   CLI, and the direct-read fallback is no longer available: the runtime never reads the work
+   record's store, and `prebuild` fails the build on an import that would.
 2. **Rev's Helm actor identity** — loops write as themselves; when *Rev* files an escalation
    ticket, it writes as what? Proposed: `{name: "rev", kind: "agent"}` until Helm grows a
    dedicated actor kind for machinery.

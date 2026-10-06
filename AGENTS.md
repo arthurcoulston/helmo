@@ -4,8 +4,8 @@ Canonical apparatus file (vendor-neutral). `CLAUDE.md` is a shim pointing here.
 The context envelope is a design decision: what a session does NOT load is part
 of its role.
 
-One repository holds three products — Work, Roadmap and Runtime — plus the
-`core` they share. A session reads the routing below, then the one file its
+One repository holds one product with three areas — Work, Roadmap and Runtime
+— plus the `core` they share. A session reads the routing below, then the one file its
 role names, then that area's `DEV.md`. Nothing else here.
 
 ## What kind of session is this?

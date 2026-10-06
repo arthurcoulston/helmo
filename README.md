@@ -24,7 +24,9 @@ loaded tool schema names changed when the three products became one.
 
 ## Status
 
-**MVP, one version — `0.6.1`.** All three areas are dogfooded on this
+**MVP, one version.** The current number is the root `package.json` `version`;
+every area and shipped protocol surface reports that same one, and a figure
+restated here would only drift from it. All three areas are dogfooded on this
 product's own development. What the version number promises, and what counts as
 a breaking change, is [VERSIONING.md](VERSIONING.md). The automated floor is
 the root `npm run build` and `npm test`; independent review still gates

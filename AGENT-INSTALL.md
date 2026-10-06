@@ -251,9 +251,11 @@ the limit — it is not a failed install.
 
 ## 7. Report back to the human
 
-Deliver this, adapted to what you actually set up:
+Deliver this, adapted to what you actually set up. `<version>` is the root
+`package.json` `version` of the checkout you installed — read it, don't recall
+it.
 
-> Helmo is installed and connected — version 0.6.1, one checkout at
+> Helmo is installed and connected — version `<version>`, one checkout at
 > `<helmo-path>`.
 >
 > - **Work** (read-only): http://localhost:4400 — the "Awaiting you" section is

@@ -1,7 +1,7 @@
 # DEV — coding context for the Helmo repository
 
-One repository, three products and the module they share. This file is what
-holds across all of them; each area's own `DEV.md` is the context for its
+One repository, one product, three areas and the module they share. This file
+is what holds across all of them; each area's own `DEV.md` is the context for its
 internals, and a dev session reads this one first and then that one.
 
 | Area | Package | Name on npm/bin | Its context |

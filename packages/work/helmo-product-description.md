@@ -42,7 +42,9 @@ Design consequences:
 
 ## When agents escalate
 
-Whether an agent ships autonomously or returns a ticket for approval is the **agent's discretion, governed by its constitution** — the instructions it was given for its workstream. E.g., "if complex, seek approval; if simple, ship without asking" (in practice, in-depth and specific to the agent's work). Helmo doesn't enforce an approval policy; it provides the escalation channel (the returned ticket and the awaiting-human queue) that constitutions route through.
+Whether an agent ships autonomously or returns a ticket for approval is the **agent's discretion, governed by its constitution** — the instructions it was given for its workstream. E.g., "if complex, seek approval; if simple, ship without asking" (in practice, in-depth and specific to the agent's work). For an ordinary ticket Helmo doesn't enforce an approval policy; it provides the escalation channel (the returned ticket and the awaiting-human queue) that constitutions route through.
+
+That stayed the whole story until the workflow gate. A ticket bound to a workflow attempt (`workflow_attempt_id`) can enter execution only through one store-side admission transaction: the stage's entry requirements must hold, its exit requirements gate advancing, and the exact evidence consumed is retained, so revoking or superseding it quarantines the attempt. There the store enforces, not the constitution. Binding is opt-in per ticket and ordinary tickets are unchanged — see `DEV.md`, the `store.ts` workflow-enforcement notes (H-429).
 
 ## Components
 

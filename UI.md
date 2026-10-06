@@ -108,16 +108,20 @@ views does not close the audit.
 The chrome is migrated: the sidebar, its hiding, the header row and the page
 pop-out are the components above. Everything inside them — Work's rows,
 requests and disclosures, Roadmap's list, Runtime's table, the app page's
-cards — is still hand-written HTML each product renders for itself, and the
-inventory in `H-2933@dev.rev` is where each of those maps. A shadcn/ui outer
-shell around bespoke inner views does not close that audit. `DEV.md`'s "What
-is migrated, and what is not" says the same thing to a coding session.
+cards — is still hand-written HTML each product renders for itself. The
+remaining foundation and app cards belong to `H-2933@dev.rev`; Work requests
+and records to `H-2936@dev.rev` and `H-2937@dev.rev`; Roadmap to
+`H-2938@dev.rev`; Runtime to `H-2939@dev.rev`. Independent integrated reviews
+are `H-2940@dev.rev` and `H-2941@dev.rev`. A shadcn/ui outer shell around
+bespoke inner views does not close that audit. `DEV.md`'s "What is migrated,
+and what is not" says the same thing to a coding session.
 
-Two things in this contract are decided and two are not. Decided: the sidebar
-starts shown in every window, and one window's trigger never moves another's —
-the component writes its `sidebar_state` cookie, and nothing reads it back.
-Not decided: where a popped-out window is placed, and what a multi-monitor
-arrangement should look like.
+The current preview starts with the sidebar shown in every window. That is
+an implementation default for Arthur to review in `H-2932@dev.rev`, not an
+agreed product decision. Independent window state is required: one window's
+trigger never moves another's. The component currently writes its
+`sidebar_state` cookie, and nothing reads it back. Window placement and a
+particular multi-monitor arrangement remain undecided.
 
 ## Upstream references
 

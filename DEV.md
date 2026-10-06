@@ -37,7 +37,8 @@ refreshes the copies and `--check` reports drift, the same seam
 
 The **inside** of Work, Roadmap, Runtime and the app page is still their own
 hand-written HTML. Their rows, disclosures, request forms, tables and status
-text remain mapped-but-unmigrated in UI.md's inventory. The shell is not a
+text remain unmigrated; UI.md maps their remaining work to H-2933 and
+H-2936–H-2939. The shell is not a
 claim about them: a shadcn outer shell around bespoke inner views does not
 close that audit, and this file saying so is what stops the next session
 reading a sidebar as a finished migration.

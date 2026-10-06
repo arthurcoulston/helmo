@@ -1866,6 +1866,7 @@ export class Store {
     newly_ready_count: number;
     newly_ready_ids: string[];
     held_count?: number;
+    newly_unblocked_held_ids?: string[];
     changed_since: boolean;
   } {
     return this.db.transaction(() => {
@@ -1881,7 +1882,7 @@ export class Store {
         // held_count only when the caller is identified: work already in hand.
         // With ready_count it lets a harness spot the probe case — nothing to
         // draw, nothing mid-flight — and run that pass cheap (rev H-412).
-        ...(assignee ? { held_count: this.heldCount(assignee) } : {}),
+        ...(assignee ? { held_count: this.heldCount(assignee), newly_unblocked_held_ids: this.newlyUnblockedHeld(seq, assignee) } : {}),
         changed_since: this.scopeChangedSince(seq, workstream, assignee),
       };
       // .immediate() for the reason in the constructor: the ready read
@@ -2011,6 +2012,34 @@ export class Store {
         .get(id) as { actor: string; ts: string } | undefined;
       return { ticket_id: id, claim_actor: ev ? (JSON.parse(ev.actor) as Actor) : null, claimed_at: ev?.ts ?? null };
     });
+  }
+
+  /** In-progress tickets held by `assignee` whose last open blocker closed
+   *  (or whose blocking link was removed) after `seq` (H-804). A held claim
+   *  is never ready, so newly-ready cannot report it, and the blocker's close
+   *  is an event on another seat's ticket, so it is not motion in the
+   *  holder's scope either: a holder parked on review idled until its hourly
+   *  resync with the repair already unblocked. Only tickets with no open
+   *  blocker left are named, so a partial unblock stays quiet. */
+  newlyUnblockedHeld(seq: number, assignee: string): string[] {
+    return (this.db
+      .prepare(
+        `SELECT DISTINCT t.id AS id FROM tickets t
+         WHERE t.status = 'in_progress' AND t.assignee = ?
+           AND (
+             EXISTS (SELECT 1 FROM events e JOIN deps d ON d.to_id = e.ticket_id AND d.type = 'blocks'
+               WHERE d.from_id = t.id AND e.seq > ? AND (
+                 (e.event_type = 'updated' AND json_extract(e.payload, '$.diffs.status.to') IN ('done','cancelled'))
+                 OR (e.event_type = 'answered' AND json_extract(e.payload, '$.resolution') IN ('done','cancelled'))
+               ))
+             OR EXISTS (SELECT 1 FROM events e WHERE e.ticket_id = t.id AND e.seq > ?
+               AND e.event_type = 'unlinked' AND json_extract(e.payload, '$.type') = 'blocks')
+           )
+           AND NOT EXISTS (SELECT 1 FROM deps d JOIN tickets b ON b.id = d.to_id
+             WHERE d.from_id = t.id AND d.type = 'blocks' AND b.status NOT IN ('done','cancelled'))
+         ORDER BY t.id`,
+      )
+      .all(assignee, seq, seq) as { id: string }[]).map((r) => r.id);
   }
 
   /** Count of in_progress tickets assigned to `assignee` — work already in

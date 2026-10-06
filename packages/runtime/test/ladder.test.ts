@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { breakerDecide, choiceDecide, classifyExit, declineDecide, limitDecide, ladderDecide, probeDecide, respawnDecide, rollingMean, routedDeclines, seatDecide, velocityToPause, wakeDecide } from '../src/ladder.js';
+import { breakerDecide, choiceDecide, classifyExit, declineDecide, idleCursorDecide, limitDecide, ladderDecide, probeDecide, respawnDecide, rollingMean, routedDeclines, seatDecide, velocityToPause, wakeDecide } from '../src/ladder.js';
 
 const base = { produced: true, failStreak: 0, limitStreak: 0, failCap: 2, limitCap: 20, limitWait: 900 };
 
@@ -57,6 +57,49 @@ describe('wakeDecide (H-92/H-426)', () => {
   it('standing backlog never wakes a store-wide loop, including its first poll', () => {
     expect(wakeDecide({ changedSince: false, firstPoll: true, workstream: '*', readyCount: 1 })).toBe(false);
     expect(wakeDecide({ changedSince: false, firstPoll: false, workstream: '*', readyCount: 1 })).toBe(false);
+  });
+
+  it('a held claim whose last blocker closed wakes its scoped holder, with nothing ready (H-804)', () => {
+    const held = { changedSince: false, firstPoll: false, workstream: 'goodplumb', readyCount: 0, newlyReadyCount: 0 };
+    expect(wakeDecide({ ...held, newlyUnblockedHeldCount: 1 })).toBe(true);
+    expect(wakeDecide({ ...held, newlyUnblockedHeldCount: 0 })).toBe(false);
+    expect(wakeDecide(held)).toBe(false); // a helmo that predates the field
+    expect(wakeDecide({ ...held, workstream: '*', newlyUnblockedHeldCount: 1 })).toBe(false);
+  });
+});
+
+describe('idleCursorDecide (H-804)', () => {
+  const scoped = { workstream: 'goodplumb', launchSeq: 15357, afterSeq: 15360 };
+
+  it('holds the launch seq when a ticket became ready mid-run without being offered', () => {
+    // The Tester case: launched on H-692 at 15357; H-787 closed at 15358,
+    // making H-108 ready; the run declined H-692 and idled at 15360.
+    const d = idleCursorDecide({ ...scoped, offered: ['H-692'], newlyReadyIds: ['H-108'] });
+    expect(d).toEqual({ cursor: 15357, missed: ['H-108'] });
+    // The next poll reads since that cursor and finds the edge, so it wakes.
+    expect(wakeDecide({ changedSince: true, firstPoll: false, workstream: 'goodplumb', readyCount: 2, newlyReadyCount: d.missed.length })).toBe(true);
+  });
+
+  it('advances past what the run was offered or claimed and declined (H-426)', () => {
+    // Released back to open by the run itself, or re-touched while offered:
+    // an edge since launch, but one the run saw. Re-waking on it is the loop.
+    expect(idleCursorDecide({ ...scoped, offered: ['H-692', 'H-804'], newlyReadyIds: ['H-804'] }))
+      .toEqual({ cursor: 15360, missed: [] });
+    expect(idleCursorDecide({ ...scoped, offered: ['H-692'], newlyReadyIds: [] })).toEqual({ cursor: 15360, missed: [] });
+  });
+
+  it('holds the launch seq when a held claim was unblocked mid-run, claimed or not', () => {
+    expect(idleCursorDecide({ ...scoped, offered: ['H-877'], newlyReadyIds: [], newlyUnblockedHeldIds: ['H-877'] }))
+      .toEqual({ cursor: 15357, missed: ['H-877'] });
+  });
+
+  it('keeps the old cursors where it cannot tell', () => {
+    // An older helmo: no edge sets, the post-run cursor as before.
+    expect(idleCursorDecide({ ...scoped, offered: [] })).toEqual({ cursor: 15360, missed: [] });
+    // A failed read idles at the launch seq rather than guessing forward.
+    expect(idleCursorDecide({ ...scoped, afterSeq: undefined, offered: [] })).toEqual({ cursor: 15357, missed: [] });
+    // Store-wide loops always retain the launch seq (H-223).
+    expect(idleCursorDecide({ ...scoped, workstream: '*', offered: [], newlyReadyIds: ['H-1'] })).toEqual({ cursor: 15357, missed: [] });
   });
 });
 

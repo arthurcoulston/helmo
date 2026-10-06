@@ -94,6 +94,11 @@ than reconstructing installation state.
 Unbound operator use remains only as the documented single-install migration
 path, not as an agent-launch fallback.
 
+Runtime trace reads Work through `helmo-cli get --trace`, a content-off
+projection of ticket identity, ownership, blockers and event launch metadata.
+It never transports ticket bodies or event payloads; Runtime also caps every
+captured Work CLI response and turns an overflow into its content-safe refusal.
+
 Every Helmo-family surface accepts canonical `HELMO_INSTALLATION`, followed by
 the legacy `ROADMAP_LABEL`, `HELMO_LABEL`, and `REV_LABEL`. Precedence picks the key when one is set; two accepted keys
 carrying distinct values refuse at startup rather than guessing. Adding a

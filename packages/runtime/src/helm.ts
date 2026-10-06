@@ -48,13 +48,13 @@ function run(g: GlobalConfig, args: string[], actor?: object, quiet = false): un
   if (g.helmo_db) env['HELMO_DB'] = g.helmo_db;
   if (actor) env['HELMO_ACTOR'] = JSON.stringify(actor);
   const out = execFileSync('node', [g.helmo_cli, ...args], quiet
-    ? { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
-    : { env, encoding: 'utf8' });
+    ? { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 8 * 1024 * 1024 }
+    : { env, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
   return JSON.parse(out);
 }
 
 export function ticketHistory(g: GlobalConfig, ticket: string): Record<string, unknown> {
-  return run(g, ['get', '--ticket', ticket, '--history'], undefined, true) as Record<string, unknown>;
+  return run(g, ['get', '--ticket', ticket, '--trace'], undefined, true) as Record<string, unknown>;
 }
 
 // The seat stamp (H-558): every write a loop session makes carries this in the

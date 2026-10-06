@@ -70,6 +70,20 @@ describe('get carries the ticket\'s links', () => {
     expect(history.events.length).toBeGreaterThan(0);
     expect(history.blockers).toEqual([{ id: blocker, status: 'open', assignee: 'proof', needs_human: false }]);
   });
+
+  it('projects trace metadata without ticket or event content', () => {
+    const secret = 'SYNTHETIC_PRIVATE_' + 'x'.repeat(10_000);
+    const s = new Store(dbPath);
+    s.updateTicket(orch, { ticket_id: ticket, note: secret });
+    s.close();
+    const trace = cli('get', '--ticket', ticket, '--trace');
+    expect(trace.status).toBe(0);
+    expect(trace.stdout).not.toContain('Build the importer');
+    expect(trace.stdout).not.toContain('SYNTHETIC_PRIVATE_');
+    expect(JSON.parse(trace.stdout)).toMatchObject({
+      id: ticket, events: expect.arrayContaining([expect.objectContaining({ actor: expect.any(Object) })]),
+    });
+  });
 });
 
 describe('a flag that takes a value must be given one (H-1783)', () => {

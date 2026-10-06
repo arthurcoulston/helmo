@@ -13,6 +13,9 @@ longer.
 
 ## Unreleased
 
+- Keep session traces available for large real ticket histories by transporting
+  only the Work identity, ownership, blockers and launch-link metadata they
+  consume, with a bounded content-safe refusal instead of silent truncation.
 - Bind every supervised Runtime iteration to a durable content-off launch
   record, including the provider session identifier when the provider emits
   one, timing, outcome, measured usage and cost. The same launch identifier is

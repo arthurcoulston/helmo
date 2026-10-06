@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { assertTicketIdentity, readTicketLaunches, sessionTrace } from '../src/session-trace.js';
+import { Store } from '../../work/src/store.js';
+import { ticketHistory } from '../src/helm.js';
 
 const ticket = {
   installation: { label: 'fixture.personal' }, id: 'H-7', status: 'in_progress', assignee: 'mason', action: null,
@@ -118,5 +120,32 @@ describe('session trace diagnostic', () => {
     const malformedRelease = invoke(undefined, { INSTALLATION_RELEASE: release });
     expect(malformedRelease).toMatchObject({ status: 1, stdout: '', stderr: 'trace refused: diagnostic unavailable\n' });
     expect(malformedRelease.stderr).not.toContain(home);
+  });
+
+  it('traces a real Work history larger than the failed 6.2 MB case through Runtime\'s Work CLI path', () => {
+    const repo = join(import.meta.dirname, '..', '..', '..');
+    const home = mkdtempSync(join(tmpdir(), 'rev-trace-large-'));
+    const db = join(home, 'helmo.db');
+    const work = new Store(db);
+    const actor = { name: 'fixture', kind: 'orchestrator' as const, model: 'fixture', version: '1' };
+    const id = work.createTicket(actor, { title: 'Synthetic large history', body: 'synthetic', workstream: 'test', type: 'build', assignee: 'mason' }).id;
+    const content = 'SYNTHETIC_PRIVATE_' + 'x'.repeat(10_000);
+    for (let i = 0; i < 640; i += 1) work.updateTicket(actor, { ticket_id: id, note: `${i}:${content}` });
+    expect(Buffer.byteLength(JSON.stringify(work.getEvents(id)))).toBeGreaterThan(6_189_013);
+    work.close();
+    const workCli = join(repo, 'packages', 'work', 'dist', 'cli.js');
+    const env = { ...process.env, REV_HOME: home };
+    for (const key of Object.keys(env)) if (/^(HELMO|ROADMAP|REV|INSTALLATION)_/.test(key) && key !== 'REV_HOME') delete env[key];
+    const projected = spawnSync(process.execPath, [workCli, 'get', '--ticket', id, '--trace'], {
+      cwd: repo, env: { ...env, HELMO_DB: db }, encoding: 'utf8',
+    });
+    expect(projected).toMatchObject({ status: 0, stderr: '' });
+    const installation = JSON.parse(projected.stdout).installation.label as string;
+    const requested = `${id}@${installation}`;
+    const throughRuntime = ticketHistory({ helmo_cli: workCli, helmo_db: db } as Parameters<typeof ticketHistory>[0], requested);
+    assertTicketIdentity(throughRuntime, requested);
+    const trace = JSON.stringify(sessionTrace(throughRuntime, [], 0));
+    expect(trace).not.toContain('SYNTHETIC_PRIVATE_');
+    expect(JSON.parse(trace)).toMatchObject({ schema: 'helmo.session-trace.v1', content: 'excluded' });
   });
 });

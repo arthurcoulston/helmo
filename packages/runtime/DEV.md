@@ -3,6 +3,10 @@
 Rev keeps agent loops turning: process supervision for autonomous loops
 that draw work from Helmo. Rev never reads ticket content; Helmo never
 manages a process. Product doc: `rev-product-description.md`.
+The `trace` command gets only Work's `get --trace` projection: identity,
+ownership, blocker and event launch metadata. Its subprocess capture is capped
+at 8 MiB; an oversized projection takes the same content-safe refusal path as
+any malformed response, never truncation.
 The accepted A01–A14 workflow launch proof and its exact cross-repository
 boundary are recorded in `WORKFLOW-GATE-VERIFICATION.md`.
 The root `INSTALLATIONS.md` is the consumer's account of install identity, pinned

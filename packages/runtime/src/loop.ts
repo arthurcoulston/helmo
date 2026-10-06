@@ -314,6 +314,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
         firstPoll: restartPoll,
         workstream: l.workstream,
         readyCount: w.ready_count,
+        heldOnRestart: poolWorker(l) && (w.held_count ?? 0) > 0,
         newlyReadyCount: w.newly_ready_count,
         resyncDue,
       });
@@ -562,6 +563,8 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
         if (unanswered) claimLaunchId = unanswered.launch_id;
         recordLaunchIntent(l.name, claimLaunchId, { claim: true });
         claim = launchClaim(g, l, claimLaunchId);
+        if (claim.how === 'held_out_of_scope') sSet(l.name, 'OUT_OF_SCOPE', `${claim.reason}\n`);
+        else if (claim.how !== 'unavailable') sClear(l.name, 'OUT_OF_SCOPE');
         if (unanswered) logEvent(l.name, 'claim-reconciled', `${claimLaunchId} ${claim.how === 'stale' ? claim.reason : `answered ${claim.reason}`}`);
         if (claim.how === 'stale' && unanswered) {
           settleLaunch(l.name, claimLaunchId, 'quarantined');

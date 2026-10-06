@@ -102,6 +102,21 @@ Pinned releases accept both the historical three-component layout and C1's one
   draws its next ticket; the gate opening is the wake and the ordinary claim
   takes it. Workflow-bound held work is excluded, for the same spent-admission
   reason, and keeps resuming.
+  `--lane` replaces both lists for a worker serving a lane: a ticket's
+  nullable `lane` column routes it to that worker on its next poll with no
+  roster edit. A claim without `--lane` takes only lane-null tickets, so lane
+  work never falls to the general worker, another lane, or a pre-lane caller.
+  The lane is ANDed over the routed-ready clause (assigned work is claimable
+  across workstreams), not in place of it.
+  `lane` joins the receipt scope only when passed, so lane-less receipts stay
+  byte-identical to earlier ones and replay. Resume refuses a held ticket
+  whose lane differs (`launch_claim_scope_conflict`, now naming the lane).
+  An update refuses a lane change while an execution claim holds the ticket
+  and it stays in_progress; the holder's release may set the new lane in the
+  same call. Handoffs and relabels leave the lane alone, and a recurring
+  template's instances carry its lane. `wake-check --lane L | --no-lane`
+  narrows the wake to the same set; without either it keeps the whole queue
+  for seats that do not claim by lane.
   A server whose `HELMO_ACTOR` carries `generation` is supervised:
   `writingActor` refuses caller-stated name/kind/session/generation that
   conflict and inherits omitted ones; outside it a stated generation refuses.

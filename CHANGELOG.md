@@ -37,6 +37,12 @@ longer.
 - Add `rev reload <loop|role> [--worker]`, which respawns one worker on the
   current roster after its in-flight iteration, with no fleet drain. It never
   clears STOP/HOLD/BLOCKED: a halt present when the loop exits keeps it down.
+- Route pool work by a per-ticket `lane`: a worker configured with `lane = "x"`
+  claims only tickets carrying that lane on its next poll, with no roster edit
+  or restart, and a lane no live worker serves holds its work visibly
+  (`unserved_lanes`) instead of falling to the general worker. Work exposes the
+  field on create/update/list and `launch-claim --lane`; existing stores gain
+  the column by migration and resume their held claims unchanged.
 
 ## v0.9.4 — 2026-10-05
 

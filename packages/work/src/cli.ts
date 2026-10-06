@@ -20,10 +20,10 @@ const cmd = args.shift();
 // `verdicts` it names the reviewer to filter on rather than the writer.
 // The matching rule on the MCP side is the strict input schema in tools.ts.
 const COMMAND_FLAGS: Record<string, readonly string[]> = {
-  'wake-check': ['since-seq', 'workstream', 'assignee'],
+  'wake-check': ['since-seq', 'workstream', 'assignee', 'lane', 'no-lane'],
   'seat-check': ['assignee'],
   'launch-admit': ['workstream', 'assignee', 'launch-id'],
-  'launch-claim': ['workstream', 'assignee', 'launch-id', 'project', 'tickets', 'exclude-tickets'],
+  'launch-claim': ['workstream', 'assignee', 'launch-id', 'project', 'tickets', 'exclude-tickets', 'lane'],
   'launch-receipt': ['admission-id', 'launch-id'],
   'launch-revalidate': ['admission-id', 'launch-id'],
   'launch-quarantine': ['admission-id', 'launch-id', 'reason'],
@@ -39,14 +39,14 @@ const COMMAND_FLAGS: Record<string, readonly string[]> = {
   'workstream-set': ['name', 'budget-usd', 'seat'],
   'rename-workstream': ['from', 'to', 'note'],
   'record-spend': ['ticket', 'tokens', 'cost-usd', 'note'],
-  list: ['ready', 'status', 'workstream', 'assignee', 'limit'],
+  list: ['ready', 'status', 'workstream', 'assignee', 'lane', 'limit'],
   get: ['ticket', 'history', 'trace'],
   'product-complete': ['ticket', 'artifacts', 'note'],
   'acceptance-verdict': ['ticket', 'refs', 'verdict', 'note'],
   'acceptance-check': ['ticket', 'refs'],
   'release-handoff': ['ticket', 'record'],
-  create: ['title', 'body', 'workstream', 'type', 'priority', 'status', 'assignee', 'dep', 'dep-type', 'schedule', 'not-before', 'needs-human', 'sitting-with', 'workflow-attempt'],
-  update: ['ticket', 'note', 'status', 'evidence-kind', 'evidence-ref', 'confidence', 'uncertainty-note', 'blast-radius', 'tokens', 'cost-usd', 'handoff-to', 'not-before', 'needs-human', 'sitting-with', 'no-needs-human', 'takeover', 'body-append', 'body-old', 'body-new'],
+  create: ['title', 'body', 'workstream', 'type', 'priority', 'status', 'assignee', 'dep', 'dep-type', 'schedule', 'not-before', 'needs-human', 'sitting-with', 'lane', 'workflow-attempt'],
+  update: ['ticket', 'note', 'status', 'evidence-kind', 'evidence-ref', 'confidence', 'uncertainty-note', 'blast-radius', 'tokens', 'cost-usd', 'handoff-to', 'not-before', 'lane', 'needs-human', 'sitting-with', 'no-needs-human', 'takeover', 'body-append', 'body-old', 'body-new'],
   return: ['ticket', 'situation', 'question', 'options', 'recommendation', 'if-unanswered'],
   action: ['ticket', 'situation', 'action', 'why-human', 'if-unanswered'],
   'action-report': ['ticket', 'did'],
@@ -171,7 +171,12 @@ try {
       // REPORTS — but not in what it does: opening a Store migrates, so this
       // takes the write lock like any other call (H-134).
       const since = Number(flag('since-seq') ?? 0);
-      out(store.wakeCheck(since, flag('workstream'), flag('assignee')));
+      // --lane L wakes a lane worker on its lane only; --no-lane is the
+      // general pool worker, which launch-claim confines to lane-null work.
+      // Neither keeps the whole queue, for seats that do not claim by lane.
+      const lane = flag('lane');
+      if (lane !== undefined && has('no-lane')) throw new HelmoError('Pass --lane or --no-lane, not both.');
+      out(store.wakeCheck(since, flag('workstream'), flag('assignee'), has('no-lane') ? null : lane));
       break;
     }
     case 'seat-check': {
@@ -292,10 +297,11 @@ try {
         status: flag('status') as never,
         workstream: flag('workstream'),
         assignee: flag('assignee'),
+        lane: flag('lane'),
         caller: actorSafe()?.name,
         limit: Number(flag('limit') ?? 20),
       });
-      out({ tickets: tickets.map((t) => ({ id: t.id, title: t.title, status: t.status, priority: t.priority, workstream: t.workstream, assignee: t.assignee })) });
+      out({ tickets: tickets.map((t) => ({ id: t.id, title: t.title, status: t.status, priority: t.priority, workstream: t.workstream, assignee: t.assignee, lane: t.lane })) });
       break;
     }
     case 'get': {
@@ -365,7 +371,7 @@ try {
       break;
     }
     case 'launch-claim': {
-      out(store.launchClaim(actor(), req('workstream'), req('assignee'), req('launch-id'), flag('project'), flag('tickets')?.split(','), flag('exclude-tickets')?.split(',')));
+      out(store.launchClaim(actor(), req('workstream'), req('assignee'), req('launch-id'), flag('project'), flag('tickets')?.split(','), flag('exclude-tickets')?.split(','), flag('lane')));
       break;
     }
     case 'launch-receipt': {
@@ -394,6 +400,7 @@ try {
         not_before: flag('not-before'),
         needs_human: flag('needs-human'),
         sitting_with: flag('sitting-with'),
+        lane: flag('lane'),
         workflow_attempt_id: flag('workflow-attempt'),
       });
       out({ id: t.id });
@@ -417,6 +424,7 @@ try {
         cost_usd: flag('cost-usd') !== undefined ? Number(flag('cost-usd')) : undefined,
         handoff_to: flag('handoff-to'),
         not_before: flag('not-before'),
+        lane: flag('lane'),
         needs_human: has('no-needs-human') ? false : flag('needs-human'),
         sitting_with: flag('sitting-with'),
         takeover: has('takeover') ? true : undefined,
@@ -456,10 +464,10 @@ try {
     }
     default:
       console.error(`usage: helmo-cli <command> [flags]
-  wake-check     --workstream W --assignee A --since-seq N     (read-only harness poll)
+  wake-check     --workstream W --assignee A --since-seq N [--lane L | --no-lane] (read-only harness poll; a lane narrows it to what launch-claim with that lane could take)
   seat-check     --assignee A                                  (in_progress holds in a name + claiming actor; rev's same-seat guard)
   launch-admit   --workstream W --assignee A --launch-id ID     (atomic next-candidate workflow admission; read-only for ordinary tickets)
-  launch-claim   --workstream W --assignee A --launch-id ID [--project P] [--tickets H-1,H-2 | --exclude-tickets H-3] (same admission AND an exclusive claim, written by the worker itself; --tickets is an exact allowlist, --exclude-tickets its complement)
+  launch-claim   --workstream W --assignee A --launch-id ID [--project P] [--tickets H-1,H-2 | --exclude-tickets H-3] [--lane L] (same admission AND an exclusive claim, written by the worker itself; --tickets is an exact allowlist, --exclude-tickets its complement; --lane takes only that lane's tickets, and without it only lane-null ones)
   launch-receipt --admission-id ID --launch-id ID                (read exact immutable launch authority and captured evidence)
   launch-revalidate --admission-id ID --launch-id ID             (atomically fail closed unless captured authority still stands)
   launch-quarantine --admission-id ID --launch-id ID --reason R  (idempotently quarantine one interrupted or invalid launch)
@@ -468,7 +476,7 @@ try {
   actor-tickets  --name A --since-seq N [--session S]          (which tickets, most-touched first)
   actor-spend    --name A --since-seq N [--session S]          (self-reported spend in the window, total + by_ticket)
   record-spend   --ticket H-n [--tokens N] [--cost-usd X] --note N   (metered spend; terminal tickets accepted)
-  list           [--ready] [--status S] [--workstream W] [--assignee A] [--limit N]
+  list           [--ready] [--status S] [--workstream W] [--assignee A] [--lane L] [--limit N]
   get            <ticket-id>
   action         --ticket H-n --situation S --action A --why-human W [--if-unanswered C]
   action-report  --ticket H-n --did D
@@ -483,8 +491,8 @@ try {
   workstream     --name W                                      (budget, seat, spend-to-date; read-only)
   rename-workstream --from X --to Y --note N   (relabel every ticket incl. closed; one evented rename)
   workstream-set --name W [--budget-usd X] [--seat A | --seat '']   (operator steering; actor kind human/orchestrator only; seat = agent unassigned filings are reserved to)
-  create         --title T --body B --workstream W --type TY [--priority P] [--status S] [--assignee A] [--workflow-attempt ID] [--dep H-n --dep-type TY] [--schedule 'every 30m' | '0 0 * * *'] [--not-before 2026-09-10]
-  update         --ticket H-n --note N [--status S] [--evidence-kind K --evidence-ref R] [--body-append T | --body-old OLD --body-new NEW] [--confidence C] [--blast-radius B] [--tokens N] [--cost-usd X] [--handoff-to A] [--not-before 2026-09-10 | ''] [--takeover]
+  create         --title T --body B --workstream W --type TY [--priority P] [--status S] [--assignee A] [--workflow-attempt ID] [--dep H-n --dep-type TY] [--schedule 'every 30m' | '0 0 * * *'] [--not-before 2026-09-10] [--lane L]
+  update         --ticket H-n --note N [--status S] [--evidence-kind K --evidence-ref R] [--body-append T | --body-old OLD --body-new NEW] [--confidence C] [--blast-radius B] [--tokens N] [--cost-usd X] [--handoff-to A] [--not-before 2026-09-10 | ''] [--lane L | ''] [--takeover]
   return         --ticket H-n --situation S --question Q --recommendation R [--options '[{"label":..,"consequence":..}]' (2-3, only for a real choice)] [--if-unanswered U]
 Writes read identity from HELMO_ACTOR env or --actor JSON. Installation from HELMO_HOME (default ~/.helmo) or HELMO_DB naming the store
 directly; set both only if they agree. Its name is REV_LABEL when Rev started this process, or HELMO_LABEL, else derived from the home.

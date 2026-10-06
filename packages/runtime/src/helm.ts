@@ -24,11 +24,14 @@ export interface WakeCheck {
 
 export function readyTicketIds(g: GlobalConfig, l: LoopConfig): string[] {
   if (l.workstream === '*') return [];
-  const list = (args: string[]) => (run(g, ['list', '--ready', ...args, '--limit', '100'], loopActor(l)) as { tickets: { id: string }[] }).tickets;
+  const list = (args: string[]) => (run(g, ['list', '--ready', ...args, '--limit', '100'], loopActor(l)) as { tickets: { id: string; lane?: string | null }[] }).tickets;
+  // Another lane's work is not this worker's to decline: counting it
+  // would quarantine a sibling's ready ticket as a silent decline.
+  const ours = (t: { lane?: string | null }) => !(l.lane || l.lane_null) || (t.lane ?? null) === (l.lane ?? null);
   return [...new Set([
     ...list(['--workstream', l.workstream]),
     ...list(['--assignee', seatName(l)]),
-  ].map((t) => t.id))];
+  ].filter(ours).map((t) => t.id))];
 }
 
 export interface WorkstreamInfo {
@@ -276,7 +279,7 @@ export function poolWorker(l: LoopConfig): boolean {
  *  lacks the command must stop the pool rather than let it race. */
 export interface LaunchClaim {
   act: 'launch' | 'idle' | 'deny';
-  how: 'claimed' | 'nothing_ready' | 'denied' | 'unsupported' | 'unavailable' | 'stale' | 'mismatch';
+  how: 'claimed' | 'nothing_ready' | 'denied' | 'unsupported' | 'unavailable' | 'stale' | 'mismatch' | 'held_out_of_scope';
   reason: string;
   ticketId: string | null;
   workflowAttemptId?: string;
@@ -292,7 +295,7 @@ export interface LaunchClaim {
 export function launchClaimArgs(l: LoopConfig, id: string): string[] {
   return ['launch-claim', '--workstream', l.workstream, '--assignee', seatName(l), '--launch-id', id,
     ...(l.project ? ['--project', l.project] : []), ...(l.tickets ? ['--tickets', l.tickets.join(',')] : []),
-    ...(l.exclude_tickets ? ['--exclude-tickets', l.exclude_tickets.join(',')] : [])];
+    ...(l.exclude_tickets ? ['--exclude-tickets', l.exclude_tickets.join(',')] : []), ...(l.lane ? ['--lane', l.lane] : [])];
 }
 
 export function launchClaim(g: GlobalConfig, l: LoopConfig, id: string): LaunchClaim {
@@ -302,7 +305,7 @@ export function launchClaim(g: GlobalConfig, l: LoopConfig, id: string): LaunchC
   try {
     const res = run(g, launchClaimArgs(l, id), loopActor(l, undefined, undefined, id), true) as {
       admitted?: boolean; claimed?: boolean; resumed?: boolean; ticket_id?: string; workflow_attempt_id?: string | null; admission_id?: string | null;
-      launch_id?: string; admission_launch_id?: string | null; scope?: { session?: string; assignee?: string; workstream?: string; project?: string | null; tickets?: string[]; exclude_tickets?: string[] };
+      launch_id?: string; admission_launch_id?: string | null; scope?: { session?: string; assignee?: string; workstream?: string; project?: string | null; tickets?: string[]; exclude_tickets?: string[]; lane?: string };
     };
     if (res.admitted === false && res.claimed === undefined) return { act: 'idle', how: 'nothing_ready', reason: 'nothing ready to claim', ticketId: null };
     // The receipt must name THIS worker's exact scope: a replayed id answered
@@ -315,6 +318,8 @@ export function launchClaim(g: GlobalConfig, l: LoopConfig, id: string): LaunchC
       && (!l.tickets || l.tickets.includes(res.ticket_id))
       && JSON.stringify(res.scope.exclude_tickets) === JSON.stringify(l.exclude_tickets && [...l.exclude_tickets].sort())
       && !l.exclude_tickets?.includes(res.ticket_id)
+      // A store that ignored --lane would answer with no lane in its scope.
+      && (res.scope.lane ?? undefined) === l.lane
       && Boolean(res.workflow_attempt_id) === Boolean(res.admission_id);
     if (!exact) {
       // An answer, not a lost reply (H-671): asking again under the same id
@@ -351,6 +356,21 @@ export function launchClaim(g: GlobalConfig, l: LoopConfig, id: string): LaunchC
     // under the same id is how the uncertainty is reconciled (H-686).
     if (/launch_claim_stale|stale_generation|was replayed with different scope/.test(raw)) {
       return { act: 'deny', how: 'stale', reason: `launch ${id} can no longer claim: ${detail}`, ticketId: null };
+    }
+    // This worker holds a ticket its current config does not cover: its
+    // scope was changed while it held work. The work is still this
+    // worker's, so no session runs it in the wrong scope and nothing
+    // releases it. Restoring the config it was claimed under resumes it.
+    if (raw.includes('launch_claim_scope_conflict')) {
+      let body: { held_ticket_id?: string; lane?: string | null } = {};
+      try {
+        const error = String((JSON.parse(raw) as { error?: string }).error ?? '');
+        body = JSON.parse(error.slice(error.indexOf('{'))) as typeof body;
+      } catch { /* named below as unknown */ }
+      return {
+        act: 'deny', how: 'held_out_of_scope', ticketId: body.held_ticket_id ?? null,
+        reason: `holds ${body.held_ticket_id ?? 'a ticket'} (lane ${body.lane ?? 'none'}) outside this worker's scope (lane ${l.lane ?? 'none'}); restore the config it was claimed under to resume it`,
+      };
     }
     return raw.startsWith('usage:') || /unknown (command|flag)/i.test(raw)
       ? { act: 'deny', how: 'unsupported', reason: `this store has no launch-claim command, so pool worker '${l.name}' cannot run: ${detail}`, ticketId: null }
@@ -412,7 +432,10 @@ export function wakeCheck(g: GlobalConfig, l: LoopConfig, sinceSeq: number): Wak
   // filings — the wake signal these loops exist for — never land (H-138).
   const scope =
     l.workstream === '*' ? [] : ['--workstream', l.workstream, '--assignee', seatName(l)];
-  return run(g, ['wake-check', ...scope, '--since-seq', String(sinceSeq)]) as WakeCheck;
+  // The wake matches the claim. Neither flag goes out until a lane is
+  // configured, so a roster without lanes runs against a store without them.
+  const lane = l.lane ? ['--lane', l.lane] : l.lane_null ? ['--no-lane'] : [];
+  return run(g, ['wake-check', ...scope, ...lane, '--since-seq', String(sinceSeq)]) as WakeCheck;
 }
 
 // Steering disclosure (helmo H-55): the remaining budget goes into every
@@ -502,11 +525,40 @@ export function openEscalation(g: GlobalConfig, l: LoopConfig): string | null {
  *  workstream and project lane, and to its exact ticket allowlist where it has
  *  one (H-671), so work outside them would sit reserved to a live role that
  *  never picks it up. A ticket not yet filed is in no allowlist. */
-export function drawsScope(l: LoopConfig, workstream: string, project: string | null = null, ticketId: string | null = null): boolean {
+export function drawsScope(l: LoopConfig, workstream: string, project: string | null = null, ticketId: string | null = null, lane: string | null = null): boolean {
   if (!poolWorker(l)) return true;
   return l.workstream === workstream && (l.project === undefined || l.project === project)
+    && (l.lane ?? null) === lane
     && (l.tickets === undefined || (ticketId !== null && l.tickets.includes(ticketId)))
     && !(ticketId !== null && l.exclude_tickets?.includes(ticketId));
+}
+
+/** Ready lane work no live worker will claim. Helmo cannot see the
+ *  roster, so a mistyped lane, a lane whose worker is stopped, or a lane
+ *  nobody serves would otherwise hold its ticket in silence. Lane work never
+ *  falls back to another worker, so this list is how the gap stays visible.
+ *  `live` says whether a loop is drawing work now. */
+export function unservedLaneWork(g: GlobalConfig, loops: LoopConfig[], live: (name: string) => string | null):
+  { ticket: string; seat: string; lane: string; reason: string }[] {
+  const out: { ticket: string; seat: string; lane: string; reason: string }[] = [];
+  for (const seat of [...new Set(loops.filter(poolWorker).map(seatName))]) {
+    const workers = loops.filter((l) => poolWorker(l) && seatName(l) === seat);
+    // The seat draws work reserved to it anywhere, and unreserved work in its
+    // workers' streams — the same two reads as readyTicketIds.
+    const streams = [...new Set(workers.map((l) => l.workstream))];
+    const list = (args: string[]) => (run(g, ['list', '--ready', ...args, '--limit', '200'], loopActor(workers[0]!)) as
+      { tickets: { id: string; assignee: string | null; workstream: string; lane?: string | null }[] }).tickets;
+    const rows = [...list(['--assignee', seat]), ...streams.flatMap((ws) => list(['--workstream', ws]))]
+      .filter((t, i, all) => all.findIndex((u) => u.id === t.id) === i);
+    for (const t of rows) {
+      if (!t.lane || !(t.assignee === seat || (t.assignee === null && streams.includes(t.workstream)))) continue;
+      const worker = workers.find((l) => l.lane === t.lane);
+      const down = worker ? live(worker.name) : null;
+      if (worker && !down) continue;
+      out.push({ ticket: t.id, seat, lane: t.lane, reason: worker ? `${worker.name} is ${down}` : `no ${seat} worker serves lane '${t.lane}'` });
+    }
+  }
+  return out;
 }
 
 export function investigatorFor(g: GlobalConfig, stopped: LoopConfig): LoopConfig | null {

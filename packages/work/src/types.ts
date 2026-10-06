@@ -276,6 +276,7 @@ export interface Ticket {
   sitting: string | null; // what that sitting needs from the operator, in one line (H-1761)
   sitting_with: string | null; // the agent to sit with; a prose line cannot be asked which one (R-42 I13)
   release_handoff: ReleaseHandoff | null; // explicit release invitation; stale records return to agents
+  lane: string | null; // the stream of work, and workspace, a pool worker serves; null is the general pool
   capacity_hold: CapacityHold | null; // deliberate spending hold; visible, never ready or directly claimable
   workflow_attempt_id: string | null; // immutable workflow obligation; null preserves ordinary ticket semantics
   created_at: string;

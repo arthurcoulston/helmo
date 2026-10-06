@@ -571,3 +571,133 @@ process.exit(r.status ?? 1);
     expect(ticket(e, id).status).toBe('open');
   });
 });
+
+// Lanes: a ticket's lane routes it to the worker serving that lane,
+// with no allowlist to edit and no restart. Files the way Orchestrator does,
+// through helm-cli, after the workers are already running.
+describe('lane workers on one seat', { timeout: 90000 }, () => {
+  function seedLane(e: Env, title: string, lane: string | null, priority = 2, by = 'seeder'): string {
+    return (JSON.parse(execFileSync('node', [HELM_CLI, 'create', '--title', title, '--body', 'lane work', '--workstream', 'rev-test', '--type', 'ops',
+      '--priority', String(priority), ...(lane ? ['--lane', lane] : [])], {
+      env: { ...e.env, HELMO_ACTOR: JSON.stringify({ name: by, kind: 'agent', model: 't', version: '0' }) }, encoding: 'utf8',
+    })) as { id: string }).id;
+  }
+  const runOnce = (e: Env, loop: string) =>
+    execFileSync('npx', ['tsx', REV_CLI, 'run', loop, '--count', '1'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') });
+  const swap = (e: Env, from: string, to: string) => {
+    const path = join(e.home, 'roster.toml');
+    const before = readFileSync(path, 'utf8');
+    expect(before).toContain(from);
+    writeFileSync(path, before.replace(from, to));
+  };
+
+  it('claims a lane ticket filed after its worker went idle on the next poll, then a child the session filed mid-run', async () => {
+    // Orchestrator files a child while the parent's session is still at work,
+    // work that became ready mid-session must be taken by the
+    // next claim, not lost.
+    const child = `${BOUND}; if [ "$T" = "H-2" ]; then touch $REV_HOME/mid; for i in $(seq 200); do [ -f $REV_HOME/child-filed ] && break; sleep 0.1; done; fi; ${FINISH}`;
+    const e = setup((h) => worker('w1', h, child, 'lane = "frontend"\n') + worker('w2', h, 'true'));
+    const general = seedLane(e, 'General work, first in the queue', null, 0);
+    const proc = spawn(process.execPath, ['--import', 'tsx', REV_CLI, 'run', 'w1', '--count', '3'], { env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore' });
+    try {
+      await waitFor(() => /launch-idle\s+nothing ready to claim/.test(events(e, 'w1')));
+      const filed = Date.now();
+      const lane = seedLane(e, 'Frontend work', 'frontend');
+      await waitFor(() => existsSync(join(e.home, 'bound')) && readFileSync(join(e.home, 'bound'), 'utf8').includes(lane));
+      const delayMs = Date.now() - filed;
+      console.log(`lane claim: ${lane} filed after w1 idled, bound in ${delayMs} ms (poll_seconds 0.1)`);
+      expect(delayMs).toBeLessThan(15_000);
+      await waitFor(() => existsSync(join(e.home, 'mid')));
+      expect(seedLane(e, 'Child filed mid-session', 'frontend')).toBe('H-3');
+      writeFileSync(join(e.home, 'child-filed'), '');
+      await exited(proc);
+      expect(readFileSync(join(e.home, 'bound'), 'utf8').trim().split('\n')).toEqual([`w1 ${lane}`, 'w1 H-3']);
+      expect(ticket(e, 'H-3').status).toBe('done');
+      expect(ticket(e, general).status).toBe('open');
+    } finally { proc.kill(); }
+  });
+
+  it('runs two lanes and the general worker at once, each on its own work, in its own checkout', async () => {
+    const three = `${BOUND}; echo "$T" > out-$REV_LOOP; touch $REV_HOME/started-$REV_LOOP; for i in $(seq 200); do [ "$(ls $REV_HOME | grep -c '^started-')" -ge 3 ] && break; sleep 0.1; done; [ "$(ls $REV_HOME | grep -c '^started-')" -ge 3 ] && echo "$REV_LOOP" >> $REV_HOME/overlap; ${FINISH}`;
+    const e = setup((h) => worker('w1', h, three, 'lane = "frontend"\n') + worker('w2', h, three, 'lane = "backend"\n') + worker('w3', h, three));
+    const prep = seedLane(e, 'frontend work', 'frontend', 3);
+    const backend = seedLane(e, 'backend work', 'backend', 3);
+    const general = seedLane(e, 'general work', null, 3);
+    // Higher priority lane work in a lane nobody serves: everyone leaves it.
+    const orphan = seedLane(e, 'a lane with no worker', 'mobile', 0);
+
+    await Promise.all(['w3', 'w2', 'w1'].map((w) => runAsync(e, w)).map(exited));
+
+    const bound = Object.fromEntries(readFileSync(join(e.home, 'bound'), 'utf8').trim().split('\n').map((l) => l.split(' ')));
+    expect(bound).toEqual({ w1: prep, w2: backend, w3: general });
+    expect(readFileSync(join(e.home, 'overlap'), 'utf8').trim().split('\n').sort()).toEqual(['w1', 'w2', 'w3']);
+    for (const w of ['w1', 'w2', 'w3']) expect(readdirSync(join(e.home, w))).toEqual([`out-${w}`]);
+    expect(ticket(e, orphan).status).toBe('open');
+
+    const status = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    expect(status.loops.map((l: { loop: string; lane: string | null }) => [l.loop, l.lane])).toEqual([['w1', 'frontend'], ['w2', 'backend'], ['w3', null]]);
+    expect(status.unserved_lanes).toEqual([{ ticket: orphan, seat: 'builder', lane: 'mobile', reason: "no builder worker serves lane 'mobile'" }]);
+    const human = execFileSync('npx', ['tsx', REV_CLI, 'status'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') });
+    expect(human).toContain('LANES: frontend=w1  backend=w2');
+    expect(human).toContain(`UNSERVED LANE WORK: ${orphan} (builder, lane mobile) — no builder worker serves lane 'mobile'`);
+  });
+
+  it('a worker swapped to a lane while it holds work launches nothing and releases nothing; restoring its allowlist resumes it', () => {
+    const keep = `${BOUND}; [ -f $REV_HOME/second ] || { node ${HELM_CLI} update --ticket $T --note "partial progress"; exit 1; }; ${FINISH}`;
+    const e = setup((h) => worker('w1', h, keep, 'tickets = ["H-1"]\n') + worker('w2', h, 'true'));
+    const id = seedLane(e, 'Held across the swap', null);
+    runOnce(e, 'w1');
+    expect(ticket(e, id)).toMatchObject({ status: 'in_progress', assignee: 'builder' });
+
+    swap(e, 'tickets = ["H-1"]', 'lane = "frontend"');
+    writeFileSync(join(e.home, 'second'), '');
+    runOnce(e, 'w1');
+    expect(events(e, 'w1')).toMatch(new RegExp(`launch-denied\\s+holds ${id} \\(lane none\\) outside this worker's scope \\(lane frontend\\)`));
+    expect(readFileSync(join(e.home, 'bound'), 'utf8').trim().split('\n')).toEqual([`w1 ${id}`]);
+    expect(ticket(e, id)).toMatchObject({ status: 'in_progress', assignee: 'builder' });
+    expect(events(e, 'w1')).not.toMatch(/claim-released/);
+    const status = execFileSync('npx', ['tsx', REV_CLI, 'status'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') });
+    expect(status).toContain(`HELD OUT OF SCOPE: w1 holds ${id} (lane none) outside this worker's scope (lane frontend)`);
+
+    swap(e, 'lane = "frontend"', 'tickets = ["H-1"]');
+    runOnce(e, 'w1');
+    expect(events(e, 'w1')).toMatch(new RegExp(`launch-claimed\\s+resumed ${id}`));
+    expect(ticket(e, id).status).toBe('done');
+    expect(existsSync(join(e.home, 'state', 'w1', 'OUT_OF_SCOPE'))).toBe(false);
+  });
+
+  it('cuts a worker over behind the barrier: a held listed ticket cannot be relaned; after release, relane and swap, the next poll takes new lane work', () => {
+    // First session stops mid-way holding H-1; the second puts it down at a
+    // natural stop with its continuation note.
+    const stopThenRelease = `${BOUND}; if [ -f $REV_HOME/release ]; then node ${HELM_CLI} update --ticket $T --status open --note "Natural stop: branch codex/x; next step the parser" >/dev/null; else node ${HELM_CLI} update --ticket $T --note "partial progress" >/dev/null; exit 1; fi`;
+    const e = setup((h) => worker('w1', h, stopThenRelease, 'tickets = ["H-1", "H-2"]\n') + worker('w2', h, `${BOUND}; ${FINISH}`));
+    const held = seedLane(e, 'Listed and held', null, 1);
+    const listed = seedLane(e, 'Listed, not held', null, 2);
+    runOnce(e, 'w1');
+    expect(ticket(e, held).status).toBe('in_progress');
+
+    // 3.1: the barrier is not met, and Helmo refuses the relane outright.
+    const relane = (id: string) => execFileSync('node', [HELM_CLI, 'update', '--ticket', id, '--note', 'cutover to lanes', '--lane', 'frontend'], {
+      env: { ...e.env, HELMO_ACTOR: JSON.stringify({ name: 'orchestrator', kind: 'orchestrator', model: 't', version: '0' }) }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    expect(() => relane(held)).toThrow(/lane cannot change/);
+
+    writeFileSync(join(e.home, 'release'), '');
+    runOnce(e, 'w1');
+    expect(ticket(e, held).status).toBe('open');
+    // 3.3 then 3.4: relane every listed ticket, swap the config.
+    relane(held); relane(listed);
+    swap(e, 'tickets = ["H-1", "H-2"]', 'lane = "frontend"');
+    // The general worker sees none of the relaned work.
+    runOnce(e, 'w2');
+    expect(events(e, 'w2')).toMatch(/launch-idle\s+nothing ready to claim/);
+    // A ticket filed after the swap, routed by lane alone, is the next claim.
+    const fresh = seedLane(e, 'Filed after the cutover', 'frontend', 0);
+    swap(e, 'if [ -f $REV_HOME/release ]', 'if false');
+    writeFileSync(join(e.home, 'roster.toml'), readFileSync(join(e.home, 'roster.toml'), 'utf8'));
+    runOnce(e, 'w1');
+    const bound = readFileSync(join(e.home, 'bound'), 'utf8').trim().split('\n');
+    expect(bound.at(-1)).toBe(`w1 ${fresh}`);
+    expect(events(e, 'w1')).toMatch(/launch-claimed\s+claimed H-3/);
+  });
+});

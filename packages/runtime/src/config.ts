@@ -159,7 +159,7 @@ export function resolveRef(
 
 /** The complete set of keys a [loops.<name>] table may carry. */
 const LOOP_KEYS = new Set([
-  'seat', 'project', 'tickets',
+  'seat', 'project', 'tickets', 'lane',
   'workstream', 'cwd', 'constitution', 'version', 'pace', 'idle_floor_s',
   'runtime', 'model', 'provider', 'tier', 'probe_tier', 'probe_model', 'rotation', 'fallback', 'routing',
   'mcp_extra', 'skills', 'mock_cmd', 'burn_usd_per_hour', 'burn_usd_per_day', 'continue_cap',
@@ -221,6 +221,7 @@ export function loadRoster(): Roster {
       peer_sessions: [],
       project: l['project'] === undefined ? undefined : String(l['project']),
       tickets: l['tickets'] === undefined ? undefined : parseTickets(name, l['tickets']),
+      lane: l['lane'] === undefined ? undefined : parseLane(name, l['lane']),
       workstream: String(l['workstream']),
       cwd: expand(String(l['cwd'])),
       runtime: selection.primary.runtime,
@@ -257,7 +258,11 @@ export function loadRoster(): Roster {
     if (loop.peer_sessions.length < 2) {
       if (loop.project !== undefined) throw new Error(`Loop '${loop.name}': 'project' scopes a pool worker's claims; it needs another loop sharing seat '${loop.seat}'.`);
       if (loop.tickets !== undefined) throw new Error(`Loop '${loop.name}': 'tickets' scopes a pool worker's claims; it needs another loop sharing seat '${loop.seat}'.`);
+      if (loop.lane !== undefined) throw new Error(`Loop '${loop.name}': 'lane' scopes a pool worker's claims; it needs another loop sharing seat '${loop.seat}'.`);
       continue;
+    }
+    if (loop.lane !== undefined && loop.tickets !== undefined) {
+      throw new Error(`Loop '${loop.name}': set 'lane' or 'tickets', not both — a lane worker's scope is its lane.`);
     }
     if (loop.workstream === '*') throw new Error(`Loop '${loop.name}': a pool worker for seat '${loop.seat}' needs one exact workstream, not '*'.`);
   }
@@ -274,14 +279,20 @@ export function loadRoster(): Roster {
       if (why) throw new Error(`Loops '${loop.name}' and '${peer.name}' share seat '${loop.seat}' and ${why}; each worker needs its own writable checkout.`);
       const overlap = loop.tickets?.filter((t) => peer.tickets?.includes(t)) ?? [];
       if (overlap.length) throw new Error(`Loops '${loop.name}' and '${peer.name}' both list ${overlap.join(', ')}; a ticket belongs to one worker's allowlist.`);
+      if (loop.lane !== undefined && loop.lane === peer.lane) throw new Error(`Loops '${loop.name}' and '${peer.name}' both serve lane '${loop.lane}' for seat '${loop.seat}'; a lane belongs to one worker.`);
     }
   }
   // A worker with no allowlist would otherwise take a lane's ticket the moment
   // it became ready, so it is told which tickets its siblings own.
+  // Lane work needs no exclusion: Helmo gives a claim without a lane only
+  // lane-null tickets. The flag only narrows the wake to match, and
+  // is passed only once a sibling serves a lane, so a roster with no lanes
+  // sends Helmo exactly what it sent before.
   for (const loop of pool) {
-    if (loop.tickets) continue;
+    if (loop.tickets || loop.lane) continue;
     const owned = pool.filter((p) => p.seat === loop.seat && p.tickets).flatMap((p) => p.tickets!);
     if (owned.length) loop.exclude_tickets = owned;
+    if (pool.some((p) => p.seat === loop.seat && p.lane)) loop.lane_null = true;
   }
   return { global, loops, providers };
 }
@@ -291,6 +302,13 @@ function parseTickets(loop: string, raw: unknown): string[] {
     throw new Error(`Loop '${loop}': 'tickets' must be a non-empty array of distinct exact ticket ids.`);
   }
   return raw as string[];
+}
+
+function parseLane(loop: string, raw: unknown): string {
+  if (typeof raw !== 'string' || !/^[a-z0-9][a-z0-9-]{0,39}$/.test(raw)) {
+    throw new Error(`Loop '${loop}': 'lane' must be a lane name — lowercase letters, digits and hyphens, at most 40 characters (e.g. 'frontend').`);
+  }
+  return raw;
 }
 
 function within(child: string, parent: string): boolean {

@@ -55,6 +55,12 @@ describe('wakeDecide (H-92/H-426)', () => {
     expect(wakeDecide({ changedSince: false, firstPoll: false, workstream: 'rev-dev', readyCount: 1 })).toBe(false);
   });
 
+  it('a pool worker holding work wakes once after restart, so a held claim is asked for again', () => {
+    expect(wakeDecide({ changedSince: false, firstPoll: true, workstream: 'rev-dev', readyCount: 0, newlyReadyCount: 0, heldOnRestart: true })).toBe(true);
+    expect(wakeDecide({ changedSince: false, firstPoll: false, workstream: 'rev-dev', readyCount: 0, newlyReadyCount: 0, heldOnRestart: true })).toBe(false);
+    expect(wakeDecide({ changedSince: false, firstPoll: true, workstream: 'rev-dev', readyCount: 0, newlyReadyCount: 0 })).toBe(false);
+  });
+
   it('standing backlog never wakes a store-wide loop, including its first poll', () => {
     expect(wakeDecide({ changedSince: false, firstPoll: true, workstream: '*', readyCount: 1 })).toBe(false);
     expect(wakeDecide({ changedSince: false, firstPoll: false, workstream: '*', readyCount: 1 })).toBe(false);

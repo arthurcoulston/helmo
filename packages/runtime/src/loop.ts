@@ -766,7 +766,10 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       continue;
     }
     const sessionStartedAt = new Date().toISOString();
-    const res = await runSession(g, l, prompt, model, run, journaledLaunchId ?? undefined, journaledLaunchId ? launchGroupFile(l.name, journaledLaunchId) : undefined);
+    // Only preclaimed pool work is fenced to a launch generation. Scoped
+    // seats claim inside the session and may carry that claim across the next
+    // iteration; changing their generation would fence the same seat out.
+    const res = await runSession(g, l, prompt, model, run, claimedTicket ? journaledLaunchId ?? undefined : undefined, journaledLaunchId ? launchGroupFile(l.name, journaledLaunchId) : undefined);
     if (journaledLaunchId) {
       try {
         recordLaunchSession(l.name, journaledLaunchId, {

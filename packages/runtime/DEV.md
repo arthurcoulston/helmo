@@ -857,8 +857,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   lives in `~/.rev/` (roster.toml, mcp/, state/<loop>/, token-log), NEVER
   in this repo — publishability is structural.
 - `launch-journal.ts` — the durable, per-loop record from model dispatch through
-  its content-off provider result. Every supervised iteration carries the
-  launch id as its Work actor generation; the settled record adds provider,
+  its content-off provider result. Preclaimed pool iterations carry the
+  launch id as their Work actor generation; scoped seats do not, because a
+  claim made inside one iteration may remain with that seat for the next.
+  Every iteration still has a launch journal, and the settled record adds provider,
   model, provider session id when observed, timing, outcome and measured
   usage/cost, never prompts, responses, tool payloads or environment. An
   absent provider id is stored as `unsupported`, not empty. Workflow launches

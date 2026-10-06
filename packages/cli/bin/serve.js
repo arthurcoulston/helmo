@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { appConfig, startAppServer } from '../app-server.mjs';
-import { appRequest, serveProduct } from '../../app/server.mjs';
+import { appRequest, serveProduct, shellRequest } from '../../app/server.mjs';
 import { workHealth, workListening, workRequest, workSnapshot } from '../../work/dist/view.js';
 import { roadmapHealth, roadmapRequest, roadmapSnapshot } from '../../roadmap/dist/view.js';
 import { runtimeRequest, runtimeSnapshot } from '../../runtime/dist/view.js';
@@ -37,6 +37,7 @@ function overviewSnapshot() {
 const appDocuments={overview:overviewSnapshot,work:workSnapshot,roadmap:roadmapSnapshot,team:teamSnapshot,runtime:runtimeSnapshot};
 const running = await startAppServer(appConfig(), (request, response) => {
   try {
+    if (shellRequest(request, response)) return;
     if (request.url === '/health.json') {
       const checks = [check('app', () => ({ origin })), check('work', workHealth), check('roadmap', roadmapHealth), check('runtime', runtimeSnapshot)];
       const ok = checks.every((item) => item.ok);

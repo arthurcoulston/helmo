@@ -13,6 +13,15 @@ longer.
 
 ## Unreleased — 0.9.5
 
+- Give every Helmo page one navigation: a shadcn/ui sidebar that hides
+  completely — no icon rail, no reserved gutter — behind a trigger sharing one
+  compact header row with the view's title and a new upper-right control that
+  opens the current page, filters and all, in a window of its own. The
+  horizontal strip each page used to draw for itself is gone. Work, Roadmap,
+  Runtime and the app page render exactly as before inside it; the shell
+  adopts their markup rather than replacing it, so every control, disclosure
+  and refresh they already had goes on working. Only the chrome is migrated:
+  what is inside each product is still its own hand-written HTML.
 - Wrap the Runtime view's build and usage lines, so an unstamped build printing
   its own directory can no longer lay the page out wider than a phone's
   viewport.

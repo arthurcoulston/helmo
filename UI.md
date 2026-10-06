@@ -13,6 +13,15 @@ the upstream registry using the agreed configuration. Preserve upstream source
 provenance and make local changes legible. A matching appearance, a dependency
 name, or shared design tokens alone does not establish adoption.
 
+The shared components are `packages/shell/src/components/ui/`, and the agreed
+configuration is `packages/shell/components.json`: style `radix-nova`, base
+colour neutral, `tsx`, lucide icons. They are vendored verbatim from the
+estate shell, which is where this estate settled that configuration, and
+`node scripts/vendor-estate-components.mjs --check` reports drift. Add a
+missing component to the estate first and vendor it here; fetching one
+straight from a new CLI run picks whatever generation is current, which is
+not the one these components are.
+
 Use documented props, variants, composition and the approved theme to meet
 product requirements. Do not substitute a hand-written lookalike, another
 component system, or a new navigation design where shadcn/ui supplies the
@@ -93,6 +102,22 @@ inventory has no unexplained deviations and the actual served surfaces pass
 the applicable behavior, accessibility, theme and viewport checks. Adding a
 configuration file or a shadcn/ui outer shell while retaining bespoke inner
 views does not close the audit.
+
+## Where this stands
+
+The chrome is migrated: the sidebar, its hiding, the header row and the page
+pop-out are the components above. Everything inside them — Work's rows,
+requests and disclosures, Roadmap's list, Runtime's table, the app page's
+cards — is still hand-written HTML each product renders for itself, and the
+inventory in `H-2933@dev.rev` is where each of those maps. A shadcn/ui outer
+shell around bespoke inner views does not close that audit. `DEV.md`'s "What
+is migrated, and what is not" says the same thing to a coding session.
+
+Two things in this contract are decided and two are not. Decided: the sidebar
+starts shown in every window, and one window's trigger never moves another's —
+the component writes its `sidebar_state` cookie, and nothing reads it back.
+Not decided: where a popped-out window is placed, and what a multi-monitor
+arrangement should look like.
 
 ## Upstream references
 

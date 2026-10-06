@@ -356,8 +356,13 @@ test('unified routes retain the established product workflows and common navigat
     const response = await fetch(origin + path);
     assert.equal(response.status, 200, path);
     const html = await response.text();
-    assert.match(html, /aria-label="Areas"/, path);
-    for (const link of ['/overview', '/work', '/roadmap', '/team', '/run']) assert.ok(html.includes(`href="${link}"`), path + ' ' + link);
+    // The common navigation is the shell's sidebar now, so what the server
+    // owes every route is the shell's assets and its destination list — the
+    // five areas are in the configuration, not in a strip each page draws.
+    assert.match(html, /<link rel="stylesheet" href="\/shell\/shell\.css">/, path);
+    assert.match(html, /<script type="module" src="\/shell\/shell\.js"><\/script>/, path);
+    const config = JSON.parse(/id="helmo-shell-config">([^]*?)<\/script>/.exec(html)[1].replaceAll('\\u003c', '<'));
+    assert.deepEqual(config.destinations.map((d) => d.href), ['/overview', '/work', '/roadmap', '/team', '/run'], path);
     if (path === '/' || path.startsWith('/work')) {
       assert.match(html, new RegExp(ticket));
       assert.match(html, /record-scope/);

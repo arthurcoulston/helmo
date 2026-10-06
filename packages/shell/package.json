@@ -1,0 +1,35 @@
+{
+  "name": "@helmo/shell",
+  "version": "0.9.5",
+  "private": true,
+  "type": "module",
+  "description": "Helmo's shadcn/ui application shell: the sidebar, the view header, and the page pop-out control.",
+  "license": "MIT",
+  "author": "Arthur Coulston",
+  "scripts": {
+    "build": "vite build",
+    "test": "node --test test/*.test.mjs",
+    "vendor:components": "node scripts/vendor-estate-components.mjs"
+  },
+  "dependencies": {
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.39.0",
+    "radix-ui": "^1.6.7",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "tailwind-merge": "^3.6.0"
+  },
+  "devDependencies": {
+    "@helmo/core": "0.9.5",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.1.0",
+    "shadcn": "^4.20.1",
+    "tailwindcss": "^4.3.3",
+    "tw-animate-css": "^1.4.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2"
+  }
+}

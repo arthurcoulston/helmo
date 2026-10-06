@@ -72,12 +72,17 @@ test('every workspace package carries the product version', () => {
   const product = JSON.parse(readFileSync(new URL('package.json', root))).version;
   // Classified, not derived: a new package must be put on one side of the
   // core-dependency rule below, and a derived list would silently skip it.
-  assert.deepEqual([...PACKAGES].sort(), ['app', 'cli', 'core', 'roadmap', 'runtime', 'work']);
+  assert.deepEqual([...PACKAGES].sort(), ['app', 'cli', 'core', 'roadmap', 'runtime', 'shell', 'work']);
   for (const name of PACKAGES) {
     const pkg = JSON.parse(readFileSync(new URL(`packages/${name}/package.json`, root)));
     assert.equal(pkg.version, product, `${name} version`);
     if (CORE_DEPENDENTS.includes(name)) {
       assert.equal(pkg.dependencies['@helmo/core'], product, `${name} core dependency`);
+    }
+    // The shell reads core at build time and bundles none of it, so its pin
+    // lives in devDependencies — and goes stale the same way if nobody looks.
+    if (pkg.devDependencies?.['@helmo/core']) {
+      assert.equal(pkg.devDependencies['@helmo/core'], product, `${name} core dev dependency`);
     }
   }
 });

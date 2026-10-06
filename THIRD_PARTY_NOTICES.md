@@ -1,7 +1,11 @@
 # Third-party notices
 
-Helmo's vendored estate design tokens — the copies carried by the Work,
-Roadmap and Runtime views — include values derived from shadcn/ui.
+Helmo carries two copies of work that shadcn/ui owns. The vendored estate
+design tokens — the copies the Work, Roadmap and Runtime views inline —
+include values derived from it. The application shell
+(`packages/shell/src/components/ui/`) is its component source, vendored
+verbatim from the estate shell, which is where this estate's shadcn
+configuration (style `radix-nova`, base colour neutral) was agreed.
 
 ## shadcn/ui
 

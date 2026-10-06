@@ -7,6 +7,7 @@
     "packages/app",
     "packages/core",
     "packages/cli",
+    "packages/shell",
     "packages/roadmap",
     "packages/work",
     "packages/runtime"

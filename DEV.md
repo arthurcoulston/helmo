@@ -7,6 +7,7 @@ internals, and a dev session reads this one first and then that one.
 | Area | Package | Name on npm/bin | Its context |
 | --- | --- | --- | --- |
 | App shell | `packages/app` | served by `helmo serve` | this file |
+| Shell chrome | `packages/shell` | built into `/shell/shell.{js,css}` | this file |
 | Work | `packages/work` | `helmo` | [DEV.md](packages/work/DEV.md) |
 | Roadmap | `packages/roadmap` | `helmo-roadmap` | [DEV.md](packages/roadmap/DEV.md) |
 | Runtime | `packages/runtime` | `rev` | [DEV.md](packages/runtime/DEV.md) |
@@ -21,6 +22,50 @@ patterns. The shared token seam described below is theme integration only;
 the legacy hand-written views are not evidence of component compliance.
 Migration must preserve existing product behavior and entry points. It does
 not authorize a new information architecture or a dashboard redesign.
+
+### What is migrated, and what is not
+
+`packages/shell` is the first increment and it covers the **chrome only**: the
+navigation sidebar, the one header row that carries the trigger, the view
+title and the Open-in-new-window control. Those are real shadcn/ui components
+— `SidebarProvider`, `Sidebar`, `SidebarTrigger`, `SidebarInset`, `Button`,
+`Tooltip`, `Separator`, and `Sheet` under them at phone width — vendored from
+the estate shell, which is where this estate's configuration (`radix-nova`,
+neutral, lucide, tsx) was agreed. `scripts/vendor-estate-components.mjs`
+refreshes the copies and `--check` reports drift, the same seam
+`vendor-estate-tokens.mjs` already uses for the colours.
+
+The **inside** of Work, Roadmap, Runtime and the app page is still their own
+hand-written HTML. Their rows, disclosures, request forms, tables and status
+text remain mapped-but-unmigrated in UI.md's inventory. The shell is not a
+claim about them: a shadcn outer shell around bespoke inner views does not
+close that audit, and this file saying so is what stops the next session
+reading a sidebar as a finished migration.
+
+### How the shell meets a product document
+
+The server does not render the shell. Each product renders its own complete
+document exactly as it did before; `serveProduct` injects the shell's
+stylesheet, a JSON configuration island and the module script at the top of
+`<body>`, and the script adopts the document it finds:
+
+- It lifts every non-`<script>` body child into a fragment and hands it, once,
+  to an empty host inside `SidebarInset`. React never owns that subtree, so
+  every listener, disclosure and refresh timer the product installed survives
+  the move. Scripts stay where they are — a `<script>` moved before it runs is
+  entitled to run twice.
+- It re-points each product stylesheet's `body` rules at that host, because
+  Work and Roadmap put their reading column on `<body>` itself. Moving the
+  rule rather than copying its computed values is what keeps the column
+  responsive under the products' own media queries.
+- `<body>` and not `</head>`: Work and Roadmap render no head element at all,
+  so an injection anchored on `</head>` matches nothing and the shell silently
+  never loads on the two busiest pages.
+
+Tailwind's preflight is deliberately NOT imported, and its utilities are
+deliberately NOT in a layer. `packages/shell/src/index.css` says why at each
+point; both answer the same fact, that this stylesheet lands on top of a
+document that already has a complete one of its own.
 
 ## What `packages/cli` owns
 
@@ -162,8 +207,9 @@ legacy reader.
 - **A build writes only where it is marked to.** The root `npm run build`
   refuses unless the root carries the build marker, so it can never write into
   a release directory or a checkout an installation resolves through.
-  The root `npm test` likewise refuses before workspace tests unless the four
-  built packages carry their expected build artifacts. `scripts/build.mjs`,
+  The root `npm test` likewise refuses before workspace tests unless the built
+  packages carry their expected build artifacts — including the shell's two,
+  so a checkout cannot serve a page whose navigation never arrives. `scripts/build.mjs`,
   `scripts/assert-built.mjs` and `scripts/build.test.mjs` are the whole of it.
   The one script that *does* write into a release directory is
   `scripts/stage-legacy-launch-paths.mjs`, and it is never part of a build: it
@@ -176,7 +222,9 @@ legacy reader.
   `~/.rev` selection, making the same checkout pass or fail according to who
   launched the suite.
 - **One version.** Every package carries the root version and depends on
-  `@helmo/core` at exactly that version; `scripts/build.test.mjs` asserts it.
+  `@helmo/core` at exactly that version — in `devDependencies` for the shell,
+  which reads core at build time and bundles none of it;
+  `scripts/build.test.mjs` asserts both.
   What the number promises is [VERSIONING.md](VERSIONING.md), and a change to
   the surfaces it names is a version decision, not an implementation detail.
 

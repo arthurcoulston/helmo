@@ -696,6 +696,67 @@ mock_cmd = "true"
     }
   });
 
+  it('a ticket that becomes ready during a run wakes the seat on the next poll, not the hourly resync (H-804)', async () => {
+    // The Tester shape: the run is launched with one ticket ready, which it
+    // declines. Meanwhile another seat closes the blocker on a second ticket
+    // for this seat. The run never saw it, and it is not newly ready after
+    // the post-run seq, so idling there slept until the resync.
+    const e = setup(`[loops.midrun-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+idle_floor_s = 0
+mock_cmd = '''
+set -e
+if [ "$(node ${HELM_CLI} get BLOCKER | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d).status))")" = open ]; then
+  HELMO_ACTOR='{"name":"other-seat","kind":"agent","model":"mock","version":"0.1","session":"rev:other-seat"}' node ${HELM_CLI} update --ticket BLOCKER --note "review PASS" --status done --evidence-kind other --evidence-ref fixture
+fi
+'''
+`);
+    seedTicket(e, 'Ready at launch; the run declines it');
+    const review = (helm(e, [
+      'create', '--title', 'Review the handoff', '--body', 'another seat\'s work', '--workstream', 'elsewhere', '--type', 'review', '--assignee', 'other-seat',
+    ]) as { id: string }).id;
+    const handoff = (helm(e, [
+      'create', '--title', 'Verify once review passes', '--body', 'blocked until the review closes',
+      '--workstream', 'rev-test', '--type', 'ops', '--assignee', 'midrun-loop', '--dep', review, '--dep-type', 'blocks',
+    ]) as { id: string }).id;
+    // The mock closes the blocker as another seat; its id exists only now.
+    const toml = join(e.home, 'roster.toml');
+    writeFileSync(toml, readFileSync(toml, 'utf8').replaceAll('BLOCKER', review));
+
+    const dir = join(e.home, 'state', 'midrun-loop');
+    const child = spawn(process.execPath, ['--import', 'tsx', REV_CLI, 'run', 'midrun-loop', '--count', '2'], {
+      env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore',
+    });
+    try {
+      const deadline = Date.now() + 30_000;
+      let events = '';
+      while (!/run-start.*iter=2/.test(events)) {
+        if (Date.now() >= deadline) throw new Error(`the seat did not wake for the mid-run handoff; saw: ${events}`);
+        await new Promise((r) => setTimeout(r, 25));
+        events = existsSync(join(dir, 'events.log')) ? readFileSync(join(dir, 'events.log'), 'utf8') : '';
+      }
+      expect(events).toMatch(new RegExp(`missed-mid-run tickets=${handoff} `));
+      expect(events).toMatch(/wake\s.*ready=2/);
+      // --count 2: the loop exits once the second run has idled.
+      while (child.exitCode === null) {
+        if (Date.now() >= deadline) throw new Error('the second run did not idle');
+        await new Promise((r) => setTimeout(r, 25));
+      }
+    } finally {
+      await stop(child);
+    }
+
+    // The second run saw both and declined both: it idles past them and the
+    // seat stays asleep (H-426), with the handoff still ready for it.
+    const settled = Number(readFileSync(join(dir, 'IDLE'), 'utf8').split('\n')[0]);
+    const w = helm(e, ['wake-check', '--workstream', 'rev-test', '--assignee', 'midrun-loop', '--since-seq', String(settled)]) as
+      { newly_ready_count: number; ready_ids: string[] };
+    expect(w.newly_ready_count).toBe(0);
+    expect(w.ready_ids).toContain(handoff);
+  });
+
   it('an hour asleep on standing ready work resyncs the seat (H-1072)', async () => {
     // The backstop for a readiness edge Rev never saw: no motion, nothing
     // newly ready, and a ticket the seat could draw sitting there. It is a

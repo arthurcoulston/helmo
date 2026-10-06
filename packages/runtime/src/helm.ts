@@ -19,6 +19,9 @@ export interface WakeCheck {
   changed_since: boolean;
   newly_ready_count?: number;
   newly_ready_ids?: string[];
+  /** in_progress claims in the loop's own hands whose last blocker closed
+   *  after the cursor (H-804) — absent from a helmo that predates it. */
+  newly_unblocked_held_ids?: string[];
   ready_ids?: string[];
 }
 

@@ -413,6 +413,34 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   the total it belongs to. Both ceilings sit well clear of real configuration:
   this installation's largest instruction file measures 41,272 against a ceiling
   of four million, and all 23 encode in 33ms together.
+- **Both ceilings bound a FILE; the document gets its own pass (H-3011).** A
+  request waits for a document, and an installation's seat count multiplies
+  whatever the per-file ceiling admits — ward measured ten seats sharing six
+  worst-admitted files holding `/api/v1/team` 14.6s with `/api/v1/overview`
+  blocked 14.2s behind it, on every poll, past this surface's own 10s deadline.
+  `measurePass()` is threaded from `teamDocument` through every `seatContext`
+  and does two things the per-file ceiling cannot.
+  It measures each unique path ONCE. `crew:AGENTS.md` is on all ten seats'
+  walks, so the live document was tokenizing it ten times a request: 24
+  inventory entries, 13 unique files. The key is `resolve`, which normalizes
+  `.`, `..` and repeated separators without touching the filesystem —
+  deliberately **not** `realpath`, which would collapse a symlink onto its
+  target and let whichever a seat asked for first answer for both, serving a
+  planted link the real file's count. That is the one thing `O_NOFOLLOW` is
+  there to refuse, so two spellings reaching one file through a symlinked
+  directory are measured twice instead; a test holds the distinction.
+  And it spends `TOKENIZE_DOCUMENT_BUDGET` across the whole document rather than
+  per file. Measurements take turns on `pass.turn` for that reason: `encode` is
+  synchronous so concurrency bought nothing, and under `Promise.all` every file
+  read `work` as 0 before any other had spent any — a budget nothing could
+  exceed. The budget is six worst-admitted files, which is where ward measured
+  1.4s; this installation's whole document is 361,534, a sixty-sixth of it, and
+  measures in 465ms including the one-time rank load. Past the budget a file is
+  `unreadable` naming the budget, never a token count.
+  The two halves are red-proved separately: without dedupe, ward's own shape
+  runs past the budget and the e2e case fires on the refusal; without the
+  budget, distinct worst-admitted files time the request out at 10s; without
+  either, both.
 - **The Team routes answer a failed read 500, like every other route.** They
   read files, so they answer from a promise, which takes a throw out of
   `serve.js`'s own handler catch — so `answer()` has to repeat that status

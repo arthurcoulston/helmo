@@ -43,6 +43,17 @@ longer.
   an unreadable file is never a zero folded into a total. And a member named
   after one of JavaScript's built-in property names is no longer a member.
 
+- Team now reads one file once, however many members carry it. The shared
+  instruction file at the top of this installation's agent tree is on every
+  seat's list, and the page was counting it again for each of them — ten times a
+  request, for the same ten thousand characters. It is counted once now. The
+  whole page also has a ceiling on how much counting one request may do, not
+  just a ceiling per file: the page is a tenth of it today, but a member's
+  working tree is a place other things write, and enough awkward files across
+  enough members used to be able to hold the page — and the rest of the
+  dashboard with it — for fifteen seconds at a time. Past that ceiling a file is
+  named, with its size and the reason, the same way an unreadable one is.
+
 - Red now outranks amber. The four status colours all came out the same weight:
   their fills measured 1.10, 1.12, 1.12 and 1.14 against a white page, a three
   percent spread, so a failed review carried no more weight than something merely

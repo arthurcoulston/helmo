@@ -21,7 +21,7 @@
 //     and the iteration prompt are real tokens nobody here can count. They are
 //     named in `unmeasured` rather than left to read as zero.
 import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readdirSync, readFileSync, readSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import type { Tiktoken } from 'js-tiktoken';
 import { loadRoster, tokenLogPath, type Roster } from './config.js';
@@ -77,6 +77,52 @@ export const MEASURE_BYTE_CEILING = 1_048_576;
  *  The other term is per chunk rather than quadratic, ~1-2us, and is what
  *  MEASURE_BYTE_CEILING bounds: a megabyte of prose is 250,000 chunks. */
 export const TOKENIZE_WORK_CEILING = 4_000_000;
+
+/** The most tokenizer work one DOCUMENT may be worth, in the same units.
+ *
+ *  TOKENIZE_WORK_CEILING bounds a file; nothing bounded the document, and the
+ *  document is what a request waits for. The Team document measures every
+ *  inventoried file of every seat, so an installation's seat count multiplies
+ *  whatever the per-file ceiling admits: ten seats sharing six worst-admitted
+ *  files held /api/v1/team 14.6s and blocked /api/v1/overview behind it, on
+ *  every poll, which is past this surface's own 10s deadline (H-3011, measured
+ *  by ward on H-3007's PASS).
+ *
+ *  Six worst-admitted files is where ward measured 1.4s, and the quadratic
+ *  term's 30-90ms per million puts the same figure at 1.4-2.2s, so the budget
+ *  is six of them. This installation's whole document is 361,534 — a
+ *  sixty-sixth of it, with every seat's shared ancestor counted once — so no
+ *  real document is anywhere near being cut. */
+export const TOKENIZE_DOCUMENT_BUDGET = 24_000_000;
+
+/** One document build's measurement state, threaded through every `measure`
+ *  call that belongs to it.
+ *
+ *  It does two things the per-file ceiling cannot. It measures each unique path
+ *  ONCE: `crew:AGENTS.md` is in all ten seats' walks, so the live document was
+ *  tokenizing it ten times per request (24 measures, 13 unique files). And it
+ *  spends `TOKENIZE_DOCUMENT_BUDGET` across the whole document rather than per
+ *  file.
+ *
+ *  Measurements run one at a time, in the order they are asked for. The budget
+ *  is the reason: `encode` is synchronous, so concurrency bought nothing here
+ *  anyway, and under `Promise.all` every file would read `work` as 0 before any
+ *  other had spent any — a budget nothing could ever exceed. Taking a turn is
+ *  what makes the figure each file checks the real one. */
+export interface MeasurePass {
+  /** Keyed on the resolved path, holding the in-flight promise so concurrent
+   *  callers share one measurement instead of racing to a second one. */
+  files: Map<string, Promise<MeasuredFile>>;
+  /** Work already spent on files admitted in this document. */
+  work: number;
+  budget: number;
+  /** The chain measurements queue behind, so each sees `work` as it stands. */
+  turn: Promise<unknown>;
+}
+
+export function measurePass(budget = TOKENIZE_DOCUMENT_BUDGET): MeasurePass {
+  return { files: new Map(), work: 0, budget, turn: Promise.resolve() };
+}
 
 let pattern: RegExp | undefined;
 
@@ -197,7 +243,33 @@ function frontMatterCap(text: string): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-async function measure(path: string): Promise<MeasuredFile> {
+/** Measure one file as part of a document, once.
+ *
+ *  The key is `resolve`, which normalizes `.`, `..` and repeated separators
+ *  without touching the filesystem. Deliberately NOT `realpath`: that would
+ *  collapse a symlink onto its target, and then whichever of the two a seat
+ *  asked for first would answer for both — so a planted link could be served
+ *  the real file's token count, which is the one thing `readBounded`'s
+ *  `O_NOFOLLOW` exists to refuse. Two spellings that reach the same file
+ *  through a symlinked directory are measured twice; that costs a measurement
+ *  and tells no lie. */
+async function measure(path: string, pass: MeasurePass): Promise<MeasuredFile> {
+  const key = resolve(path);
+  const already = pass.files.get(key);
+  if (already) return already;
+  const result = (async () => {
+    await pass.turn;
+    return measureOne(key, pass);
+  })();
+  // The chain must not carry a rejection: one file that somehow threw would
+  // otherwise reject every file queued behind it. `measureOne` reports rather
+  // than throws, so this is a guard, not a path we expect to take.
+  pass.turn = result.then(() => undefined, () => undefined);
+  pass.files.set(key, result);
+  return result;
+}
+
+async function measureOne(path: string, pass: MeasurePass): Promise<MeasuredFile> {
   const name = path.split('/').pop() ?? path;
   // An unmeasurable file is reported as unreadable with the reason, never as a
   // zero that would quietly shrink the total it belongs to.
@@ -222,6 +294,13 @@ async function measure(path: string): Promise<MeasuredFile> {
       // file's size. Named, not counted.
       return unreadable(read.bytes, `Its ${read.bytes.toLocaleString('en-US')} bytes are chunked too coarsely to tokenize within this surface's time ceiling, so no token count is claimed for it.`);
     }
+    // Refused by the file ceiling above does not spend the document's budget:
+    // nothing was tokenized. Admitted does, before the encode rather than
+    // after, because the budget is permission to spend it.
+    if (pass.work + work > pass.budget) {
+      return unreadable(read.bytes, `This document has already spent its ${pass.budget.toLocaleString('en-US')}-unit tokenizer budget on the files measured before it, so no token count is claimed for this one.`);
+    }
+    pass.work += work;
     const cap = frontMatterCap(read.text);
     // `([], [])` — no special token is allowed, and none is disallowed either,
     // so `<|endoftext|>` in instruction prose is counted as the text it is
@@ -294,7 +373,7 @@ const UNMEASURED = [
   "the iteration prompt Rev sends, and the session's own transcript",
 ];
 
-async function memoryInventory(l: LoopConfig): Promise<SeatContext['memory']> {
+async function memoryInventory(l: LoopConfig, pass: MeasurePass): Promise<SeatContext['memory']> {
   if (!l.memory_dir) {
     return { configured: false, index: null, files: 0, tokens: 0, note: 'No memory directory is configured for this seat in the roster.' };
   }
@@ -305,7 +384,7 @@ async function memoryInventory(l: LoopConfig): Promise<SeatContext['memory']> {
     return { configured: true, index: null, files: 0, tokens: 0, note: `The configured memory directory cannot be read: ${l.memory_dir}` };
   }
   const indexName = names.find((n) => n === 'MEMORY.md');
-  const index = indexName ? await measure(join(l.memory_dir, indexName)) : null;
+  const index = indexName ? await measure(join(l.memory_dir, indexName), pass) : null;
   // Sizes come from the filesystem rather than the tokenizer: the corpus is
   // hundreds of files, it is not startup context, and tokenizing all of it per
   // request would cost more than the reading is worth. The estimate is marked
@@ -323,10 +402,10 @@ async function memoryInventory(l: LoopConfig): Promise<SeatContext['memory']> {
   };
 }
 
-export async function seatContext(l: LoopConfig): Promise<SeatContext> {
-  const profile = l.constitution ? await measure(l.constitution) : null;
-  const skills = await Promise.all((l.skills ?? []).map(measure));
-  const discoveredFiles = await Promise.all(workingTreeInstructions(l.cwd, l.runtime).map(measure));
+export async function seatContext(l: LoopConfig, pass: MeasurePass = measurePass()): Promise<SeatContext> {
+  const profile = l.constitution ? await measure(l.constitution, pass) : null;
+  const skills = await Promise.all((l.skills ?? []).map((p) => measure(p, pass)));
+  const discoveredFiles = await Promise.all(workingTreeInstructions(l.cwd, l.runtime).map((p) => measure(p, pass)));
   const composedTokens = (profile?.tokens ?? 0) + skills.reduce((s, f) => s + f.tokens, 0);
   const discoveredTokens = discoveredFiles.reduce((s, f) => s + f.tokens, 0);
   return {
@@ -336,7 +415,7 @@ export async function seatContext(l: LoopConfig): Promise<SeatContext> {
       tokens: discoveredTokens,
       note: `Found by the ${l.runtime} CLI in ${l.cwd} and above it, up to the enclosing repository. Rev does not compose these.`,
     },
-    memory: await memoryInventory(l),
+    memory: await memoryInventory(l, pass),
     startup_tokens: composedTokens + discoveredTokens,
     session_cap: null,
     unmeasured: UNMEASURED,
@@ -474,6 +553,9 @@ export interface TeamDocument {
  *  loop is running. */
 export async function teamDocument(period: Period, state: (name: string) => string): Promise<TeamDocument> {
   const roster = loadRoster();
+  // One pass for the whole document: a path several seats' walks share is
+  // measured once, and the tokenizer budget is spent across all of them.
+  const pass = measurePass();
   const loops = await Promise.all(Object.values(roster.loops).map(async (l) => ({
     id: l.name,
     name: l.seat ?? l.name,
@@ -482,7 +564,7 @@ export async function teamDocument(period: Period, state: (name: string) => stri
     runtime: l.runtime,
     model: l.model,
     profile: `/api/v1/team/members/${encodeURIComponent(l.name)}`,
-    context: await seatContext(l),
+    context: await seatContext(l, pass),
     spend: seatSpend(l.name, period),
   })));
   return {

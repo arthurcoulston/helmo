@@ -15,7 +15,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { BIN, env, fixture } from './installation.mjs';
 
@@ -181,4 +181,150 @@ test('a prototype name is not a seat, and is not a period', async (t) => {
   const fallback = await get(origin, '/api/v1/team?period=__proto__');
   assert.equal(fallback.status, 200);
   assert.equal((await fallback.json()).data.period, '7d');
+});
+
+// ---------------------------------------------------------------------------
+// The document, not the file — family H-3011
+//
+// Everything above bounds ONE file. The document is what a request waits for,
+// and an installation's seat count multiplies whatever the per-file ceiling
+// admits: ward measured ten seats sharing six worst-admitted files holding
+// /api/v1/team 14.6s with /api/v1/overview blocked 14.2s behind it, on every
+// poll. Two mechanisms answer that, and they are tested apart because they
+// cover different trees: a shared path is measured once per document, and the
+// document has a tokenizer budget of its own.
+// ---------------------------------------------------------------------------
+
+/** The worst file the per-file work ceiling admits: a single 1,999-byte chunk,
+ *  which is 3,996,001 against a ceiling of 4,000,000, and about a quarter of a
+ *  second of merge loop each. Ordinary size — no byte ceiling would stop it. */
+const WORST_ADMITTED = 'x'.repeat(1_999);
+
+/** An installation of `seats` loops, each walking up through `levels` of its
+ *  own directories to a shared repository root. Every directory on every walk
+ *  holds a CLAUDE.md and an AGENTS.md of the worst admitted shape.
+ *
+ *  `shared: true` points every seat at the SAME deepest directory, so all of
+ *  them inventory one set of paths — the shape ward measured, and the one
+ *  per-document dedupe is for. Otherwise each seat gets its own branch and
+ *  every planted file is a distinct path, which dedupe cannot help with at all.
+ */
+function crowdedInstallation(t, { seats, levels, shared }) {
+  const runtime = fixture(t);
+  const root = fixture(t);
+  writeFileSync(join(root, '.git'), 'a repository boundary');
+  const plant = (dir) => {
+    for (const name of ['CLAUDE.md', 'AGENTS.md']) writeFileSync(join(dir, name), WORST_ADMITTED);
+  };
+  plant(root);
+
+  mkdirSync(join(runtime, 'constitutions'), { recursive: true });
+  writeFileSync(join(runtime, 'constitutions', 'seat.md'), '---\ncap_tokens: 500\n---\nthe seat itself');
+
+  let roster = `[global]\nhelmo_cli = "x"\nhelmo_mcp_server = "y"\n`;
+  let planted = 2;
+  for (let s = 0; s < seats; s++) {
+    let dir = root;
+    for (let l = 0; l < levels; l++) {
+      dir = join(dir, shared ? `level${l}` : `seat${s}-level${l}`);
+      if (!existsSync(dir)) { mkdirSync(dir, { recursive: true }); plant(dir); planted += 2; }
+    }
+    roster += `[loops.seat${s}]
+workstream = "estate-ui"
+cwd = "${dir}"
+runtime = "claude"
+model = "claude-opus-5"
+constitution = "constitutions/seat.md"
+`;
+  }
+  writeFileSync(join(runtime, 'roster.toml'), roster);
+  return { homes: { HELMO_HOME: fixture(t), ROADMAP_HOME: fixture(t), REV_HOME: runtime }, planted };
+}
+
+/** Every inventoried file of every seat, with its role. */
+function inventory(document) {
+  return document.loops.flatMap((loop) => [
+    ...(loop.context.composed.profile ? [loop.context.composed.profile] : []),
+    ...loop.context.composed.skills,
+    ...loop.context.discovered.files,
+  ]);
+}
+
+test('a path ten seats share is measured once, not once per seat', async (t) => {
+  // Ward's own shape, exactly: ten seats at one deepest directory, six
+  // worst-admitted files on the walk. Sixty measurements is about 15s and past
+  // this surface's deadline; six is about a second and a half.
+  //
+  // Six is also precisely TOKENIZE_DOCUMENT_BUDGET, by construction — the
+  // budget was sized as six of these — so the shape ward measured is the
+  // largest document that still measures in full, and dedupe is the whole of
+  // what lets it measure at all.
+  //
+  // That is also how this case goes red, measured rather than assumed: with
+  // dedupe removed the sixty measurements run past the budget, so the budget
+  // refuses most of them and the assertion below fires at 1.9s. It is only
+  // with BOTH removed that the request itself times out at 10s. Dedupe is
+  // what makes the page honest here; the budget is what keeps it answering.
+  const { homes, planted } = crowdedInstallation(t, { seats: 10, levels: 2, shared: true });
+  assert.equal(planted, 6, 'the fixture should plant one shared walk, not one per seat');
+  const { origin } = await startApp(t, homes);
+
+  const started = Date.now();
+  const team = await get(origin, '/api/v1/team');
+  assert.equal(team.status, 200);
+  const document = (await team.json()).data;
+  const elapsed = Date.now() - started;
+
+  const files = inventory(document);
+  assert.equal(files.length, 70, 'ten seats of a profile and six discovered files');
+  // The reading survives being shared: every one of them is a real count.
+  const refused = files.map((file) => file.error).filter(Boolean);
+  assert.deepEqual(refused, [], 'the budget should still admit the six files ward measured');
+  assert.ok(files.every((file) => file.tokens > 0), 'every file should carry a real count');
+  const walk = document.loops[0].context.discovered.files;
+  assert.equal(walk.length, 6);
+  assert.ok(walk.every((file) => file.tokens === walk[0].tokens), 'the planted files are identical');
+
+  assert.equal((await get(origin, '/api/v1/overview')).status, 200);
+  assert.ok(elapsed < 10_000, `the Team document took ${elapsed}ms`);
+});
+
+test('a document of distinct worst-admitted files is cut by its budget, not left to run', async (t) => {
+  // The half dedupe cannot reach: ten seats on their own branches, so every
+  // planted file is a distinct path and sharing saves nothing. A level deeper
+  // than the case above on purpose — 62 worst-admitted files is about 16s,
+  // comfortably past the deadline rather than near it. The budget admits six,
+  // so the rest are NAMED, and that is the second assertion here: the deadline
+  // alone would not say which mechanism saved the request.
+  const { homes, planted } = crowdedInstallation(t, { seats: 10, levels: 3, shared: false });
+  assert.equal(planted, 62, 'every seat should have its own branch');
+  const { origin } = await startApp(t, homes);
+
+  const started = Date.now();
+  const team = await get(origin, '/api/v1/team');
+  assert.equal(team.status, 200);
+  const document = (await team.json()).data;
+  const elapsed = Date.now() - started;
+
+  const refused = inventory(document).filter((file) => file.state === 'unreadable');
+  assert.ok(refused.length > 0, 'a document this expensive should have been cut');
+  // Named with its size and the budget's own reason, never counted and never a
+  // zero folded into a seat's total: a cut figure that reads as a measurement
+  // is the one thing this surface exists not to do.
+  for (const file of refused) {
+    assert.equal(file.tokens, 0);
+    assert.equal(file.bytes, 1_999);
+    assert.match(file.error, /already spent its [\d,]+-unit tokenizer budget/);
+  }
+  for (const loop of document.loops) {
+    const counted = loop.context.discovered.files.filter((file) => file.state !== 'unreadable');
+    assert.equal(
+      loop.context.discovered.tokens,
+      counted.reduce((sum, file) => sum + file.tokens, 0),
+      'a seat total should be the files actually measured',
+    );
+  }
+
+  assert.equal((await get(origin, '/api/v1/overview')).status, 200);
+  assert.ok(elapsed < 10_000, `the Team document took ${elapsed}ms`);
 });

@@ -533,13 +533,14 @@ export interface TeamMemberRow {
   workstream: string;
   runtime: string;
   model: string;
-  /** Every model the roster configures this seat to select among, in its own
-   *  order, and how one is chosen. A rotating seat has no single configured
-   *  model, so naming the primary as "the" model beside a live state badge is
-   *  how a reader concludes a running session is on a model it never ran — on
-   *  this installation most seats rotate across two providers, and `by_model`
-   *  in the same response records what they really ran. `model` stays the
-   *  primary; this is the whole of what was configured. */
+  /** The rotation this seat selects among, in the roster's own order, and how
+   *  one is chosen. A rotating seat has no single configured model, so naming
+   *  the primary as "the" model beside a live state badge is how a reader
+   *  concludes a running session is on a model it never ran — on this
+   *  installation most seats rotate across two providers. It is the rotation
+   *  and not every model a seat could ever run: quota fallbacks and probe
+   *  models are configured too and are not in it. What a seat really ran is
+   *  `by_model`, in the same response, and nothing else here is observed. */
   models: string[];
   routing: 'rotation' | 'headroom';
   profile: string;

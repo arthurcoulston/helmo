@@ -135,11 +135,13 @@ function Composition({ context, labelledBy }: { context: SeatContext; labelledBy
    `Composition` map `parts` in sequence. */
 function CompositionLegend({ context, children }: { context: SeatContext; children?: React.ReactNode }) {
   return <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-    {parts(context).map((part, index) => <li key={part.key} className="flex items-center gap-1.5">
+    {parts(context).map((part) => <li key={part.key} className="flex items-center gap-1.5">
       <span className={`${part.fill} size-2 rounded-full`} aria-hidden="true" />
       <span>{part.label} {count(part.tokens)}</span>
-      {index === 0 ? <span className="text-muted-foreground">(left to right along the bar)</span> : null}
     </li>)}
+    {/* After the categories, not inside the first one: read beside a number it
+        looked like a note about that number. */}
+    <li className="text-muted-foreground">in that order, left to right along the bar</li>
     {children}
   </ul>
 }
@@ -149,8 +151,11 @@ function CompositionLegend({ context, children }: { context: SeatContext; childr
    word "configured" and, when there is more than one, refuses to pick one of
    them to show. What actually ran is `by_model`, under its own heading. */
 function configured(member: Member) {
+  /* How one is chosen is the Sheet's to say. On this roster eight of ten seats
+     rotate, so carrying it here put the same forty characters down the page
+     and the word that matters — "configured" — had to be found inside it. */
   return member.models.length > 1
-    ? `${member.models.length} models configured, chosen by ${member.routing}`
+    ? `${member.models.length} models configured`
     : `${member.runtime} · ${member.model} configured`
 }
 

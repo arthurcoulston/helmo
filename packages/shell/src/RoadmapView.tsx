@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
-import { excerpt, expandColumn, RecordTable, type RecordColumn } from "./RecordTable"
+import { excerpt, expandColumn, RecordTable, recordColumn, type RecordColumn } from "./RecordTable"
 import { CopyReference } from "./WorkRecord"
 import { projectStatusRole, StatusAlert, StatusBadge } from "./Status"
 
@@ -123,7 +123,7 @@ function columnsFor(open: Opener): RecordColumn<Row>[] {
           {ranked ? <span className="text-muted-foreground px-2 text-xs">{why(ranked.explanation)}</span> : null}
         </div>
       },
-      meta: { className: "min-w-64 whitespace-normal" },
+      meta: { className: recordColumn },
     },
     { id: "state", header: () => "State", cell: ({ row }) => <StatusBadge status={projectStatusRole(row.original.project.status)}>{status(row.original.project.status)}</StatusBadge>, meta: { className: "w-28" } },
     { id: "usage", header: () => "Usage est.", cell: ({ row }) => <span>${row.original.project.actual_usd.toFixed(2)}</span>, meta: { className: "w-24 text-right tabular-nums" } },

@@ -473,6 +473,14 @@ try {
   await page.evaluate(() => document.documentElement.className = 'light');
   const areas = ['overview', 'work', 'roadmap', 'team', 'run'], themes = ['light', 'dark'], widths = [390, 640, 1280];
   const audited = [];
+  /* Where the horizontal fold falls on a phone. Nothing above can see this:
+     the page itself never overflows — the table scrolls inside its own
+     container — so `measure.overflow` is 0 on a row whose state is cut in
+     half, which is what shipped (H-2981: "In moti" on Work at 390, and
+     Roadmap's "Ship next" cut harder). A row's work and its state are the two
+     columns that have to be readable without scrolling; everything after them
+     is what the region's label offers to scroll for. */
+  const cut = [], folds = [];
   for (const area of areas) for (const theme of themes) for (const width of widths) {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`${origin}/${area}`);
@@ -488,6 +496,20 @@ try {
     assert.deepEqual(audit, [], `${area} ${theme} ${width} accessibility violations: ${JSON.stringify(audit)}`);
     audited.push(`${area}/${theme}/${width}`);
     await page.screenshot({ path: join(dir, `shots/${area}-${theme}-${width}.png`), fullPage: true, animations: 'disabled' });
+    if (width === 390) {
+      /* By `data-column`, never by the words in the cell: a state renamed
+         tomorrow must still be measured rather than silently skipped. */
+      const states = await page.evaluate(() => [...document.querySelectorAll('[data-slot="table-container"]')].flatMap((container) => {
+        const edge = container.getBoundingClientRect().left + container.clientWidth;
+        return [...container.querySelectorAll('tbody [data-column="state"]')].map((cell) => ({
+          table: container.querySelector('table')?.getAttribute('aria-label'),
+          text: cell.textContent.trim(),
+          over: Math.round(cell.getBoundingClientRect().right - edge),
+        }));
+      }));
+      folds.push(...states);
+      cut.push(...states.filter((state) => state.over > 0).map((state) => `${area} ${theme}: ${state.table} cuts "${state.text}" by ${state.over}px`));
+    }
   }
   // A real iframe receives both its count and size without a second renderer.
   await page.goto(`${origin}/work`);
@@ -527,6 +549,13 @@ try {
     ['attention/dark', 'attention/light', 'failure/dark', 'failure/light', 'info/dark', 'info/light', 'success/dark', 'success/light'],
     'a role was never rendered anywhere, so nothing measured it',
   );
+  /* An area with no record table measures no fold, so the pass above is the
+     empty set unless Work's and Roadmap's tables were really read. */
+  assert.deepEqual(cut, [], 'a 390 window must read a row down to its state without scrolling');
+  assert.ok(folds.length >= 8, `only ${folds.length} state cells were measured at 390, so the fold was not really read`);
+  /* Reported, not asserted: how much room the tightest state had to spare. A
+     pass says nothing was cut; this says how close the next longer word is. */
+  const tightest = folds.reduce((worst, fold) => (fold.over > worst.over ? fold : worst));
   /* And every layout would pass with the audit skipped, which is exactly how it
      shipped: the count is what turns a skipped audit red instead of silent. */
   assert.equal(
@@ -535,7 +564,7 @@ try {
     `the WCAG audit ran on ${audited.length} layouts, not all ${areas.length * themes.length * widths.length}: ${audited.join(', ')}`,
   );
   assert.deepEqual(errors, []);
-  console.log(`All five areas, Work's and Roadmap's compact tables, bounded summaries and full records, held state, copy, focused refresh, embedded answer, runtime trace, team profiles, Inter, the four status roles measured at rest and on hovered and expanded rows in both themes, and all ${audited.length} layouts verified and audited against WCAG 2 A/AA with axe-core ${axeVersion}. Evidence: ${dir}`);
+  console.log(`All five areas, Work's and Roadmap's compact tables, bounded summaries and full records, held state, copy, focused refresh, embedded answer, runtime trace, team profiles, Inter, the four status roles measured at rest and on hovered and expanded rows in both themes, and all ${audited.length} layouts verified and audited against WCAG 2 A/AA with axe-core ${axeVersion}. At 390 the tightest of ${folds.length} state cells, "${tightest.text}" in ${tightest.table}, cleared the fold by ${-tightest.over}px. Evidence: ${dir}`);
   writeFileSync(join(dir, 'result.json'), JSON.stringify({ origin, artifacts: dir, errors, verified: new Date().toISOString() }, null, 2));
 } finally {
   await browser?.close();

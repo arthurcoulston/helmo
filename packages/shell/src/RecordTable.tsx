@@ -28,6 +28,17 @@ export function excerpt(text: string, limit = 320) {
   return { text: `${(boundary > limit / 2 ? cut.slice(0, boundary) : cut).trimEnd()}…`, truncated: true }
 }
 
+/* The first column carries the record itself and takes whatever width is left
+   over, but it needs a floor or a long title shreds into one word a line. That
+   floor is also what decides where the horizontal fold lands on a phone, and
+   at 64 it put the fold through the State badge: Work read "In moti" at 390
+   and Roadmap cut "Ship next" harder still (H-2981). A row's two load-bearing
+   columns are the work and what state it is in, so the floor is the widest one
+   that keeps both inside a 390 window; the columns after them are what the
+   region's label offers to scroll for. `verify:ui` measures it there, so a
+   wider floor or a longer state word goes red rather than quietly clipping. */
+export const recordColumn = "min-w-48 whitespace-normal"
+
 /* `has-aria-expanded:bg-muted/50` on upstream's TableRow is what tints the
    open row, so the toggle has to carry the state in aria rather than a class. */
 export function expandColumn<T extends RowData>(label: (row: T) => string): RecordColumn<T> {
@@ -64,7 +75,10 @@ export function RecordTable<T extends RowData>({ label, columns, rows, rowId, ex
   return <div className="min-w-0 overflow-hidden rounded-md border" role="region" aria-label={`${label} — scroll horizontally for all columns`}>
     <Table tabIndex={0} aria-label={label}>
       <TableHeader>{table.getHeaderGroups().map((group) => <TableRow key={group.id} className="hover:bg-transparent">
-        {group.headers.map((header) => <TableHead key={header.id} className={header.column.columnDef.meta?.className}>
+        {/* `data-column` is how the browser verification addresses a column —
+            by what it IS rather than by the words a cell happens to hold, so
+            measuring where the fold falls does not break on a renamed state. */}
+        {group.headers.map((header) => <TableHead key={header.id} data-column={header.column.id} className={header.column.columnDef.meta?.className}>
           {header.isPlaceholder ? null : <table.FlexRender header={header} />}
         </TableHead>)}
       </TableRow>)}</TableHeader>
@@ -73,7 +87,7 @@ export function RecordTable<T extends RowData>({ label, columns, rows, rowId, ex
           <TableRow id={row.id}>
             {/* getAllCells, not getVisibleCells: hiding columns is a feature
                 this table does not opt into, so that method is not here. */}
-            {row.getAllCells().map((cell) => <TableCell key={cell.id} className={cell.column.columnDef.meta?.className}>
+            {row.getAllCells().map((cell) => <TableCell key={cell.id} data-column={cell.column.id} className={cell.column.columnDef.meta?.className}>
               <table.FlexRender cell={cell} />
             </TableCell>)}
           </TableRow>

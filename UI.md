@@ -288,7 +288,13 @@ here about status or progress; that is R-46's question.
 **Work is the same compact reading.** Its groups — in motion, ready, blocked,
 standing, done, cancelled — are the same `RecordTable`, with columns chosen
 for scanning: the reference and title, the stream/project/type beneath it,
-the state, the priority, the owner, and when it last moved. A row also carries
+the state, the priority, the owner, and when it last moved. Those columns do
+not fit a phone, and the shared record column's floor is what decides where
+the horizontal fold falls: a row's work and its state stay inside a 390 window,
+and the priority, owner and last movement are what the region's label offers to
+scroll for. Until H-2946@dev.rev that floor was wider and the fold ran through
+the State badge on every table in both areas — Work read "In moti" at 390
+(H-2981@dev.rev) and Roadmap cut its state harder still. A row also carries
 the signals that should reach Arthur before he opens anything — what it waits
 on, that it is on hold, a date it cannot start before, a stale release
 handoff, a confidence below routine, an acceptance state, a closed ticket with
@@ -326,7 +332,10 @@ artifacts or rebuild that checkout as a workaround.
 It uses synthetic stores and the managed headless browser, exercising actual
 answers, copies, disclosures, two simultaneous windows, stale-answer refusal,
 embedded sizing, failed refreshes, keyboard table scrolling and both themes at
-390, 640 and 1280 pixels. Every one of those 30 layouts is audited against
+390, 640 and 1280 pixels. At 390 it also measures where each record table's
+fold falls, by `data-column` rather than by the words in a cell; the page
+itself never overflows there — the table scrolls inside its own container — so
+no other measurement in the run can see a state cut in half. Every one of those 30 layouts is audited against
 WCAG 2 A/AA by axe-core, a devDependency of `@helmo/shell` resolved from the
 package — there is nothing to set and no way to skip it, and the run asserts
 the audit count so a layout that went unaudited is a failure rather than a

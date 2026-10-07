@@ -13,6 +13,15 @@ longer.
 
 ## Unreleased — 0.9.5
 
+- A phone reads a row's state again. Work and Roadmap are wider than a 390
+  pixel window and scroll sideways by design, but the first column's floor put
+  the fold through the State badge, so every table in both areas showed a
+  state cut in half — "In moti" — with the priority, owner and last movement
+  off the edge behind it. The floor is now the widest one that keeps a row's
+  work and its state on screen together, and the browser verification measures
+  where that fold falls at 390 instead of trusting the page's own overflow,
+  which is zero whether the state is whole or halved.
+
 - `release status` no longer calls a restarted fleet a down one. The service
   manager restarts the supervisor on its own, and the replacement comes back on
   the same release under a new pid; nothing reconciled the activation receipt

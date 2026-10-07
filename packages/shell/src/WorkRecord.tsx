@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
-import { excerpt, expandColumn, RecordTable, type RecordColumn } from "./RecordTable"
+import { excerpt, expandColumn, RecordTable, recordColumn, type RecordColumn } from "./RecordTable"
 import { acceptanceRole, StatusAlert, StatusBadge, ticketStateRole, type StatusRole } from "./Status"
 
 type Evidence = { kind: string; ref: string; note?: string; role?: string }
@@ -317,7 +317,7 @@ function columnsFor(open: Opener): RecordColumn<Row>[] {
           <Signals row={record} />
         </div>
       },
-      meta: { className: "min-w-64 whitespace-normal" },
+      meta: { className: recordColumn },
     },
     { id: "state", header: () => "State", cell: ({ row }) => <StatusBadge status={ticketStateRole(row.original.status)}>{state(row.original.status)}</StatusBadge>, meta: { className: "w-28" } },
     { id: "priority", header: () => <span title="Priority: 0 critical, 3 low">P</span>, cell: ({ row }) => <span className="tabular-nums">{row.original.priority}</span>, meta: { className: "w-10 text-right" } },

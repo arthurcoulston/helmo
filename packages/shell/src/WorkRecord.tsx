@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { excerpt, expandColumn, RecordTable, type RecordColumn } from "./RecordTable"
+import { acceptanceRole, StatusAlert, StatusBadge, ticketStateRole, type StatusRole } from "./Status"
 
 type Evidence = { kind: string; ref: string; note?: string; role?: string }
 // Index into the row's own `evidence` array, with what the projection knows
@@ -101,7 +102,9 @@ export function TicketDetails({ id, revision, drawn }: { id: string; revision?: 
     ...data.deps.incoming.filter((d) => ["parent", "relates"].includes(d.type)).map((d) => ({ type: d.type === "parent" ? "parent of" : "related", id: d.from_id })),
   ] : []
   return <div className="flex min-w-0 flex-col gap-4 text-sm">
-    {state.error ? <Alert variant="destructive"><AlertTitle>Could not refresh the history</AlertTitle><AlertDescription>{state.error}</AlertDescription></Alert> : null}
+    {/* Attention, not failure: the record itself is already on screen from the
+        document the table was drawn from, and only its history is missing. */}
+    {state.error ? <StatusAlert status="attention"><AlertTitle>Could not refresh the history</AlertTitle><AlertDescription>{state.error}</AlertDescription></StatusAlert> : null}
     {!data ? <p className="text-muted-foreground">Loading record…</p> : <>
       {drawn ? null : <>
         <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{data.ticket.body}</p>
@@ -214,20 +217,28 @@ function RecordRef({ id }: { id: string }) {
  *  Each is the short form only. A hold's reason and a stale handoff's reason
  *  are sentences, and a sentence in a row is what made the cards tall — they
  *  are in the record, one control away, which is where the parked reason went
- *  on Roadmap for the same reason. */
+ *  on Roadmap for the same reason.
+ *
+ *  Three of these are deliberate and stay uncoloured (H-2978): waiting on a
+ *  dependency, a capacity hold and a date gate are the queue working as asked,
+ *  and the row already says so in words. What takes a colour is a record that
+ *  has gone wrong on its own — a handoff that no longer matches readiness, work
+ *  its author would not call routine, a closed ticket with nothing to show, and
+ *  the release review's verdict. */
 function Signals({ row }: { row: Row }) {
   const d = row.display
-  const marks = [
-    d.waits_on.length ? `Waits on ${d.waits_on.join(", ")}` : "",
-    d.held ? "On hold" : "",
-    d.gated ? `Not before ${row.not_before}` : "",
-    row.release_handoff?.current === false ? "Release handoff stale" : "",
-    row.confidence && row.confidence !== "routine" ? row.confidence.replaceAll("_", " ") : "",
-    d.acceptance.state !== "not_requested" ? `Acceptance ${d.acceptance.reason === "contested" ? "contested" : d.acceptance.state}` : "",
-    row.status === "done" && !row.evidence.length ? "No evidence" : "",
-  ].filter(Boolean)
+  const signals: { mark: string; status: StatusRole | null }[] = [
+    { mark: d.waits_on.length ? `Waits on ${d.waits_on.join(", ")}` : "", status: null },
+    { mark: d.held ? "On hold" : "", status: null },
+    { mark: d.gated ? `Not before ${row.not_before}` : "", status: null },
+    { mark: row.release_handoff?.current === false ? "Release handoff stale" : "", status: "attention" },
+    { mark: row.confidence && row.confidence !== "routine" ? row.confidence.replaceAll("_", " ") : "", status: row.confidence === "needs_review" ? "attention" : null },
+    { mark: d.acceptance.state !== "not_requested" ? `Acceptance ${d.acceptance.reason === "contested" ? "contested" : d.acceptance.state}` : "", status: acceptanceRole(d.acceptance.state, d.acceptance.reason) },
+    { mark: row.status === "done" && !row.evidence.length ? "No evidence" : "", status: "attention" },
+  ]
+  const marks = signals.filter((signal) => signal.mark)
   return marks.length ? <span className="flex flex-wrap gap-1 px-2">
-    {marks.map((mark) => <Badge key={mark} variant="outline">{mark}</Badge>)}
+    {marks.map(({ mark, status }) => <StatusBadge key={mark} variant="outline" status={status}>{mark}</StatusBadge>)}
   </span> : null
 }
 
@@ -252,7 +263,7 @@ export function TicketRecord({ row }: { row: Row }) {
       <SheetTitle className="break-words [overflow-wrap:anywhere]">{row.title}</SheetTitle>
       <SheetDescription asChild><div className="flex flex-wrap items-center gap-2 pt-1 text-xs">
         <RecordRef id={row.id} />
-        <Badge variant="secondary">{state(row.status)}</Badge>
+        <StatusBadge status={ticketStateRole(row.status)}>{state(row.status)}</StatusBadge>
         <Badge variant="outline">P{row.priority}</Badge>
         {row.blast_radius && row.blast_radius !== "none" ? <Badge variant="outline">{row.blast_radius}</Badge> : null}
         {row.schedule ? <Badge variant="outline">Recurring · {row.schedule}</Badge> : null}
@@ -308,7 +319,7 @@ function columnsFor(open: Opener): RecordColumn<Row>[] {
       },
       meta: { className: "min-w-64 whitespace-normal" },
     },
-    { id: "state", header: () => "State", cell: ({ row }) => <Badge variant="secondary">{state(row.original.status)}</Badge>, meta: { className: "w-28" } },
+    { id: "state", header: () => "State", cell: ({ row }) => <StatusBadge status={ticketStateRole(row.original.status)}>{state(row.original.status)}</StatusBadge>, meta: { className: "w-28" } },
     { id: "priority", header: () => <span title="Priority: 0 critical, 3 low">P</span>, cell: ({ row }) => <span className="tabular-nums">{row.original.priority}</span>, meta: { className: "w-10 text-right" } },
     { id: "assignee", header: () => "Who", cell: ({ row }) => <span className="text-xs">{row.original.assignee ?? "—"}</span>, meta: { className: "w-28" } },
     { id: "updated", header: () => "Updated", cell: ({ row }) => <span className="text-muted-foreground text-xs">{time(row.original.closed_at ?? row.original.updated_at)}</span>, meta: { className: "w-32" } },

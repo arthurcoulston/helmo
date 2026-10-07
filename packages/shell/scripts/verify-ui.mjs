@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -57,6 +58,28 @@ const longWork = create('A work record whose opening is not the work', {
 const decision = create('A decision awaiting the operator');
 store.returnToHuman(actor, decision.id, { situation: 'Fixture situation', question: 'Use the standard baseline?', recommendation: 'Use the selected baseline.' });
 
+/* One record per status COLOUR (H-2978), because a palette proved on nothing
+   that carries it is an empty set passing. These four put a live role on Work
+   in both themes: work in motion, a release review that accepted the work, one
+   that refused it, and a closed ticket with nothing to show for itself. */
+const moving = create('Work in motion reads as in motion');
+store.updateTicket(actor, { ticket_id: moving.id, status: 'in_progress', note: 'Claimed by the fixture worker.' });
+const reviewer = { name: 'fixture-reviewer', kind: 'agent', model: 'fixture', version: 'fixture' };
+const reviewed = (title, verdict) => {
+  const t = create(title);
+  /* An immutable ref: the store refuses anything short of a full sha, which
+     is the point of the completion record. */
+  const ref = `helmo@${createHash('sha1').update(t.id).digest('hex')}`;
+  store.updateTicket(actor, { ticket_id: t.id, status: 'done', note: `Finished ${t.id}.`, confidence: 'routine', evidence: [{ kind: 'commit', ref, role: 'result' }] });
+  store.recordProductCompletion(actor, { ticket_id: t.id, artifacts: [{ ref, author: 'fixture' }], note: 'Ready for an independent reading.' });
+  store.recordAcceptanceVerdict(reviewer, { ticket_id: t.id, refs: [ref], verdict, note: `The review ${verdict === 'pass' ? 'confirmed' : 'refused'} this exact ref.` });
+  return t;
+};
+const accepted = reviewed('An accepted release review says so', 'pass');
+const refused = reviewed('A refused release review says so', 'fail');
+const unproved = create('A closed ticket with nothing to show');
+store.updateTicket(actor, { ticket_id: unproved.id, status: 'done', note: 'Closed without recording what it produced.', confidence: 'needs_review' });
+
 const roadmap = new RoadmapStore(join(dir, 'roadmap/roadmap.db'));
 const project = roadmap.createProject(actor, { title: 'The complete standard UI foundation', status: 'ready', body: 'Preserve the full project record while using standard components.' });
 const objective = roadmap.setCharterItem(actor, { shape: 'objective', statement: 'A clear foundation', source: 'Fixture charter', horizon: 'near', rank: 1 });
@@ -72,6 +95,9 @@ const unruly = roadmap.createProject(actor, { title: 'An unruly record whose ope
 roadmap.updateProject(actor, { project_id: unruly.id, status: 'parked', parked_reason: 'Another project is the current focus.', unpark_condition: 'The current focus ships.', note: 'Parked by the fixture operator.' });
 const shaping = roadmap.createProject(actor, { title: 'A shaping project with no stated objective', status: 'shaping', body: 'Still being shaped.' });
 const watching = roadmap.createProject(actor, { title: 'A shipped project under observation', status: 'shipped_watching', body: 'Shipped and watched.' });
+/* And one that came through observation, so Roadmap carries the healthy role
+   as well as the in-motion one. */
+roadmap.createProject(actor, { title: 'A shipped project that settled', status: 'shipped_stable', body: 'Shipped and stable.' });
 
 const choice = create('Choose between the stored options');
 store.returnToHuman(actor, choice.id, { situation: 'Both options are valid.', question: 'Which option should be used?', recommendation: 'First', options: [{ label: 'First', consequence: 'Use the first path.' }, { label: 'Second', consequence: 'Use the second path.' }] });
@@ -102,6 +128,80 @@ try {
   page.setDefaultTimeout(15000);
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
+
+  /* ---------- the status palette, measured where it is painted (H-2978) ----------
+
+     Arthur's approved colours, as the browser must compute them. A role is
+     found by the token it NAMES in its class attribute rather than by the
+     selectors this change happened to touch, so a role added later to any
+     surface is measured without anyone remembering to widen this. */
+  const PALETTE = {
+    info: { light: ['rgb(73, 106, 138)', 'rgb(237, 242, 247)'], dark: ['rgb(169, 195, 219)', 'rgb(38, 51, 63)'] },
+    success: { light: ['rgb(73, 107, 85)', 'rgb(237, 244, 239)'], dark: ['rgb(174, 203, 183)', 'rgb(41, 55, 46)'] },
+    attention: { light: ['rgb(136, 101, 40)', 'rgb(250, 243, 229)'], dark: ['rgb(217, 189, 135)', 'rgb(61, 52, 36)'] },
+    failure: { light: ['rgb(153, 79, 82)', 'rgb(248, 238, 238)'], dark: ['rgb(222, 170, 170)', 'rgb(65, 44, 48)'] },
+  };
+  const luminance = (css) => {
+    const [r, g, b] = css.match(/[\d.]+/g).slice(0, 3)
+      .map((v) => Number(v) / 255)
+      .map((c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const contrast = (a, b) => {
+    const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+    return (hi + 0.05) / (lo + 0.05);
+  };
+  const seen = new Set();
+  /** Measure every rendered role on the current page, in the current theme. */
+  async function measurePalette(where, theme) {
+    /* A theme class put on from script cross-fades every `transition-all`
+       element, and a badge read mid-fade is sitting at the OTHER theme's colour
+       on this theme's ground — a real contrast failure, and a flaky one.
+       Settle on CSS transitions only: a skeleton's pulse never finishes. */
+    await page.waitForFunction(() => !document.getAnimations().some((a) => a.constructor.name === 'CSSTransition'));
+    /* Both ways in: the marker, and a class naming a token. An element that
+       lost its class entirely still has the marker and still gets measured. */
+    const found = await page.evaluate(() => [...document.querySelectorAll('[data-status-role], [class*="--helmo-"]')]
+      .filter((el) => el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden')
+      .map((el) => {
+        const classes = String(el.className);
+        /* The colour behind this element: its own if it paints one, else the
+           nearest ancestor that does. Text given only an ink sits on the page. */
+        let node = el, background = getComputedStyle(el).backgroundColor;
+        while (/^(transparent|rgba\(0, 0, 0, 0\))$/.test(background) && node.parentElement) {
+          node = node.parentElement;
+          background = getComputedStyle(node).backgroundColor;
+        }
+        return {
+          /* The marker first: StatusBadge and StatusAlert set it from the role
+             PROP, so an element carrying it must be fully painted whatever its
+             class attribute ended up saying — which is what catches a utility
+             Tailwind never generated or a merge that kept the stock colour.
+             The class is only the fallback, for ink applied to plain text. */
+          role: el.dataset.statusRole ?? (/--helmo-(\w+)-/.exec(classes) ?? [])[1],
+          tinted: Boolean(el.dataset.statusRole) || classes.includes('bg-[var(--helmo-'),
+          text: el.textContent.trim(),
+          color: getComputedStyle(el).color,
+          background,
+        };
+      }));
+    for (const item of found) {
+      const expected = PALETTE[item.role];
+      assert.ok(expected, `${where} ${theme}: an element names an unknown role "${item.role}"`);
+      const [ink, tint] = expected[theme];
+      assert.equal(item.color, ink, `${where} ${theme}: a ${item.role} element is not painted the approved ink — a class that never reached the stylesheet paints nothing and logs nothing`);
+      if (item.tinted) assert.equal(item.background, tint, `${where} ${theme}: a ${item.role} element asks for its tint and sits on ${item.background}`);
+      /* The reading that matters: the ratio the browser actually produces on
+         the surface this element actually landed on. */
+      const ratio = contrast(item.color, item.background);
+      assert.ok(ratio >= 4.5, `${where} ${theme}: ${item.role} "${item.text.slice(0, 40)}" reads ${ratio.toFixed(2)}:1 on ${item.background}`);
+      /* The tint is 1.1–1.45:1 against its surface by design, so colour can
+         never be the carrier: every role has to say what it means in words. */
+      assert.ok(item.text, `${where} ${theme}: a ${item.role} element carries colour and no text`);
+      seen.add(`${item.role}/${theme}`);
+    }
+    return found.length;
+  }
   // Work is a compact reading: the groups are tables, a collapsed row carries
   // no record body, and a sentence-length reason is in the record not the row.
   await page.goto(`${origin}/work`);
@@ -295,6 +395,7 @@ try {
     const measure = await page.evaluate(() => ({ font: getComputedStyle(document.body).fontFamily, overflow: document.documentElement.scrollWidth - innerWidth }));
     assert.match(measure.font, /Inter/);
     assert.ok(measure.overflow <= 1, `${theme} ${width}: ${measure.overflow}px overflow`);
+    await measurePalette(`${area} ${width}`, theme);
     if (process.env.HELMO_AXE_SOURCE && existsSync(process.env.HELMO_AXE_SOURCE)) {
       await page.addScriptTag({ path: process.env.HELMO_AXE_SOURCE });
       const audit = await page.evaluate(async () => (await window.axe.run(document, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21aa'] } })).violations.map((v) => ({ id: v.id, nodes: v.nodes.map((n) => ({ target: n.target, failureSummary: n.failureSummary })) })));
@@ -318,6 +419,14 @@ try {
   assert.equal(await page.getByText(project.title, { exact: true }).count(), 1);
   await page.reload();
   await page.getByText('Could not read roadmap', { exact: true }).waitFor();
+  /* A page that cannot be read at all is the one failure alert a reader meets,
+     and it only exists on this path — so it is measured here, in both themes,
+     rather than left to the layouts above where nothing is broken. */
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate((value) => document.documentElement.className = value, theme);
+    assert.ok(await measurePalette('an unreadable area', theme) > 0, 'the unreadable area carries no role at all');
+  }
+  await page.evaluate(() => document.documentElement.className = 'light');
   await page.unroute('**/api/v1/roadmap');
   // Keyboard scrolling keeps the table, not the entire document, moving.
   await page.setViewportSize({ width: 390, height: 900 });
@@ -325,8 +434,15 @@ try {
   await page.getByRole('table', { name: 'Loop status', exact: true }).focus();
   await page.keyboard.press('ArrowRight'); await page.waitForTimeout(250);
   assert.ok(await page.locator('[data-slot="table-container"]').evaluate((el) => el.scrollLeft > 0));
+  /* Every assertion above this line would pass on a page that painted no role
+     at all, which is how a palette ships as monochrome under a green run. */
+  assert.deepEqual(
+    [...seen].sort(),
+    ['attention/dark', 'attention/light', 'failure/dark', 'failure/light', 'info/dark', 'info/light', 'success/dark', 'success/light'],
+    'a role was never rendered anywhere, so nothing measured it',
+  );
   assert.deepEqual(errors, []);
-  console.log(`All five areas, Work's and Roadmap's compact tables, bounded summaries and full records, held state, copy, focused refresh, embedded answer, runtime trace, team profiles, Inter and all 34 layouts verified. Evidence: ${dir}`);
+  console.log(`All five areas, Work's and Roadmap's compact tables, bounded summaries and full records, held state, copy, focused refresh, embedded answer, runtime trace, team profiles, Inter, the four status roles measured in both themes, and all 30 layouts verified. Evidence: ${dir}`);
   writeFileSync(join(dir, 'result.json'), JSON.stringify({ origin, artifacts: dir, errors, verified: new Date().toISOString() }, null, 2));
 } finally {
   await browser?.close();

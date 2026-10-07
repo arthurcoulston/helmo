@@ -64,7 +64,9 @@
       "src/RecordTable.tsx",
       "src/RoadmapView.tsx",
       "src/RuntimeView.tsx",
-      "src/TeamView.tsx"
+      "src/TeamView.tsx",
+      "src/Status.tsx",
+      "src/status.css"
     ],
     "manifest": {
       "components.json": "aadc5e216b8c950c431eed626d98fa5334e379f88c100942b40f2370f41202f6",

@@ -43,8 +43,14 @@ before reading it is the division:
   `src/hooks/`, `src/components/theme-provider.tsx` and everything under
   `src/components/ui/`. Preflight, the cascade layers, the Mauve tokens and
   Inter are all upstream's, untouched.
-- **Ours.** `index.html`, `src/App.tsx`, `src/RecordTable.tsx` and the domain
-  view modules — the composition, the menu, the area views and the data reads.
+- **Ours.** `index.html`, `src/App.tsx`, `src/RecordTable.tsx`, `src/Status.tsx`,
+  `src/status.css` and the domain view modules — the composition, the menu, the
+  area views and the data reads.
+  `Status.tsx` and `status.css` are the four approved status colors and the only
+  place that decides which domain state is which role: added tokens beside the
+  preset, which is the one bounded addition UI.md permits and which changes no
+  generated file. `App.tsx` is what imports the stylesheet, because a Node-
+  rendered proof of those components has no loader for a CSS import.
   `RecordTable.tsx` is the one Data Table composition the areas share:
   upstream's Table driven by TanStack Table v9's feature set, one disclosure
   row per expanded record, expansion keyed by the record's own id so a poll

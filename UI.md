@@ -28,6 +28,55 @@ dependency. Keep generated component source and styling unmodified. Do not add
 font/theme overrides, custom CSS resets, cascade-layer changes, selector
 rewrites, style overrides or patched component behavior.
 
+### The one addition: four status colors
+
+Arthur approved a four-role status palette on 2026-10-06 (H-2978@dev.rev) and
+asked for it in the running dashboard. It is an **addition beside** the preset,
+not a deviation from it, and the line between those is what the rest of this
+section draws. What it permits is exactly the documented
+[Adding New Tokens](https://ui.shadcn.com/docs/theming) path and the `className`
+composition the [Badge](https://ui.shadcn.com/docs/components/radix/badge#custom-colors)
+and [Alert](https://ui.shadcn.com/docs/components/radix/alert#custom-colors)
+pages show: application tokens in an application stylesheet, named from
+application components. It permits nothing else. No generated file changes, the
+Mauve base/theme/chart colors, Inter and the radius are untouched, and
+`upstream:check` still proves every generated file byte-identical.
+
+The palette lives in `packages/shell/src/status.css` (eight tokens: an ink and a
+tint per role, in light and dark) and its meanings live in
+`packages/shell/src/Status.tsx` — one `StatusBadge`, one `StatusAlert`, and the
+mapping from each domain state to a role. No area carries a hex or its own
+severity rule.
+
+| Role | Means | Light ink / tint | Dark ink / tint |
+| --- | --- | --- | --- |
+| `info` | information, in progress | `#496A8A` / `#EDF2F7` | `#A9C3DB` / `#26333F` |
+| `success` | success, healthy | `#496B55` / `#EDF4EF` | `#AECBB7` / `#29372E` |
+| `attention` | needs Arthur | `#886528` / `#FAF3E5` | `#D9BD87` / `#3D3424` |
+| `failure` | failure, urgent intervention | `#994F52` / `#F8EEEE` | `#DEAAAA` / `#412C30` |
+
+Two rules make it a signal rather than decoration, and both are enforced:
+
+- **Ordinary and deliberate states take no color.** Queued work, a capacity
+  hold, a dependency wait, a date gate, a parked project, a stopped or idle
+  loop, and a closed ticket under a "Done" heading all stay the chrome they
+  were. Colouring them is how a backlog starts looking like an incident, and
+  then nothing stands out. Amber means Arthur; red means it has failed.
+- **Color is never the carrier.** The tint is deliberately 1.10–1.45:1 against
+  its surface, so it cannot meet the 3:1 a meaningful non-text indicator would
+  need — which is exactly why every role is applied to something that already
+  says what it means in words. The ink is what is measured: ≥4.5:1 on its own
+  tint and on every preset surface it can land on bare.
+
+`test/status-palette.test.mjs` holds the tokens, the meanings and the
+arithmetic; Arthur's approved hexes are written out there the way his preset
+selection is written out in `test/upstream.test.mjs`, so the file cannot check
+itself against itself. `scripts/verify-ui.mjs` measures the computed colors of
+every rendered role on every layout in both themes, finds them by the
+`data-status-role` marker rather than by the selectors this change touched, and
+fails if a role is never rendered at all — an unpainted palette would otherwise
+pass every assertion above it.
+
 Compose the application through documented shadcn components, props, variants
 and block patterns in the standard React/Tailwind setup. The framework owns the
 page styling. Replace the old DOM-adoption and runtime CSS-rewriting bridge;
@@ -269,6 +318,17 @@ coverage. Removed source-string tests described the superseded HTML/CSS, not
 the browser's behavior; they do not define the new component structure.
 
 `H-2940@dev.rev` and `H-2941@dev.rev` are the independent integrated reviews.
+
+**The four status colors are in.** Work's state and signal badges, Roadmap's
+state badges, the three awaiting-request chips, Runtime's supervisor, loop
+states and usage severities, and every alert now read in the approved roles;
+everything deliberate or ordinary stayed neutral. `src/status.css` and
+`src/Status.tsx` are the only places a status color or its meaning is written.
+The stock `destructive` variant is no longer used for an application failure:
+one bright red beside a muted palette was the inconsistency Arthur asked to
+remove, and the dusty red measures better on both themes than the stock value
+did. A refresh that failed while the last good reading is still on screen is
+amber, not red — nothing is broken for the reader, the reading is just old.
 
 Two things in the build are upstream's behavior rather than product decisions,
 kept because keeping the generated files unmodified is the requirement: the

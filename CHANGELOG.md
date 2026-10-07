@@ -13,6 +13,20 @@ longer.
 
 ## Unreleased — 0.9.5
 
+- Give state a colour, in four meanings and no more. Work in motion and a
+  project with the go-ahead read slate blue; a release review that accepted the
+  work and a shipped project that settled read sage green; anything that needs
+  you — a request, a blocked loop, a usage warning, a stale handoff, a closed
+  ticket with nothing to show — reads ochre amber; a refused review, a wedged
+  or crashed loop, a page that cannot be read at all reads dusty red. They are
+  deliberately desaturated: the interface stays quiet so that the few things
+  carrying a colour are the ones worth looking at. Ordinary queued work and
+  anything deliberately held — a capacity hold, a dependency wait, a date gate,
+  a parked project, a stopped loop, and the long tail of done tickets — stay
+  exactly the chrome they were, because a backlog that looks like an incident
+  is the same as no signal at all. Every colour sits beside words that say the
+  same thing, so nothing depends on seeing it.
+
 - Read Work and Roadmap as compact tables instead of walls of cards. Every
   group is a standard Data Table whose rows say what the work is, what state
   it is in, who owns the next step, when it last moved, and anything that

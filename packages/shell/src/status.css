@@ -1,0 +1,44 @@
+/* The four status roles, as application tokens.
+
+   Arthur approved this palette on 2026-10-06 (H-2978@dev.rev) from the
+   specimen at ~/.codex/visualizations/2026/10/06/01a11361-36e5-79d2-90f5-e24e36245496/helmo-muted-palette.html:
+   two colours per role and no third, because that is what the specimen shows.
+   Each role is an `ink` (the text) read on its own `tint` (the fill behind it).
+
+   These are the only colour literals the application owns. The Mauve
+   foundation, the radius, the font and every generated component stay exactly
+   as the b6YWkyPAm preset wrote them — this file adds names beside them and
+   patches nothing, which is the bounded theming UI.md records.
+
+   The tint can never carry a meaning on its own: it is 1.10–1.45:1 against the
+   surface it sits on, by design, because a quiet interface was the point. Every
+   role is therefore applied to something that also says what it means in words.
+   The ink is what is measured: 4.8–7.2:1 on its tint, and ≥4.7:1 on every
+   preset surface it can land on bare.
+
+   `App.tsx` imports this file — not `Status.tsx`, whose classes it serves,
+   because the result contract's proof renders those components in Node, where
+   a CSS import has no loader. `test/status-palette.test.mjs` asserts the import
+   is there, so dropping it goes red rather than quietly unpainting every role. */
+
+:root {
+    --helmo-info-ink: #496A8A;
+    --helmo-info-tint: #EDF2F7;
+    --helmo-success-ink: #496B55;
+    --helmo-success-tint: #EDF4EF;
+    --helmo-attention-ink: #886528;
+    --helmo-attention-tint: #FAF3E5;
+    --helmo-failure-ink: #994F52;
+    --helmo-failure-tint: #F8EEEE;
+}
+
+.dark {
+    --helmo-info-ink: #A9C3DB;
+    --helmo-info-tint: #26333F;
+    --helmo-success-ink: #AECBB7;
+    --helmo-success-tint: #29372E;
+    --helmo-attention-ink: #D9BD87;
+    --helmo-attention-tint: #3D3424;
+    --helmo-failure-ink: #DEAAAA;
+    --helmo-failure-tint: #412C30;
+}

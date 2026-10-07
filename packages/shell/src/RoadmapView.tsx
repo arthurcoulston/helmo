@@ -8,6 +8,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { excerpt, expandColumn, RecordTable, type RecordColumn } from "./RecordTable"
 import { CopyReference } from "./WorkRecord"
+import { projectStatusRole, StatusAlert, StatusBadge } from "./Status"
 
 type Usage = { value: number; basis: string; coverage: string }
 type Project = { id: string; title: string; body: string; status: string; actual_usd: number; updated_at: string; parked_reason?: string; unpark_condition?: string; usage_disclosure?: Usage }
@@ -65,14 +66,14 @@ function ProjectRecord({ row, detail, error }: { row: Row; detail: Detail | null
       <SheetTitle className="break-words [overflow-wrap:anywhere]">{project.title}</SheetTitle>
       <SheetDescription asChild><div className="flex flex-wrap items-center gap-2 pt-1 text-xs">
         <Reference id={project.id} />
-        <Badge variant="secondary">{status(project.status)}</Badge>
+        <StatusBadge status={projectStatusRole(project.status)}>{status(project.status)}</StatusBadge>
         {ranked ? <span>{ranked.explanation}</span> : null}
         <span>Updated {when(project.updated_at)}</span>
         <span>{usageLine(project)}</span>
       </div></SheetDescription>
     </SheetHeader>
     <div className="flex flex-col gap-4 overflow-y-auto p-4">
-      {error ? <Alert variant="destructive"><AlertTitle>Could not refresh this record</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
+      {error ? <StatusAlert status="attention"><AlertTitle>Could not refresh this record</AlertTitle><AlertDescription>{error}</AlertDescription></StatusAlert> : null}
       {decision ? <p className="text-sm">Ship next · decided by {decision.payload.decided_by}, {when(decision.ts)} — {decision.payload.reason}</p> : null}
       <p className="whitespace-pre-wrap break-words text-sm [overflow-wrap:anywhere]">{project.body}</p>
       {project.parked_reason || project.unpark_condition ? <Alert><AlertTitle>Parked</AlertTitle><AlertDescription>{project.parked_reason}{project.unpark_condition ? ` · Unparks when: ${project.unpark_condition}` : ""}</AlertDescription></Alert> : null}
@@ -124,7 +125,7 @@ function columnsFor(open: Opener): RecordColumn<Row>[] {
       },
       meta: { className: "min-w-64 whitespace-normal" },
     },
-    { id: "state", header: () => "State", cell: ({ row }) => <Badge variant="secondary">{status(row.original.project.status)}</Badge>, meta: { className: "w-28" } },
+    { id: "state", header: () => "State", cell: ({ row }) => <StatusBadge status={projectStatusRole(row.original.project.status)}>{status(row.original.project.status)}</StatusBadge>, meta: { className: "w-28" } },
     { id: "usage", header: () => "Usage est.", cell: ({ row }) => <span>${row.original.project.actual_usd.toFixed(2)}</span>, meta: { className: "w-24 text-right tabular-nums" } },
   ]
 }

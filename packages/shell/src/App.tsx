@@ -14,8 +14,12 @@ import {
   type LucideIcon,
 } from "lucide-react"
 
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
+import { inkRole, StatusAlert, StatusBadge, type StatusRole } from "./Status"
+/* The four approved status tokens. Here rather than in Status.tsx because a
+   Node-rendered proof of those components has no loader for a stylesheet. */
+import "./status.css"
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -341,7 +345,7 @@ function RecordingStatus({ recording }: { recording: Recording }) {
       aria-live="polite"
       className={
         recording.state === "failed"
-          ? "text-xs text-destructive"
+          ? `text-xs ${inkRole("failure")}`
           : "text-muted-foreground text-xs"
       }
     >
@@ -351,9 +355,16 @@ function RecordingStatus({ recording }: { recording: Recording }) {
 }
 
 /** Each card names its own kind, in the same place, in words. The reader
- *  settles "what is being asked of me" from the chip, not from the control. */
-function KindChip({ children }: { children: React.ReactNode }) {
-  return <Badge variant="outline" className="whitespace-normal">{children}</Badge>
+ *  settles "what is being asked of me" from the chip, not from the control.
+ *
+ *  All three kinds carry the same amber, because what they have in common is
+ *  exactly what the colour says — this one needs Arthur. They stay distinct the
+ *  way they already did and the way that survives being read aloud: the words,
+ *  the icon and the control. A fourth colour per kind would make amber mean
+ *  "decision" and leave nothing meaning "yours". A request too broken to read
+ *  is the exception: it is a failure of the record, not a thing to answer. */
+function KindChip({ status = "attention", children }: { status?: StatusRole; children: React.ReactNode }) {
+  return <StatusBadge variant="outline" status={status} className="whitespace-normal">{children}</StatusBadge>
 }
 
 function RequestMeta({ request }: { request: AwaitingCommon }) {
@@ -423,7 +434,7 @@ function UnreadableCard({ request }: { request: Decision }) {
         <RequestMeta request={request} />
         <CardTitle className="text-base">{request.title}</CardTitle>
         <div>
-          <KindChip>⚠ Request unreadable</KindChip>
+          <KindChip status="failure">⚠ Request unreadable</KindChip>
         </div>
       </CardHeader>
       <CardContent>
@@ -731,16 +742,16 @@ function AreaView({ area, areas }: { area: Destination; areas: string[] }) {
 
   if (state.status === "error") {
     return (
-      <Alert variant="destructive">
+      <StatusAlert status="failure">
         <AlertTitle>Could not read {area.id}</AlertTitle>
         <AlertDescription>{state.message}</AlertDescription>
-      </Alert>
+      </StatusAlert>
     )
   }
 
   const provenance = state.data as { installation?: { id?: string; label?: string }; running?: { state: string; commit?: string; dirty?: boolean; detail: string } }
   return <>
-    {state.warning ? <Alert variant="destructive"><AlertTitle>Refresh failed</AlertTitle><AlertDescription>Showing the last good reading from {state.readAt}: {state.warning}</AlertDescription></Alert> : null}
+    {state.warning ? <StatusAlert status="attention"><AlertTitle>Refresh failed</AlertTitle><AlertDescription>Showing the last good reading from {state.readAt}: {state.warning}</AlertDescription></StatusAlert> : null}
     <AreaContent area={area} state={state} selected={selected} areas={areas} />
     <p className="text-muted-foreground text-xs">Refreshed {state.readAt} · updates every 15 seconds{provenance.installation?.id ? ` · installation ${provenance.installation.id}` : ""}</p>
     {provenance.running && typeof provenance.running.state === "string" ? <Collapsible><CollapsibleTrigger asChild><Button variant="ghost" size="sm">Build details</Button></CollapsibleTrigger><CollapsibleContent className="text-muted-foreground pt-2 text-xs [overflow-wrap:anywhere]">Running {provenance.running.commit?.slice(0, 7) ?? "unstamped"}{provenance.running.dirty ? " (dirty)" : ""} · {provenance.running.state} · {provenance.running.detail}</CollapsibleContent></Collapsible> : null}
@@ -761,19 +772,19 @@ function AreaContent({ area, state, selected, areas }: { area: Destination; stat
        is an error to say out loud rather than a page to draw half of. */
     if (!awaiting) {
       return (
-        <Alert variant="destructive">
+        <StatusAlert status="failure">
           <AlertTitle>Could not read what is awaiting you</AlertTitle>
           <AlertDescription>
             The work document carried no requests. This view needs them
             presented by the server — the option letters and the fingerprints
             are not things a browser may compute.
           </AlertDescription>
-        </Alert>
+        </StatusAlert>
       )
     }
     if (new URLSearchParams(location.search).get("section") === "awaiting") return <AwaitingYou awaiting={awaiting} />
     const record = (state.data as { record?: WorkRecordData }).record
-    if (!record) return <Alert variant="destructive"><AlertTitle>Could not read the work record</AlertTitle><AlertDescription>The server returned no record sections.</AlertDescription></Alert>
+    if (!record) return <StatusAlert status="failure"><AlertTitle>Could not read the work record</AlertTitle><AlertDescription>The server returned no record sections.</AlertDescription></StatusAlert>
     return <>
       <WorkView awaiting={awaiting} record={record} selected={selected} />
     </>
@@ -916,7 +927,7 @@ export function App() {
       return r.json()
     }).then(setConfig).catch((e: Error) => setError(e.message))
   }, [])
-  if (error) return <div className="p-4"><Alert variant="destructive"><AlertTitle>Could not open Helmo</AlertTitle><AlertDescription>{error}</AlertDescription></Alert></div>
+  if (error) return <div className="p-4"><StatusAlert status="failure"><AlertTitle>Could not open Helmo</AlertTitle><AlertDescription>{error}</AlertDescription></StatusAlert></div>
   if (!config) return <div className="p-4"><Loading /></div>
   const area = activeArea(config.defaultArea)
   if (new URLSearchParams(location.search).get("section") === "awaiting") {

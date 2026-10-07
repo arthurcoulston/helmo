@@ -1,9 +1,10 @@
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { loopStateRole, StatusAlert, StatusBadge, usageSeverityRole } from "./Status"
 
 export type RuntimeData = {
   supervisor: number | null
@@ -18,16 +19,23 @@ export function RuntimeView({ data, workAvailable }: { data: RuntimeData; workAv
   return <>
     <div className="flex flex-wrap items-center gap-2 text-sm">
       <Badge variant="secondary">Read-only</Badge>
-      <span>Supervisor {data.supervisor_state === "unknown" ? `unobservable (recorded pid ${data.supervisor})` : data.supervisor ? `running (pid ${data.supervisor})` : "down"}</span>
+      {/* The one health reading on this page. A supervisor that is down or
+          unobservable is the fleet not working, whichever of the two it is.
+          The pid is beside the badge rather than in it: a badge does not wrap,
+          and a narrow monitoring window is what this page is read in. */}
+      <StatusBadge status={data.supervisor_state === "unknown" ? "attention" : data.supervisor ? "success" : "attention"}>
+        Supervisor {data.supervisor_state === "unknown" ? "unobservable" : data.supervisor ? "running" : "down"}
+      </StatusBadge>
+      {data.supervisor ? <span className="text-muted-foreground text-xs">{data.supervisor_state === "unknown" ? "recorded " : ""}pid {data.supervisor}</span> : null}
       <Badge variant="outline">Installation {data.installation.label}</Badge>
     </div>
-    {data.installation.detail ? <Alert variant="destructive"><AlertTitle>Installation is unclear</AlertTitle><AlertDescription>{data.installation.detail}</AlertDescription></Alert> : null}
+    {data.installation.detail ? <StatusAlert status="failure"><AlertTitle>Installation is unclear</AlertTitle><AlertDescription>{data.installation.detail}</AlertDescription></StatusAlert> : null}
     <div className="grid gap-3 md:grid-cols-2">
       {data.reading.usage.map((usage) => <Card key={usage.name}>
         <CardHeader><CardTitle>{usage.name} usage</CardTitle></CardHeader>
         <CardContent className="flex flex-col gap-2 text-sm [overflow-wrap:anywhere]">
           <p>{usage.line}</p>
-          {usage.severity !== "normal" ? <div><Badge variant="outline">{usage.severity === "unknown" ? "No reading" : usage.severity}</Badge></div> : null}
+          {usage.severity !== "normal" ? <div><StatusBadge variant="outline" status={usageSeverityRole(usage.severity)}>{usage.severity === "unknown" ? "No reading" : usage.severity}</StatusBadge></div> : null}
         </CardContent>
       </Card>)}
     </div>
@@ -42,7 +50,7 @@ export function RuntimeView({ data, workAvailable }: { data: RuntimeData; workAv
           {data.loops.map((loop) => <TableRow key={loop.name}>
             <TableCell className="align-top font-medium">{loop.name}</TableCell>
             <TableCell className="align-top">
-              <Badge variant="outline">{loop.state}</Badge>
+              <StatusBadge variant="outline" status={loopStateRole(loop.state)}>{loop.state}</StatusBadge>
               {loop.reason ? <p className="mt-2 max-w-64 whitespace-normal text-xs [overflow-wrap:anywhere]">{loop.reason}</p> : null}
             </TableCell>
             <TableCell className="align-top">{loop.workstream}</TableCell>
@@ -66,7 +74,7 @@ export function RuntimeView({ data, workAvailable }: { data: RuntimeData; workAv
     <Collapsible>
       <CollapsibleTrigger asChild><Button variant="outline" size="sm">Build and installation details</Button></CollapsibleTrigger>
       <CollapsibleContent className="flex flex-col gap-2 pt-3 text-sm [overflow-wrap:anywhere]">
-        {data.reading.severity ? <Alert><AlertTitle>Build needs attention</AlertTitle><AlertDescription>{data.reading.provenance}</AlertDescription></Alert> : <p>{data.reading.provenance}</p>}
+        {data.reading.severity ? <StatusAlert status="attention"><AlertTitle>Build needs attention</AlertTitle><AlertDescription>{data.reading.provenance}</AlertDescription></StatusAlert> : <p>{data.reading.provenance}</p>}
         <p>Home: {data.installation.home}</p>
         {data.installation.release ? <p>Release: {data.installation.release}</p> : null}
       </CollapsibleContent>

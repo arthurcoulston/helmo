@@ -77,9 +77,18 @@ test('the generated configuration is the one that was asked for', () => {
 
 test('the application code is the only hand-written source', () => {
   assert.ok(pin.files.local.includes('src/App.tsx'));
-  const app = readFileSync(join(root, 'src/App.tsx'), 'utf8');
-  const imports = [...app.matchAll(/from "@\/components\/ui\/([a-z-]+)"/g)].map((match) => match[1]);
-  assert.ok(imports.length > 0, 'the application imports no components');
-  const missing = imports.filter((name) => !(`src/components/ui/${name}.tsx` in pin.files.manifest));
+  /* Every hand-written module, not only App.tsx: a view that reached for a
+     component nobody installed would build here and 404 after a refresh. */
+  const sources = pin.files.local.filter((path) => path.endsWith('.tsx'));
+  assert.ok(sources.length > 1, 'the pin records no view modules');
+  const missing = [];
+  for (const path of sources) {
+    const source = readFileSync(join(root, path), 'utf8');
+    const imports = [...source.matchAll(/from "@\/components\/ui\/([a-z-]+)"/g)].map((match) => match[1]);
+    assert.ok(imports.length > 0, `${path} imports no components`);
+    for (const name of imports) {
+      if (!(`src/components/ui/${name}.tsx` in pin.files.manifest)) missing.push(`${path} → ${name}`);
+    }
+  }
   assert.deepEqual(missing, [], `imported but not generated: ${missing.join(', ')}`);
 });

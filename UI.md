@@ -203,6 +203,24 @@ preset and refreshed is internally consistent and still fails.
 newer release. 4.21.3 is the current latest, so the recorded evidence is a
 same-version full refresh, not a version-upgrade claim.
 
+**Roadmap is a compact reading.** Its groups are standard Data Tables — the
+documented shadcn composition, which is TanStack Table v9's feature set
+(`tableFeatures`, `useTable`, `table.FlexRender`) over the generated Table —
+in the shared `packages/shell/src/RecordTable.tsx`. A row carries the rank,
+the reference, the title, the server's own ranking explanation, the state and
+the recorded usage estimate, in the groups and the ranked order the server
+sends. Expanding a row shows the opening of the record, bounded at 320
+characters and cut at a word boundary, plus the way into the full record:
+it is an excerpt and is never presented as a summary, because no stored field
+says in one line what a project is and deriving a sentence would put a meaning
+in front of the reader that nobody wrote. The complete project — body, parked
+reason and its exit, citations, claims, dependencies, history — is an
+unmodified Sheet, opened from the title without expanding first. The old
+"Waits on" and "Advances nothing stated" badges are gone: the server's
+explanation already says both, under exactly the conditions the badges tested,
+and only ever on a row that also carried the explanation. Nothing was decided
+here about status or progress; that is R-46's question.
+
 **All five areas now use the same standard application.** Overview, Work,
 Roadmap, Team and Runtime share the official sidebar and components. Work,
 Roadmap and Runtime standalone entry points serve that same built document;

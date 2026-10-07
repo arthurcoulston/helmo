@@ -56,6 +56,14 @@ roadmap.cite(actor, { project_id: project.id, objective_id: objective.id, claim:
 roadmap.recordClaim(actor, { project_id: project.id, kind: 'value', level: 'high', reason: 'Every operator reading benefits.' });
 roadmap.recordClaim(actor, { project_id: project.id, kind: 'effort', size: 'M', predicted_usd: 20, reason: 'A finite set of existing screens.' });
 roadmap.setShipNext(actor, { project_id: project.id, decided_by: 'Fixture operator', reason: 'The foundation is the next work.' });
+/* Three more projects, so the compact reading is proved on what it has to
+   survive: a record far longer than a row can carry whose opening is filing
+   prose rather than meaning, a second ranked row to compare the order
+   against, and an unranked shipped one. */
+const unruly = roadmap.createProject(actor, { title: 'An unruly record whose opening is not the project', status: 'shaping', body: `${'Filing provenance recorded when this project was last reconciled, which is context rather than the project itself. '.repeat(5)}\n\nOutcome: the thing a reader actually wants from this record.` });
+roadmap.updateProject(actor, { project_id: unruly.id, status: 'parked', parked_reason: 'Another project is the current focus.', unpark_condition: 'The current focus ships.', note: 'Parked by the fixture operator.' });
+const shaping = roadmap.createProject(actor, { title: 'A shaping project with no stated objective', status: 'shaping', body: 'Still being shaped.' });
+const watching = roadmap.createProject(actor, { title: 'A shipped project under observation', status: 'shipped_watching', body: 'Shipped and watched.' });
 
 const choice = create('Choose between the stored options');
 store.returnToHuman(actor, choice.id, { situation: 'Both options are valid.', question: 'Which option should be used?', recommendation: 'First', options: [{ label: 'First', consequence: 'Use the first path.' }, { label: 'Second', consequence: 'Use the second path.' }] });
@@ -150,13 +158,73 @@ try {
   await page.getByRole('button', { name: `Copy ${ready.id}`, exact: true }).focus();
   await page.keyboard.press('Enter');
   await page.getByRole('status').filter({ hasText: `${ready.id} copied` }).waitFor();
-  await page.goto(`${origin}/roadmap#${project.id}`);
-  await page.getByText(project.body, { exact: true }).waitFor();
-  await page.getByText(/decided by Fixture operator/).waitFor();
-  await page.getByRole('button', { name: 'History', exact: true }).click();
-  await page.getByText(/ship next set/).waitFor();
-  await page.getByRole('button', { name: `Copy ${project.id}`, exact: true }).click();
+  // Roadmap is a compact table: a collapsed row carries no record body, and
+  // the groups and the server's ranked order are what the rows are.
+  await page.goto(`${origin}/roadmap`);
+  const list = page.getByRole('table', { name: 'The list', exact: true });
+  await list.locator(`tr#${unruly.id}`).waitFor();
+  assert.equal(await page.getByText(project.body, { exact: true }).count(), 0, 'a collapsed row must not carry the record body');
+  const ranking = (await (await page.request.get(`${origin}/api/v1/roadmap`)).json()).data.ranked;
+  assert.deepEqual(
+    await list.locator('tbody tr[id]').evaluateAll((rows) => rows.map((row) => row.id)),
+    ranking.filter((r) => r.project.status !== 'ship_next').map((r) => r.project.id),
+    'the table must keep the order the server ranked',
+  );
+  assert.deepEqual(
+    await page.getByRole('table', { name: 'Ship next', exact: true }).locator('tbody tr[id]').evaluateAll((rows) => rows.map((row) => row.id)),
+    [project.id],
+  );
+  await page.getByRole('table', { name: 'Shipped — watching', exact: true }).locator(`tr#${watching.id}`).getByText('—', { exact: true }).waitFor();
+  // The server's own explanation is the only place a row says these things.
+  await page.locator(`tr#${shaping.id}`).getByText('shaping, advances nothing stated', { exact: true }).waitFor();
+  assert.equal(
+    (await page.locator(`tr#${shaping.id}`).innerText()).match(/advances nothing stated/g).length,
+    1,
+    'the row must not render the same ranking fact twice',
+  );
+  // An expanded row is the record's opening, bounded, and nothing else.
+  await page.locator(`tr#${unruly.id}`).getByRole('button', { name: `Summary of ${unruly.id}`, exact: true }).click();
+  const summary = page.locator(`[data-expanded-for="${unruly.id}"]`);
+  const preview = await summary.locator('p').innerText();
+  assert.ok(preview.startsWith('Filing provenance recorded when'), `the preview is not the record's opening: ${preview.slice(0, 40)}`);
+  assert.ok(preview.length <= 321 && preview.endsWith('…'), `the preview is not bounded: ${preview.length} characters`);
+  assert.equal(await summary.getByRole('button', { name: 'History', exact: true }).count(), 0, 'an expanded row carries no history');
+  await summary.getByRole('button', { name: /^Open full view/ }).waitFor();
+  // Expansion is keyed by the record, so a refresh cannot close it.
+  await page.waitForTimeout(15500);
+  assert.equal(await page.locator(`[data-expanded-for="${unruly.id}"]`).count(), 1, 'refresh must keep the row expanded');
+  // The complete project is a Sheet, reachable without expanding first, and
+  // closing it returns to the control that opened it.
+  await page.locator(`tr#${project.id}`).getByRole('button', { name: project.title, exact: true }).focus();
+  await page.keyboard.press('Enter');
+  const sheet = page.getByRole('dialog');
+  await sheet.getByText(project.body, { exact: true }).waitFor();
+  await sheet.getByText(/decided by Fixture operator/).waitFor();
+  await sheet.getByText(/A consistent interface makes the work legible/).waitFor();
+  await sheet.getByText(/Every operator reading benefits/).waitFor();
+  await sheet.getByRole('button', { name: 'History', exact: true }).click();
+  await sheet.getByText(/ship next set/).waitFor();
+  await sheet.getByRole('button', { name: `Copy ${project.id}`, exact: true }).click();
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), project.id);
+  for (const theme of ['light', 'dark']) for (const width of [390, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.evaluate((value) => document.documentElement.className = value, theme);
+    await page.waitForTimeout(250);
+    await page.screenshot({ path: join(dir, `shots/roadmap-record-${theme}-${width}.png`), animations: 'disabled' });
+  }
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.evaluate(() => document.documentElement.className = 'light');
+  await page.keyboard.press('Escape');
+  await sheet.waitFor({ state: 'detached' });
+  assert.equal(
+    await page.evaluate(() => document.activeElement?.textContent?.trim()),
+    project.title,
+    'closing the record must return focus to the control that opened it',
+  );
+  // The parked reason and its exit are in the record, not in the row.
+  assert.equal(await page.locator(`tr#${unruly.id}`).getByText('Another project is the current focus.').count(), 0);
+  await page.goto(`${origin}/roadmap#${unruly.id}`);
+  await page.getByRole('dialog').getByText('Another project is the current focus. · Unparks when: The current focus ships.', { exact: true }).waitFor();
   await page.goto(`${origin}/run`);
   await page.getByRole('table', { name: 'Loop status', exact: true }).waitFor();
   await page.getByText('BLOCKED', { exact: true }).waitFor();
@@ -193,10 +261,10 @@ try {
   await page.waitForFunction(() => window.sectionReports?.some((r) => r.count === 1 && r.height > 100));
   // Failed polling keeps actual content and announces the last good reading.
   await page.goto(`${origin}/roadmap`);
-  await page.getByText(project.body, { exact: true }).waitFor();
+  await page.getByText(project.title, { exact: true }).waitFor();
   await page.route('**/api/v1/roadmap', (route) => route.fulfill({ status: 503, body: 'fixture unavailable' }));
   await page.getByText('Refresh failed', { exact: true }).waitFor({ timeout: 20000 });
-  assert.equal(await page.getByText(project.body, { exact: true }).count(), 1);
+  assert.equal(await page.getByText(project.title, { exact: true }).count(), 1);
   await page.reload();
   await page.getByText('Could not read roadmap', { exact: true }).waitFor();
   await page.unroute('**/api/v1/roadmap');
@@ -207,7 +275,7 @@ try {
   await page.keyboard.press('ArrowRight'); await page.waitForTimeout(250);
   assert.ok(await page.locator('[data-slot="table-container"]').evaluate((el) => el.scrollLeft > 0));
   assert.deepEqual(errors, []);
-  console.log(`All five areas, record history, held state, copy, focused refresh, embedded answer, runtime trace, team profiles, Inter and all 30 layouts verified. Evidence: ${dir}`);
+  console.log(`All five areas, Roadmap's compact table, bounded summary and full record, held state, copy, focused refresh, embedded answer, runtime trace, team profiles, Inter and all 34 layouts verified. Evidence: ${dir}`);
   writeFileSync(join(dir, 'result.json'), JSON.stringify({ origin, artifacts: dir, errors, verified: new Date().toISOString() }, null, 2));
 } finally {
   await browser?.close();

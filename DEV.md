@@ -43,8 +43,14 @@ before reading it is the division:
   `src/hooks/`, `src/components/theme-provider.tsx` and everything under
   `src/components/ui/`. Preflight, the cascade layers, the Mauve tokens and
   Inter are all upstream's, untouched.
-- **Ours.** `index.html`, `src/App.tsx` and domain view modules — the composition, the menu, the
-  area views and the data reads. Plus `upstream.json`, `scripts/upstream.mjs`
+- **Ours.** `index.html`, `src/App.tsx`, `src/RecordTable.tsx` and the domain
+  view modules — the composition, the menu, the area views and the data reads.
+  `RecordTable.tsx` is the one Data Table composition the areas share:
+  upstream's Table driven by TanStack Table v9's feature set, one disclosure
+  row per expanded record, expansion keyed by the record's own id so a poll
+  cannot close it. Adding a hand-written module means adding it to
+  `upstream.json`'s `files.local` too; the offline test reads every `.tsx`
+  there and fails on a component no refresh would install. Plus `upstream.json`, `scripts/upstream.mjs`
   and `test/upstream.test.mjs`, which are the relationship with upstream
   rather than part of the product.
 
@@ -60,9 +66,11 @@ upstream's real output rather than a snapshot of it that could quietly age.
 `test/upstream.test.mjs` is the offline half: it checks the manifest, so an
 edit to generated source is a test failure.
 
-**Every area is in this application.** Roadmap's server-ranked groups, charter,
-claims and lazy history are composed in `RoadmapView.tsx`; Runtime's complete
-status projection uses the official Table in `RuntimeView.tsx`. Team profiles
+**Every area is in this application.** Roadmap's server-ranked groups are
+compact Data Tables composed in `RoadmapView.tsx` over the shared
+`RecordTable.tsx`; the charter, claims and lazy history are in the Sheet that
+table opens. Runtime's complete status projection uses the official Table in
+`RuntimeView.tsx`. Team profiles
 are fetched only from configured roster members and shown in standard
 Collapsible components; a missing profile is an explicit Alert. All standalone
 entries serve the same application with navigation limited to their API areas.

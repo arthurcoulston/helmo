@@ -61,6 +61,7 @@
       "scripts/upstream.mjs",
       "test/upstream.test.mjs",
       "src/WorkRecord.tsx",
+      "src/RecordTable.tsx",
       "src/RoadmapView.tsx",
       "src/RuntimeView.tsx",
       "src/TeamView.tsx"

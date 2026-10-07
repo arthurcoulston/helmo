@@ -800,6 +800,21 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   record `running`. The detached restart watch records `failed` and recovery if
   no supervisor returns; identity conflicts refuse at the CLI door before any
   activation record or sentinel is written.
+  - **A restart is not a failure, and the record has to be told** (H-2985).
+    Nothing reconciled the receipt when launchd restarted the supervisor on its
+    own, so it went on naming a dead pid, status read that as `NOT RUNNING`, and
+    the recovery line it printed told the operator to roll back off a correctly
+    running release — the dangerous direction, fired hardest during an
+    activation preflight, the one procedure that has agreed to halt on drift.
+    `recordRestart` closes the gap at the source: a supervisor starting outside
+    an activation re-attests its own evidence, gated on `loadedFromRelease` —
+    the loaded directory under `<release>/<component>/…` and that component's
+    selected commit, never a configured ref and never a dirty stamp (H-2432).
+    `describeDeployment` is the second half for a record nobody re-attested: it
+    reads the supervisor's `RUNNING` marker through the same predicate and the
+    same liveness rule (`markerObservation`, shared with `sentinels.ts` so the
+    recycled-pid defence of H-154 is not written twice), and prints `RESTARTED`
+    rather than a false failure. Recovery prints only when something is wrong.
 - `remove.ts` — **the one command that deletes an installation's records**
   (H-2512). `rev install remove [--confirm]`. Every other removal rev has keeps
   the data: `rev service uninstall` takes the definition and leaves the store,

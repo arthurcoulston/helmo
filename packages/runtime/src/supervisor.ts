@@ -23,7 +23,7 @@ import { endSessionGroup, sessionGroupsOf } from './shim.js';
 import { REDEPLOY_EXIT, RedeployRequest, armRedeployWatch, readRedeploy, reportRedeployLanded } from './redeploy.js';
 import { agentFalseAlarmDisposition, answeredResumeEscalation, completeAnsweredResume, createIntakeAssignment, failAnsweredResume, recordAgentResumeFailure, recordRelapse, cliError, ticketStatus } from './helm.js';
 import { GlobalConfig, LoopConfig } from './types.js';
-import { completeActivation, deploymentFile } from './deployment.js';
+import { completeActivation, deploymentFile, recordRestart } from './deployment.js';
 import { readSelection, selectionFile } from './release.js';
 import { target } from './install.js';
 import { intakePreparationPass } from './intake-preparation.js';
@@ -108,7 +108,12 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
   const selected = selectionFile();
   if (selected) {
     const selection = readSelection(selected);
-    if (selection) completeActivation(deploymentFile(selected), selection, target().label);
+    // Finishing an activation and coming back from an ordinary restart are
+    // different records: the first completes a pending attempt, the second
+    // corrects live evidence the service manager has just made stale (H-2985).
+    if (selection && !completeActivation(deploymentFile(selected), selection, target().label)) {
+      recordRestart(deploymentFile(selected), selection, target().label);
+    }
   }
   process.on('exit', () => sClear(SUP, 'RUNNING'));
   // A REDEPLOY found at startup is the record of the restart that just

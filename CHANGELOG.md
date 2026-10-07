@@ -13,6 +13,18 @@ longer.
 
 ## Unreleased — 0.9.5
 
+- `release status` no longer calls a restarted fleet a down one. The service
+  manager restarts the supervisor on its own, and the replacement comes back on
+  the same release under a new pid; nothing reconciled the activation receipt
+  when it did, so status read the old pid as dead and printed the one piece of
+  advice that would have made things worse — roll back, then activate, off a
+  release that was running correctly. A supervisor starting outside an
+  activation now re-attests its own evidence, and only when the code it loaded
+  is the selected release's own; where no supervisor has, status asks the live
+  marker and says which pid restarted and what build it loaded. Recovery
+  instructions are printed where something needs recovering, not under a
+  healthy deployment.
+
 - Give state a colour, in four meanings and no more. Work in motion and a
   project with the go-ahead read slate blue; a release review that accepted the
   work and a shipped project that settled read sage green; anything that needs

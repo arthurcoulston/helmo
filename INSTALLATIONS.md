@@ -262,6 +262,20 @@ coverage, identity, refs, selection, or liveness disagree. It never promotes
 selection cannot hide the independently readable recovery instruction in the
 activation record.
 
+A dead recorded supervisor pid is not by itself a down fleet. launchd and
+systemd restart the supervisor on their own — that is the point of the stable
+launcher — and the replacement comes back on the same release under a new pid.
+So a supervisor that starts outside an activation re-attests its own evidence
+in the record, and only when the bytes it loaded are the selected release's own:
+loaded code under `<release directory>/<component>/…` carrying that component's
+selected commit. A supervisor back on anything else leaves the record saying so.
+Where the record was not reconciled, status asks the supervisor's `RUNNING`
+marker before concluding anything, and reports `RESTARTED` with the live pid and
+the build it loaded instead of `NOT RUNNING`. Recovery is printed only where
+something needs recovering: a healthy running record's recovery instruction is
+how an operator *would* roll back, and printed under a false `NOT RUNNING` it
+reads as advice to abandon a correctly running release (H-2985).
+
 Activate an already selected set with `rev release activate`. It records the
 attempt, asks the existing supervisor to drain at the next poll, lets every
 in-flight iteration finish its close-out, and relies on the stable service

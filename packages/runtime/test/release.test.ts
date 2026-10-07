@@ -1,11 +1,13 @@
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { Migration, ReleaseError, describe as describeRelease, readSelection, releaseProblems, rollback, upgrade, writeSelection } from '../src/release.js';
-import { beginActivation, completeActivation, deploymentFile, failActivation, readDeployment, writeDeployment } from '../src/deployment.js';
+import { beginActivation, completeActivation, deploymentFile, failActivation, loadedFromRelease, readDeployment, recordRestart, writeDeployment } from '../src/deployment.js';
+import { markerLines, snapshot } from '../src/build.js';
+import { runCommand } from '../src/command-name.js';
 
 const REV_CLI = join(import.meta.dirname, '..', 'src', 'cli.ts');
 const ROOT = join(import.meta.dirname, '..');
@@ -486,6 +488,180 @@ describe('describing a selection (H-2493)', () => {
     expect(shown).toContain('release: UNREADABLE');
     expect(shown).toContain('deployment: failed');
     expect(shown).toContain('Restore the previous selection');
+  });
+});
+
+// A supervisor that launchd or systemd restarts comes back under a new pid on
+// the same release, and before H-2985 nothing reconciled the activation
+// receipt: `release status` read the dead recorded pid as NOT RUNNING and
+// printed a recovery line telling the operator to roll back and activate —
+// which, followed on a correctly running release, abandons it to recover from
+// nothing. The rescue may only fire for the selection's OWN bytes, so every
+// way a returning supervisor can be on something else is a refusal here.
+describe('a restarted supervisor is not a failed deployment (H-2985)', () => {
+  /** The marker a live supervisor leaves, written by the product's own writer:
+   *  pid, start stamp, its command, and the build it loaded (runningStamp). */
+  function liveMarker(home: string, dist: string, pid = process.pid, started = '2026-10-07T04:14:44.115Z'): void {
+    const state = join(home, 'state', 'supervisor');
+    mkdirSync(state, { recursive: true });
+    const command = execFileSync('ps', ['-ww', '-p', String(pid), '-o', 'command='], { encoding: 'utf8' }).trim();
+    writeFileSync(join(state, 'RUNNING'), `${pid}\nstarted ${started}\ncmd ${command}\n${markerLines(snapshot(dist))}`);
+  }
+
+  /** A record left by an activation whose supervisor has since been replaced:
+   *  everything agrees with the selection except that the pid is long dead. */
+  function recordWithDeadSupervisor(file: string, release: string, id: string): void {
+    const components = Object.fromEntries(REPOS.map((repo) => [repo, sha(`${id}:${repo}`)]));
+    writeDeployment(deploymentFile(file), {
+      format: 1, installation: 'dev.rev', phase: 'running', release: id, directory: release, components,
+      updated_at: '2026-10-06T21:34:42.046Z', attempt: 'attempt-9',
+      recovery: `This release is running. To recover, select the retained release with ${runCommand} release rollback, then run ${runCommand} release activate.`,
+      required_processes: ['supervisor'],
+      processes: [{ process: 'supervisor', pid: 2147483647, command: 'node /home/.rev/service/launch.mjs run', installation: 'dev.rev', release: id,
+        components, observed_at: '2026-10-06T21:34:42.046Z', identity_verified_at: '2026-10-06T21:34:42.046Z' }],
+    });
+  }
+
+  function installation(id = 'current') {
+    const dir = root();
+    const file = selectionAt(dir);
+    const release = makeRelease(dir, id);
+    upgrade(file, release);
+    const selected = readSelection(file)!;
+    selected.install = 'dev.rev';
+    writeSelection(file, selected);
+    recordWithDeadSupervisor(file, release, id);
+    return { dir, file, release, id, dist: join(release, 'rev', 'dist') };
+  }
+
+  it('reads verified, says what restarted, and offers no recovery advice', () => {
+    const i = installation();
+    liveMarker(i.dir, i.dist);
+    const shown = describeRelease(i.file).join('\n');
+    expect(shown).toContain('deployment: running — current');
+    expect(shown).not.toContain('NOT RUNNING');
+    expect(shown).not.toContain('recovery:');
+    expect(shown).not.toContain('release rollback, then');
+    expect(shown).toContain(`RESTARTED: supervisor pid ${process.pid} since 2026-10-07T04:14:44.115Z`);
+    expect(shown).toContain(`loaded rev ${sha('current:rev').slice(0, 12)} from this release`);
+  });
+
+  it('still reports a down fleet when there is no live supervisor at all', () => {
+    const i = installation();
+    const shown = describeRelease(i.file).join('\n');
+    expect(shown).toContain('deployment: UNVERIFIED — record says running');
+    expect(shown).toContain('supervisor pid 2147483647 is not live');
+    expect(shown).toContain('release rollback');
+  });
+
+  it('reads two spellings of one release directory as one release', () => {
+    const i = installation();
+    const link = join(i.dir, 'linked');
+    symlinkSync(i.release, link);
+    // A process records the directory Node resolved for it, which is the real
+    // path; the operator's selection holds whatever was written. One symlink
+    // above the release — /tmp is one on macOS, which is how this was found —
+    // made the same directory read as two different ones.
+    liveMarker(i.dir, join(link, 'rev', 'dist'));
+    const shown = describeRelease(i.file).join('\n');
+    expect(shown).toContain('deployment: running — current');
+    expect(shown).toContain('RESTARTED: supervisor');
+    expect(shown).not.toContain('NOT RUNNING');
+  });
+
+  it('refuses the rescue when the live supervisor loaded another commit', () => {
+    const i = installation();
+    const elsewhere = makeRelease(i.dir, 'elsewhere');
+    liveMarker(i.dir, join(elsewhere, 'rev', 'dist'));
+    const shown = describeRelease(i.file).join('\n');
+    expect(shown).toContain('deployment: UNVERIFIED — record says running');
+    expect(shown).toContain('supervisor pid 2147483647 is not live');
+    expect(shown).not.toContain('RESTARTED');
+  });
+
+  it('refuses the rescue for a marker whose pid is dead', () => {
+    const i = installation();
+    liveMarker(i.dir, i.dist, process.pid);
+    const marker = join(i.dir, 'state', 'supervisor', 'RUNNING');
+    writeFileSync(marker, readFileSync(marker, 'utf8').replace(String(process.pid), '2147483646'));
+    const shown = describeRelease(i.file).join('\n');
+    expect(shown).toContain('deployment: UNVERIFIED — record says running');
+    expect(shown).not.toContain('RESTARTED');
+  });
+
+  it('refuses the rescue while the record describes another selection', () => {
+    const i = installation();
+    const next = makeRelease(i.dir, 'next');
+    upgrade(i.file, next);
+    // The upgrade rewrote the record as 'selected'; this is the interrupted
+    // case, where the old activation's running record survives the new choice.
+    recordWithDeadSupervisor(i.file, i.release, i.id);
+    liveMarker(i.dir, join(next, 'rev', 'dist'));
+    const shown = describeRelease(i.file).join('\n');
+    expect(shown).toContain('deployment: UNVERIFIED — record says running');
+    expect(shown).toContain('the record describes another selection');
+    expect(shown).not.toContain('RESTARTED');
+    expect(shown).toContain('release rollback');
+  });
+
+  it('judges loaded bytes against the selection, not against a configured ref', () => {
+    const commits = { helmo: sha('a'), other: sha('b') };
+    const at = (dir: string, commit: string, dirty = false) =>
+      ({ dir, digest: 'd', stamp: { commit, dirty, built_at: 'x' } });
+    expect(loadedFromRelease(at('/r/12/helmo/packages/runtime/dist', sha('a')), '/r/12', commits)).toEqual({ component: 'helmo', commit: sha('a') });
+    // Same commit, but bytes from outside the release the installation selected.
+    expect(loadedFromRelease(at('/r/11/helmo/packages/runtime/dist', sha('a')), '/r/12', commits)).toBeNull();
+    // A sibling directory whose name merely starts with the selection's.
+    expect(loadedFromRelease(at('/r/12-old/helmo/dist', sha('a')), '/r/12', commits)).toBeNull();
+    // The right place, the wrong component's commit.
+    expect(loadedFromRelease(at('/r/12/helmo/dist', sha('b')), '/r/12', commits)).toBeNull();
+    // A dirty build's commit did not produce its bytes, so it answers nothing.
+    expect(loadedFromRelease(at('/r/12/helmo/dist', sha('a'), true), '/r/12', commits)).toBeNull();
+    // No stamp, no marker, and the release directory itself names no component.
+    expect(loadedFromRelease({ dir: '/r/12/helmo/dist', digest: 'd', stamp: null }, '/r/12', commits)).toBeNull();
+    expect(loadedFromRelease(null, '/r/12', commits)).toBeNull();
+    expect(loadedFromRelease(at('/r/12', sha('a')), '/r/12', commits)).toBeNull();
+  });
+
+  it('re-attests the record itself when the supervisor comes back, and only then', () => {
+    const i = installation();
+    const selection = readSelection(i.file)!;
+    const loadedHere = snapshot(i.dist);
+    const activation = deploymentFile(i.file);
+    // This process stands in for the returning supervisor, so the evidence it
+    // writes names a pid that is really live running really that command.
+    const pid = process.pid;
+    const command = execFileSync('ps', ['-ww', '-p', String(pid), '-o', 'command='], { encoding: 'utf8' }).trim();
+
+    // Another installation's label, and bytes from outside the selection, both
+    // leave the record exactly as the activation wrote it.
+    expect(recordRestart(activation, selection, 'other.rev', loadedHere, pid, command)).toBeNull();
+    expect(recordRestart(activation, selection, 'dev.rev', snapshot(join(makeRelease(i.dir, 'elsewhere'), 'rev', 'dist')), pid, command)).toBeNull();
+    expect(readDeployment(activation)?.processes?.[0]?.pid).toBe(2147483647);
+
+    const restarted = recordRestart(activation, selection, 'dev.rev', loadedHere, pid, command);
+    expect(restarted?.phase).toBe('running');
+    expect(restarted?.attempt).toBe('attempt-9');
+    expect(restarted?.processes).toHaveLength(1);
+    expect(restarted?.processes?.[0]).toMatchObject({ process: 'supervisor', pid, command, release: i.id });
+    expect(readDeployment(activation)?.processes?.[0]?.pid).toBe(pid);
+    // With the record true again, status reads verified with no marker to ask.
+    const shown = describeRelease(i.file).join('\n');
+    expect(shown).toContain('deployment: running — current');
+    expect(shown).not.toContain('NOT RUNNING');
+    expect(shown).not.toContain('RESTARTED');
+    // And a second restart over a record it has already corrected is a no-op.
+    expect(recordRestart(activation, selection, 'dev.rev', loadedHere, pid, command)).toBeNull();
+  });
+
+  it('leaves a record describing another selection for a human to read as stale', () => {
+    const i = installation();
+    const next = makeRelease(i.dir, 'next');
+    upgrade(i.file, next);
+    recordWithDeadSupervisor(i.file, i.release, i.id);
+    const selection = readSelection(i.file)!;
+    expect(recordRestart(deploymentFile(i.file), selection, 'dev.rev', snapshot(join(next, 'rev', 'dist')), 4242, 'cmd')).toBeNull();
+    expect(readDeployment(deploymentFile(i.file))).toMatchObject({ release: i.id, processes: [{ pid: 2147483647 }] });
   });
 });
 

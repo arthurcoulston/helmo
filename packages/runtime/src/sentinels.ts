@@ -207,7 +207,14 @@ function liveCommand(pid: number): string | null {
 export type ProcessObservation = { state: 'alive' | 'unknown'; pid: number } | { state: 'dead'; pid: null };
 
 export function processObservation(loop: string, inspect: (pid: number) => string | null = liveCommand): ProcessObservation {
-  const running = sGet(loop, 'RUNNING');
+  return markerObservation(sGet(loop, 'RUNNING'), inspect);
+}
+
+/** The same rule over a marker read from somewhere else: `release status`
+ *  reads the supervisor's marker by path, beside the selection, rather than
+ *  through this installation's own state directory (H-2985). The recycled-pid
+ *  defence above must not be written twice. */
+export function markerObservation(running: string | null, inspect: (pid: number) => string | null = liveCommand): ProcessObservation {
   if (!running) return { state: 'dead', pid: null };
   const lines = running.split('\n');
   const pid = parseInt(lines[0] ?? '', 10);

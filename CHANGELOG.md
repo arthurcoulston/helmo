@@ -148,6 +148,10 @@ longer.
   (`unserved_lanes`) instead of falling to the general worker. Work exposes the
   field on create/update/list and `launch-claim --lane`; existing stores gain
   the column by migration and resume their held claims unchanged.
+- Wake a lane worker when an open ticket is moved into its lane. A lane change
+  was not a readiness edge, so the worker slept until its periodic resync; it
+  now wakes on the next poll, and moving a ticket back to the general pool
+  wakes the general worker instead.
 
 ## v0.9.4 — 2026-10-05
 

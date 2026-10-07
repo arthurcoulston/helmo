@@ -485,7 +485,8 @@ Pinned releases accept both the historical three-component layout and C1's one
   timestamp. Held work participates only in this edge calculation, never the
   open claim queue. Indexed event queries cover direct route /
   gate changes, removal or closure of blockers, clearing a human sitting, and
-  moving unassigned work into the watched stream; notes, spend, unrelated close-out, and
+  moving unassigned work into the watched stream, and moving an open ticket
+  into or out of a lane; notes, spend, unrelated close-out, and
   self-filed untouched work cannot enter through that intersection. The first
   non-meter touch by another actor (or a human/orchestrator relay) is also an
   edge: it releases self-triage for the filing or its recurring template;

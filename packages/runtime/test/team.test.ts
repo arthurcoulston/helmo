@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   seatContext, seatSpend, spendBasis, workingTreeInstructions, isPeriod, readBounded,
-  tokenizeWork, chunkPattern, MEASURE_BYTE_CEILING, TOKENIZE_WORK_CEILING, WORKING_LEVEL,
+  teamDocument, tokenizeWork, chunkPattern, MEASURE_BYTE_CEILING, TOKENIZE_WORK_CEILING, WORKING_LEVEL,
 } from '../src/team.js';
 import type { LoopConfig } from '../src/types.js';
 
@@ -382,6 +382,55 @@ describe('isPeriod', () => {
     // NaN rather than falling back (H-3004).
     for (const name of ['__proto__', 'constructor', 'toString', 'valueOf', 'hasOwnProperty']) {
       expect(isPeriod(name)).toBe(false);
+    }
+  });
+});
+
+/* What the roster configured, apart from what ran. The row sits beside a live
+   state badge, so reporting only the primary of a rotation is how a reader
+   concludes a running session is on a model the seat never ran: on this
+   installation mason is configured `gpt-5.6-sol` and ran claude-opus-5 104
+   times in the same week (H-3001). */
+describe('teamDocument: the configured selection', () => {
+  const TABLES = '\n[providers.claude.models]\nmid = "c-mid"\n[providers.codex.models]\nmid = "x-mid"\n';
+
+  function roster(loops: string): void {
+    const dir = mkdtempSync(join(tmpdir(), 'rev-team-doc-'));
+    writeFileSync(join(dir, 'PROFILE.md'), '# Profile\n');
+    mkdirSync(join(dir, 'work'));
+    writeFileSync(
+      join(dir, 'roster.toml'),
+      `[global]\nhelmo_cli = "x"\nhelmo_mcp_server = "y"\n${TABLES}\n`
+      + loops.replaceAll('CWD', join(dir, 'work')).replaceAll('CONS', join(dir, 'PROFILE.md')),
+    );
+    process.env['REV_HOME'] = dir;
+  }
+  const LOOP = (name: string) => `[loops.${name}]\nworkstream = "w"\ncwd = "CWD"\nconstitution = "CONS"\n`;
+
+  it('reports every model a rotating seat selects among, in the roster order, and how one is chosen', async () => {
+    roster(LOOP('rotator') + 'provider = "codex"\ntier = "mid"\nrotation = ["codex", "claude"]\nrouting = "headroom"\n');
+    const row = (await teamDocument('7d', () => 'RUNNING')).loops[0]!;
+
+    expect(row.models).toEqual(['x-mid', 'c-mid']);
+    expect(row.routing).toBe('headroom');
+    // The primary is still reported, and is NOT the whole of the selection —
+    // which is the misreading this field exists to prevent.
+    expect(row.model).toBe('x-mid');
+    expect(row.models).not.toEqual([row.model]);
+  });
+
+  it('reports a single-model seat as exactly that one model', async () => {
+    roster(LOOP('plain') + 'runtime = "claude"\nmodel = "only-this"\n');
+    const row = (await teamDocument('7d', () => 'IDLE')).loops[0]!;
+    expect(row.models).toEqual(['only-this']);
+    expect(row.routing).toBe('rotation');
+  });
+
+  it('never reports a seat as configured with no model at all', async () => {
+    roster(LOOP('plain') + 'runtime = "claude"\nmodel = "only-this"\n');
+    for (const row of (await teamDocument('7d', () => 'IDLE')).loops) {
+      expect(row.models.length).toBeGreaterThan(0);
+      expect(row.models).not.toContain('');
     }
   });
 });

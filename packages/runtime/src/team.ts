@@ -533,6 +533,15 @@ export interface TeamMemberRow {
   workstream: string;
   runtime: string;
   model: string;
+  /** Every model the roster configures this seat to select among, in its own
+   *  order, and how one is chosen. A rotating seat has no single configured
+   *  model, so naming the primary as "the" model beside a live state badge is
+   *  how a reader concludes a running session is on a model it never ran — on
+   *  this installation most seats rotate across two providers, and `by_model`
+   *  in the same response records what they really ran. `model` stays the
+   *  primary; this is the whole of what was configured. */
+  models: string[];
+  routing: 'rotation' | 'headroom';
   profile: string;
   context: SeatContext;
   spend: SeatSpend;
@@ -563,6 +572,11 @@ export async function teamDocument(period: Period, state: (name: string) => stri
     workstream: l.workstream,
     runtime: l.runtime,
     model: l.model,
+    // `choices` is length 1 when no rotation is set, and empty only in a
+    // fixture that never went through resolveSelection — fall back to the
+    // primary rather than reporting a seat configured with no model at all.
+    models: [...new Set(l.choices.length ? l.choices.map((c) => c.model) : [l.model])],
+    routing: l.routing ?? 'rotation',
     profile: `/api/v1/team/members/${encodeURIComponent(l.name)}`,
     context: await seatContext(l, pass),
     spend: seatSpend(l.name, period),

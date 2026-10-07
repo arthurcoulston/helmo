@@ -340,6 +340,16 @@ load-bearing.
 The record column's floor cannot be a minimum on the cell — fixed layout does
 not consult one — so it is the table's own `minWidth`, which each view states as
 its fixed columns plus that floor; a column widened without it moves the fold.
+Which columns that floor has to keep inside a 390 window is each view's own
+call, declared beside the widths as `RecordTable`'s `aboveFold` and carried to
+the browser as `data-above-fold`: Work's work and state, Roadmap's project and
+state, Team's member and context. `verify:ui` measures exactly what a table
+declares, fails naming any column the fold cuts, and fails a table that
+declares nothing at all. Until H-3001@dev.rev it instead measured whatever
+column was named `state` — so it read Work and Roadmap, and never read Team,
+whose state badge lives inside its member cell. A view could have put its own
+subject beyond the fold under a green run; the point of the declaration is that
+the skip is impossible rather than unlikely.
 Roadmap's floor is smaller than Work's, because the rank column in front of it
 spends width Work's does not.
 
@@ -395,8 +405,9 @@ and width from each table's own left edge, and fails naming the shapes that
 disagree; it also fails on any cell whose content is wider than the column
 holding it.
 
-**A control an outside check drives carries a name.** `data-column` is one; the
-Ratify button's `data-helmo-control="ratify"` is the other. The estate's
+**A control an outside check drives carries a name.** `data-column` is one,
+`data-above-fold` the declaration it is measured against; the Ratify button's
+`data-helmo-control="ratify"` is the other. The estate's
 acceptance smoke (`npm run smoke` in `~/projects/estate`) drives the running
 app, so it can only address a control through the DOM — and addressing it by
 its visible words means a reworded label silently turns that stop into "no
@@ -419,7 +430,31 @@ the browser's behavior; they do not define the new component structure.
 member, because context is what this view is for; memory, period tokens and
 notional dollars are what the region's label offers to scroll for. The
 composition bar is the preset's own chart colours — a category is not a
-severity, and the four status roles keep their meanings. A member opens in an
+severity, and the four status roles keep their meanings.
+
+Width was not enough to make it the page's subject, and the two findings that
+say so are gauge's on the shipped page (H-3003@dev.rev). It was already the
+widest column after the member and still lost the glance to that member's bold
+name and solid status badge, so the answer is weight rather than more width: a
+12px bar and its total at the body size. The badge is deliberately untouched —
+its colour and weight belong to the shared status system, and a view that
+restyled one surface's badge is how one state ends up two weights on two
+pages. And the preset's chart tokens resolve to a near-monochrome value ramp in
+both themes, so three hues read as two tones. The colours stay the preset's, so
+position carries the composition instead and is made visible: a gap draws every
+segment boundary in the track's own colour, which holds whatever the hues do,
+and the legend states that it reads left to right along the bar. Colour was
+never the carrier here — the bar's `aria-label` and the legend both say the
+real numbers in words — but a bar that promises a composition has to show one.
+
+A row states what the roster configured and never what ran, because it sits
+beside a live state badge. A seat that rotates has no single configured model,
+so the row refuses to pick one of them: it says how many there are and how one
+is chosen, the Sheet names them all, and `by_model` — the one reading on the
+page taken from what sessions really did — carries its own heading saying so.
+Reporting only the primary was the original reading, and on this installation
+it showed mason as `gpt-5.6-sol` beside a RUNNING badge while the session
+running was `claude-opus-5` (H-3001@dev.rev). A member opens in an
 unmodified Sheet: every configured file with its size, its own `cap_tokens` and
 a bounded reading of it, the memory corpus beside the startup total rather than
 inside it, the overhead nobody can measure named rather than left at zero, and

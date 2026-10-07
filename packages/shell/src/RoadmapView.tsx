@@ -186,6 +186,7 @@ export function RoadmapView({ data, selected }: { data: RoadmapData; selected: s
              State badge at 390 puts the fold back through it. See Work's for
              what measures this. */
           minWidth="min-w-[420px]"
+          aboveFold={["project", "state"]}
           columns={columns}
           rows={group.rows}
           rowId={(row) => row.project.id}

@@ -62,12 +62,21 @@ export function expandColumn<T extends RowData>(label: (row: T) => string): Reco
   }
 }
 
-export function RecordTable<T extends RowData>({ label, minWidth, columns, rows, rowId, expanded, onExpandedChange, renderExpanded, empty }: {
+export function RecordTable<T extends RowData>({ label, minWidth, aboveFold, columns, rows, rowId, expanded, onExpandedChange, renderExpanded, empty }: {
   label: string
   /* The view's own floor, as a literal Tailwind class — Tailwind generates from
      source text, so a width composed here would name a rule that does not
      exist. See `recordColumn` for what the number has to be. */
   minWidth: string
+  /* The columns this view says a reader must be able to read at 390 without
+     scrolling. `verify:ui` measures these and fails naming any one the fold
+     cuts, which is what makes the floor above a decision rather than a comment.
+     It has to be declared here, with the widths, rather than known by the
+     check: the check keyed on a column named "state" instead, and Team — whose
+     state badge lives inside its member cell — had no such column, so its fold
+     was never measured at all while the two views that happened to have one
+     were (H-3001). */
+  aboveFold: string[]
   columns: RecordColumn<T>[]
   rows: T[]
   /* Keyed by the record's own id, so expansion survives a refresh that
@@ -92,7 +101,7 @@ export function RecordTable<T extends RowData>({ label, minWidth, columns, rows,
      third, and the eye had no straight edge to run down. Fixed layout takes
      every width from the header row, and the groups all share one of those. */
   return <div className="min-w-0 overflow-hidden rounded-md border" role="region" aria-label={`${label} — scroll horizontally for all columns`}>
-    <Table tabIndex={0} aria-label={label} className={`table-fixed ${minWidth}`}>
+    <Table tabIndex={0} aria-label={label} data-above-fold={aboveFold.join(" ")} className={`table-fixed ${minWidth}`}>
       <TableHeader>{table.getHeaderGroups().map((group) => <TableRow key={group.id} className="hover:bg-transparent">
         {/* `data-column` is how the browser verification addresses a column —
             by what it IS rather than by the words a cell happens to hold, so

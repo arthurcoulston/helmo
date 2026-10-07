@@ -55,6 +55,7 @@ export type SeatSpend = {
 }
 export type Member = {
   id: string; name: string; state: string; workstream: string; runtime: string; model: string
+  models: string[]; routing: string
   context: SeatContext; spend: SeatSpend
 }
 export type TeamData = {
@@ -92,7 +93,26 @@ function parts(context: SeatContext) {
    the composition is also stated in words on the element itself, which is what
    a screen reader and the accessibility audit read. A segment below 2% of the
    bar still gets 2% of its width: a category that is present must be visible,
-   and a hairline is indistinguishable from absence. */
+   and a hairline is indistinguishable from absence.
+
+   Two things here are gauge's findings on the shipped page (H-3003), and both
+   are about the bar losing a reading it was supposed to carry:
+
+   - It is the widest column after the member and still lost the glance to the
+     member's own bold name and solid status badge. The answer is not more
+     width — it already has enough — so it is weight: a 12px bar rather than
+     8px, and its total at the body size rather than the fine print. The badge
+     is untouched on purpose; its colour and weight are the shared status
+     system's, and a view that restyled one surface's badge is how the same
+     state ends up two weights on two pages.
+   - The preset's chart tokens resolve to a near-monochrome value ramp in both
+     themes, so three hues read as two tones and the composition was only half
+     legible. The colours are the preset's and stay that way (UI.md), so
+     position carries the composition instead and is made visible: a gap
+     between segments draws every boundary in the track's own colour, which
+     holds whatever the hues do. Flex shrink keeps the proportions — the
+     segments give the gaps their width rather than the last one being clipped
+     off the end. */
 function Composition({ context, labelledBy }: { context: SeatContext; labelledBy?: string }) {
   const shown = parts(context).filter((part) => part.tokens > 0)
   const total = context.startup_tokens
@@ -100,11 +120,38 @@ function Composition({ context, labelledBy }: { context: SeatContext; labelledBy
     ? `${count(total)} tokens configured at startup: ${shown.map((part) => `${part.label} ${count(part.tokens)}`).join(", ")}`
     : "No configured startup context could be measured"
   return <div className="flex flex-col gap-1">
-    <div role="img" aria-label={words} aria-describedby={labelledBy} className="bg-muted flex h-2 w-full overflow-hidden rounded-full">
+    <div role="img" aria-label={words} aria-describedby={labelledBy} className="bg-muted flex h-3 w-full gap-0.5 overflow-hidden rounded-full">
       {shown.map((part) => <div key={part.key} className={part.fill} style={{ width: `${Math.max(2, (part.tokens / total) * 100)}%` }} />)}
     </div>
-    <span className="text-xs tabular-nums">{total ? `${count(total)} tok` : "unmeasured"}</span>
+    <span className="text-sm font-medium tabular-nums">{total ? `${count(total)} tok` : "unmeasured"}</span>
   </div>
+}
+
+/* The bar's key, in the bar's own order — which is the point of saying so.
+   Position is what distinguishes the segments once the preset's chart tones
+   resolve to one ramp, and a reader only reads position as a signal if
+   something tells them to. One component for the two places this appears, so
+   the order it claims cannot drift from the bar it describes: both it and
+   `Composition` map `parts` in sequence. */
+function CompositionLegend({ context, children }: { context: SeatContext; children?: React.ReactNode }) {
+  return <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+    {parts(context).map((part, index) => <li key={part.key} className="flex items-center gap-1.5">
+      <span className={`${part.fill} size-2 rounded-full`} aria-hidden="true" />
+      <span>{part.label} {count(part.tokens)}</span>
+      {index === 0 ? <span className="text-muted-foreground">(left to right along the bar)</span> : null}
+    </li>)}
+    {children}
+  </ul>
+}
+
+/* What the roster configured, never what ran. A seat that rotates has no single
+   configured model, and this sits beside a live state badge — so it says the
+   word "configured" and, when there is more than one, refuses to pick one of
+   them to show. What actually ran is `by_model`, under its own heading. */
+function configured(member: Member) {
+  return member.models.length > 1
+    ? `${member.models.length} models configured, chosen by ${member.routing}`
+    : `${member.runtime} · ${member.model} configured`
 }
 
 /* One inventoried file. `tight` and `uncapped` stay neutral: a file deliberately
@@ -156,19 +203,16 @@ function MemberRecord({ member, basis }: { member: Member; basis: TeamData["basi
       <SheetDescription asChild><div className="flex flex-wrap items-center gap-2 pt-1 text-xs">
         <StatusBadge status={loopStateRole(member.state)}>{member.state}</StatusBadge>
         <span>{member.workstream}</span>
-        <span>{member.runtime} · {member.model}</span>
+        <span>{member.models.length > 1
+          ? `configured: ${member.models.join(", ")} — chosen by ${member.routing}`
+          : `configured: ${member.runtime} · ${member.model}`}</span>
       </div></SheetDescription>
     </SheetHeader>
     <div className="flex flex-col gap-5 overflow-y-auto p-4">
       <section className="flex flex-col gap-2" aria-label="Configured context">
         <h3 className="text-xs font-medium tracking-wide uppercase">Configured context</h3>
         <Composition context={context} />
-        <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-          {parts(context).map((part) => <li key={part.key} className="flex items-center gap-1.5">
-            <span className={`${part.fill} size-2 rounded-full`} aria-hidden="true" />
-            <span>{part.label} {count(part.tokens)}</span>
-          </li>)}
-        </ul>
+        <CompositionLegend context={context} />
         {/* The one number this page refuses to invent. A model's context window
             is not a configured cap, and showing one as the other is how a
             reader concludes a seat has room it was never given. */}
@@ -206,7 +250,9 @@ function MemberRecord({ member, basis }: { member: Member; basis: TeamData["basi
         <p className="text-sm tabular-nums">{count(spend.tokens)} tokens · {dollars(spend.usd)} notional · {count(spend.sessions)} metered {spend.sessions === 1 ? "session" : "sessions"}</p>
         {spend.unknown_sessions ? <Alert><AlertTitle>{count(spend.unknown_sessions)} {spend.unknown_sessions === 1 ? "session" : "sessions"} the runtime did not meter</AlertTitle><AlertDescription>Counted here, and absent from the totals above — not added as zero.</AlertDescription></Alert> : null}
         {spend.by_model.length ? <table className="text-xs">
-          <caption className="text-muted-foreground pb-1 text-left">By model</caption>
+          {/* The counterpart to the configured selection above: this is the
+              only reading on the page taken from what sessions really did. */}
+          <caption className="text-muted-foreground pb-1 text-left">What ran, by model</caption>
           <tbody>{spend.by_model.map((model) => <tr key={`${model.runtime}/${model.model}`}>
             <th scope="row" className="pr-3 text-left font-normal [overflow-wrap:anywhere]">{model.model}</th>
             <td className="pr-3 tabular-nums">{count(model.tokens)} tok</td>
@@ -248,7 +294,7 @@ function columnsFor(open: (id: string, from?: HTMLElement) => void): RecordColum
             <Button variant="link" className="h-auto p-0 text-sm font-medium" onClick={(event) => open(member.id, event.currentTarget)}>{member.name}</Button>
             <StatusBadge status={loopStateRole(member.state)}>{member.state}</StatusBadge>
           </div>
-          <span className="text-muted-foreground text-xs [overflow-wrap:anywhere]">{member.workstream} · {member.runtime} · {member.model}</span>
+          <span className="text-muted-foreground text-xs [overflow-wrap:anywhere]">{member.workstream} · {configured(member)}</span>
         </div>
       },
       meta: { className: recordColumn },
@@ -309,6 +355,13 @@ export function TeamView({ data, period, onPeriodChange }: { data: TeamData; per
          window with room to spare. Memory, tokens and notional spend are what
          the region's label offers to scroll for. */
       minWidth="min-w-[620px]"
+      /* Measured on the live app at 390: member ends at x204 and context at
+         x332, inside a 356px container, so both clear the fold by 24px — the
+         same clearance Work's state has. Memory straddles it and tokens and
+         notional sit beyond, which is the horizontal scroll every view in the
+         estate has and not a defect; what the fold must never cut is these
+         two. */
+      aboveFold={["member", "context"]}
       columns={columns}
       rows={data.loops}
       rowId={(member) => member.id}
@@ -316,13 +369,9 @@ export function TeamView({ data, period, onPeriodChange }: { data: TeamData; per
       onExpandedChange={setExpanded}
       empty="No team members are configured."
       renderExpanded={(member) => <div className="flex flex-col items-start gap-2">
-        <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-          {parts(member.context).map((part) => <li key={part.key} className="flex items-center gap-1.5">
-            <span className={`${part.fill} size-2 rounded-full`} aria-hidden="true" />
-            <span>{part.label} {count(part.tokens)}</span>
-          </li>)}
+        <CompositionLegend context={member.context}>
           <li className="text-muted-foreground">{member.context.memory.configured ? `${count(member.context.memory.files)} memory files available, not loaded` : "no memory directory configured"}</li>
-        </ul>
+        </CompositionLegend>
         <Button variant="outline" size="sm" onClick={(event) => openRecord(member.id, event.currentTarget)}>
           Open {member.name} — files, caps and usage
         </Button>

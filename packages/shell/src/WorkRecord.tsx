@@ -396,6 +396,7 @@ export function WorkRecord({ data, selected }: { data: WorkRecordData; selected:
            record column's 192px floor. `verify:ui` measures the fold at 390, so
            widening a column without this goes red. */
         minWidth="min-w-[588px]"
+        aboveFold={["work", "state"]}
         columns={columns}
         rows={group.rows}
         rowId={(row) => row.id}

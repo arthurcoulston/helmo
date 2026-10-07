@@ -594,9 +594,10 @@ try {
      the page itself never overflows — the table scrolls inside its own
      container — so `measure.overflow` is 0 on a row whose state is cut in
      half, which is what shipped (H-2981: "In moti" on Work at 390, and
-     Roadmap's "Ship next" cut harder). A row's work and its state are the two
-     columns that have to be readable without scrolling; everything after them
-     is what the region's label offers to scroll for. */
+     Roadmap's "Ship next" cut harder). Which columns have to be readable
+     without scrolling is each view's own call, declared on its table rather
+     than known here; everything after them is what the region's label offers
+     to scroll for. */
   const cut = [], folds = [];
   /* And whether the groups of one view line up. Each group is its own table, so
      under auto layout each sized its columns from its own content and Work's
@@ -631,17 +632,41 @@ try {
     await page.screenshot({ path: join(dir, `shots/${area}-${theme}-${width}.png`), fullPage: true, animations: 'disabled' });
     if (width === 390) {
       /* By `data-column`, never by the words in the cell: a state renamed
-         tomorrow must still be measured rather than silently skipped. */
-      const states = await page.evaluate(() => [...document.querySelectorAll('[data-slot="table-container"]')].flatMap((container) => {
+         tomorrow must still be measured rather than silently skipped.
+
+         And by the columns the TABLE declares above its fold, never by a column
+         id this check happens to know. Keyed on "state" it measured Work and
+         Roadmap — the two views with a column of that name — and silently
+         skipped Team, whose state badge lives inside its member cell, so the
+         one view added since could have put its subject beyond the fold under a
+         green run (H-3001). A table that declares nothing is itself a failure
+         below: the skip is what has to be impossible, not merely unlikely. */
+      const measured = await page.evaluate(() => [...document.querySelectorAll('[data-slot="table-container"]')].flatMap((container) => {
+        const table = container.querySelector('table');
         const edge = container.getBoundingClientRect().left + container.clientWidth;
-        return [...container.querySelectorAll('tbody [data-column="state"]')].map((cell) => ({
-          table: container.querySelector('table')?.getAttribute('aria-label'),
-          text: cell.textContent.trim(),
-          over: Math.round(cell.getBoundingClientRect().right - edge),
-        }));
+        const label = table?.getAttribute('aria-label');
+        const declared = (table?.dataset.aboveFold ?? '').split(' ').filter(Boolean);
+        if (!declared.length) return [{ table: label, column: null, text: '', over: 0 }];
+        return declared.map((column) => {
+          /* The header's box is the column's geometry under fixed layout, and
+             the body cell is what a reader actually reads — measure the box,
+             report the words. */
+          const th = container.querySelector(`thead th[data-column="${column}"]`);
+          const cell = container.querySelector(`tbody [data-column="${column}"]`);
+          return {
+            table: label,
+            column,
+            text: (cell ?? th)?.textContent.trim() ?? '',
+            over: th ? Math.round(th.getBoundingClientRect().right - edge) : NaN,
+          };
+        });
       }));
-      folds.push(...states);
-      cut.push(...states.filter((state) => state.over > 0).map((state) => `${area} ${theme}: ${state.table} cuts "${state.text}" by ${state.over}px`));
+      for (const row of measured) {
+        if (row.column === null) cut.push(`${area} ${theme}: ${row.table} declares no above-fold columns, so its fold is unmeasured`);
+        else if (Number.isNaN(row.over)) cut.push(`${area} ${theme}: ${row.table} declares "${row.column}" above the fold and has no such column`);
+        else if (row.over > 0) cut.push(`${area} ${theme}: ${row.table} cuts ${row.column} ("${row.text}") by ${row.over}px`);
+      }
+      folds.push(...measured.filter((row) => row.column !== null));
     }
     /* By offset and width from the table's own left edge, never from the
        viewport: a view whose groups agree is one shape however the page around
@@ -729,7 +754,7 @@ try {
   });
   /* An area with no record table measures no fold, so the pass above is the
      empty set unless Work's and Roadmap's tables were really read. */
-  assert.deepEqual(cut, [], 'a 390 window must read a row down to its state without scrolling');
+  assert.deepEqual(cut, [], 'a 390 window must read every column a view declares above its fold');
   assert.deepEqual(
     [...shapes].filter(([, distinct]) => distinct.length > 1).map(([where, distinct]) => `${where}: ${distinct.length} shapes — ${distinct.join(' | ')}`),
     [],
@@ -739,8 +764,17 @@ try {
      not one view that happens to have a single group. */
   assert.ok(shapes.size >= 12, `only ${shapes.size} multi-group views were measured for alignment: ${[...shapes.keys()].join(', ')}`);
   assert.deepEqual([...new Set(spill)], [], 'a column must be wide enough for what it holds');
-  assert.ok(folds.length >= 8, `only ${folds.length} state cells were measured at 390, so the fold was not really read`);
-  /* Reported, not asserted: how much room the tightest state had to spare. A
+  /* The assertion the old `state` key could not make. Counting cells says the
+     loop ran; naming the columns says WHICH views it ran on, and Team's two
+     are only in this set because the table declares them — keyed on "state"
+     this list came back without them and the check was green regardless. */
+  assert.deepEqual(
+    [...new Set(folds.map((fold) => fold.column))].sort(),
+    ['context', 'member', 'project', 'state', 'work'],
+    'every above-fold column every view declares must be measured at 390',
+  );
+  assert.ok(folds.length >= 24, `only ${folds.length} above-fold columns were measured at 390, so the fold was not really read`);
+  /* Reported, not asserted: how much room the tightest column had to spare. A
      pass says nothing was cut; this says how close the next longer word is. */
   const tightest = folds.reduce((worst, fold) => (fold.over > worst.over ? fold : worst));
   /* And every layout would pass with the audit skipped, which is exactly how it
@@ -751,7 +785,7 @@ try {
     `the WCAG audit ran on ${audited.length} layouts, not all ${areas.length * themes.length * widths.length}: ${audited.join(', ')}`,
   );
   assert.deepEqual(errors, []);
-  console.log(`All five areas, Work's and Roadmap's compact tables, bounded summaries and full records, held state, copy, focused refresh, embedded answer, runtime trace, Team's composed/discovered/available context with its bounded file reads, Inter, the four status roles measured at rest and on hovered and expanded rows in both themes, all ${audited.length} layouts verified and audited against WCAG 2 A/AA with axe-core ${axeVersion}, ${shapes.size} multi-group views aligned column for column, and nothing wider than the column holding it. Red outranks amber by at least ${LOUDER_BY} on every ground both were found on: ${redVsAmber.join('; ')}. At 390 the tightest of ${folds.length} state cells, "${tightest.text}" in ${tightest.table}, cleared the fold by ${-tightest.over}px. Evidence: ${dir}`);
+  console.log(`All five areas, Work's and Roadmap's compact tables, bounded summaries and full records, held state, copy, focused refresh, embedded answer, runtime trace, Team's composed/discovered/available context with its bounded file reads, Inter, the four status roles measured at rest and on hovered and expanded rows in both themes, all ${audited.length} layouts verified and audited against WCAG 2 A/AA with axe-core ${axeVersion}, ${shapes.size} multi-group views aligned column for column, and nothing wider than the column holding it. Red outranks amber by at least ${LOUDER_BY} on every ground both were found on: ${redVsAmber.join('; ')}. At 390 the tightest of ${folds.length} declared above-fold columns, ${tightest.column} ("${tightest.text}") in ${tightest.table}, cleared the fold by ${-tightest.over}px. Evidence: ${dir}`);
   writeFileSync(join(dir, 'result.json'), JSON.stringify({ origin, artifacts: dir, errors, verified: new Date().toISOString() }, null, 2));
 } finally {
   await browser?.close();

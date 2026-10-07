@@ -181,6 +181,10 @@ Overview reads each product snapshot independently and summarizes them without
 joining their stores. Team projects the roster's own configuration — each
 seat's identity, the files it is configured to load, what those files measure
 against their own `cap_tokens`, and what the token-log says its sessions spent.
+A seat's identity carries `models`, the whole rotation it selects among, beside
+the `model` that is only its primary: a rotating seat has no single configured
+model, and `by_model` in the same response is the only part of it taken from
+what sessions really ran (H-3001).
 No file's CONTENTS enter the app document: a body is served only by
 `/api/v1/team/members/<seat>/files/<path>`, and only for a path that seat's own
 inventory names, so there is no arbitrary-path reader and no way to reach a file

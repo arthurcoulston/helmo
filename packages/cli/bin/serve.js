@@ -21,7 +21,15 @@ function check(name, read) {
 
 // The Team routes read and measure files, so they answer from a promise. A null
 // result is the route's own "this installation configures no such thing" and is
-// a 404 rather than an empty document; a thrown read is a 503 that says so.
+// a 404 rather than an empty document.
+//
+// A thrown read answers 500, the same as every other route here: deferring into
+// a promise takes the throw out of the handler's own catch below, so this has to
+// repeat that status rather than pick its own. It picked 503 at first, and a
+// broken roster made /api/v1/team disagree with /api/v1/runtime and
+// /api/v1/overview about what had gone wrong — which the app's acceptance suite
+// already asserted against, in a workspace no proof of this page had measured
+// (H-3004).
 function answer(response, area, read) {
   Promise.resolve().then(read).then((data) => {
     if (data === null) { response.writeHead(404, JSON_HEADERS); response.end(JSON.stringify({ error: 'Unknown team member or file' })); return; }
@@ -29,7 +37,7 @@ function answer(response, area, read) {
     response.end(apiJson(area, data));
   }).catch((error) => {
     if (response.headersSent) { response.destroy(error instanceof Error ? error : undefined); return; }
-    response.writeHead(503, JSON_HEADERS);
+    response.writeHead(500, JSON_HEADERS);
     response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
   });
 }

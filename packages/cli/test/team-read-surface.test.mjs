@@ -144,7 +144,7 @@ test('a prototype name is not a seat, and is not a period', async (t) => {
     assert.equal(response.status, 404, `${name} answered as a member`);
   }
   // `'__proto__' in PERIODS` was true, so the window dated to NaN and the route
-  // answered 503 instead of falling back.
+  // answered an error instead of falling back.
   const fallback = await get(origin, '/api/v1/team?period=__proto__');
   assert.equal(fallback.status, 200);
   assert.equal((await fallback.json()).data.period, '7d');

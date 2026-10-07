@@ -401,6 +401,14 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   never with a token count, so it cannot silently shrink the total it belongs
   to. Both ceilings sit well clear of real configuration: this installation's
   largest instruction file measures 125,175 against a ceiling of two million.
+- **The Team routes answer a failed read 500, like every other route.** They
+  read files, so they answer from a promise, which takes a throw out of
+  `serve.js`'s own handler catch — so `answer()` has to repeat that status
+  rather than choose one. It chose 503 at first, and a broken roster made
+  `/api/v1/team` disagree with `/api/v1/runtime` and `/api/v1/overview` about
+  what had gone wrong. The app's acceptance suite asserted against that
+  already; it lives in `@helmo/cli`, a workspace no proof of this page had
+  measured, so the root tally said 602/602 while the suite was red (H-3004).
 - **A seat is looked up with `Object.hasOwn`.** `roster.loops` and `PERIODS`
   are plain objects, so `/api/v1/team/members/__proto__` answered 200 with a
   phantom member and `?period=__proto__` dated the window to NaN and answered

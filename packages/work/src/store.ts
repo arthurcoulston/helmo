@@ -2147,6 +2147,7 @@ export class Store {
                json_type(payload, '$.diffs.assignee') IS NOT NULL
                OR json_extract(payload, '$.diffs.status.to') = 'open'
                OR json_type(payload, '$.diffs.workstream') IS NOT NULL
+               OR json_type(payload, '$.diffs.lane') IS NOT NULL
                OR json_type(payload, '$.diffs.not_before') IS NOT NULL
                OR json_type(payload, '$.diffs.capacity_hold') IS NOT NULL
                OR json_extract(payload, '$.diffs.needs_human.to') = 0

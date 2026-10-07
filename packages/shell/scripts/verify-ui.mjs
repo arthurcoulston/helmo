@@ -481,6 +481,22 @@ try {
      columns that have to be readable without scrolling; everything after them
      is what the region's label offers to scroll for. */
   const cut = [], folds = [];
+  /* And whether the groups of one view line up. Each group is its own table, so
+     under auto layout each sized its columns from its own content and Work's
+     State column started at x317 in two groups and x340 in the third — a view
+     with no straight edge to run an eye down (H-2988). `table-fixed` and a
+     declared width per column make the geometry a property of the view rather
+     than of which records happen to be in a group, which is also what makes
+     this measurable on a fixture at all. */
+  const shapes = new Map();
+  /* And whether anything is wider than the column holding it. Fixed layout is
+     what makes a column's width a decision rather than a consequence, and the
+     thing it gives up is the browser's own guarantee that content fits: a cell
+     that cannot wrap simply reaches across its neighbour, with nothing in the
+     page's own overflow to show for it. Each width is sized to the widest thing
+     the real record asks it to carry, so this is the measurement that keeps
+     that true as the words change. */
+  const spill = [];
   for (const area of areas) for (const theme of themes) for (const width of widths) {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`${origin}/${area}`);
@@ -510,6 +526,27 @@ try {
       folds.push(...states);
       cut.push(...states.filter((state) => state.over > 0).map((state) => `${area} ${theme}: ${state.table} cuts "${state.text}" by ${state.over}px`));
     }
+    /* By offset and width from the table's own left edge, never from the
+       viewport: a view whose groups agree is one shape however the page around
+       them is laid out. */
+    const geometry = await page.evaluate(() => [...document.querySelectorAll('[data-slot="table-container"]')].map((container) => {
+      const table = container.querySelector('table');
+      const left = table.getBoundingClientRect().left;
+      return [...container.querySelectorAll('thead th[data-column]')]
+        .map((th) => `${th.dataset.column}@${Math.round(th.getBoundingClientRect().left - left)}+${Math.round(th.getBoundingClientRect().width)}`)
+        .join(' ');
+    }));
+    if (geometry.length > 1) shapes.set(`${area} ${theme} ${width}`, [...new Set(geometry)]);
+    spill.push(...(await page.evaluate(() => [...document.querySelectorAll('tbody td[data-column]')].flatMap((cell) => {
+      const style = getComputedStyle(cell);
+      const room = cell.getBoundingClientRect().width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      /* The cell's own children, not its text: a wrapping cell's box already
+         holds its text by definition, and what overflows is an element that
+         will not wrap — a badge, a date, a name. */
+      return [...cell.children]
+        .map((el) => ({ column: cell.dataset.column, over: Math.round(el.getBoundingClientRect().width - room), text: el.textContent.trim().slice(0, 30) }))
+        .filter((item) => item.over > 1);
+    }))).map((item) => `${area} ${theme} ${width}: ${item.column} holds "${item.text}", ${item.over}px wider than its column`));
   }
   // A real iframe receives both its count and size without a second renderer.
   await page.goto(`${origin}/work`);
@@ -552,6 +589,15 @@ try {
   /* An area with no record table measures no fold, so the pass above is the
      empty set unless Work's and Roadmap's tables were really read. */
   assert.deepEqual(cut, [], 'a 390 window must read a row down to its state without scrolling');
+  assert.deepEqual(
+    [...shapes].filter(([, distinct]) => distinct.length > 1).map(([where, distinct]) => `${where}: ${distinct.length} shapes — ${distinct.join(' | ')}`),
+    [],
+    "a view's groups must put their equivalent columns in the same place",
+  );
+  /* Both record views, both themes, all three widths — so the pass above is
+     not one view that happens to have a single group. */
+  assert.ok(shapes.size >= 12, `only ${shapes.size} multi-group views were measured for alignment: ${[...shapes.keys()].join(', ')}`);
+  assert.deepEqual([...new Set(spill)], [], 'a column must be wide enough for what it holds');
   assert.ok(folds.length >= 8, `only ${folds.length} state cells were measured at 390, so the fold was not really read`);
   /* Reported, not asserted: how much room the tightest state had to spare. A
      pass says nothing was cut; this says how close the next longer word is. */
@@ -564,7 +610,7 @@ try {
     `the WCAG audit ran on ${audited.length} layouts, not all ${areas.length * themes.length * widths.length}: ${audited.join(', ')}`,
   );
   assert.deepEqual(errors, []);
-  console.log(`All five areas, Work's and Roadmap's compact tables, bounded summaries and full records, held state, copy, focused refresh, embedded answer, runtime trace, team profiles, Inter, the four status roles measured at rest and on hovered and expanded rows in both themes, and all ${audited.length} layouts verified and audited against WCAG 2 A/AA with axe-core ${axeVersion}. At 390 the tightest of ${folds.length} state cells, "${tightest.text}" in ${tightest.table}, cleared the fold by ${-tightest.over}px. Evidence: ${dir}`);
+  console.log(`All five areas, Work's and Roadmap's compact tables, bounded summaries and full records, held state, copy, focused refresh, embedded answer, runtime trace, team profiles, Inter, the four status roles measured at rest and on hovered and expanded rows in both themes, all ${audited.length} layouts verified and audited against WCAG 2 A/AA with axe-core ${axeVersion}, ${shapes.size} multi-group views aligned column for column, and nothing wider than the column holding it. At 390 the tightest of ${folds.length} state cells, "${tightest.text}" in ${tightest.table}, cleared the fold by ${-tightest.over}px. Evidence: ${dir}`);
   writeFileSync(join(dir, 'result.json'), JSON.stringify({ origin, artifacts: dir, errors, verified: new Date().toISOString() }, null, 2));
 } finally {
   await browser?.close();

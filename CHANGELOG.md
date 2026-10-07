@@ -13,6 +13,26 @@ longer.
 
 ## Unreleased — 0.9.5
 
+- A row's title gets the column, and a view's groups line up. The reference and
+  its copy control came first in the record column and took the width before
+  the title had any: in a 640 pixel window the title of a record was left about
+  100 of 256 pixels, wrapped to four lines, and stood its collapsed row 123
+  pixels tall. The title now leads and claims the column, with the reference
+  beside it where there is room for both and under it where there is not; the
+  columns after it declare what the record actually asks them to carry instead
+  of a round number, which gives the title the difference. On the live record
+  that is a third to two fifths off a row in the groups being watched — 243
+  pixels to 151 in a 640 window, 223 to 151 — and the same again on Roadmap.
+
+  And each group sized its own table from its own content, so equivalent columns
+  started in different places in different groups of one view and there was no
+  straight edge to scan down. The columns are laid out fixed now, so every group
+  of a view agrees, and nothing may be wider than the column holding it. That
+  also makes the fold measurable on a fixture: where it falls had been a
+  property of which records happened to be in a group, which is how the live
+  Blocked group's state was still cut in half at 390 while the verification
+  passed.
+
 - A phone reads a row's state again. Work and Roadmap are wider than a 390
   pixel window and scroll sideways by design, but the first column's floor put
   the fold through the State badge, so every table in both areas showed a

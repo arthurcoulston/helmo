@@ -287,15 +287,15 @@ here about status or progress; that is R-46's question.
 
 **Work is the same compact reading.** Its groups — in motion, ready, blocked,
 standing, done, cancelled — are the same `RecordTable`, with columns chosen
-for scanning: the reference and title, the stream/project/type beneath it,
-the state, the priority, the owner, and when it last moved. Those columns do
-not fit a phone, and the shared record column's floor is what decides where
-the horizontal fold falls: a row's work and its state stay inside a 390 window,
-and the priority, owner and last movement are what the region's label offers to
-scroll for. Until H-2946@dev.rev that floor was wider and the fold ran through
-the State badge on every table in both areas — Work read "In moti" at 390
-(H-2981@dev.rev) and Roadmap cut its state harder still. A row also carries
-the signals that should reach Arthur before he opens anything — what it waits
+for scanning: the title and, beside it where the column affords both, the
+reference; the stream/project/type beneath them; the state, the priority, the
+owner, and when it last moved. Those columns do not fit a phone, and the record
+column's floor is what decides where the horizontal fold falls: a row's work and
+its state stay inside a 390 window, and the priority, owner and last movement
+are what the region's label offers to scroll for. Until H-2946@dev.rev that
+floor was wider and the fold ran through the State badge on every table in both
+areas — Work read "In moti" at 390 (H-2981@dev.rev) and Roadmap cut its state
+harder still. A row also carries the signals that should reach Arthur before he opens anything — what it waits
 on, that it is on hold, a date it cannot start before, a stale release
 handoff, a confidence below routine, an acceptance state, a closed ticket with
 no evidence — in their short form only. The sentence behind a hold or a stale
@@ -306,6 +306,39 @@ ticket is an unmodified Sheet reading in the order a reader wants it — what
 the work is, what stands in front of it, the last recorded progress, what it
 produced, its dependencies and history, and the recorded token and usage
 figures last, where an estimate belongs rather than at the top of the record.
+
+**A view's groups line up, and the geometry is the view's own.** Each group is
+its own table, and under automatic layout each sized its columns from its own
+content: a group holding a row that waits on two tickets had a wider minimum
+than one that did not, so Work's State column began at x317 in two groups and
+x340 in the third, and the eye had no straight edge to run down (H-2988@dev.rev).
+`RecordTable` lays its columns out fixed, so every column is the width it asks
+for and the groups of one view agree by construction. Three consequences are
+load-bearing.
+
+The record column's floor cannot be a minimum on the cell — fixed layout does
+not consult one — so it is the table's own `minWidth`, which each view states as
+its fixed columns plus that floor; a column widened without it moves the fold.
+Roadmap's floor is smaller than Work's, because the rank column in front of it
+spends width Work's does not.
+
+Every other column declares what the real record actually asks it to carry, plus
+the cell's padding, because under fixed layout a column keeps what it declares
+whether it needs it or not, and what it keeps it takes from the title. Those
+widths are measurements rather than round numbers: across 2,988 records the
+widest state is "Cancelled" at 76px, the latest movement "Aug 28, 12:44 AM" at
+102px, the largest project estimate "$175.01" at 59px, and the disclosure
+control 28px. Who is the exception and wraps — the record holds a
+`claude-code-interactive` from before assignees were short names, and a column
+sized for that would cost every row. What fixed layout gives up is the browser's
+own guarantee that content fits, so `verify:ui` fails on any cell wider than its
+column: a longer word goes red rather than reaching into its neighbour.
+
+And because the geometry no longer depends on which records are in a group,
+measuring it on a fixture measures the product. The same floor that clears the
+fold by 24px on Work's fixtures clears it by 24px on the real record, where
+automatic layout had the live Blocked group's state still cut by 32px at 390
+while the fixtures passed.
 
 Decision needed, Action for you and Needs a sitting keep their own cards above
 the tables, with their own controls, their complete question or action and the
@@ -335,7 +368,11 @@ embedded sizing, failed refreshes, keyboard table scrolling and both themes at
 390, 640 and 1280 pixels. At 390 it also measures where each record table's
 fold falls, by `data-column` rather than by the words in a cell; the page
 itself never overflows there — the table scrolls inside its own container — so
-no other measurement in the run can see a state cut in half. Every one of those 30 layouts is audited against
+no other measurement in the run can see a state cut in half. At every width it
+compares the column geometry of a view's groups against each other, by offset
+and width from each table's own left edge, and fails naming the shapes that
+disagree; it also fails on any cell whose content is wider than the column
+holding it. Every one of those 30 layouts is audited against
 WCAG 2 A/AA by axe-core, a devDependency of `@helmo/shell` resolved from the
 package — there is nothing to set and no way to skip it, and the run asserts
 the audit count so a layout that went unaudited is a failure rather than a

@@ -29,15 +29,21 @@ export function excerpt(text: string, limit = 320) {
 }
 
 /* The first column carries the record itself and takes whatever width is left
-   over, but it needs a floor or a long title shreds into one word a line. That
-   floor is also what decides where the horizontal fold lands on a phone, and
-   at 64 it put the fold through the State badge: Work read "In moti" at 390
-   and Roadmap cut "Ship next" harder still (H-2981). A row's two load-bearing
-   columns are the work and what state it is in, so the floor is the widest one
-   that keeps both inside a 390 window; the columns after them are what the
-   region's label offers to scroll for. `verify:ui` measures it there, so a
-   wider floor or a longer state word goes red rather than quietly clipping. */
-export const recordColumn = "min-w-48 whitespace-normal"
+   over: `w-full`, which under the `table-fixed` below is how one column absorbs
+   the remainder while every other keeps exactly the width it asks for.
+
+   Its floor cannot live here. Fixed layout never consults a cell's min-width —
+   measured, not assumed: a column asking for 100% of a table narrower than its
+   siblings resolves to zero — so the floor is the TABLE's `minWidth`, which
+   each view states as its own fixed columns plus that floor. The floor is also
+   what decides where the horizontal fold lands on a phone, and at 64 it put the
+   fold through the State badge: Work read "In moti" at 390 and Roadmap cut
+   "Ship next" harder still (H-2981). A row's two load-bearing columns are the
+   work and what state it is in, so the floor is the widest one that keeps both
+   inside a 390 window; the columns after them are what the region's label
+   offers to scroll for. `verify:ui` measures the fold there, so a column
+   widened without its view's floor goes red rather than quietly clipping. */
+export const recordColumn = "w-full whitespace-normal"
 
 /* `has-aria-expanded:bg-muted/50` on upstream's TableRow is what tints the
    open row, so the toggle has to carry the state in aria rather than a class. */
@@ -49,12 +55,19 @@ export function expandColumn<T extends RowData>(label: (row: T) => string): Reco
       <ChevronRightIcon className={`transition-transform ${row.getIsExpanded() ? "rotate-90" : ""}`} />
       <span className="sr-only">{label(row.original)}</span>
     </Button>,
-    meta: { className: "w-8" },
+    /* 44px: the 28px control plus the cell's own padding. Automatic layout
+       used to find this for itself; under `table-fixed` a column that declares
+       less simply lets its control reach into the next one. */
+    meta: { className: "w-11" },
   }
 }
 
-export function RecordTable<T extends RowData>({ label, columns, rows, rowId, expanded, onExpandedChange, renderExpanded, empty }: {
+export function RecordTable<T extends RowData>({ label, minWidth, columns, rows, rowId, expanded, onExpandedChange, renderExpanded, empty }: {
   label: string
+  /* The view's own floor, as a literal Tailwind class — Tailwind generates from
+     source text, so a width composed here would name a rule that does not
+     exist. See `recordColumn` for what the number has to be. */
+  minWidth: string
   columns: RecordColumn<T>[]
   rows: T[]
   /* Keyed by the record's own id, so expansion survives a refresh that
@@ -72,8 +85,14 @@ export function RecordTable<T extends RowData>({ label, columns, rows, rowId, ex
   const body = table.getRowModel().rows
   /* The region label and the focusable table are RuntimeView's pattern: a
      narrow window scrolls these columns, and the keyboard has to reach it. */
+  /* `table-fixed`, so a column is the width it asks for and nothing more. Under
+     auto layout each group sized its own table from its own content — a row
+     carrying "Waits on H-2946, H-2948" has a wider minimum than one that does
+     not — so Work's State column started at x317 in two groups and x340 in the
+     third, and the eye had no straight edge to run down. Fixed layout takes
+     every width from the header row, and the groups all share one of those. */
   return <div className="min-w-0 overflow-hidden rounded-md border" role="region" aria-label={`${label} — scroll horizontally for all columns`}>
-    <Table tabIndex={0} aria-label={label}>
+    <Table tabIndex={0} aria-label={label} className={`table-fixed ${minWidth}`}>
       <TableHeader>{table.getHeaderGroups().map((group) => <TableRow key={group.id} className="hover:bg-transparent">
         {/* `data-column` is how the browser verification addresses a column —
             by what it IS rather than by the words a cell happens to hold, so

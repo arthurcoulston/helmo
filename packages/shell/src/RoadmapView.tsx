@@ -99,22 +99,25 @@ function columnsFor(open: Opener): RecordColumn<Row>[] {
       id: "rank",
       header: () => <span title="Position in the server's ranked order">#</span>,
       cell: ({ row }) => <span className="text-muted-foreground text-xs tabular-nums">{row.original.ranked ? row.original.ranked.rank : "—"}</span>,
-      meta: { className: "w-10" },
+      meta: { className: "w-8" },
     },
     {
       id: "project",
       header: () => "Project",
       cell: ({ row }) => {
         const { project, ranked } = row.original
-        return <div className="flex flex-col">
-          <div className="flex flex-wrap items-center gap-1">
-            <Reference id={project.id} />
-            {/* The title is the way into the record. A phone scrolls these
-                columns, so an icon in the last one would be the one control
-                that is never on screen; the title always is. */}
-            <Button variant="ghost" className="h-auto min-w-0 flex-1 justify-start whitespace-normal px-2 py-1 text-left font-medium" onClick={(event) => open(project.id, event.currentTarget)}>
+        return <div className="flex min-w-0 flex-col items-start">
+          {/* Title first and the reference after it, for the reason Work's are:
+              the reference used to take the width a title needs before the title
+              got any (H-2988). `basis-48` keeps them on one line where the
+              column affords it. The title is also the way into the record — a
+              phone scrolls these columns, so an icon in the last one would be
+              the one control that is never on screen. */}
+          <div className="flex w-full min-w-0 flex-wrap items-center gap-x-1">
+            <Button variant="ghost" className="h-auto min-w-0 flex-1 basis-48 justify-start whitespace-normal px-2 py-1 text-left font-medium" onClick={(event) => open(project.id, event.currentTarget)}>
               <span className="min-w-0 break-words [overflow-wrap:anywhere]">{project.title}</span>
             </Button>
+            <Reference id={project.id} />
           </div>
           {/* The server's explanation already says "waits on R-n" and
               "advances nothing stated" under exactly the conditions the old
@@ -125,8 +128,11 @@ function columnsFor(open: Opener): RecordColumn<Row>[] {
       },
       meta: { className: recordColumn },
     },
-    { id: "state", header: () => "State", cell: ({ row }) => <StatusBadge status={projectStatusRole(row.original.project.status)}>{status(row.original.project.status)}</StatusBadge>, meta: { className: "w-28" } },
-    { id: "usage", header: () => "Usage est.", cell: ({ row }) => <span>${row.original.project.actual_usd.toFixed(2)}</span>, meta: { className: "w-24 text-right tabular-nums" } },
+    /* Measured across every project, as Work's are: the widest state is "Ship
+       next" at 72px and the largest estimate "$175.01" at 59px. A column keeps
+       what it declares under `table-fixed`, and takes it from the title. */
+    { id: "state", header: () => "State", cell: ({ row }) => <StatusBadge status={projectStatusRole(row.original.project.status)}>{status(row.original.project.status)}</StatusBadge>, meta: { className: "w-24" } },
+    { id: "usage", header: () => "Usage est.", cell: ({ row }) => <span>${row.original.project.actual_usd.toFixed(2)}</span>, meta: { className: "w-20 text-right tabular-nums" } },
   ]
 }
 
@@ -174,6 +180,12 @@ export function RoadmapView({ data, selected }: { data: RoadmapData; selected: s
         <h2 className="text-muted-foreground text-xs font-medium uppercase tracking-wide">{group.title} · {group.rows.length}</h2>
         <RecordTable<Row>
           label={group.title}
+          /* The four fixed columns above (44 + 32 + 96 + 80) plus a 168px record
+             floor — not Work's 192, because the rank column in front of it
+             spends width Work does not, and a floor that leaves no room for the
+             State badge at 390 puts the fold back through it. See Work's for
+             what measures this. */
+          minWidth="min-w-[420px]"
           columns={columns}
           rows={group.rows}
           rowId={(row) => row.project.id}

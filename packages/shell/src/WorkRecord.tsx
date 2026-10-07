@@ -237,8 +237,11 @@ function Signals({ row }: { row: Row }) {
     { mark: row.status === "done" && !row.evidence.length ? "No evidence" : "", status: "attention" },
   ]
   const marks = signals.filter((signal) => signal.mark)
-  return marks.length ? <span className="flex flex-wrap gap-1 px-2">
-    {marks.map(({ mark, status }) => <StatusBadge key={mark} variant="outline" status={status}>{mark}</StatusBadge>)}
+  /* A fixed-width column does not grow for a long mark, so a mark wraps rather
+     than reaching across the column after it: "Waits on H-2946, H-2948" is one
+     badge, and the badge upstream generates is `whitespace-nowrap h-5`. */
+  return marks.length ? <span className="flex min-w-0 flex-wrap gap-1">
+    {marks.map(({ mark, status }) => <StatusBadge key={mark} variant="outline" status={status} className="h-auto whitespace-normal">{mark}</StatusBadge>)}
   </span> : null
 }
 
@@ -303,25 +306,47 @@ function columnsFor(open: Opener): RecordColumn<Row>[] {
       header: () => "Work",
       cell: ({ row }) => {
         const record = row.original
-        return <div className="flex flex-col">
-          <div className="flex flex-wrap items-center gap-1">
-            <RecordRef id={record.id} />
-            {/* The title is the way in. A narrow window scrolls these columns,
-                so a control in the last one would be the one never on screen;
-                the title always is. */}
-            <Button variant="ghost" className="h-auto min-w-0 flex-1 justify-start whitespace-normal px-2 py-1 text-left font-medium" onClick={(event) => open(record.id, event.currentTarget)}>
+        return <div className="flex min-w-0 flex-col items-start">
+          {/* The title asks for the whole column and the reference follows it,
+              beside it where the column is wide enough for both and on its own
+              line where it is not. The reference used to come FIRST, which at
+              640 left a title about 100px of a 256px cell: H-2986's own title
+              wrapped to four lines and its collapsed row stood 123px tall,
+              which is not a table anyone scans. `basis-48` is what makes that
+              conditional — the title claims the floor width before the
+              reference gets any, and shrinks below it only when the column
+              itself is narrower.
+
+              The title is also the way in. A narrow window scrolls these
+              columns, so a control in the last one would be the one never on
+              screen; the title always is. */}
+          <div className="flex w-full min-w-0 flex-wrap items-center gap-x-1">
+            <Button variant="ghost" className="h-auto min-w-0 flex-1 basis-48 justify-start whitespace-normal px-2 py-1 text-left font-medium" onClick={(event) => open(record.id, event.currentTarget)}>
               <span className="min-w-0 break-words [overflow-wrap:anywhere]">{record.title}</span>
             </Button>
+            <RecordRef id={record.id} />
           </div>
-          <span className="text-muted-foreground px-2 text-xs">{[record.workstream, record.project, record.type].filter(Boolean).join(" · ")}</span>
-          <Signals row={record} />
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 px-2">
+            <span className="text-muted-foreground text-xs">{[record.workstream, record.project, record.type].filter(Boolean).join(" · ")}</span>
+            <Signals row={record} />
+          </div>
         </div>
       },
       meta: { className: recordColumn },
     },
-    { id: "state", header: () => "State", cell: ({ row }) => <StatusBadge status={ticketStateRole(row.original.status)}>{state(row.original.status)}</StatusBadge>, meta: { className: "w-28" } },
-    { id: "priority", header: () => <span title="Priority: 0 critical, 3 low">P</span>, cell: ({ row }) => <span className="tabular-nums">{row.original.priority}</span>, meta: { className: "w-10 text-right" } },
-    { id: "assignee", header: () => "Who", cell: ({ row }) => <span className="text-xs">{row.original.assignee ?? "—"}</span>, meta: { className: "w-28" } },
+    /* Each width is what the column is actually asked to carry across the whole
+       record, plus the cell's padding — measured, because under `table-fixed` a
+       column keeps every pixel it declares whether it needs them or not, and
+       what it keeps it takes from the title. The widest state is "Cancelled" at
+       76px, a priority is one digit, and the latest movement is "Aug 28, 12:44
+       AM" at 102px. `verify:ui` fails on a cell wider than its column, so a
+       longer word goes red rather than reaching into its neighbour. */
+    { id: "state", header: () => "State", cell: ({ row }) => <StatusBadge status={ticketStateRole(row.original.status)}>{state(row.original.status)}</StatusBadge>, meta: { className: "w-24" } },
+    { id: "priority", header: () => <span title="Priority: 0 critical, 3 low">P</span>, cell: ({ row }) => <span className="tabular-nums">{row.original.priority}</span>, meta: { className: "w-8 text-right" } },
+    /* Who is the exception: assignees are short names, but the record holds
+       "claude-code-interactive" at 137px from before they were, and a column
+       sized for that would cost every row. It wraps instead. */
+    { id: "assignee", header: () => "Who", cell: ({ row }) => <span className="text-xs">{row.original.assignee ?? "—"}</span>, meta: { className: "w-24 whitespace-normal break-words" } },
     { id: "updated", header: () => "Updated", cell: ({ row }) => <span className="text-muted-foreground text-xs">{time(row.original.closed_at ?? row.original.updated_at)}</span>, meta: { className: "w-32" } },
   ]
 }
@@ -367,6 +392,10 @@ export function WorkRecord({ data, selected }: { data: WorkRecordData; selected:
       <h2 className="text-muted-foreground text-xs font-medium uppercase tracking-wide">{group.label} · {group.rows.length}</h2>
       <RecordTable<Row>
         label={group.label}
+        /* The five fixed columns above (44 + 96 + 32 + 96 + 128) plus the
+           record column's 192px floor. `verify:ui` measures the fold at 390, so
+           widening a column without this goes red. */
+        minWidth="min-w-[588px]"
         columns={columns}
         rows={group.rows}
         rowId={(row) => row.id}

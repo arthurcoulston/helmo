@@ -730,6 +730,30 @@ describe('the release commands (H-2493)', () => {
     expect(existsSync(join(i.supervisor, 'REDEPLOY'))).toBe(false);
   });
 
+  // The call site H-2985 added, driven by the real supervisor rather than a
+  // stand-in. `rev run` over a running record whose pid has since died is the
+  // ordinary launchd restart, and this harness runs the CLI from `src`, which
+  // carries no build stamp — so the supervisor cannot certify that what it
+  // loaded is the selected release's own bytes, and the record must come out
+  // untouched rather than re-attested to a process that might be running
+  // anything. The acceptance side needs a supervisor that really loaded a
+  // stamped release, which is what the disposable-installation run in
+  // crew:agents/mason/workspace/h2985-live-restart.sh exercises end to end.
+  it('leaves a running record alone when a returning supervisor cannot certify what it loaded', () => {
+    const i = activatableInstallation('activation-restart');
+    expect(rev(i.home, ['release', 'activate'], i.env).status).toBe(0);
+    unlinkSync(join(i.supervisor, 'RUNNING'));
+    expect(rev(i.home, ['run'], i.env).status).toBe(0);
+    const activated = readDeployment(deploymentFile(i.file));
+    expect(activated?.phase).toBe('running');
+    expect(activated?.detail).toBeUndefined();
+
+    // That supervisor is gone and nothing is activating: the restart branch.
+    const restarted = rev(i.home, ['run'], i.env);
+    expect(restarted.status, `${restarted.stdout}${restarted.stderr}`).toBe(0);
+    expect(readDeployment(deploymentFile(i.file))).toEqual(activated);
+  });
+
   it('records watch expiry and recovers only through a fresh activation attempt', () => {
     const i = activatableInstallation('activation-recovery');
     expect(rev(i.home, ['release', 'activate'], i.env).status).toBe(0);

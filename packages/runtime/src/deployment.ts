@@ -1,5 +1,5 @@
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { explicitInstallationIdentity } from '@helmo/core';
 import type { Selection } from './release.js';
@@ -170,18 +170,22 @@ export function failActivation(file: string, detail: string): DeploymentRecord |
  * is no answer here — the whole point of comparing is not to report a
  * configured ref as a running one (H-2432, build.ts).
  *
- * Both paths are resolved first, as `selectedRelease` resolves the two it
- * compares: a process records the directory Node resolved for it, which is the
- * real path, while the selection holds whatever the operator wrote. One symlink
- * anywhere above the release — `/tmp` is one on macOS — makes two spellings of
- * the same directory look like two different releases.
+ * Each component's own directory is resolved before the comparison, exactly as
+ * `selectedRelease` resolves the two paths it compares. A process records the
+ * directory Node resolved for it; the selection holds what the operator wrote,
+ * and a set may stage a component as a symlink. One link anywhere above the
+ * loaded code — `/tmp` is one on macOS — otherwise makes two spellings of the
+ * same directory look like two different releases.
  */
 export function loadedFromRelease(snapshot: Snapshot | null, directory: string, commits: Record<string, string>): { component: string; commit: string } | null {
   if (!snapshot?.stamp || snapshot.stamp.dirty) return null;
-  const within = relative(real(directory), real(snapshot.dir));
-  if (within === '' || within.startsWith('..') || isAbsolute(within)) return null;
-  const component = within.split(sep)[0]!;
-  return commits[component] === snapshot.stamp.commit ? { component, commit: snapshot.stamp.commit } : null;
+  const where = real(snapshot.dir);
+  for (const [component, commit] of Object.entries(commits)) {
+    if (commit !== snapshot.stamp.commit) continue;
+    const within = relative(real(join(directory, component)), where);
+    if (!within.startsWith('..') && !isAbsolute(within)) return { component, commit };
+  }
+  return null;
 }
 
 export interface Restart {

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,6 +12,14 @@ import { env } from '../../cli/test/installation.mjs';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 assertBuilt(root);
+/* The WCAG audit is a dependency, not an environment variable. It used to run
+   only `if (process.env.HELMO_AXE_SOURCE && existsSync(...))`, so the default
+   was to audit nothing, print nothing and exit 0 — a clean run a reader took
+   for accessibility evidence (H-2982). Resolved here so a missing devDependency
+   fails before a browser is launched. */
+const required = createRequire(import.meta.url);
+const axeSource = required.resolve('axe-core/axe.min.js');
+const axeVersion = required('axe-core/package.json').version;
 const core = await import('../../core/dist/index.js');
 assert.equal(typeof core.uiRequest, 'function', 'The compiled core is stale. Prepare and build this exact ref in a disposable checkout before running verify:ui; never rebuild a shared installation.');
 const { Store } = await import('../../work/dist/store.js');
@@ -462,7 +471,9 @@ try {
     'a role inside a table row carries ink with no tint of its own, so a hovered or expanded row changes the surface under it',
   );
   await page.evaluate(() => document.documentElement.className = 'light');
-  for (const area of ['overview', 'work', 'roadmap', 'team', 'run']) for (const theme of ['light', 'dark']) for (const width of [390, 640, 1280]) {
+  const areas = ['overview', 'work', 'roadmap', 'team', 'run'], themes = ['light', 'dark'], widths = [390, 640, 1280];
+  const audited = [];
+  for (const area of areas) for (const theme of themes) for (const width of widths) {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`${origin}/${area}`);
     await page.getByText(/Refreshed .*updates every/).waitFor();
@@ -472,11 +483,10 @@ try {
     assert.match(measure.font, /Inter/);
     assert.ok(measure.overflow <= 1, `${theme} ${width}: ${measure.overflow}px overflow`);
     await measurePalette(`${area} ${width}`, theme);
-    if (process.env.HELMO_AXE_SOURCE && existsSync(process.env.HELMO_AXE_SOURCE)) {
-      await page.addScriptTag({ path: process.env.HELMO_AXE_SOURCE });
-      const audit = await page.evaluate(async () => (await window.axe.run(document, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21aa'] } })).violations.map((v) => ({ id: v.id, nodes: v.nodes.map((n) => ({ target: n.target, failureSummary: n.failureSummary })) })));
-      assert.deepEqual(audit, [], `${area} ${theme} ${width} accessibility violations: ${JSON.stringify(audit)}`);
-    }
+    await page.addScriptTag({ path: axeSource });
+    const audit = await page.evaluate(async () => (await window.axe.run(document, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21aa'] } })).violations.map((v) => ({ id: v.id, nodes: v.nodes.map((n) => ({ target: n.target, failureSummary: n.failureSummary })) })));
+    assert.deepEqual(audit, [], `${area} ${theme} ${width} accessibility violations: ${JSON.stringify(audit)}`);
+    audited.push(`${area}/${theme}/${width}`);
     await page.screenshot({ path: join(dir, `shots/${area}-${theme}-${width}.png`), fullPage: true, animations: 'disabled' });
   }
   // A real iframe receives both its count and size without a second renderer.
@@ -517,8 +527,15 @@ try {
     ['attention/dark', 'attention/light', 'failure/dark', 'failure/light', 'info/dark', 'info/light', 'success/dark', 'success/light'],
     'a role was never rendered anywhere, so nothing measured it',
   );
+  /* And every layout would pass with the audit skipped, which is exactly how it
+     shipped: the count is what turns a skipped audit red instead of silent. */
+  assert.equal(
+    audited.length,
+    areas.length * themes.length * widths.length,
+    `the WCAG audit ran on ${audited.length} layouts, not all ${areas.length * themes.length * widths.length}: ${audited.join(', ')}`,
+  );
   assert.deepEqual(errors, []);
-  console.log(`All five areas, Work's and Roadmap's compact tables, bounded summaries and full records, held state, copy, focused refresh, embedded answer, runtime trace, team profiles, Inter, the four status roles measured at rest and on hovered and expanded rows in both themes, and all 30 layouts verified. Evidence: ${dir}`);
+  console.log(`All five areas, Work's and Roadmap's compact tables, bounded summaries and full records, held state, copy, focused refresh, embedded answer, runtime trace, team profiles, Inter, the four status roles measured at rest and on hovered and expanded rows in both themes, and all ${audited.length} layouts verified and audited against WCAG 2 A/AA with axe-core ${axeVersion}. Evidence: ${dir}`);
   writeFileSync(join(dir, 'result.json'), JSON.stringify({ origin, artifacts: dir, errors, verified: new Date().toISOString() }, null, 2));
 } finally {
   await browser?.close();

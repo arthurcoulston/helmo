@@ -326,8 +326,13 @@ artifacts or rebuild that checkout as a workaround.
 It uses synthetic stores and the managed headless browser, exercising actual
 answers, copies, disclosures, two simultaneous windows, stale-answer refusal,
 embedded sizing, failed refreshes, keyboard table scrolling and both themes at
-390, 640 and 1280 pixels. `HELMO_AXE_SOURCE` may name an installed axe-core
-script for a WCAG A/AA audit of every rendered layout. API tests retain
+390, 640 and 1280 pixels. Every one of those 30 layouts is audited against
+WCAG 2 A/AA by axe-core, a devDependency of `@helmo/shell` resolved from the
+package — there is nothing to set and no way to skip it, and the run asserts
+the audit count so a layout that went unaudited is a failure rather than a
+quiet omission. A clean `verify:ui` is therefore accessibility evidence; before
+H-2982@dev.rev it was not, because the audit ran only when `HELMO_AXE_SOURCE`
+named an out-of-tree copy and was silently absent by default. API tests retain
 readiness, blocked-sitting, nonce/fingerprint and installation-isolation
 coverage. Removed source-string tests described the superseded HTML/CSS, not
 the browser's behavior; they do not define the new component structure.

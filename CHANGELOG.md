@@ -28,6 +28,20 @@ longer.
   names its corpus; a seat without one says so rather than reporting an empty
   one.
 
+- A file Team cannot safely read is now named rather than read. The inventory
+  reaches files no roster entry names — whatever `CLAUDE.md` or `AGENTS.md` sits
+  in a seat's working tree — so the reading had to stop trusting them. A fifo
+  with one of those names used to hold every page of the app, not just Team,
+  until the process was killed; a symbolic link used to put whatever it pointed
+  at on the page. Both are now reported as what they are. So is a file too large
+  to read, and a file whose text runs unbroken far enough that counting its
+  tokens would stall the page for everyone — the tokenizer's cost turns out to
+  follow how far a file runs without a space rather than how big it is, so a
+  size limit alone would not have been one. In each case the page says the file
+  is there and why it has no count, which is the one thing it must not get wrong:
+  an unreadable file is never a zero folded into a total. And a member named
+  after one of JavaScript's built-in property names is no longer a member.
+
 - Red now outranks amber. The four status colours all came out the same weight:
   their fills measured 1.10, 1.12, 1.12 and 1.14 against a white page, a three
   percent spread, so a failed review carried no more weight than something merely

@@ -379,6 +379,32 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   load on the first measurement, so no command that never asks for context pays
   for them. `view.ts` adds `state()` to the document, rather than team.ts
   deriving loop state a second time and letting two surfaces disagree.
+- **Every Team read goes through `readBounded`, and that is the whole guard
+  (H-3004).** The inventory includes every `CLAUDE.md` and `AGENTS.md` found
+  walking up from a seat's cwd — files no roster entry names, in trees any agent
+  on this machine can write — so the open is what decides, not a stat a later
+  open could race. `O_NOFOLLOW` refuses a symbolic link, because the walk used
+  `existsSync` and the file route served the link's target; `O_NONBLOCK` keeps a
+  fifo from parking the open, because a fifo named `AGENTS.md` in a seat's cwd
+  held *every* route of the app, `/overview` included, until a kill; `fstat` on
+  the descriptor refuses anything that is not a regular file.
+  Two ceilings sit above it. `MEASURE_BYTE_CEILING` bounds what one request
+  pulls into memory. `TOKENIZE_WORK_CEILING` is the one that matters: a byte
+  ceiling does not bound the tokenizer, because js-tiktoken's BPE merge loop is
+  quadratic in a single chunk and the chunking regex never spans a whitespace
+  boundary by more than a character — so 16KB of one repeated character costs
+  15s, 32KB of spaces 65s, and 256KB whose every run is 1KB still costs 15s.
+  `tokenizeWork` sums the squares of a text's whitespace-delimited runs, which
+  is what the cost is proportional to (~60ms per million for ASCII, ~170ms for
+  non-ASCII, holding from 37ms to 65s across the measured range). A file past
+  either ceiling is reported `unreadable` with its byte count and the reason,
+  never with a token count, so it cannot silently shrink the total it belongs
+  to. Both ceilings sit well clear of real configuration: this installation's
+  largest instruction file measures 125,175 against a ceiling of two million.
+- **A seat is looked up with `Object.hasOwn`.** `roster.loops` and `PERIODS`
+  are plain objects, so `/api/v1/team/members/__proto__` answered 200 with a
+  phantom member and `?period=__proto__` dated the window to NaN and answered
+  503 instead of falling back (H-3004).
 - `capacity.ts` — plan capacity and runaway detection, pure (H-185), consumed
   by the loop before subscription-provider runs (H-186). Metered providers
   retain the legacy dollar and transient-limit gates; declaring a provider

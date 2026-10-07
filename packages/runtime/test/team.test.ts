@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  seatContext, seatSpend, spendBasis, workingTreeInstructions, isPeriod, WORKING_LEVEL,
+  seatContext, seatSpend, spendBasis, workingTreeInstructions, isPeriod, readBounded,
+  tokenizeWork, MEASURE_BYTE_CEILING, TOKENIZE_WORK_CEILING, WORKING_LEVEL,
 } from '../src/team.js';
 import type { LoopConfig } from '../src/types.js';
 
@@ -82,6 +83,45 @@ describe('seatContext', () => {
     expect(c.startup_tokens).toBe(0);
   });
 
+  it('names a file past the byte ceiling rather than claiming a token count for it', async () => {
+    writeFileSync(join(tree, 'PROFILE.md'), 'word '.repeat(MEASURE_BYTE_CEILING / 4));
+    const c = await seatContext(loop());
+    expect(c.composed.profile?.state).toBe('unreadable');
+    expect(c.composed.profile?.tokens).toBe(0);
+    // Its size is the reading that IS available, so it is reported.
+    expect(c.composed.profile?.bytes).toBeGreaterThan(MEASURE_BYTE_CEILING);
+    expect(c.composed.profile?.error).toMatch(/ceiling/);
+    expect(c.startup_tokens).toBe(0);
+  });
+
+  it('refuses to tokenize a file whose runs are long enough to hold the event loop', async () => {
+    // 16KB of one unbroken character measures 15s on this encoding — the BPE
+    // merge loop is quadratic in a single chunk, and this read is synchronous,
+    // so the cost lands on every route of the app (H-3004). The elapsed
+    // assertion is the real one: it fails by timing out, which is the reported
+    // failure, not a proxy for it.
+    writeFileSync(join(tree, 'PROFILE.md'), 'x'.repeat(16_384));
+    const started = Date.now();
+    const c = await seatContext(loop());
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(c.composed.profile?.state).toBe('unreadable');
+    expect(c.composed.profile?.tokens).toBe(0);
+    expect(c.composed.profile?.bytes).toBe(16_384);
+    expect(c.startup_tokens).toBe(0);
+  });
+
+  it('measures ordinary prose far larger than that, because size is not what costs', async () => {
+    // The ceiling is on the tokenizer's work, not the file's size: a quarter of
+    // a megabyte of prose is cheap and must still be measured, or the guard
+    // would report this installation's own configuration as unreadable.
+    const prose = 'The quick brown fox jumps over the lazy dog. '.repeat(5_000);
+    writeFileSync(join(tree, 'PROFILE.md'), prose);
+    expect(tokenizeWork(prose)).toBeLessThan(TOKENIZE_WORK_CEILING);
+    const c = await seatContext(loop());
+    expect(c.composed.profile?.state).toBe('uncapped');
+    expect(c.composed.profile?.tokens).toBeGreaterThan(40_000);
+  });
+
   it('inventories the memory corpus as available, and keeps it out of the startup total', async () => {
     writeFileSync(join(tree, 'PROFILE.md'), 'the seat');
     const memory = join(tree, 'memory');
@@ -135,6 +175,60 @@ describe('workingTreeInstructions', () => {
     expect(workingTreeInstructions(tree, 'codex').map((p) => p.split('/').pop())).toEqual(['AGENTS.md']);
     expect(workingTreeInstructions(tree, 'claude').map((p) => p.split('/').pop())).toEqual(['CLAUDE.md', 'AGENTS.md']);
     expect(workingTreeInstructions(tree, 'mock')).toEqual([]);
+  });
+});
+
+describe('readBounded', () => {
+  it('refuses a symbolic link at the open rather than by a stat a later open could race', () => {
+    const outside = join(tree, 'outside.txt');
+    writeFileSync(outside, 'OUTSIDE');
+    symlinkSync(outside, join(tree, 'link.md'));
+    const read = readBounded(join(tree, 'link.md'), 1_000);
+    expect(read.ok).toBe(false);
+    if (read.ok) return;
+    expect(read.error).toMatch(/symbolic link/);
+  });
+
+  it('refuses what is not a regular file by what fstat says, not by what the read happens to fail with', () => {
+    // A directory opens read-only on macOS and fails at the read with EISDIR —
+    // whose message also contains the word “directory”, so an assertion
+    // looking for that passed with the guard removed. The wording asserted
+    // here is the guard's own, which no accidental errno produces.
+    mkdirSync(join(tree, 'adir'), { recursive: true });
+    const dir = readBounded(join(tree, 'adir'), 1_000);
+    expect(dir.ok).toBe(false);
+    if (dir.ok) return;
+    expect(dir.error).toBe('This path is a directory, so it is named here rather than read.');
+  });
+
+  it('cuts at the limit while reporting the file’s whole size', () => {
+    writeFileSync(join(tree, 'long.md'), 'abcdefghij'.repeat(100));
+    const read = readBounded(join(tree, 'long.md'), 64);
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+    expect(read.text.length).toBe(64);
+    expect(read.truncated).toBe(true);
+    expect(read.bytes).toBe(1_000);
+  });
+
+  it('reports an absent file rather than throwing into the route', () => {
+    const read = readBounded(join(tree, 'absent.md'), 64);
+    expect(read.ok).toBe(false);
+  });
+});
+
+describe('tokenizeWork', () => {
+  it('costs one unbroken run its square, so a long one is refused and prose of the same size is not', () => {
+    // 1,000 of one character is 1,000,000; 1,000 characters of five-letter
+    // words is a few tens of thousands. Same bytes, three orders apart.
+    expect(tokenizeWork('x'.repeat(1_000))).toBe(1_000_000);
+    expect(tokenizeWork('word '.repeat(200))).toBeLessThan(10_000);
+  });
+
+  it('counts a whitespace run too, which is as expensive as any other', () => {
+    // 32KB of spaces measured 65s: the chunk the merge loop sees is the run,
+    // whatever it is made of.
+    expect(tokenizeWork(' '.repeat(1_000))).toBe(1_000_000);
   });
 });
 
@@ -214,5 +308,10 @@ describe('isPeriod', () => {
     expect(isPeriod('all')).toBe(true);
     expect(isPeriod('99d')).toBe(false);
     expect(isPeriod(undefined)).toBe(false);
+    // `'__proto__' in PERIODS` is true, and the window it produced dated to
+    // NaN rather than falling back (H-3004).
+    for (const name of ['__proto__', 'constructor', 'toString', 'valueOf', 'hasOwnProperty']) {
+      expect(isPeriod(name)).toBe(false);
+    }
   });
 });

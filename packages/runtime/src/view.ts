@@ -10,7 +10,7 @@ import { buildReport, compare, loaded, parseMarker, snapshot } from './build.js'
 import { revHome, loadRoster, stateDir, tokenLogPath } from './config.js';
 import { target } from './install.js';
 import { processObservation, sGet, sHas, sValue } from './sentinels.js';
-import { isPeriod, seatContext, teamDocument, type Period } from './team.js';
+import { isPeriod, readBounded, seatContext, teamDocument, type Period } from './team.js';
 
 const port = Number(process.env['REV_VIEW_PORT'] ?? 4500);
 const host = process.env['REV_VIEW_HOST'] ?? '127.0.0.1';
@@ -158,12 +158,24 @@ export function teamPeriod(url: string | undefined): Period {
   return isPeriod(asked) ? asked : '7d';
 }
 
+/** The most of a file body this surface sends. */
+const TEAM_BODY_LIMIT = 200_000;
+
+/** A seat by roster name. `hasOwn`, because `loops` is a plain object and
+ *  `loops['__proto__']`, `constructor` and `toString` are all truthy — which
+ *  answered `/api/v1/team/members/__proto__` with a phantom member (H-3004). */
+function seatLoop(name: string) {
+  const loops = loadRoster().loops;
+  return Object.hasOwn(loops, name) ? loops[name] : undefined;
+}
+
 /** One member's configured profile and the inventory behind it. The `body` key
  *  is the reading this route has always offered, kept so the profile is one
  *  request away; `context` is the inventory the Team page draws. */
 export async function teamMember(name: string) {
-  const loop = loadRoster().loops[name];
+  const loop = seatLoop(name);
   if (!loop) return null;
+  const profile = loop.constitution ? readBounded(loop.constitution, TEAM_BODY_LIMIT) : null;
   return {
     id: loop.name,
     name: loop.seat ?? loop.name,
@@ -171,7 +183,9 @@ export async function teamMember(name: string) {
     runtime: loop.runtime,
     model: loop.model,
     context: await seatContext(loop),
-    body: loop.constitution ? readFileSync(loop.constitution, 'utf8') : 'No profile is configured.',
+    body: profile === null ? 'No profile is configured.'
+      : profile.ok ? profile.text + (profile.truncated ? '\n\n…bounded here; the file continues.' : '')
+      : `This profile cannot be read: ${profile.error}`,
   };
 }
 
@@ -183,7 +197,7 @@ export async function teamMember(name: string) {
  *  argument: the set of readable files is whatever THIS installation
  *  configured, and no request can widen it. */
 export async function teamFile(name: string, path: string) {
-  const loop = loadRoster().loops[name];
+  const loop = seatLoop(name);
   if (!loop) return null;
   const context = await seatContext(loop);
   const inventory = [
@@ -194,11 +208,12 @@ export async function teamFile(name: string, path: string) {
   ];
   const found = inventory.find((item) => item.file.path === path);
   if (!found) return null;
-  // Bounded: a reader on a dashboard wants the file, not an unbounded transfer,
-  // and the cut is reported rather than silent.
-  const whole = readFileSync(path, 'utf8');
-  const body = whole.slice(0, 200_000);
-  return { ...found.file, role: found.role, body, truncated: body.length < whole.length };
+  // Bounded at the read rather than after it: slicing a string we had already
+  // pulled whole into memory was a bound on the response, not on the work, and
+  // the same open is what refuses a fifo or a symlink (H-3004).
+  const read = readBounded(path, TEAM_BODY_LIMIT);
+  if (!read.ok) return { ...found.file, role: found.role, state: 'unreadable' as const, error: read.error, body: '', truncated: false };
+  return { ...found.file, role: found.role, body: read.text, truncated: read.truncated };
 }
 
 export function runtimeRequest(req: IncomingMessage, res: ServerResponse) {

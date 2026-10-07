@@ -20,7 +20,7 @@
 //   - MEASURED vs UNMEASURED. The CLI's own system prompt, its tool schemas
 //     and the iteration prompt are real tokens nobody here can count. They are
 //     named in `unmeasured` rather than left to read as zero.
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readdirSync, readFileSync, readSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import type { Tiktoken } from 'js-tiktoken';
@@ -52,6 +52,98 @@ export const WORKING_LEVEL = 0.75;
 
 export type FileState = 'ok' | 'tight' | 'over' | 'uncapped' | 'unreadable';
 
+/** The most of a file this surface will read. Configured context is instruction
+ *  prose — the largest thing in this installation's inventory is 14KB — so a
+ *  ceiling here costs nothing real and bounds what one request can pull into
+ *  memory. */
+export const MEASURE_BYTE_CEILING = 1_048_576;
+
+/** The most tokenizer work one file may be worth.
+ *
+ *  js-tiktoken's BPE merge loop is quadratic in the length of a single chunk,
+ *  and the regex that makes chunks never spans a whitespace boundary by more
+ *  than a character — so the cost of a file tracks the sum of the squares of
+ *  its whitespace-delimited runs. Measured on this encoding: ~60ms per million
+ *  of that sum for ASCII and ~170ms for non-ASCII, holding across inputs from
+ *  256KB of prose (37ms) to 8KB of one repeated character (3.8s) and 16KB of
+ *  one (15.1s). A byte ceiling alone does not bound this: 256KB whose every
+ *  run is 1KB still costs 15s.
+ *
+ *  So the ceiling is on the work, not the size. At two million it admits about
+ *  570KB of ordinary prose and refuses anything that would hold the event loop
+ *  past roughly a third of a second — this installation's worst real file
+ *  measures 125,175, sixteen times under it (H-3004). */
+export const TOKENIZE_WORK_CEILING = 2_000_000;
+
+/** The sum of the squares of a text's whitespace-delimited runs: what the
+ *  tokenizer's cost is proportional to. One pass, ~4ms on a megabyte. */
+export function tokenizeWork(text: string): number {
+  let sum = 0;
+  let len = 0;
+  let previous = -1;
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i]!;
+    const space = c === ' ' || c === '\n' || c === '\t' || c === '\r' ? 1 : 0;
+    if (space === previous) {
+      len += 1;
+    } else {
+      sum += len * len;
+      previous = space;
+      len = 1;
+    }
+  }
+  return sum + len * len;
+}
+
+export type BoundedRead =
+  | { ok: true; text: string; bytes: number; truncated: boolean }
+  | { ok: false; bytes: number; error: string };
+
+/** Read at most `limit` bytes of a regular file, refusing anything that is not
+ *  one.
+ *
+ *  The inventory this serves includes every CLAUDE.md and AGENTS.md found
+ *  walking up from a seat's working directory — files no roster entry names, in
+ *  trees any agent on this machine can write. So the open itself has to be the
+ *  guard rather than a stat a later open could race:
+ *
+ *  - `O_NOFOLLOW` makes the kernel refuse a symbolic link, so a planted
+ *    `AGENTS.md -> somewhere/else` is reported as a link instead of rendering
+ *    the target's body on the operator's dashboard.
+ *  - `O_NONBLOCK` keeps a fifo from parking the open. A fifo named `AGENTS.md`
+ *    in a seat's cwd froze every route of the app — this read is synchronous,
+ *    and `/api/v1/team` does it once per seat.
+ *  - `fstat` on the open descriptor is what decides: a regular file, or named
+ *    rather than read.
+ *
+ *  Found by the H-3004 containment review. */
+export function readBounded(path: string, limit: number): BoundedRead {
+  let fd: number | undefined;
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) {
+      const kind = stat.isDirectory() ? 'a directory' : stat.isFIFO() ? 'a fifo' : stat.isSocket() ? 'a socket' : 'not a regular file';
+      return { ok: false, bytes: 0, error: `This path is ${kind}, so it is named here rather than read.` };
+    }
+    const want = Math.min(stat.size, limit);
+    const buffer = Buffer.allocUnsafe(want);
+    let read = 0;
+    while (read < want) {
+      const n = readSync(fd, buffer, read, want - read, read);
+      if (n === 0) break;
+      read += n;
+    }
+    return { ok: true, text: buffer.subarray(0, read).toString('utf8'), bytes: stat.size, truncated: stat.size > read };
+  } catch (e) {
+    const code = (e as { code?: string }).code;
+    if (code === 'ELOOP') return { ok: false, bytes: 0, error: 'This path is a symbolic link, which is not followed here; the CLI reading it may still follow it.' };
+    return { ok: false, bytes: 0, error: e instanceof Error ? e.message : String(e) };
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
 export interface MeasuredFile {
   path: string;
   name: string;
@@ -76,19 +168,26 @@ function frontMatterCap(text: string): number | null {
 
 async function measure(path: string): Promise<MeasuredFile> {
   const name = path.split('/').pop() ?? path;
-  let text: string;
-  try {
-    text = readFileSync(path, 'utf8');
-  } catch (e) {
-    // An unreadable file is reported as unreadable, never as a zero that would
-    // quietly shrink the total it belongs to.
-    return { path, name, bytes: 0, tokens: 0, cap: null, state: 'unreadable', error: e instanceof Error ? e.message : String(e) };
+  // An unmeasurable file is reported as unreadable with the reason, never as a
+  // zero that would quietly shrink the total it belongs to.
+  const unreadable = (bytes: number, error: string): MeasuredFile =>
+    ({ path, name, bytes, tokens: 0, cap: null, state: 'unreadable', error });
+  const read = readBounded(path, MEASURE_BYTE_CEILING);
+  if (!read.ok) return unreadable(read.bytes, read.error);
+  if (read.truncated) {
+    return unreadable(read.bytes, `${read.bytes.toLocaleString('en-US')} bytes is past the ${MEASURE_BYTE_CEILING.toLocaleString('en-US')}-byte ceiling this surface measures, so no token count is claimed for it.`);
   }
-  const cap = frontMatterCap(text);
-  const tokens = (await tokenizer()).encode(text).length;
+  const work = tokenizeWork(read.text);
+  if (work > TOKENIZE_WORK_CEILING) {
+    // Not a shape instruction prose takes: one unbroken run long enough that
+    // tokenizing it would hold the event loop for everyone. Named, not counted.
+    return unreadable(read.bytes, `Its ${read.bytes.toLocaleString('en-US')} bytes run unbroken too far to tokenize within this surface's time ceiling, so no token count is claimed for it.`);
+  }
+  const cap = frontMatterCap(read.text);
+  const tokens = (await tokenizer()).encode(read.text).length;
   return {
     path, name, tokens, cap,
-    bytes: Buffer.byteLength(text, 'utf8'),
+    bytes: read.bytes,
     state: cap === null ? 'uncapped' : tokens > cap ? 'over' : tokens > Math.round(cap * WORKING_LEVEL) ? 'tight' : 'ok',
   };
 }
@@ -168,7 +267,9 @@ async function memoryInventory(l: LoopConfig): Promise<SeatContext['memory']> {
   // as one in the note the surface shows.
   let bytes = 0;
   for (const n of names) {
-    try { bytes += statSync(join(l.memory_dir, n)).size; } catch { /* a file that vanished mid-read is not a reading */ }
+    // lstat, not stat: a link planted in the corpus must not contribute its
+    // target's size to a figure presented as the corpus's own.
+    try { const st = lstatSync(join(l.memory_dir, n)); if (st.isFile()) bytes += st.size; } catch { /* a file that vanished mid-read is not a reading */ }
   }
   return {
     configured: true, index, files: names.length,
@@ -210,7 +311,9 @@ export const PERIODS = { '24h': 1, '7d': 7, '30d': 30, all: 0 } as const;
 export type Period = keyof typeof PERIODS;
 
 export function isPeriod(value: string | undefined): value is Period {
-  return value !== undefined && value in PERIODS;
+  // hasOwn, not `in`: `'__proto__' in PERIODS` is true, and a period that
+  // resolves to a prototype member dates the window to NaN (H-3004).
+  return value !== undefined && Object.hasOwn(PERIODS, value);
 }
 
 export interface SeatSpend {

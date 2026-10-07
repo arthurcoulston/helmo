@@ -391,16 +391,28 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   Two ceilings sit above it. `MEASURE_BYTE_CEILING` bounds what one request
   pulls into memory. `TOKENIZE_WORK_CEILING` is the one that matters: a byte
   ceiling does not bound the tokenizer, because js-tiktoken's BPE merge loop is
-  quadratic in a single chunk and the chunking regex never spans a whitespace
-  boundary by more than a character — so 16KB of one repeated character costs
-  15s, 32KB of spaces 65s, and 256KB whose every run is 1KB still costs 15s.
-  `tokenizeWork` sums the squares of a text's whitespace-delimited runs, which
-  is what the cost is proportional to (~60ms per million for ASCII, ~170ms for
-  non-ASCII, holding from 37ms to 65s across the measured range). A file past
-  either ceiling is reported `unreadable` with its byte count and the reason,
-  never with a token count, so it cannot silently shrink the total it belongs
-  to. Both ceilings sit well clear of real configuration: this installation's
-  largest instruction file measures 125,175 against a ceiling of two million.
+  quadratic in the UTF-8 byte length of a single chunk — so 16KB of one repeated
+  character costs 22s, 32KB of spaces 94s, and 256KB whose every run is 1KB
+  still costs 23s. `tokenizeWork` sums the squares of those chunks' byte
+  lengths, which is what the cost is proportional to (30-90ms per million,
+  across every shape measured).
+  **It gets the chunks by running the encoding's own pattern, and that is the
+  load-bearing part (H-3007).** The first version estimated them, splitting runs
+  on space, tab, CR and LF; the pattern's whitespace branch is `\s`, so 16KB of
+  U+3000 alternating with LF is one chunk where the estimate saw 8,000 runs of
+  one character. It passed, was counted, and held the member route 39s with
+  `/overview` blocked behind it. Any hand-written split has that failure mode one
+  Unicode class at a time, and measuring characters rather than bytes has it
+  again for CJK. Taking `patStr` off the encoder closes both: the bound is
+  computed over the same cuts `encode` makes. It is js-tiktoken's own internal
+  field, so `chunkPattern` throws if a version stops exposing it, and a unit
+  test asserts it is there.
+  A file past either ceiling — or one the tokenizer throws on, which `<|endoftext|>`
+  in any instruction file used to do — is reported `unreadable` with its byte
+  count and the reason, never with a token count, so it cannot silently shrink
+  the total it belongs to. Both ceilings sit well clear of real configuration:
+  this installation's largest instruction file measures 41,272 against a ceiling
+  of four million, and all 23 encode in 33ms together.
 - **The Team routes answer a failed read 500, like every other route.** They
   read files, so they answer from a promise, which takes a throw out of
   `serve.js`'s own handler catch — so `answer()` has to repeat that status

@@ -34,10 +34,11 @@ longer.
   with one of those names used to hold every page of the app, not just Team,
   until the process was killed; a symbolic link used to put whatever it pointed
   at on the page. Both are now reported as what they are. So is a file too large
-  to read, and a file whose text runs unbroken far enough that counting its
-  tokens would stall the page for everyone — the tokenizer's cost turns out to
-  follow how far a file runs without a space rather than how big it is, so a
-  size limit alone would not have been one. In each case the page says the file
+  to read, and a file whose text is shaped so that counting its tokens would
+  stall the page for everyone — the tokenizer's cost turns out to follow how its
+  own splitting cuts a file up, not how big the file is, so a size limit alone
+  would not have been one, and the guard asks the tokenizer for that splitting
+  rather than estimating it. In each case the page says the file
   is there and why it has no count, which is the one thing it must not get wrong:
   an unreadable file is never a zero folded into a total. And a member named
   after one of JavaScript's built-in property names is no longer a member.

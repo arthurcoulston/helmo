@@ -58,41 +58,72 @@ export type FileState = 'ok' | 'tight' | 'over' | 'uncapped' | 'unreadable';
  *  memory. */
 export const MEASURE_BYTE_CEILING = 1_048_576;
 
-/** The most tokenizer work one file may be worth.
+/** The most tokenizer work one file may be worth, as the sum of the squares of
+ *  its chunks' byte lengths (see `tokenizeWork`).
  *
- *  js-tiktoken's BPE merge loop is quadratic in the length of a single chunk,
- *  and the regex that makes chunks never spans a whitespace boundary by more
- *  than a character — so the cost of a file tracks the sum of the squares of
- *  its whitespace-delimited runs. Measured on this encoding: ~60ms per million
- *  of that sum for ASCII and ~170ms for non-ASCII, holding across inputs from
- *  256KB of prose (37ms) to 8KB of one repeated character (3.8s) and 16KB of
- *  one (15.1s). A byte ceiling alone does not bound this: 256KB whose every
- *  run is 1KB still costs 15s.
+ *  js-tiktoken's BPE merge loop is quadratic in the UTF-8 byte length of a
+ *  single chunk, so a file's cost tracks that sum. Measured on this encoding,
+ *  the quadratic term is 30-90ms per million, holding across every shape tried:
+ *  16KB of one character (268m, 22.4s), 32KB of spaces (1,074m, 94s), 256KB in
+ *  1KB runs (263m, 22.6s), 16KB of U+3000/LF (256m, 18.6s), 24KB of NBSP/LF
+ *  (576m, 17.2s), 1,400 CJK letters (18m, 0.9s).
  *
- *  So the ceiling is on the work, not the size. At two million it admits about
- *  570KB of ordinary prose and refuses anything that would hold the event loop
- *  past roughly a third of a second — this installation's worst real file
- *  measures 125,175, sixteen times under it (H-3004). */
-export const TOKENIZE_WORK_CEILING = 2_000_000;
+ *  A byte ceiling alone does not bound this — 256KB whose every run is 1KB
+ *  still costs 22s — so the ceiling is on the work. At four million it refuses
+ *  anything whose merge loops would hold the event loop past ~360ms, and
+ *  admits around 770KB of ordinary prose; this installation's worst real file
+ *  measures far under it (H-3004, H-3007).
+ *
+ *  The other term is per chunk rather than quadratic, ~1-2us, and is what
+ *  MEASURE_BYTE_CEILING bounds: a megabyte of prose is 250,000 chunks. */
+export const TOKENIZE_WORK_CEILING = 4_000_000;
 
-/** The sum of the squares of a text's whitespace-delimited runs: what the
- *  tokenizer's cost is proportional to. One pass, ~4ms on a megabyte. */
-export function tokenizeWork(text: string): number {
-  let sum = 0;
-  let len = 0;
-  let previous = -1;
-  for (let i = 0; i < text.length; i += 1) {
-    const c = text[i]!;
-    const space = c === ' ' || c === '\n' || c === '\t' || c === '\r' ? 1 : 0;
-    if (space === previous) {
-      len += 1;
-    } else {
-      sum += len * len;
-      previous = space;
-      len = 1;
+let pattern: RegExp | undefined;
+
+/** The chunk pattern this encoding splits on before any merging, taken from the
+ *  encoder itself.
+ *
+ *  Taken, not copied: a bound computed over a different split is not a bound at
+ *  all. The first version of this guard measured whitespace-delimited runs,
+ *  classifying whitespace as space, tab, CR and LF. But the pattern's
+ *  `\s*[\r\n]+` branch uses `\s`, so text alternating U+3000 (or NBSP, or
+ *  U+2028) with LF is ONE chunk where that estimate saw runs of one character:
+ *  16KB of it passed the ceiling and held the member route 39 seconds, with
+ *  /api/v1/overview blocked behind it (H-3007). Any hand-written split has that
+ *  failure mode, one Unicode class at a time. This one cannot: it is the same
+ *  regex `encode` runs.
+ *
+ *  `patStr` is js-tiktoken's own internal field and not in its published types,
+ *  so a version that stops exposing it must fail loudly here rather than fall
+ *  back to a guess. `tokenizeWork`'s callers report the file unreadable. */
+export async function chunkPattern(): Promise<RegExp> {
+  if (!pattern) {
+    const internal = (await tokenizer()) as unknown as { patStr?: unknown };
+    if (typeof internal.patStr !== 'string') {
+      throw new Error(`${TOKENIZER} did not expose the chunk pattern this surface bounds its work with, so no token count can be claimed.`);
     }
+    pattern = new RegExp(internal.patStr, 'ug');
   }
-  return sum + len * len;
+  return pattern;
+}
+
+/** The sum of the squares of the UTF-8 byte lengths of the chunks `pattern`
+ *  makes: what the tokenizer's cost is proportional to.
+ *
+ *  One linear pass. Under 50ms on a megabyte of prose, and under 6ms on a
+ *  megabyte that is one chunk — the shapes that cost the encoder minutes are
+ *  the cheapest to refuse.
+ *
+ *  Bytes, not characters: the merge loop works on the UTF-8 encoding, so 1,400
+ *  CJK letters are 4,200 bytes and cost nine times what their character count
+ *  would predict. */
+export function tokenizeWork(text: string, chunks: RegExp): number {
+  let sum = 0;
+  for (const match of text.matchAll(chunks)) {
+    const bytes = Buffer.byteLength(match[0], 'utf8');
+    sum += bytes * bytes;
+  }
+  return sum;
 }
 
 export type BoundedRead =
@@ -177,19 +208,33 @@ async function measure(path: string): Promise<MeasuredFile> {
   if (read.truncated) {
     return unreadable(read.bytes, `${read.bytes.toLocaleString('en-US')} bytes is past the ${MEASURE_BYTE_CEILING.toLocaleString('en-US')}-byte ceiling this surface measures, so no token count is claimed for it.`);
   }
-  const work = tokenizeWork(read.text);
-  if (work > TOKENIZE_WORK_CEILING) {
-    // Not a shape instruction prose takes: one unbroken run long enough that
-    // tokenizing it would hold the event loop for everyone. Named, not counted.
-    return unreadable(read.bytes, `Its ${read.bytes.toLocaleString('en-US')} bytes run unbroken too far to tokenize within this surface's time ceiling, so no token count is claimed for it.`);
+  // Everything the tokenizer touches is inside this try. A file that cannot be
+  // measured is reported unreadable; it must not be able to throw out of here
+  // and take the whole page — which is a route an agent that can write a seat's
+  // working tree would otherwise have. The special-token case was exactly that:
+  // `encode` refuses by default on text containing `<|endoftext|>`, so one
+  // sentence in any discovered CLAUDE.md answered the Team routes a 500.
+  try {
+    const work = tokenizeWork(read.text, await chunkPattern());
+    if (work > TOKENIZE_WORK_CEILING) {
+      // Not a shape instruction prose takes: chunks long enough that the merge
+      // loop over them would hold the event loop for everyone, whatever the
+      // file's size. Named, not counted.
+      return unreadable(read.bytes, `Its ${read.bytes.toLocaleString('en-US')} bytes are chunked too coarsely to tokenize within this surface's time ceiling, so no token count is claimed for it.`);
+    }
+    const cap = frontMatterCap(read.text);
+    // `([], [])` — no special token is allowed, and none is disallowed either,
+    // so `<|endoftext|>` in instruction prose is counted as the text it is
+    // rather than refused.
+    const tokens = (await tokenizer()).encode(read.text, [], []).length;
+    return {
+      path, name, tokens, cap,
+      bytes: read.bytes,
+      state: cap === null ? 'uncapped' : tokens > cap ? 'over' : tokens > Math.round(cap * WORKING_LEVEL) ? 'tight' : 'ok',
+    };
+  } catch (e) {
+    return unreadable(read.bytes, `${TOKENIZER} could not measure this file: ${e instanceof Error ? e.message : String(e)}`);
   }
-  const cap = frontMatterCap(read.text);
-  const tokens = (await tokenizer()).encode(read.text).length;
-  return {
-    path, name, tokens, cap,
-    bytes: read.bytes,
-    state: cap === null ? 'uncapped' : tokens > cap ? 'over' : tokens > Math.round(cap * WORKING_LEVEL) ? 'tight' : 'ok',
-  };
 }
 
 /** The instruction files the runtime's CLI discovers for itself by walking up

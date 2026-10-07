@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   seatContext, seatSpend, spendBasis, workingTreeInstructions, isPeriod, readBounded,
-  tokenizeWork, MEASURE_BYTE_CEILING, TOKENIZE_WORK_CEILING, WORKING_LEVEL,
+  tokenizeWork, chunkPattern, MEASURE_BYTE_CEILING, TOKENIZE_WORK_CEILING, WORKING_LEVEL,
 } from '../src/team.js';
 import type { LoopConfig } from '../src/types.js';
 
@@ -110,13 +110,42 @@ describe('seatContext', () => {
     expect(c.startup_tokens).toBe(0);
   });
 
+  it('refuses a file whose one chunk is whitespace the first guard did not count', async () => {
+    // 16KB of U+3000 alternating with LF: one chunk to the encoder, because the
+    // chunk pattern's whitespace branch is `\s`, which U+3000 is. The first
+    // version of this guard split runs on space/tab/CR/LF only, so it saw 8,000
+    // runs of one character, passed the file, counted it at 4,000 tokens, and
+    // held the member route 39 seconds (H-3007). Well under the byte ceiling,
+    // which is the point: size says nothing about cost.
+    writeFileSync(join(tree, 'PROFILE.md'), '\u3000\n'.repeat(4_000));
+    const started = Date.now();
+    const c = await seatContext(loop());
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(c.composed.profile?.state).toBe('unreadable');
+    expect(c.composed.profile?.tokens).toBe(0);
+    expect(c.composed.profile?.bytes).toBe(16_000);
+    expect(c.composed.profile?.bytes).toBeLessThan(MEASURE_BYTE_CEILING);
+    expect(c.startup_tokens).toBe(0);
+  });
+
+  it('measures a file that names a special token instead of refusing the whole page', async () => {
+    // `encode` throws by default on text containing `<|endoftext|>`, and that
+    // throw left `measure` entirely: any instruction file mentioning one — a
+    // sentence about tokenizers is enough — answered every Team route a 500.
+    writeFileSync(join(tree, 'PROFILE.md'), 'The literal <|endoftext|> is text here, not a token.');
+    const c = await seatContext(loop());
+    expect(c.composed.profile?.state).toBe('uncapped');
+    expect(c.composed.profile?.tokens).toBeGreaterThan(5);
+    expect(c.startup_tokens).toBe(c.composed.profile?.tokens);
+  });
+
   it('measures ordinary prose far larger than that, because size is not what costs', async () => {
     // The ceiling is on the tokenizer's work, not the file's size: a quarter of
     // a megabyte of prose is cheap and must still be measured, or the guard
     // would report this installation's own configuration as unreadable.
     const prose = 'The quick brown fox jumps over the lazy dog. '.repeat(5_000);
     writeFileSync(join(tree, 'PROFILE.md'), prose);
-    expect(tokenizeWork(prose)).toBeLessThan(TOKENIZE_WORK_CEILING);
+    expect(tokenizeWork(prose, await chunkPattern())).toBeLessThan(TOKENIZE_WORK_CEILING);
     const c = await seatContext(loop());
     expect(c.composed.profile?.state).toBe('uncapped');
     expect(c.composed.profile?.tokens).toBeGreaterThan(40_000);
@@ -218,17 +247,58 @@ describe('readBounded', () => {
 });
 
 describe('tokenizeWork', () => {
-  it('costs one unbroken run its square, so a long one is refused and prose of the same size is not', () => {
-    // 1,000 of one character is 1,000,000; 1,000 characters of five-letter
-    // words is a few tens of thousands. Same bytes, three orders apart.
-    expect(tokenizeWork('x'.repeat(1_000))).toBe(1_000_000);
-    expect(tokenizeWork('word '.repeat(200))).toBeLessThan(10_000);
+  it('costs one chunk the square of its bytes, so a long one is refused and prose of the same size is not', async () => {
+    // 1,000 of one character is one chunk, 1,000,000; 1,000 characters of
+    // five-letter words is 200 chunks of six bytes. Same size, four orders
+    // apart in what the merge loop does with them.
+    const chunks = await chunkPattern();
+    expect(tokenizeWork('x'.repeat(1_000), chunks)).toBe(1_000_000);
+    expect(tokenizeWork('word '.repeat(200), chunks)).toBeLessThan(10_000);
   });
 
-  it('counts a whitespace run too, which is as expensive as any other', () => {
-    // 32KB of spaces measured 65s: the chunk the merge loop sees is the run,
-    // whatever it is made of.
-    expect(tokenizeWork(' '.repeat(1_000))).toBe(1_000_000);
+  it('counts a whitespace chunk too, which is as expensive as any other', async () => {
+    // 32KB of spaces measured 94s: the chunk the merge loop sees is whatever
+    // the pattern made, and `\s+` makes one of the lot.
+    expect(tokenizeWork(' '.repeat(1_000), await chunkPattern())).toBe(1_000_000);
+  });
+
+  it('sees every whitespace the pattern does, not a hand-written list of four', async () => {
+    // The H-3007 FAIL. Each of these alternating with LF is ONE chunk to the
+    // encoder: the pattern's branch is `\s*[\r\n]+`, and `\s` covers all of
+    // them. A guard that classified whitespace itself scored each of these
+    // 2,000 and passed; the encoder spent 18s on the first.
+    const chunks = await chunkPattern();
+    for (const space of ['\u3000', '\u00a0', '\u000b', '\u000c', '\u2028', '\u2029', '\u202f', '\u205f', '\ufeff']) {
+      const text = `${space}\n`.repeat(1_000);
+      expect(tokenizeWork(text, chunks)).toBe(Buffer.byteLength(text, 'utf8') ** 2);
+    }
+  });
+
+  it('measures a chunk in UTF-8 bytes, because that is what the merge loop walks', async () => {
+    // 1,400 CJK letters are 1,400 UTF-16 units and 4,200 bytes; the encoder
+    // spent 0.9s on them, nine times what the character count predicts.
+    expect(tokenizeWork('\u4e00'.repeat(1_400), await chunkPattern())).toBe(4_200 ** 2);
+  });
+
+  it('is the encoder\'s own pattern, so the two cannot drift apart', async () => {
+    // Not a copy of the pattern: a bound computed over a different split is not
+    // a bound. If a js-tiktoken upgrade stops exposing `patStr`, this goes red
+    // here rather than silently in whatever the next hostile shape is.
+    const { getEncoding } = await import('js-tiktoken');
+    const internal = getEncoding('o200k_base') as unknown as { patStr?: string };
+    expect(typeof internal.patStr).toBe('string');
+    expect((await chunkPattern()).source).toBe(internal.patStr);
+    expect((await chunkPattern()).flags).toContain('u');
+  });
+
+  it('scans a megabyte of the worst shape far faster than the encoder would', async () => {
+    // The guard has to be cheap on exactly the inputs it refuses, or it is the
+    // stall it was meant to prevent.
+    const chunks = await chunkPattern();
+    const started = Date.now();
+    expect(tokenizeWork(' '.repeat(1_048_576), chunks)).toBeGreaterThan(TOKENIZE_WORK_CEILING);
+    expect(tokenizeWork('the quick brown fox jumps over a lazy dog. '.repeat(25_000), chunks)).toBeGreaterThan(0);
+    expect(Date.now() - started).toBeLessThan(1_000);
   });
 });
 

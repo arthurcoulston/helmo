@@ -26,7 +26,7 @@ const SENTINEL = 'OUTSIDE-SENTINEL-H3004';
  *  Each case plants only what it is about. A tree carrying both a fifo and a
  *  link proves nothing about the link: the fifo stalls the route first, so the
  *  symlink test went red for the other defect's reason. */
-function hostileInstallation(t, { fifo = false, link = false } = {}) {
+function hostileInstallation(t, { fifo = false, link = false, stall = false } = {}) {
   const runtime = fixture(t);
   const tree = fixture(t);
   const outside = fixture(t);
@@ -41,6 +41,12 @@ function hostileInstallation(t, { fifo = false, link = false } = {}) {
   // writer arrives, and nothing here will ever write: this is the shape that
   // froze the app.
   if (fifo) assert.equal(spawnSync('mkfifo', [join(tree, 'AGENTS.md')]).status, 0, 'the fixture could not make a fifo');
+
+  // A file whose every chunk is one the tokenizer pays quadratically for, at a
+  // size no byte ceiling would stop. U+3000 alternating with LF is a single
+  // chunk to the encoder — the pattern's whitespace branch is `\s`, which the
+  // first version of the work guard did not classify as whitespace.
+  if (stall) writeFileSync(join(tree, 'AGENTS.md'), '\u3000\n'.repeat(4_000));
 
   // A symlink with a discovered name, pointing at a file outside the tree.
   if (link) {
@@ -113,6 +119,33 @@ test('a fifo in a seat\'s working tree is named rather than read, and no route s
   // so /overview timed out too.
   assert.equal((await get(origin, '/api/v1/overview')).status, 200);
   assert.ok(elapsed < 10_000, `the Team document took ${elapsed}ms`);
+});
+
+test('a file the tokenizer would stall on is named rather than counted, and no route waits for it', async (t) => {
+  // The H-3007 FAIL, through the listener: 16KB of U+3000/LF passed the work
+  // ceiling, was counted at 4,000 tokens, and held /api/v1/team/members/alpha
+  // 38,962ms with /api/v1/overview blocked 38,461ms behind it. Both deadlines
+  // below are the real assertions — this case fails by timing out, which is
+  // the reported failure itself rather than a proxy for it.
+  const { homes } = hostileInstallation(t, { stall: true });
+  const { origin } = await startApp(t, homes);
+
+  const started = Date.now();
+  const member = await get(origin, '/api/v1/team/members/alpha');
+  assert.equal(member.status, 200);
+  const elapsed = Date.now() - started;
+
+  const file = (await member.json()).data.context.discovered.files.find((f) => f.name === 'AGENTS.md');
+  assert.ok(file, 'the file left the inventory; the CLI would read it, so the page should say it is there');
+  assert.equal(file.state, 'unreadable');
+  assert.equal(file.tokens, 0);
+  assert.equal(file.bytes, 16_000);
+  // Reported with its size and reason, never as a token count that would make
+  // a planted file look like context the seat carries.
+  assert.match(file.error, /chunked too coarsely/);
+
+  assert.equal((await get(origin, '/api/v1/overview')).status, 200);
+  assert.ok(elapsed < 10_000, `the member document took ${elapsed}ms`);
 });
 
 test('a symlink with a discovered name does not put its target on the dashboard', async (t) => {

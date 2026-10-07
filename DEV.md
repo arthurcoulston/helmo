@@ -189,7 +189,9 @@ remain outside the product entirely.
 
 `app-server.mjs` is the listener kernel under it: one app listener plus the
 installation's configured retired set, started as one lifecycle and closed as
-one. Its configuration is read at both ends — `appConfig` normalizes, and
+one. The app listener accepts only a loopback `Host` naming its bound port;
+the retired listeners construct redirects from the configured origin. Its
+configuration is read at both ends — `appConfig` normalizes, and
 `startAppServer` validates what it is handed — so every normalizing step there
 has to be idempotent. The one that was not refused to start an installation
 that retired a port onto the app root, which is why `route('')` now means the

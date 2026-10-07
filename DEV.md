@@ -66,6 +66,19 @@ upstream's real output rather than a snapshot of it that could quietly age.
 `test/upstream.test.mjs` is the offline half: it checks the manifest, so an
 edit to generated source is a test failure.
 
+`npm run typecheck --workspace @helmo/shell` is `tsc --build --force`, not
+`tsc --noEmit`. The generated `tsconfig.json` is a solution config —
+`"files": []` plus references to the app and node projects — so `--noEmit`
+alone checked the named project, which names no files, and exited 0 on
+anything for as long as it existed (H-2977). `--build` follows the references,
+which is what a solution config is for, and keeps following whatever
+`upstream:refresh` regenerates; `--force` means no cached `tsbuildinfo` can
+report a stale green. `test/typecheck.test.mjs` is the proof the gate can go
+red: it writes a type error into `src/`, asserts the script reports that exact
+error, and removes it. That is also what runs the gate — nothing else in the
+repository calls `typecheck`, so the shell's suite is where it happens, and
+the two `tsc` runs are most of the five seconds that suite now takes.
+
 **Every area is in this application.** Roadmap's server-ranked groups are
 compact Data Tables composed in `RoadmapView.tsx` over the shared
 `RecordTable.tsx`; the charter, claims and lazy history are in the Sheet that

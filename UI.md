@@ -66,7 +66,8 @@ Two rules make it a signal rather than decoration, and both are enforced:
   its surface, so it cannot meet the 3:1 a meaningful non-text indicator would
   need — which is exactly why every role is applied to something that already
   says what it means in words. The ink is what is measured: ≥4.5:1 on its own
-  tint and on every preset surface it can land on bare.
+  tint and on every preset surface it can land on bare, including a row while
+  it is hovered and while it is expanded.
 
 `test/status-palette.test.mjs` holds the tokens, the meanings and the
 arithmetic; Arthur's approved hexes are written out there the way his preset
@@ -76,6 +77,20 @@ every rendered role on every layout in both themes, finds them by the
 `data-status-role` marker rather than by the selectors this change touched, and
 fails if a role is never rendered at all — an unpainted palette would otherwise
 pass every assertion above it.
+
+Two things about how it reads a color, because both were wrong once and each
+hid the other. **The renderer resolves every value, not a regex.** Preset
+surfaces are declared in `oklch` and `getComputedStyle` returns them that way,
+so a reader of the numeric components gets a colour that does not exist; each
+value is painted to a 1×1 canvas and read back in sRGB instead. **Translucent
+layers are composited.** Upstream's `TableRow` tints a hovered and an expanded
+row with `bg-muted/50`, so a ratio against the declared colour is one nobody is
+looking at. Both row states are measured, and each must be shown to have
+actually moved the surface before a role on it is read. There is no selected
+state to measure — the product never sets `data-[state=selected]`. A closing
+assertion keeps that sound as the product grows: every role in a row paints its
+own opaque tint, which is the real reason a row's hover cannot change a ratio,
+and `inkRole` in a row is what would break it.
 
 Compose the application through documented shadcn components, props, variants
 and block patterns in the standard React/Tailwind setup. The framework owns the

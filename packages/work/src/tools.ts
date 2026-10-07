@@ -598,5 +598,24 @@ Workstream-level findings have no ticket_id and cannot be disposed.`,
     },
   );
 
+  server.registerTool(
+    'helmo_acceptance_holds',
+    {
+      description:
+        `The acceptance gate read by COMMIT instead of by ticket: which completions are still pending or failed on refs you name, so you never have to guess which tickets might be holding one. Ask by repo for every hold in that repo, or by refs for one exact manifest — not both. A hold is independent of ticket status: a done ticket holds a pending verdict exactly as a live one does, so this is the only safe way to ask before something becomes public. An empty list means nothing recorded is holding those commits; it does not mean they were reviewed. For a process exit suitable for release scripts, use helmo-cli acceptance-holds.`,
+      inputSchema: strict({
+        repo: z.string().optional().describe('Repo name — the part of an artifact ref before the "@"'),
+        refs: z.array(z.string()).optional().describe('Exact refs, each repo@<40hex>'),
+      }),
+    },
+    async ({ repo, refs }) => {
+      try {
+        return ok({ holds: store.unresolvedCompletions({ repo, refs }) });
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
+
   return server;
 }

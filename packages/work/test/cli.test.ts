@@ -402,6 +402,7 @@ describe('a flag the command has no field for (R-39 Q9)', () => {
     ok('list', '--ready', '--status', 'open', '--workstream', 'helmo-dev', '--assignee', 'builder-loop', '--limit', '5');
     ok('get', '--ticket', ticket);
     ok('acceptance-check', '--ticket', ticket, '--refs', '[]');
+    ok('acceptance-holds', '--repo', 'helmo', '--refs', '[]');
     ok('record-spend', '--ticket', ticket, '--tokens', '10', '--cost-usd', '0.01', '--note', 'metered');
     ok('update', '--ticket', ticket, '--note', 'every update flag at once', '--status', 'in_progress',
       '--evidence-kind', 'commit', '--evidence-ref', 'helmo@' + 'a'.repeat(40), '--evidence-role', 'result', '--confidence', 'spot_check',
@@ -520,5 +521,50 @@ describe('an evidence item states what it is for (R-42 I5)', () => {
     const s = new Store(dbPath);
     expect(s.getTicket(ticket)!.evidence).toEqual([]);
     s.close();
+  });
+});
+
+// H-3012. Crew's publication gate reads the store through this CLI, by process
+// exit and JSON, exactly as release scripts read `acceptance-check`. What it
+// needs is the gate asked by commit: it holds a branch head, not a ticket id.
+describe('acceptance-holds answers the gate by commit (H-3012)', () => {
+  const reviewer: Actor = { name: 'ward', kind: 'agent', model: 'claude-opus-5', version: 'claude-code-2.1.221' };
+  const sha = 'a'.repeat(40);
+
+  function offer() {
+    const r = cli('product-complete', '--ticket', ticket, '--artifacts', JSON.stringify([{ ref: `helmo@${sha}`, author: 'builder-loop' }]), '--note', 'Ready for the security read.');
+    expect(r.status).toBe(0);
+  }
+
+  it('exits 1 and names the holding ticket while a verdict is outstanding, then 0 once it lands', () => {
+    offer();
+
+    const held = cli('acceptance-holds', '--repo', 'helmo');
+    expect(held.status).toBe(1);
+    expect(JSON.parse(held.stdout).holds).toMatchObject([{ ticket_id: ticket, state: 'pending', refs: [`helmo@${sha}`] }]);
+
+    const s = new Store(dbPath);
+    s.recordAcceptanceVerdict(reviewer, { ticket_id: ticket, refs: [`helmo@${sha}`], verdict: 'pass', note: 'Read it; it is clean.' });
+    s.close();
+
+    const clear = cli('acceptance-holds', '--repo', 'helmo');
+    expect(clear.status).toBe(0);
+    expect(JSON.parse(clear.stdout).holds).toEqual([]);
+  });
+
+  it('answers an exact manifest, and reports a bad question on stderr rather than an empty list', () => {
+    offer();
+
+    expect(cli('acceptance-holds', '--refs', JSON.stringify([`helmo@${sha}`])).status).toBe(1);
+    expect(cli('acceptance-holds', '--refs', JSON.stringify([`helmo@${'b'.repeat(40)}`])).status).toBe(0);
+
+    const both = cli('acceptance-holds', '--repo', 'helmo', '--refs', JSON.stringify([`helmo@${sha}`]));
+    expect(both.status).toBe(1);
+    expect(both.stderr).toContain('not both');
+    expect(both.stdout).toBe('');
+
+    const neither = cli('acceptance-holds');
+    expect(neither.status).toBe(1);
+    expect(neither.stderr).toContain('Say what to ask about');
   });
 });

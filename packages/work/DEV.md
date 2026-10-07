@@ -508,6 +508,18 @@ Pinned releases accept both the historical three-component layout and C1's one
   `acceptance-check --ticket H-n --refs '["repo@<40hex>"]'` is the release
   process seam: it exits zero only when an independent PASS covers that exact
   manifest. `product-complete` and `acceptance-verdict` record the two halves.
+  `acceptance-holds --repo R | --refs '[...]'` is that gate asked by COMMIT
+  (`Store.unresolvedCompletions`, `helmo_acceptance_holds`), for the caller who
+  holds a branch head and no ticket id: it exits zero only when no recorded
+  completion is still pending or failed on those refs. Crew's publication gate
+  had no such read and enumerated the tickets that could be holding one —
+  every live ticket, every ticket the outgoing messages name, one dep hop out
+  of those — around 45 reads per push, and still blind to a completion on a
+  terminal ticket that no message names and no edge reaches (H-3008, H-3012).
+  One bounded query over the `product_completed` events finds the candidates;
+  the decision on each is `productAcceptance` itself, so the two reads cannot
+  disagree. A repo is matched as an exact prefix, never a LIKE: a ref's repo
+  part is `[^\s@]+`, which admits `%` and `_`.
 - `view.ts` — the dashboard at :4400 (H-2). The constitutional line, restated
   with Arthur in H-90: the page carries no record DATA-ENTRY (agents write
   the record), but answering an awaiting_human question is operator steering

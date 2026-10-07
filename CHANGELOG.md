@@ -13,6 +13,21 @@ longer.
 
 ## Unreleased — 0.9.5
 
+- The acceptance gate can now be asked by commit. Until now it answered one
+  question — is this ticket's work accepted? — so anything holding a commit
+  rather than a ticket id had to guess which tickets to ask. Crew's publication
+  gate, the thing that keeps a commit still awaiting its verdict from riding out
+  under someone else's push, guessed from three places: every live ticket, every
+  ticket the outgoing commit messages name, and one step out along the dependency
+  graph. Around forty-five reads on every push, and still blind to the case it
+  was written for — a closed ticket holding an outstanding verdict that none of
+  those commits name. `helmo-cli acceptance-holds --repo <name>` and
+  `helmo_acceptance_holds` answer it directly now: every completion still pending
+  or failed on those commits, the ticket holding each one, and a nonzero exit a
+  release script can read the way it reads `acceptance-check`. Ticket status
+  plays no part, which is the whole point of it. An empty answer means nothing
+  on the record is holding those commits — never that they were reviewed.
+
 - Team now says what each member is configured to carry into a session, and what
   its sessions have spent. A row gives the seat, a composition bar over its
   configured context and the period's tokens and notional dollars; opening one

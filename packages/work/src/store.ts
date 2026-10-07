@@ -5,7 +5,7 @@ import { actionFingerprint, questionFingerprint } from './presentation.js';
 import { parseSchedule } from './schedule.js';
 import {
   ActionReport, ActionRequest, Actor, ActorKind, ACTOR_KINDS, Answer, AnswerEvent, BlastRadius, BLAST_RADII, CapacityHold, Confidence, Dep, DepType, Evidence, EVIDENCE_ROLES,
-  HelmoError, HelmoEvent, HumanRequest, Notice, ProductAcceptance, ProductArtifact, Question, QuestionInput, ReleaseHandoff, Status, Ticket, TicketProgress, VerdictEvent, Workstream, WorkstreamInfo,
+  HelmoError, HelmoEvent, HumanRequest, Notice, ProductAcceptance, ProductArtifact, Question, QuestionInput, ReleaseHandoff, Status, Ticket, TicketProgress, UnresolvedCompletion, VerdictEvent, Workstream, WorkstreamInfo,
 } from './types.js';
 
 const STALE_CLAIM_HOURS = 24;
@@ -413,6 +413,17 @@ function normalizeArtifacts(input: ProductArtifact[] | undefined): ProductArtifa
   }
   if (new Set(artifacts.map((a) => a.ref)).size !== artifacts.length) throw new HelmoError('Each completed ref must appear once.');
   return artifacts.sort((a, b) => a.ref.localeCompare(b.ref));
+}
+
+/** A repo name as an artifact ref carries it: everything before the `@`. It is
+ *  validated rather than pattern-matched because the query it feeds compares an
+ *  exact prefix — `[^\s@]+` admits `%` and `_`, so a LIKE would silently widen
+ *  the question for some repo names and not others. */
+function normalizeRepo(input: string | undefined): string {
+  const repo = input?.trim();
+  if (!repo) throw new HelmoError('Asking by repo requires its name: the part of an artifact ref before the "@".');
+  if (/[\s@]/.test(repo)) throw new HelmoError(`"${repo}" is not a repo name. It is the part of an artifact ref before the "@", so it contains neither "@" nor whitespace.`);
+  return repo;
 }
 
 function normalizeRefs(input: string[] | undefined): string[] {
@@ -1328,6 +1339,75 @@ export class Store {
     // normalizeRefs here, not in the projection: rejecting a caller's
     // unusable ref is validation of the question, and the replay asks none.
     return projectAcceptance(rows.map(rowToEvent), expectedRefs ? normalizeRefs(expectedRefs) : undefined);
+  }
+
+  /** Which completions are still holding a verdict on commits the caller
+   *  names — `productAcceptance` asked from the other end.
+   *
+   *  `productAcceptance` answers "is THIS ticket's work accepted?", so a
+   *  caller holding a commit and no ticket id had to guess which tickets to
+   *  ask. Crew's publication gate enumerated every live ticket, every ticket
+   *  the outgoing commit messages name, and one dep hop out of those — around
+   *  45 reads per push, and still blind to a completion on a terminal ticket
+   *  that no message names and no edge reaches, which is exactly what H-3002
+   *  was when the gate was written (H-3008, H-3012).
+   *
+   *  Ask by `repo` for every hold in one repo, or by `refs` for one exact
+   *  manifest. Both at once is refused: they are two questions, and an AND or
+   *  an OR of them would each be a reasonable reading of the same call.
+   *
+   *  Only `pending` and `failed` come back — `accepted` is cleared and
+   *  `not_requested` was never claimed. The decision is the same
+   *  `productAcceptance` every other reader runs; the query below only narrows
+   *  WHICH tickets it runs on, so this read cannot disagree with the
+   *  per-ticket one about any ticket it returns. */
+  unresolvedCompletions(query: { repo?: string; refs?: string[] }): UnresolvedCompletion[] {
+    if (query.repo !== undefined && query.refs !== undefined) {
+      throw new HelmoError('Ask by repo or by refs, not both: one answers every hold in a repo, the other one exact manifest.');
+    }
+    // An empty ref array is the same unnamed question as no argument at all,
+    // and must not fall through to the verdict validator's wording.
+    if (query.repo === undefined && !query.refs?.length) {
+      throw new HelmoError('Say what to ask about: a repo name, or the exact refs. An unnamed question would return every hold in the store, which no caller means.');
+    }
+    const refs = query.refs === undefined ? undefined : normalizeRefs(query.refs);
+    const repo = refs ? undefined : normalizeRepo(query.repo);
+    const [match, params]: [string, (string | number)[]] = refs
+      ? [`ref IN (${refs.map(() => '?').join(',')})`, refs]
+      : ['substr(ref, 1, ?) = ?', [repo!.length + 1, `${repo}@`]];
+    // One bounded query over the completion events rather than the tickets:
+    // there is one `product_completed` row per offer ever made, against every
+    // ticket in the store. The CTE names the ref so `match` can read plainly;
+    // a result alias is not reliably visible to WHERE.
+    const rows = this.db
+      .prepare(
+        `WITH completed(ticket_id, ref) AS (
+           SELECT e.ticket_id, json_extract(a.value, '$.ref')
+             FROM events e, json_each(e.payload, '$.artifacts') a
+            WHERE e.event_type = 'product_completed'
+         )
+         SELECT DISTINCT ticket_id, ref FROM completed WHERE ${match}`,
+      )
+      .all(...params) as { ticket_id: string; ref: string }[];
+    const asked = new Map<string, Set<string>>();
+    for (const row of rows) {
+      const refsHere = asked.get(row.ticket_id) ?? new Set<string>();
+      refsHere.add(row.ref);
+      asked.set(row.ticket_id, refsHere);
+    }
+    const held: UnresolvedCompletion[] = [];
+    for (const [ticket_id, refsHere] of asked) {
+      const acceptance = this.productAcceptance(ticket_id);
+      if (acceptance.state !== 'pending' && acceptance.state !== 'failed') continue;
+      // A ref named only by a superseded completion is not a hold: a verdict
+      // answers the latest offer, and that is the one the ticket is standing
+      // behind (acceptance.ts §2.1).
+      const names = acceptance.completion!.artifacts.map((a) => a.ref).filter((ref) => refsHere.has(ref));
+      if (!names.length) continue;
+      held.push({ ticket_id, state: acceptance.state, reason: acceptance.reason, refs: names, completion_seq: acceptance.completion!.seq });
+    }
+    // Oldest hold first: the one that has been waiting longest on a reviewer.
+    return held.sort((a, b) => a.completion_seq - b.completion_seq);
   }
 
   /** Latest recorded human-readable update for each requested ticket. This is

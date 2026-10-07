@@ -122,6 +122,24 @@ export interface ProductAcceptance {
   verdicts: AcceptanceVerdict[];
 }
 
+/** One ticket still holding a verdict on commits a caller named — the row
+ *  `unresolvedCompletions` returns. It carries no ticket status on purpose:
+ *  acceptance and status are independent, and a `done` ticket holds a PENDING
+ *  verdict exactly as a live one does (H-3008). */
+export interface UnresolvedCompletion {
+  ticket_id: string;
+  /** Narrower than `ProductAcceptance['state']` by construction: `accepted`
+   *  and `not_requested` are not holds and are never returned. */
+  state: 'pending' | 'failed';
+  reason: ProductAcceptance['reason'];
+  /** Which of the asked-about refs this ticket's CURRENT completion names, in
+   *  the completion's own order. Refs only an earlier, superseded completion
+   *  named are not holds and do not appear. */
+  refs: string[];
+  /** `seq` of that completion — when the hold was taken. */
+  completion_seq: number;
+}
+
 export interface ReleaseHandoffReceipt {
   path: string;
   sha256: string;

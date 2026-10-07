@@ -512,3 +512,40 @@ describe('a blocked row on the first queue read every loop makes (H-621)', () =>
     store.close();
   });
 });
+
+// H-3012. The gate asked by commit instead of by ticket. It is on this surface
+// as well as the CLI because the agents who have to answer "is anything of
+// mine still held?" before a push reach the store through here, and the only
+// alternative was to guess which tickets to check.
+describe('the acceptance gate asked by commit (H-3012)', () => {
+  const builder: Actor = { name: 'mason', kind: 'agent', model: 'claude-opus-5', version: 'claude-code-2.1.221' };
+  const ref = `helmo@${'a'.repeat(40)}`;
+
+  async function held(store: Store, args: Record<string, unknown>) {
+    const client = await connect(store);
+    const res = await client.callTool({ name: 'helmo_acceptance_holds', arguments: args });
+    const text = (res.content as { text: string }[])[0]!.text;
+    await client.close();
+    return { isError: res.isError === true, body: JSON.parse(text) as { result?: { holds: unknown[] }; error?: string } };
+  }
+
+  it('names the ticket holding a verdict on a repo, and answers an exact manifest', async () => {
+    const store = new Store(':memory:');
+    const t = store.createTicket(builder, { title: 'Ship the read', body: 'Goal: answer by commit. Current state: landed.', workstream: 'helmo-dev', type: 'build' });
+    store.recordProductCompletion(builder, { ticket_id: t.id, artifacts: [{ ref, author: 'mason' }], note: 'Ready for the independent read.' });
+
+    expect((await held(store, { repo: 'helmo' })).body.result!.holds).toMatchObject([{ ticket_id: t.id, state: 'pending', refs: [ref] }]);
+    expect((await held(store, { refs: [ref] })).body.result!.holds).toHaveLength(1);
+    expect((await held(store, { repo: 'crew' })).body.result!.holds).toEqual([]);
+    store.close();
+  });
+
+  it('refuses the ambiguous question rather than answering one reading of it', async () => {
+    const store = new Store(':memory:');
+    const both = await held(store, { repo: 'helmo', refs: [ref] });
+
+    expect(both.isError).toBe(true);
+    expect(both.body.error).toContain('not both');
+    store.close();
+  });
+});

@@ -27,7 +27,7 @@ const tools = await client.listTools();
 console.log('TOOLS:', tools.tools.map((t) => t.name).join(', '));
 for (const name of [
   'helmo_create_ticket', 'helmo_update_ticket', 'helmo_return_to_human', 'helmo_request_action', 'helmo_report_action', 'helmo_answer_ticket', 'helmo_get_ticket',
-  'helmo_record_product_completion', 'helmo_record_acceptance_verdict', 'helmo_check_product_acceptance',
+  'helmo_record_product_completion', 'helmo_record_acceptance_verdict', 'helmo_check_product_acceptance', 'helmo_acceptance_holds',
 ]) {
   assert(tools.tools.some((t) => t.name === name), `missing MCP tool ${name}`);
 }
@@ -145,6 +145,13 @@ const completion = await call('helmo_record_product_completion', {
 assert.equal(completion.result.state, 'pending');
 assert.equal(completion.result.reason, 'missing_verdict');
 
+// The same gate asked by commit, while the verdict is genuinely outstanding
+// (H-3012). Crew's publication gate holds a branch head and no ticket id, so
+// this is the question it actually has.
+const holds = await call('helmo_acceptance_holds', { repo: 'helmo' });
+assert.deepEqual(holds.result.holds.map((h) => h.ticket_id), [id], 'the outstanding completion was not found by commit');
+assert.deepEqual(holds.result.holds[0].refs, [sourceRef]);
+
 const verdict = await call('helmo_record_acceptance_verdict', {
   ticket_id: id,
   refs: [sourceRef],
@@ -182,6 +189,11 @@ const stale = spawnSync(process.execPath, ['--import', 'tsx', 'src/cli.ts', 'acc
 });
 assert.notEqual(stale.status, 0, 'a different manifest passed acceptance');
 assert.match(stale.stdout, /stale_verdict/);
+const cleared = spawnSync(process.execPath, ['--import', 'tsx', 'src/cli.ts', 'acceptance-holds', '--repo', 'helmo'], {
+  cwd: join(import.meta.dirname, '..'), encoding: 'utf8', env: cliEnv,
+});
+assert.equal(cleared.status, 0, `a repo with no outstanding verdict exited nonzero: ${cleared.stderr}`);
+assert.deepEqual(JSON.parse(cleared.stdout).holds, [], 'a passed completion is still reported as a hold');
 
 const refused = spawnSync(process.execPath, ['--import', 'tsx', 'src/cli.ts', 'update', '--ticket', 'H-999', '--note', 'deliberate refusal probe'], {
   cwd: join(import.meta.dirname, '..'),

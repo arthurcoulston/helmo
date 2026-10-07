@@ -75,8 +75,8 @@ For Claude Code: `claude mcp add helmo -e HELMO_ACTOR='{"name":"...","kind":"age
 
 Tools include ticket creation, reading, updates, links, human questions and
 answers, workstream budgets and seats, record-hygiene scanning and disposition, plus
-`helmo_record_product_completion`, `helmo_record_acceptance_verdict`, and
-`helmo_check_product_acceptance`. The tool descriptions teach correct usage;
+`helmo_record_product_completion`, `helmo_record_acceptance_verdict`,
+`helmo_check_product_acceptance`, and `helmo_acceptance_holds`. The tool descriptions teach correct usage;
 no separate convention doc is required.
 
 Workflow-bound tickets use immutable definitions, attempts, manifests,
@@ -108,6 +108,18 @@ helmo-cli acceptance-check --ticket H-42 \
 ```
 
 The command exits zero only for an independent PASS on that exact manifest.
+
+A caller holding a commit rather than a ticket id — a publication gate deciding
+whether a branch may be pushed — asks the same gate from the other end:
+
+```
+helmo-cli acceptance-holds --repo helmo
+```
+
+It lists every completion still pending or failed on that repo's commits, with
+the ticket holding it, and exits zero only when there are none. Ticket status
+does not participate: a closed ticket holds an outstanding verdict exactly as
+an open one does. `--refs '[...]'` asks about one exact manifest instead.
 Actor names, models, harness versions, and authors are provenance asserted by
 the callers; Helmo records and checks those assertions but does not authenticate
 their real-world identities.

@@ -233,3 +233,116 @@ describe('explicit product acceptance', () => {
     expect(s.getTicket(t.id).status).toBe('done');
   });
 });
+
+// H-3012. The same gate asked from the other end. Crew's publication gate
+// holds a commit whose verdict is still outstanding, and it had no read for
+// "which completions name this commit" — so it enumerated every live ticket,
+// every ticket the outgoing messages name, and one dep hop out of those, and
+// was still blind to the case it was written for: H-3002 held the PENDING
+// acceptance of three outgoing commits while sitting `done`, named in none of
+// their messages.
+describe('acceptance holds asked by commit', () => {
+  const reviewer: Actor = { name: 'ward', kind: 'agent', model: 'gpt-6-astra', version: 'rev 0.4', session: 'rev:ward' };
+
+  function offer(s: Store, refs: string[], author = builder.name) {
+    const t = ticket(s);
+    s.recordProductCompletion(builder, {
+      ticket_id: t.id,
+      artifacts: refs.map((ref) => ({ ref, author })),
+      note: 'This exact source is ready for review.',
+    });
+    return t.id;
+  }
+
+  function pass(s: Store, id: string, refs: string[]) {
+    s.recordAcceptanceVerdict(reviewer, { ticket_id: id, refs, verdict: 'pass', note: 'Reviewed and cleared.' });
+  }
+
+  it('finds the pending hold on a done ticket, which is the case no enumeration reached', () => {
+    const s = new Store(':memory:');
+    const id = offer(s, [sha('a')]);
+    s.updateTicket(builder, { ticket_id: id, status: 'done', note: 'Landed; awaiting the security read.', evidence: [{ kind: 'commit', ref: sha('a') }] });
+
+    expect(s.unresolvedCompletions({ repo: 'helmo' })).toEqual([
+      { ticket_id: id, state: 'pending', reason: 'missing_verdict', refs: [sha('a')], completion_seq: expect.any(Number) },
+    ]);
+    expect(s.getTicket(id).status).toBe('done');
+  });
+
+  it('agrees with the per-ticket read on every ticket it returns, and drops the cleared one', () => {
+    const s = new Store(':memory:');
+    const held = offer(s, [sha('a')]);
+    const cleared = offer(s, [sha('b')]);
+    pass(s, cleared, [sha('b')]);
+
+    const holds = s.unresolvedCompletions({ repo: 'helmo' });
+    expect(holds.map((h) => h.ticket_id)).toEqual([held]);
+    for (const hold of holds) {
+      const perTicket = s.productAcceptance(hold.ticket_id);
+      expect(hold.state).toBe(perTicket.state);
+      expect(hold.reason).toBe(perTicket.reason);
+    }
+    expect(s.productAcceptance(cleared).state).toBe('accepted');
+  });
+
+  it('reports a FAIL as failed, so a gate reading state alone still holds', () => {
+    const s = new Store(':memory:');
+    const id = offer(s, [sha('c')]);
+    s.recordAcceptanceVerdict(reviewer, { ticket_id: id, refs: [sha('c')], verdict: 'fail', note: 'The guard cannot fire.' });
+
+    expect(s.unresolvedCompletions({ refs: [sha('c')] })).toMatchObject([{ ticket_id: id, state: 'failed', reason: 'review_failed' }]);
+  });
+
+  it('holds only what the CURRENT completion names, because a verdict answers the latest offer', () => {
+    const s = new Store(':memory:');
+    const id = offer(s, [sha('d')]);
+    s.recordProductCompletion(builder, {
+      ticket_id: id,
+      artifacts: [{ ref: sha('e'), author: builder.name }],
+      note: 'The remediation replaces it; review this instead.',
+    });
+
+    expect(s.unresolvedCompletions({ refs: [sha('d')] })).toEqual([]);
+    expect(s.unresolvedCompletions({ refs: [sha('e')] })).toMatchObject([{ ticket_id: id, refs: [sha('e')] }]);
+  });
+
+  it('returns only the refs that were asked about, not the rest of the manifest', () => {
+    const s = new Store(':memory:');
+    const id = offer(s, [sha('a'), sha('b')]);
+
+    expect(s.unresolvedCompletions({ refs: [sha('b')] })).toMatchObject([{ ticket_id: id, refs: [sha('b')] }]);
+    expect(s.unresolvedCompletions({ repo: 'helmo' })).toMatchObject([{ ticket_id: id, refs: [sha('a'), sha('b')] }]);
+  });
+
+  it('matches a repo name as an exact prefix, never as a pattern', () => {
+    const s = new Store(':memory:');
+    // `helmo` must not answer for `helmo-roadmap`, and an underscore in a repo
+    // name must not stand for any character — which is what a LIKE would make it.
+    const work = offer(s, [`helmo@${'1'.repeat(40)}`]);
+    offer(s, [`helmo-roadmap@${'2'.repeat(40)}`]);
+    const underscored = offer(s, [`a_c@${'3'.repeat(40)}`]);
+    offer(s, [`abc@${'4'.repeat(40)}`]);
+
+    expect(s.unresolvedCompletions({ repo: 'helmo' }).map((h) => h.ticket_id)).toEqual([work]);
+    expect(s.unresolvedCompletions({ repo: 'a_c' }).map((h) => h.ticket_id)).toEqual([underscored]);
+  });
+
+  it('says nothing is held when nothing was ever offered for those commits', () => {
+    const s = new Store(':memory:');
+    ticket(s); // a live ticket with no completion at all
+    offer(s, [sha('a')]);
+
+    expect(s.unresolvedCompletions({ repo: 'crew' })).toEqual([]);
+    expect(s.unresolvedCompletions({ refs: [sha('f')] })).toEqual([]);
+  });
+
+  it('refuses a question with no single answer rather than guessing which one was meant', () => {
+    const s = new Store(':memory:');
+    expect(() => s.unresolvedCompletions({ repo: 'helmo', refs: [sha('a')] })).toThrow(/not both/);
+    expect(() => s.unresolvedCompletions({})).toThrow(/Say what to ask about/);
+    expect(() => s.unresolvedCompletions({ repo: '' })).toThrow(/requires its name/);
+    expect(() => s.unresolvedCompletions({ repo: `helmo@${'a'.repeat(40)}` })).toThrow(/is not a repo name/);
+    expect(() => s.unresolvedCompletions({ refs: ['helmo@abc1234'] })).toThrow(/not immutable/);
+    expect(() => s.unresolvedCompletions({ refs: [] })).toThrow(/Say what to ask about/);
+  });
+});

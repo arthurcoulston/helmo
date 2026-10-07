@@ -44,6 +44,7 @@ const COMMAND_FLAGS: Record<string, readonly string[]> = {
   'product-complete': ['ticket', 'artifacts', 'note'],
   'acceptance-verdict': ['ticket', 'refs', 'verdict', 'note'],
   'acceptance-check': ['ticket', 'refs'],
+  'acceptance-holds': ['repo', 'refs'],
   'release-handoff': ['ticket', 'record'],
   create: ['title', 'body', 'workstream', 'type', 'priority', 'status', 'assignee', 'dep', 'dep-type', 'schedule', 'not-before', 'needs-human', 'sitting-with', 'lane', 'workflow-attempt'],
   update: ['ticket', 'note', 'status', 'evidence-kind', 'evidence-ref', 'evidence-role', 'confidence', 'uncertainty-note', 'blast-radius', 'tokens', 'cost-usd', 'handoff-to', 'not-before', 'lane', 'needs-human', 'sitting-with', 'no-needs-human', 'takeover', 'body-append', 'body-old', 'body-new'],
@@ -359,6 +360,19 @@ try {
       if (acceptance.state !== 'accepted') process.exitCode = 1;
       break;
     }
+    case 'acceptance-holds': {
+      // The question a publication gate has and `acceptance-check` cannot
+      // answer: not "is this ticket accepted" but "is anything still holding
+      // a verdict on these commits" (H-3012). Exit 0 means nothing is, so a
+      // release script can read it the way it reads acceptance-check.
+      const holds = store.unresolvedCompletions({
+        repo: flag('repo'),
+        refs: flag('refs') ? JSON.parse(flag('refs')!) : undefined,
+      });
+      out({ holds });
+      if (holds.length) process.exitCode = 1;
+      break;
+    }
     case 'release-handoff': {
       const record = JSON.parse(req('record')) as Record<string, unknown>;
       out(store.recordReleaseHandoff(actor(), {
@@ -486,6 +500,7 @@ try {
   product-complete --ticket H-n --artifacts '[{"ref":"repo@<40hex>","author":"name"}]' --note N
   acceptance-verdict --ticket H-n --refs '["repo@<40hex>"]' --verdict pass|fail --note N
   acceptance-check --ticket H-n [--refs '["repo@<40hex>"]'] (exit 0 only for independent acceptance of that manifest)
+  acceptance-holds --repo R | --refs '["repo@<40hex>"]'     (the same gate by commit instead of by ticket: completions still pending or failed on those refs, whatever their ticket's status; exit 0 only when none)
   release-handoff --ticket H-n --record '{...}'                (atomic evidence-bound release sitting; publishing handoff tool only)
   answers        --since-seq N [--session S]                    (answers recorded since a cursor, + max_seq; --session dashboard for the sweep's replay)
   verdicts       --since-seq N [--actor A] [--workstream W]     (acceptance verdicts recorded since a cursor, + max_seq; the sweep's forged-PASS replay)

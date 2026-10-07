@@ -33,8 +33,14 @@ function check(name, read) {
 function answer(response, area, read) {
   Promise.resolve().then(read).then((data) => {
     if (data === null) { response.writeHead(404, JSON_HEADERS); response.end(JSON.stringify({ error: 'Unknown team member or file' })); return; }
+    // Serialised before the header, like /api/v1/overview below. Nothing the
+    // Team reads can make apiJson throw today — the documents are plain strings
+    // and numbers — so this is the shape, not a repair: a throw after a 200 is
+    // on the wire reaches the catch with headersSent already true, and the only
+    // thing left to do there is drop the connection (H-3001).
+    const document_ = apiJson(area, data);
     response.writeHead(200, JSON_HEADERS);
-    response.end(apiJson(area, data));
+    response.end(document_);
   }).catch((error) => {
     if (response.headersSent) { response.destroy(error instanceof Error ? error : undefined); return; }
     response.writeHead(500, JSON_HEADERS);

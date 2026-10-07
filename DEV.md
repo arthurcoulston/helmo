@@ -69,8 +69,9 @@ edit to generated source is a test failure.
 **Every area is in this application.** Roadmap's server-ranked groups are
 compact Data Tables composed in `RoadmapView.tsx` over the shared
 `RecordTable.tsx`; the charter, claims and lazy history are in the Sheet that
-table opens. Runtime's complete status projection uses the official Table in
-`RuntimeView.tsx`. Team profiles
+table opens. Work's record groups are the same composition in
+`WorkRecord.tsx`. Runtime's complete status projection uses the official Table
+in `RuntimeView.tsx`. Team profiles
 are fetched only from configured roster members and shown in standard
 Collapsible components; a missing profile is an explicit Alert. All standalone
 entries serve the same application with navigation limited to their API areas.
@@ -81,6 +82,22 @@ bookmarks, copy controls, evidence and lazy event history are in the application
 readiness, the terminal bound and request fingerprints. Fifteen-second JSON
 refreshes keep keyed disclosures and keyboard focus; a failed refresh retains
 the last good reading and says so.
+
+Each group is a `RecordTable` (H-2974). A row carries the reference, the
+title, the stream/project/type line, the signals that should reach Arthur
+before he opens anything, the state, the priority, the owner and the last
+update; a sentence-length reason — a hold's, a stale handoff's — is in the
+record, not the row. Expanding gives the record's own opening, bounded, and
+nothing else. `TicketRecord` is the full record in a Sheet, opened from the
+title without expanding first or by a `#H-n` fragment, and `TicketRecordContent`
+is its body — exported because a Sheet is a Radix portal into `document.body`
+and the result contract's proof server-renders it. The Sheet opens only for a
+row one of these tables draws: a decision, an action and a sitting are their
+own cards above, and a fragment naming one must reach that card rather than a
+modal over it. `view.ts` spreads the whole ticket into every row, so the body
+the Sheet shows and the opening the row shows are the document the table was
+already drawn from; `TicketDetails` fetches only the dependencies and history,
+and takes `drawn` from a caller that has already written the body out.
 
 The Work-only entry and `?section=awaiting` now serve the same built application.
 `@helmo/core/ui` serves its unchanged document and assets and advertises which

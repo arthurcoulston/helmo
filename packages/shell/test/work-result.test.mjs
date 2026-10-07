@@ -20,7 +20,12 @@ const React = await import('react');
 // component, and a fixture restating the projection's output would pass while
 // the two drifted apart.
 const { resultDisplay } = await import('../../work/src/presentation.ts');
-const { WorkRecord } = await import('../src/WorkRecord.tsx');
+// `TicketRecordContent` rather than `WorkRecord`: since H-2974 the result
+// section is in the Sheet the compact table opens, and a Sheet is a Radix
+// portal into `document.body`, which server rendering has none of. This is
+// the same component the Sheet draws, fed the same row; that the Sheet draws
+// it is proved in the browser by `scripts/verify-ui.mjs`.
+const { TicketRecordContent } = await import('../src/WorkRecord.tsx');
 
 /** The record as one closed row, read as the plain text a person sees. */
 function reading(evidence, { from = VIEWING } = {}) {
@@ -35,10 +40,7 @@ function reading(evidence, { from = VIEWING } = {}) {
       result: resultDisplay(evidence),
     },
   };
-  const html = renderToStaticMarkup(React.createElement(WorkRecord, {
-    data: { whole: false, closed_tail: 20, total: 1, rows: [row], hygiene: [] },
-    selected: 'H-1',
-  }));
+  const html = renderToStaticMarkup(React.createElement(TicketRecordContent, { row }));
   return {
     html,
     text: html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim(),
@@ -127,9 +129,19 @@ describe('the result a ticket produced, as a reader sees it', () => {
 
   it('counts the results when a ticket records more than one, and hides none', () => {
     const r = reading([{ kind: 'commit', ref: 'helmo@aaa1111', role: 'result' }, { kind: 'url', ref: BOOK, role: 'result' }]);
-    assert.match(r.text, /Result · 2 recorded/);
+    assert.match(r.text, /Result · 2/);
     assert.deepEqual(r.actions, [BOOK], 'the latest append is the action, and it is the only one');
     assert.match(r.text, /commit helmo@aaa1111/);
+  });
+
+  it('counts items it cannot vouch for without calling their purpose recorded', () => {
+    // Ward's residual on H-2969: the heading read "2 recorded" over two items
+    // whose purpose is the frozen `kind === "url"` guess, which is the one
+    // thing each line underneath says was NOT recorded.
+    const r = reading([{ kind: 'url', ref: BOOK }, { kind: 'url', ref: 'https://example.com/other' }]);
+    assert.match(r.text, /Result · 2/);
+    assert.doesNotMatch(r.text, /recorded for the purpose|· 2 recorded/);
+    assert.equal(r.text.match(/Purpose not recorded/g).length, 2);
   });
 
   it('says so when a role was corrected by a later append', () => {

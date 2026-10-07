@@ -221,6 +221,31 @@ explanation already says both, under exactly the conditions the badges tested,
 and only ever on a row that also carried the explanation. Nothing was decided
 here about status or progress; that is R-46's question.
 
+**Work is the same compact reading.** Its groups — in motion, ready, blocked,
+standing, done, cancelled — are the same `RecordTable`, with columns chosen
+for scanning: the reference and title, the stream/project/type beneath it,
+the state, the priority, the owner, and when it last moved. A row also carries
+the signals that should reach Arthur before he opens anything — what it waits
+on, that it is on hold, a date it cannot start before, a stale release
+handoff, a confidence below routine, an acceptance state, a closed ticket with
+no evidence — in their short form only. The sentence behind a hold or a stale
+handoff is in the record, exactly as Roadmap's parked reason is: a sentence in
+a row is what made the cards tall. Expanding gives the record's own opening,
+bounded the same way and never called a summary, plus the way in. The full
+ticket is an unmodified Sheet reading in the order a reader wants it — what
+the work is, what stands in front of it, the last recorded progress, what it
+produced, its dependencies and history, and the recorded token and usage
+figures last, where an estimate belongs rather than at the top of the record.
+
+Decision needed, Action for you and Needs a sitting keep their own cards above
+the tables, with their own controls, their complete question or action and the
+answer path unchanged. A `#H-n` fragment naming one of them scrolls to that
+card and opens no Sheet over it: a modal between Arthur and a request he came
+to answer would be the one failure this surface cannot afford. The result
+heading counts the results a ticket recorded and no longer calls that count
+"recorded" — on the legacy records every purpose in it is the frozen
+`kind === "url"` guess, and each line underneath already says so.
+
 **All five areas now use the same standard application.** Overview, Work,
 Roadmap, Team and Runtime share the official sidebar and components. Work,
 Roadmap and Runtime standalone entry points serve that same built document;

@@ -46,6 +46,14 @@ store.updateTicket(actor, { ticket_id: operational.id, status: 'done', note: 'Ch
   { kind: 'file', ref: '~/.helmo/rev.json', role: 'supporting' },
 ] });
 
+/* A record far longer than a row can carry, whose opening is filing prose
+   rather than the work, and the one fixture with an owner — so the short
+   reading and the Who column are proved on what they actually meet. */
+const longWork = create('A work record whose opening is not the work', {
+  assignee: 'fixture-member',
+  body: `${'Filing provenance recorded when this ticket was last reconciled, which is context rather than the work itself. '.repeat(5)}\n\nOutcome: the thing a reader actually wants from this record.`,
+});
+
 const decision = create('A decision awaiting the operator');
 store.returnToHuman(actor, decision.id, { situation: 'Fixture situation', question: 'Use the standard baseline?', recommendation: 'Use the selected baseline.' });
 
@@ -94,28 +102,70 @@ try {
   page.setDefaultTimeout(15000);
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
+  // Work is a compact reading: the groups are tables, a collapsed row carries
+  // no record body, and a sentence-length reason is in the record not the row.
   await page.goto(`${origin}/work`);
-  await page.getByRole('heading', { name: 'Ready · 1', exact: true }).waitFor();
-  assert.equal(await page.getByRole('region', { name: 'Ready', exact: true }).getByText(ready.title, { exact: true }).count(), 1);
-  assert.equal(await page.getByRole('region', { name: 'Blocked', exact: true }).getByText(blocked.title, { exact: true }).count(), 1);
+  await page.getByRole('heading', { name: 'Ready · 2', exact: true }).waitFor();
+  assert.equal(await page.getByRole('table', { name: 'Ready', exact: true }).getByText(ready.title, { exact: true }).count(), 1);
+  assert.equal(await page.getByRole('table', { name: 'Blocked', exact: true }).getByText(blocked.title, { exact: true }).count(), 1);
   assert.equal(await page.locator(`#${oldest.id}`).count(), 0, 'default reading must bound terminal history');
-  await page.locator(`#${ready.id}`).getByRole('button', { name: /Ready work with a complete title/ }).click();
-  await page.getByText(`Full record for ${ready.title}`, { exact: true }).waitFor();
+  assert.equal(await page.getByText(`Full record for ${ready.title}`, { exact: true }).count(), 0, 'a collapsed row must not carry the record body');
+  await page.locator(`tr#${blocked.id}`).getByText('On hold', { exact: true }).waitFor();
+  assert.equal(await page.locator(`tr#${blocked.id}`).getByText('Waiting for the chosen spending window').count(), 0, "a hold's reason belongs in the record");
+  await page.locator(`tr#${longWork.id}`).getByText('fixture-member', { exact: true }).waitFor();
+  // The one short reading a row offers is the record's own opening, bounded.
+  await page.locator(`tr#${longWork.id}`).getByRole('button', { name: `Summary of ${longWork.id}`, exact: true }).click();
+  const opening = page.locator(`[data-expanded-for="${longWork.id}"]`);
+  const shown = await opening.locator('p').innerText();
+  assert.ok(shown.startsWith('Filing provenance recorded when'), `the preview is not the record's opening: ${shown.slice(0, 40)}`);
+  assert.ok(shown.length <= 321 && shown.endsWith('…'), `the preview is not bounded: ${shown.length} characters`);
+  assert.equal(await opening.getByRole('button', { name: 'History', exact: true }).count(), 0, 'an expanded row carries no history');
+  await opening.getByRole('button', { name: /^Open full view/ }).waitFor();
+  // Expansion and focus are the reader's state, and a poll may move neither.
   await page.getByRole('button', { name: `Copy ${ready.id}`, exact: true }).click();
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), ready.id);
   await page.waitForTimeout(15500);
-  assert.equal(await page.getByText(`Full record for ${ready.title}`, { exact: true }).count(), 1, 'refresh must keep the disclosure open');
+  assert.equal(await page.locator(`[data-expanded-for="${longWork.id}"]`).count(), 1, 'refresh must keep the row expanded');
   assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), `Copy ${ready.id}`, 'refresh must retain focus');
+  // The complete record is a Sheet, reached from the row by keyboard without
+  // expanding first, carrying what the row deliberately leaves out.
+  await page.locator(`tr#${blocked.id}`).getByRole('button', { name: blocked.title, exact: true }).focus();
+  await page.keyboard.press('Enter');
+  const record = page.getByRole('dialog');
+  await record.getByText(`Full record for ${blocked.title}`, { exact: true }).waitFor();
+  await record.getByText('On hold · Waiting for the chosen spending window', { exact: true }).waitFor();
+  // Work's history is written out under its own heading, not behind a toggle.
+  await record.getByRole('heading', { name: 'History', exact: true }).waitFor();
+  await record.getByText(/Last recorded update .* by fixture: Held by the fixture operator\./).waitFor();
+  await record.locator(`[aria-label="${blocked.id} history"]`).getByText('Held by the fixture operator.', { exact: true }).waitFor();
+  await record.getByRole('button', { name: `Copy ${blocked.id}`, exact: true }).click();
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), blocked.id);
+  await page.keyboard.press('Escape');
+  await record.waitFor({ state: 'detached' });
+  assert.equal(
+    await page.evaluate(() => document.activeElement?.textContent?.trim()),
+    blocked.title,
+    'closing the record must return focus to the control that opened it',
+  );
+  // A bookmarked reference opens that record, and the result is in it.
   await page.goto(`${origin}/#${oldest.id}`);
-  await page.getByText(`Full record for ${oldest.title}`, { exact: true }).waitFor();
-  await page.getByRole('link', { name: 'View result', exact: true }).waitFor();
-  assert.equal(await page.getByRole('link', { name: 'View result', exact: true }).getAttribute('href'), 'https://example.com/result');
+  const closed = page.getByRole('dialog');
+  await closed.getByText(`Full record for ${oldest.title}`, { exact: true }).waitFor();
+  assert.equal(await closed.getByRole('link', { name: 'View result', exact: true }).getAttribute('href'), 'https://example.com/result');
   await page.goto(`${origin}/work?whole=1#${operational.id}`);
-  const operationalRow = page.locator(`#${operational.id}`);
-  await operationalRow.getByText('commit helmo@76f395d', { exact: true }).waitFor();
-  assert.equal(await operationalRow.getByText('No result recorded').count(), 0, 'a commit result must not read as no result');
-  assert.equal(await operationalRow.getByRole('link', { name: 'View result', exact: true }).count(), 0, 'a commit is not something a browser opens');
-  assert.equal(await operationalRow.getByText('~/.helmo/rev.json', { exact: true }).count(), 1);
+  const operationalRecord = page.getByRole('dialog');
+  await operationalRecord.getByText('commit helmo@76f395d', { exact: true }).waitFor();
+  assert.equal(await operationalRecord.getByText('No result recorded').count(), 0, 'a commit result must not read as no result');
+  assert.equal(await operationalRecord.getByRole('link', { name: 'View result', exact: true }).count(), 0, 'a commit is not something a browser opens');
+  assert.equal(await operationalRecord.getByText('~/.helmo/rev.json', { exact: true }).count(), 1);
+  for (const theme of ['light', 'dark']) for (const width of [390, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.evaluate((value) => document.documentElement.className = value, theme);
+    await page.waitForTimeout(250);
+    await page.screenshot({ path: join(dir, `shots/work-record-${theme}-${width}.png`), animations: 'disabled' });
+  }
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.evaluate(() => document.documentElement.className = 'light');
   await page.goto(`${origin}/?section=awaiting`);
   await page.getByText(decision.title, { exact: true }).waitFor();
   assert.equal(await page.locator('[data-sidebar="sidebar"]').count(), 0, 'embedded reading carries no full navigation');
@@ -136,6 +186,7 @@ try {
   store.returnToHuman(actor, stale.id, { situation: 'One answer is allowed.', question: 'Use this result?', recommendation: 'Use it.' });
   await page.goto(`${origin}/work?whole=1#${stale.id}`);
   await page.locator(`#${stale.id}`).waitFor();
+  assert.equal(await page.getByRole('dialog').count(), 0, 'a fragment naming a request must not put a modal over its card');
   const popupPromise = page.waitForEvent('popup');
   await page.getByRole('button', { name: 'Open in new window' }).click();
   const popup = await popupPromise;
@@ -275,7 +326,7 @@ try {
   await page.keyboard.press('ArrowRight'); await page.waitForTimeout(250);
   assert.ok(await page.locator('[data-slot="table-container"]').evaluate((el) => el.scrollLeft > 0));
   assert.deepEqual(errors, []);
-  console.log(`All five areas, Roadmap's compact table, bounded summary and full record, held state, copy, focused refresh, embedded answer, runtime trace, team profiles, Inter and all 34 layouts verified. Evidence: ${dir}`);
+  console.log(`All five areas, Work's and Roadmap's compact tables, bounded summaries and full records, held state, copy, focused refresh, embedded answer, runtime trace, team profiles, Inter and all 34 layouts verified. Evidence: ${dir}`);
   writeFileSync(join(dir, 'result.json'), JSON.stringify({ origin, artifacts: dir, errors, verified: new Date().toISOString() }, null, 2));
 } finally {
   await browser?.close();

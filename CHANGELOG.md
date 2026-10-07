@@ -13,6 +13,22 @@ longer.
 
 ## Unreleased — 0.9.5
 
+- Read Work and Roadmap as compact tables instead of walls of cards. Every
+  group is a standard Data Table whose rows say what the work is, what state
+  it is in, who owns the next step, when it last moved, and anything that
+  should reach you before you open it. Expanding a row gives the record's own
+  opening — a verbatim excerpt, bounded, never a generated summary — and the
+  way into the complete record, which opens in a panel beside the table: the
+  full description, what stands in front of the work, the last recorded
+  progress, what it produced, its dependencies and its history, with the
+  recorded token and usage figures at the foot where an estimate belongs. A
+  sentence-length reason, like why something is on hold, is in that record
+  rather than in the row. Several of these tables now fit in a window that
+  used to hold three cards. Decisions, actions and sittings keep their own
+  cards above the tables, with their controls and their complete text
+  unchanged, and a bookmarked reference to one still reaches that card
+  directly.
+
 - Show the result a ticket actually produced, whatever it is. A closed row used
   to decide what the work produced from how the ref was *spelled* — every URL
   was the result, every commit and file was review evidence — which described

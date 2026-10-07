@@ -1,10 +1,12 @@
 import * as React from "react"
-import { CheckIcon, ChevronRightIcon, CopyIcon } from "lucide-react"
+import { CheckIcon, CopyIcon } from "lucide-react"
+import { type ExpandedState } from "@tanstack/react-table"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { excerpt, expandColumn, RecordTable, type RecordColumn } from "./RecordTable"
 
 type Evidence = { kind: string; ref: string; note?: string; role?: string }
 // Index into the row's own `evidence` array, with what the projection knows
@@ -15,7 +17,12 @@ type ResultDisplay = { primary: ResultRole | null; others: ResultRole[]; support
 type Event = { seq: number; ts: string; event_type: string; actor: { name: string; session?: string }; payload: { note?: string; question?: string; answer?: string } }
 type Detail = { ticket: { body: string; uncertainty_note?: string }; events: Event[]; deps: { outgoing: { type: string; to_id: string }[]; incoming: { type: string; from_id: string }[] } }
 type Row = {
-  id: string; title: string; status: string; workstream: string; type: string
+  // `body` and `uncertainty_note` are not new: `view.ts` spreads the whole
+  // ticket into every row, so the complete record is already in the document
+  // the table is drawn from. Declaring them is what lets the row show its own
+  // opening and the Sheet show the record without a second read.
+  id: string; title: string; body: string; uncertainty_note?: string
+  status: string; workstream: string; type: string
   project?: string; assignee?: string; lane?: string; priority: number
   schedule?: string; not_before?: string; sitting?: string; confidence?: string
   release_handoff?: { current: boolean; stale_reason?: string }; blast_radius?: string; capacity_hold?: { reason: string }
@@ -67,7 +74,15 @@ export function CopyReference({ value }: { value: string }) {
   </>
 }
 
-export function TicketDetails({ id, revision }: { id: string; revision?: string }) {
+/** The dependencies and history of one record, read only for the record a
+ *  reader has actually opened.
+ *
+ *  `drawn` says the caller has already written the record's own text out — the
+ *  work document carries every body, so the compact table's Sheet shows it
+ *  without waiting for this fetch, and in the order a reader wants it. The
+ *  awaiting cards hold only a request, so they leave it unset and read the
+ *  body this fetch brings. */
+export function TicketDetails({ id, revision, drawn }: { id: string; revision?: string; drawn?: boolean }) {
   const [state, setState] = React.useState<{ data?: Detail; error?: string }>({})
   React.useEffect(() => {
     const controller = new AbortController()
@@ -88,8 +103,10 @@ export function TicketDetails({ id, revision }: { id: string; revision?: string 
   return <div className="flex min-w-0 flex-col gap-4 text-sm">
     {state.error ? <Alert variant="destructive"><AlertTitle>Could not refresh the history</AlertTitle><AlertDescription>{state.error}</AlertDescription></Alert> : null}
     {!data ? <p className="text-muted-foreground">Loading record…</p> : <>
-      <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{data.ticket.body}</p>
-      {data.ticket.uncertainty_note ? <Alert><AlertTitle>Where the doubt is</AlertTitle><AlertDescription>{data.ticket.uncertainty_note}</AlertDescription></Alert> : null}
+      {drawn ? null : <>
+        <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{data.ticket.body}</p>
+        {data.ticket.uncertainty_note ? <Alert><AlertTitle>Where the doubt is</AlertTitle><AlertDescription>{data.ticket.uncertainty_note}</AlertDescription></Alert> : null}
+      </>}
       {deps.length ? <div className="flex flex-wrap gap-2">{deps.map((d, i) => <Badge key={i} variant="outline" asChild><a href={`?whole=1#${d.id}`}>{d.type} {d.id}</a></Badge>)}</div> : null}
       <div className="flex flex-col gap-3" aria-label={`${id} history`}>
         <h3 className="font-medium">History</h3>
@@ -156,7 +173,11 @@ function Results({ row }: { row: Row }) {
   </div> : null
   return <div className="flex flex-col gap-3 text-sm">
     <div aria-label="Result" className="flex flex-col gap-1">
-      <span className="font-medium">{r.others.length ? `Result · ${r.others.length + 1} recorded` : "Result"}</span>
+      {/* A count, and only a count. It used to read "N recorded", which was a
+          claim about every item in it: on the legacy multi-URL records all N
+          purposes are the frozen `kind === "url"` guess, and each one says so
+          on its own line underneath. The number is true; the word was not. */}
+      <span className="font-medium">{r.others.length ? `Result · ${r.others.length + 1}` : "Result"}</span>
       {r.primary
         ? <Reference item={at(r.primary)} role={r.primary} action />
         : <span className="text-muted-foreground">No result recorded{r.unstated.length ? ` — purpose was not recorded for ${r.unstated.length} item${r.unstated.length === 1 ? "" : "s"} of evidence` : ""}</span>}
@@ -169,76 +190,197 @@ function Results({ row }: { row: Row }) {
   </div>
 }
 
-function RecordRow({ row, selected }: { row: Row; selected: string }) {
-  const [open, setOpen] = React.useState(selected === row.id)
-  React.useEffect(() => { if (selected === row.id) setOpen(true) }, [selected, row.id])
+type Opener = (id: string, from?: HTMLElement) => void
+
+/* The ticket's own status, said the way the operator reads it. The group
+   heading says where a row sits in his queue; this column says what the store
+   holds, and the two differ exactly where it matters — an open ticket under
+   "Blocked" is still open. */
+const STATE: Record<string, string> = { open: "Open", in_progress: "In motion", awaiting_human: "Awaiting you", done: "Done", cancelled: "Cancelled" }
+const state = (value: string) => STATE[value] ?? value.replaceAll("_", " ")
+
+/* The ticket's own reference: the fragment link a bookmark uses, and the
+   qualified spelling to copy. `Reference` above is one evidence item. */
+function RecordRef({ id }: { id: string }) {
+  return <span className="inline-flex shrink-0 items-center gap-1">
+    <a className="font-mono text-xs underline-offset-4 hover:underline" href={`#${id}`}>{id}</a>
+    <CopyReference value={id} />
+  </span>
+}
+
+/** The signals that should reach Arthur before he opens anything: what stands
+ *  in front of the work, and what the record itself is flagging.
+ *
+ *  Each is the short form only. A hold's reason and a stale handoff's reason
+ *  are sentences, and a sentence in a row is what made the cards tall — they
+ *  are in the record, one control away, which is where the parked reason went
+ *  on Roadmap for the same reason. */
+function Signals({ row }: { row: Row }) {
   const d = row.display
-  return <Collapsible open={open} onOpenChange={setOpen} asChild>
-    <Card id={row.id} className="gap-0 py-0">
-      <div className="flex items-start gap-1 p-3">
-        <div className="flex shrink-0 items-center gap-1">
-          <a className="font-mono text-xs underline-offset-4 hover:underline" href={`#${row.id}`}>{row.id}</a>
-          <CopyReference value={row.id} />
-        </div>
-        <CollapsibleTrigger asChild>
-          <Button variant="ghost" className="h-auto min-w-0 flex-1 justify-start whitespace-normal px-2 py-1 text-left">
-            <ChevronRightIcon className={`shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />
-            <span className="min-w-0 flex-1 break-words [overflow-wrap:anywhere]">
-              <span className="block font-medium">{row.title}</span>
-              <span className="text-muted-foreground block text-xs font-normal">{[row.workstream, row.project, row.type, row.assignee, row.lane && `lane ${row.lane}`].filter(Boolean).join(" · ")} · {time(row.closed_at ?? row.updated_at)}</span>
-            </span>
-          </Button>
-        </CollapsibleTrigger>
-      </div>
-      <div className="flex flex-wrap gap-1 px-3 pb-3">
-        {row.priority !== 2 ? <Badge variant="outline">P{row.priority}</Badge> : null}
-        {row.release_handoff?.current === false ? <Badge variant="outline" className="whitespace-normal">Release handoff stale · {row.release_handoff.stale_reason ?? "readiness changed"}</Badge> : null}
-        {d.waits_on.length ? <Badge variant="outline" className="whitespace-normal">Waits on {d.waits_on.join(", ")}</Badge> : null}
-        {d.held ? <Badge variant="outline" className="whitespace-normal">On hold · {row.capacity_hold?.reason}</Badge> : null}
-        {d.gated ? <Badge variant="outline">Not before {row.not_before}</Badge> : null}
-        {row.schedule ? <Badge variant="outline" className="whitespace-normal">Recurring · {row.schedule}</Badge> : null}
-        {row.confidence && row.confidence !== "routine" ? <Badge variant="secondary">{row.confidence.replaceAll("_", " ")}</Badge> : null}
+  const marks = [
+    d.waits_on.length ? `Waits on ${d.waits_on.join(", ")}` : "",
+    d.held ? "On hold" : "",
+    d.gated ? `Not before ${row.not_before}` : "",
+    row.release_handoff?.current === false ? "Release handoff stale" : "",
+    row.confidence && row.confidence !== "routine" ? row.confidence.replaceAll("_", " ") : "",
+    d.acceptance.state !== "not_requested" ? `Acceptance ${d.acceptance.reason === "contested" ? "contested" : d.acceptance.state}` : "",
+    row.status === "done" && !row.evidence.length ? "No evidence" : "",
+  ].filter(Boolean)
+  return marks.length ? <span className="flex flex-wrap gap-1 px-2">
+    {marks.map((mark) => <Badge key={mark} variant="outline">{mark}</Badge>)}
+  </span> : null
+}
+
+/** The whole record, in the Sheet the table opens. Everything the cards held
+ *  plus the body they never showed until a fetch returned: the full text, what
+ *  is standing in front of it, the last recorded progress, what it cost, what
+ *  it produced, and its history.
+ *
+ *  The heading is the Sheet's own, so it needs the Sheet's context; the record
+ *  itself is `TicketRecordContent` below, which renders anywhere and is how
+ *  the result contract's proof reads it without a browser. */
+export function TicketRecord({ row }: { row: Row }) {
+  const d = row.display
+  const standing = [
+    d.held ? `On hold · ${row.capacity_hold?.reason ?? "no reason recorded"}` : "",
+    d.gated ? `Cannot start before ${row.not_before}` : "",
+    d.waits_on.length ? `Waits on ${d.waits_on.join(", ")}` : "",
+    row.release_handoff?.current === false ? `Release handoff stale · ${row.release_handoff.stale_reason ?? "readiness changed"}` : "",
+  ].filter(Boolean)
+  return <>
+    <SheetHeader className="border-b pr-12">
+      <SheetTitle className="break-words [overflow-wrap:anywhere]">{row.title}</SheetTitle>
+      <SheetDescription asChild><div className="flex flex-wrap items-center gap-2 pt-1 text-xs">
+        <RecordRef id={row.id} />
+        <Badge variant="secondary">{state(row.status)}</Badge>
+        <Badge variant="outline">P{row.priority}</Badge>
         {row.blast_radius && row.blast_radius !== "none" ? <Badge variant="outline">{row.blast_radius}</Badge> : null}
-        {d.acceptance.state !== "not_requested" ? <Badge variant="outline">Acceptance {d.acceptance.reason === "contested" ? "contested" : d.acceptance.state}</Badge> : null}
-        {row.status === "done" && !row.evidence.length ? <Badge variant="outline">No evidence</Badge> : null}
-      </div>
-      <CollapsibleContent>
-        <CardContent className="flex flex-col gap-4 border-t pt-4">
-          {d.progress ? <p className="text-sm">Last recorded update {time(d.progress.at)} by {d.progress.actor.name}: {d.progress.note}</p> : null}
-          {row.sitting ? <p className="text-sm">Needs a sitting: {row.sitting}</p> : null}
-          <p className="text-muted-foreground text-xs">{row.tokens_total.toLocaleString()} recorded tokens · ${row.cost_usd_total.toFixed(2)} recorded usage estimate · historical basis may be mixed; unmetered work is excluded</p>
-          {d.chain.length ? <p className="text-muted-foreground text-xs">{d.chain.join(" → ")}</p> : null}
-          {row.status === "done" ? <Results row={row} /> : null}
-          {open ? <TicketDetails id={row.id} revision={row.updated_at} /> : null}
-        </CardContent>
-      </CollapsibleContent>
-    </Card>
-  </Collapsible>
+        {row.schedule ? <Badge variant="outline">Recurring · {row.schedule}</Badge> : null}
+        <span>{[row.workstream, row.project, row.type, row.assignee, row.lane && `lane ${row.lane}`].filter(Boolean).join(" · ")}</span>
+        <span>{row.closed_at ? "Closed" : "Updated"} {time(row.closed_at ?? row.updated_at)}</span>
+      </div></SheetDescription>
+    </SheetHeader>
+    <TicketRecordContent row={row} standing={standing} />
+  </>
+}
+
+export function TicketRecordContent({ row, standing = [] }: { row: Row; standing?: string[] }) {
+  const d = row.display
+  return <div className="flex min-w-0 flex-col gap-4 overflow-y-auto p-4 text-sm">
+    {/* What the work IS leads. The document the table was drawn from already
+        carries it, so this is here before the history fetch returns. */}
+    <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{row.body}</p>
+    {row.uncertainty_note ? <Alert><AlertTitle>Where the doubt is</AlertTitle><AlertDescription>{row.uncertainty_note}</AlertDescription></Alert> : null}
+    {standing.length ? <Alert><AlertTitle>Not ready to start</AlertTitle><AlertDescription>
+      <div className="flex flex-col gap-1">{standing.map((line) => <span key={line}>{line}</span>)}</div>
+    </AlertDescription></Alert> : null}
+    {d.progress ? <p>Last recorded update {time(d.progress.at)} by {d.progress.actor.name}: {d.progress.note}</p> : null}
+    {row.sitting ? <p>Needs a sitting: {row.sitting}</p> : null}
+    {row.status === "done" ? <Results row={row} /> : null}
+    <TicketDetails id={row.id} revision={row.updated_at} drawn />
+    {/* The accounting last: true, and never the first thing about the work. */}
+    <p className="text-muted-foreground text-xs">{row.tokens_total.toLocaleString()} recorded tokens · ${row.cost_usd_total.toFixed(2)} recorded usage estimate · historical basis may be mixed; unmetered work is excluded</p>
+    {d.chain.length ? <p className="text-muted-foreground text-xs">{d.chain.join(" → ")}</p> : null}
+  </div>
+}
+
+function columnsFor(open: Opener): RecordColumn<Row>[] {
+  return [
+    expandColumn<Row>((row) => `Summary of ${row.id}`),
+    {
+      id: "work",
+      header: () => "Work",
+      cell: ({ row }) => {
+        const record = row.original
+        return <div className="flex flex-col">
+          <div className="flex flex-wrap items-center gap-1">
+            <RecordRef id={record.id} />
+            {/* The title is the way in. A narrow window scrolls these columns,
+                so a control in the last one would be the one never on screen;
+                the title always is. */}
+            <Button variant="ghost" className="h-auto min-w-0 flex-1 justify-start whitespace-normal px-2 py-1 text-left font-medium" onClick={(event) => open(record.id, event.currentTarget)}>
+              <span className="min-w-0 break-words [overflow-wrap:anywhere]">{record.title}</span>
+            </Button>
+          </div>
+          <span className="text-muted-foreground px-2 text-xs">{[record.workstream, record.project, record.type].filter(Boolean).join(" · ")}</span>
+          <Signals row={record} />
+        </div>
+      },
+      meta: { className: "min-w-64 whitespace-normal" },
+    },
+    { id: "state", header: () => "State", cell: ({ row }) => <Badge variant="secondary">{state(row.original.status)}</Badge>, meta: { className: "w-28" } },
+    { id: "priority", header: () => <span title="Priority: 0 critical, 3 low">P</span>, cell: ({ row }) => <span className="tabular-nums">{row.original.priority}</span>, meta: { className: "w-10 text-right" } },
+    { id: "assignee", header: () => "Who", cell: ({ row }) => <span className="text-xs">{row.original.assignee ?? "—"}</span>, meta: { className: "w-28" } },
+    { id: "updated", header: () => "Updated", cell: ({ row }) => <span className="text-muted-foreground text-xs">{time(row.original.closed_at ?? row.original.updated_at)}</span>, meta: { className: "w-32" } },
+  ]
 }
 
 const GROUPS = [["motion", "In motion"], ["ready", "Ready"], ["blocked", "Blocked"], ["standing", "Standing"], ["done", "Done"], ["cancelled", "Cancelled"]]
 
 export function WorkRecord({ data, selected }: { data: WorkRecordData; selected: string }) {
+  const [expanded, setExpanded] = React.useState<ExpandedState>({})
+  const [openId, setOpenId] = React.useState("")
+  /* One Sheet serves every row, so there is no SheetTrigger for Radix to
+     restore focus to. The control that opened it is remembered here and
+     restored through the documented onCloseAutoFocus. */
+  const opener = React.useRef<HTMLElement | null>(null)
+  const openRecord = React.useCallback((id: string, from?: HTMLElement) => { opener.current = from ?? null; setOpenId(id) }, [])
   React.useEffect(() => {
     if (selected) requestAnimationFrame(() => document.getElementById(selected)?.scrollIntoView({ block: "center" }))
   }, [selected])
+  /* A bookmark, a copied reference, a dependency badge or a grooming finding
+     names one ticket: show its record. Keyed on the fragment alone, so the
+     fifteen-second refresh cannot reopen a Sheet the reader closed. */
+  React.useEffect(() => { if (/^H-\d+$/.test(selected)) openRecord(selected) }, [selected, openRecord])
+  const columns = React.useMemo(() => columnsFor(openRecord), [openRecord])
+  /* One row array per group, kept across refreshes that return the same
+     records, so a poll does not rebuild six table models. */
+  const groups = React.useMemo(() => GROUPS.map(([key, label]) => ({ key: key!, label: label!, rows: data.rows.filter((r) => r.display.group === key) })), [data])
+  /* Only a record one of these tables actually draws. A decision, an action
+     and a sitting are drawn as their own cards above, with their own controls,
+     and a fragment naming one must scroll to that card — opening a Sheet over
+     it would put a modal between Arthur and the request he came for. */
+  const open = React.useMemo(() => groups.flatMap((group) => group.rows), [groups]).find((row) => row.id === openId)
+
   return <>
     <nav aria-label="Record scope" className="flex flex-wrap items-center gap-2 text-sm">
       <span className="text-muted-foreground">{data.whole ? "Whole record" : `Current record · every live ticket and the newest ${data.closed_tail} closed`}</span>
       <Button variant="outline" size="sm" asChild><a href={data.whole ? "?" : "?whole=1"}>{data.whole ? "Return to current record" : "Whole record"}</a></Button>
     </nav>
-    <div className="flex flex-wrap gap-2">{GROUPS.map(([key, label]) => <Badge key={key} variant="secondary">{data.rows.filter((r) => r.display.group === key).length} {label.toLowerCase()}</Badge>)}</div>
+    <div className="flex flex-wrap gap-2">{groups.map((group) => <Badge key={group.key} variant="secondary">{group.rows.length} {group.label.toLowerCase()}</Badge>)}</div>
     {data.hygiene.length ? <Collapsible>
       <CollapsibleTrigger asChild><Button variant="outline">Needs grooming · {data.hygiene.length}</Button></CollapsibleTrigger>
       <CollapsibleContent className="flex flex-col gap-2 pt-3">{data.hygiene.map((f, i) => <p key={i} className="text-sm"><Badge variant="outline">{f.check.replaceAll("_", " ")}</Badge> {f.ticket_id ? <a className="underline" href={`?whole=1#${f.ticket_id}`}>{f.ticket_id}</a> : f.workstream} · {f.detail}</p>)}</CollapsibleContent>
     </Collapsible> : null}
-    {GROUPS.map(([key, label]) => {
-      const rows = data.rows.filter((r) => r.display.group === key)
-      return rows.length ? <section key={key} className="flex flex-col gap-2" aria-label={label}>
-        <h2 className="text-muted-foreground text-xs font-medium uppercase tracking-wide">{label} · {rows.length}</h2>
-        {rows.map((row) => <RecordRow key={row.id} row={row} selected={selected} />)}
-      </section> : null
-    })}
+    {groups.map((group) => group.rows.length ? <section key={group.key} className="flex flex-col gap-2" aria-label={group.label}>
+      <h2 className="text-muted-foreground text-xs font-medium uppercase tracking-wide">{group.label} · {group.rows.length}</h2>
+      <RecordTable<Row>
+        label={group.label}
+        columns={columns}
+        rows={group.rows}
+        rowId={(row) => row.id}
+        expanded={expanded}
+        onExpandedChange={setExpanded}
+        empty="No work in this section."
+        renderExpanded={(row) => {
+          const { text, truncated } = excerpt(row.body ?? "")
+          return <div className="flex flex-col items-start gap-2">
+            <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground [overflow-wrap:anywhere]">{text || "This record has no description."}</p>
+            <Button variant="outline" size="sm" onClick={(event) => openRecord(row.id, event.currentTarget)}>
+              {truncated ? "Open full view — this is the record's opening only" : "Open full view"}
+            </Button>
+          </div>
+        }}
+      />
+    </section> : null)}
     {!data.rows.length ? <p className="text-muted-foreground text-sm">No work has been recorded.</p> : null}
+    <Sheet open={!!open} onOpenChange={(next) => { if (!next) setOpenId("") }}>
+      <SheetContent
+        className="gap-0 p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-xl"
+        onCloseAutoFocus={(event) => { if (opener.current?.isConnected) { event.preventDefault(); opener.current.focus() } }}
+      >
+        {open ? <TicketRecord row={open} /> : <SheetHeader><SheetTitle>No record</SheetTitle></SheetHeader>}
+      </SheetContent>
+    </Sheet>
   </>
 }

@@ -161,17 +161,48 @@ try {
     await page.waitForFunction(() => !document.getAnimations().some((a) => a.constructor.name === 'CSSTransition'));
     /* Both ways in: the marker, and a class naming a token. An element that
        lost its class entirely still has the marker and still gets measured. */
-    const found = await page.evaluate(() => [...document.querySelectorAll('[data-status-role], [class*="--helmo-"]')]
+    const found = await page.evaluate(() => {
+      /* The browser is the authority on what a colour IS. The preset's own
+         surfaces are declared in oklch and `getComputedStyle` hands them back
+         that way, so reading a colour's three components as if they were sRGB
+         bytes turns every ratio against a real surface into fiction — 0.96 is
+         not one red. Painting the value and reading the pixel back asks the
+         renderer to convert, whatever space it was written in. */
+      const ctx = Object.assign(document.createElement('canvas'), { width: 1, height: 1 })
+        .getContext('2d', { willReadFrequently: true });
+      ctx.globalCompositeOperation = 'copy';
+      const srgb = (css) => {
+        ctx.fillStyle = '#000';
+        ctx.fillStyle = css;
+        ctx.fillRect(0, 0, 1, 1);
+        const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
+        return [r, g, b, a / 255];
+      };
+      return [...document.querySelectorAll('[data-status-role], [class*="--helmo-"]')]
       .filter((el) => el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden')
       .map((el) => {
         const classes = String(el.className);
-        /* The colour behind this element: its own if it paints one, else the
-           nearest ancestor that does. Text given only an ink sits on the page. */
-        let node = el, background = getComputedStyle(el).backgroundColor;
-        while (/^(transparent|rgba\(0, 0, 0, 0\))$/.test(background) && node.parentElement) {
-          node = node.parentElement;
-          background = getComputedStyle(node).backgroundColor;
+        /* The colour behind this element: its own if it paints one, else what
+           shows through to the nearest ancestor that does. Text given only an
+           ink sits on the page.
+
+           Every layer is composited rather than read as if it were opaque,
+           because upstream's TableRow tints a hovered and an expanded row with
+           `bg-muted/50` — half-transparent — and the reader sees the blend. The
+           declared colour of a translucent layer is a ratio nobody is looking
+           at, and reading it as solid can report a pass the screen never gave. */
+        const layers = [];
+        for (let node = el; node; node = node.parentElement) {
+          const [r, g, b, a] = srgb(getComputedStyle(node).backgroundColor);
+          if (a > 0) layers.push([r, g, b, a]);
+          if (a === 1) break;
         }
+        /* Bottom layer first, each one painted onto what is already under it. */
+        const [br, bg, bb] = layers.reduceRight(
+          (under, [r, g, b, a]) => [r, g, b].map((channel, i) => Math.round(channel * a + under[i] * (1 - a))),
+          [255, 255, 255],
+        );
+        const background = `rgb(${br}, ${bg}, ${bb})`;
         return {
           /* The marker first: StatusBadge and StatusAlert set it from the role
              PROP, so an element carrying it must be fully painted whatever its
@@ -181,10 +212,11 @@ try {
           role: el.dataset.statusRole ?? (/--helmo-(\w+)-/.exec(classes) ?? [])[1],
           tinted: Boolean(el.dataset.statusRole) || classes.includes('bg-[var(--helmo-'),
           text: el.textContent.trim(),
-          color: getComputedStyle(el).color,
+          color: `rgb(${srgb(getComputedStyle(el).color).slice(0, 3).join(', ')})`,
           background,
         };
-      }));
+      });
+    });
     for (const item of found) {
       const expected = PALETTE[item.role];
       assert.ok(expected, `${where} ${theme}: an element names an unknown role "${item.role}"`);
@@ -386,6 +418,50 @@ try {
   await page.goto(`${origin}/team`);
   await page.getByRole('button', { name: 'Profile for example-worker' }).click();
   await page.getByText('A fixture member profile with a clear responsibility.', { exact: true }).waitFor();
+  /* A row's surface is not fixed, and the layouts above only ever measured it
+     at rest. Upstream's TableRow tints on hover and for as long as a row stays
+     expanded (`hover:bg-muted/50`, `has-aria-expanded:bg-muted/50`), and both
+     tints are translucent — the case the compositing above exists for.
+
+     Each state is proved to have actually moved the surface before a role on it
+     is measured: a hover that silently did nothing would otherwise re-measure
+     the resting row and pass. */
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(`${origin}/work`);
+  const movingRow = page.locator(`tr#${moving.id}`);
+  await movingRow.getByText('In motion', { exact: true }).waitFor();
+  const movedFrom = ([id, was]) => getComputedStyle(document.getElementById(id)).backgroundColor !== was;
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate((value) => document.documentElement.className = value, theme);
+    const resting = await movingRow.evaluate((el) => getComputedStyle(el).backgroundColor);
+    await movingRow.hover();
+    await page.waitForFunction(movedFrom, [moving.id, resting]);
+    assert.ok(await measurePalette('a hovered row', theme) > 0, `${theme}: a hovered row carried no role to measure`);
+    /* Expanded is the same tint but it outlives the pointer, so it is the one a
+       reader actually sits in front of. Measured with the mouse taken away, or
+       it would just be the hover case again. */
+    const summary = movingRow.getByRole('button', { name: `Summary of ${moving.id}`, exact: true });
+    await summary.click();
+    await page.locator(`[data-expanded-for="${moving.id}"]`).waitFor();
+    await page.mouse.move(0, 0);
+    await page.waitForFunction(movedFrom, [moving.id, resting]);
+    assert.ok(await measurePalette('an expanded row', theme) > 0, `${theme}: an expanded row carried no role to measure`);
+    await summary.click();
+    await page.locator(`[data-expanded-for="${moving.id}"]`).waitFor({ state: 'detached' });
+  }
+  /* Why those two measurements stay true as the product grows: every role in a
+     row paints its own opaque tint, so whatever the row does behind it cannot
+     change the ratio. `inkRole` is the exception that would break that — ink on
+     whatever happens to be underneath — and this is what fails on the day one
+     is put in a row, naming the reason rather than a colour. */
+  assert.deepEqual(
+    await page.evaluate(() => [...document.querySelectorAll('tr [data-status-role], tr [class*="--helmo-"]')]
+      .filter((el) => !el.dataset.statusRole && !String(el.className).includes('bg-[var(--helmo-'))
+      .map((el) => el.textContent.trim().slice(0, 40))),
+    [],
+    'a role inside a table row carries ink with no tint of its own, so a hovered or expanded row changes the surface under it',
+  );
+  await page.evaluate(() => document.documentElement.className = 'light');
   for (const area of ['overview', 'work', 'roadmap', 'team', 'run']) for (const theme of ['light', 'dark']) for (const width of [390, 640, 1280]) {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`${origin}/${area}`);
@@ -442,7 +518,7 @@ try {
     'a role was never rendered anywhere, so nothing measured it',
   );
   assert.deepEqual(errors, []);
-  console.log(`All five areas, Work's and Roadmap's compact tables, bounded summaries and full records, held state, copy, focused refresh, embedded answer, runtime trace, team profiles, Inter, the four status roles measured in both themes, and all 30 layouts verified. Evidence: ${dir}`);
+  console.log(`All five areas, Work's and Roadmap's compact tables, bounded summaries and full records, held state, copy, focused refresh, embedded answer, runtime trace, team profiles, Inter, the four status roles measured at rest and on hovered and expanded rows in both themes, and all 30 layouts verified. Evidence: ${dir}`);
   writeFileSync(join(dir, 'result.json'), JSON.stringify({ origin, artifacts: dir, errors, verified: new Date().toISOString() }, null, 2));
 } finally {
   await browser?.close();

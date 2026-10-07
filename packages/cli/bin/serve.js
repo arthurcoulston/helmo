@@ -80,8 +80,14 @@ const running = await startAppServer(appConfig(), (request, response) => {
       return answer(response, 'team', () => teamSnapshot(teamPeriod(request.url)));
     }
     if (request.url === '/api/v1/overview') {
-      response.writeHead(200,JSON_HEADERS);
-      response.end(apiJson('overview',appDocuments.overview()));
+      // Built before the header is written. Overview now counts the roster, and
+      // a broken one threw after a 200 was already on the wire: the catch below
+      // cannot answer 500 once headers are sent, so the socket closed
+      // mid-response and the page showed a network error instead of the Alert
+      // the view draws from the status (H-3001).
+      const document_ = apiJson('overview', appDocuments.overview());
+      response.writeHead(200, JSON_HEADERS);
+      response.end(document_);
       return;
     }
     if (appRequest(request, response)) return;

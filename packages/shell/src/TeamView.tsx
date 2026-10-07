@@ -278,7 +278,11 @@ export function TeamView({ data, period, onPeriodChange }: { data: TeamData; per
   ]).filter((file) => file.state === "over" || file.state === "unreadable")
 
   return <>
-    {over.length ? <StatusAlert status={over.some((file) => file.state === "unreadable") ? "failure" : "attention"}>
+    {/* The alert's role is the strongest of the roles its own files carry, read
+        from `contextFileRole` rather than decided a second time here: Status.tsx
+        is the only place a status meaning is written, and a view that re-derives
+        one is how the same state ends up two colours on two surfaces. */}
+    {over.length ? <StatusAlert status={over.map((file) => contextFileRole(file.state)).includes("failure") ? "failure" : "attention"}>
       <AlertTitle>{over.length} configured {over.length === 1 ? "file needs" : "files need"} your attention</AlertTitle>
       <AlertDescription>{over.map((file) => `${file.name} (${file.state === "unreadable" ? "cannot be read" : `${count(file.tokens)} over a cap of ${count(file.cap!)}`})`).join("; ")}</AlertDescription>
     </StatusAlert> : null}

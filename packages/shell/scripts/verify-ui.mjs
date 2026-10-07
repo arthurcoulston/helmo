@@ -507,6 +507,15 @@ try {
   await attention.getByText(/over-cap\.md/).waitFor();
   await attention.getByText(/no-such-profile\.md \(cannot be read\)/).waitFor();
   assert.equal(await attention.getAttribute('data-status-role'), 'failure', 'an unreadable profile outranks an over-cap one');
+  /* And the chip on the file itself, which is what `contextFileRole` decides.
+     The alert above reads its role from that same function, so asserting only
+     the alert would pass on a mapping flipped underneath it. */
+  await page.getByRole('button', { name: 'cannot-be-read', exact: true }).click();
+  assert.equal(
+    await page.getByRole('dialog').locator('[data-status-role]').filter({ hasText: 'unreadable' }).getAttribute('data-status-role'),
+    'failure', 'an unreadable configured file is red on the file itself, not only in the summary',
+  );
+  await page.keyboard.press('Escape');
   await page.getByRole('button', { name: "well-found", exact: true }).click();
   /* Composed, discovered and available, each in its own words. The memory
      corpus is reported beside the startup total and never inside it: the

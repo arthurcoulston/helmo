@@ -2,7 +2,7 @@
 // Read-only Roadmap API and the shared, unmodified shadcn application.
 import { mkdirSync } from 'node:fs';
 import { createServer, IncomingMessage, ServerResponse } from 'node:http';
-import { apiJson, JSON_HEADERS, uiRequest } from '@helmo/core';
+import { apiJson, isEntrypoint, JSON_HEADERS, uiRequest } from '@helmo/core';
 import { join } from 'node:path';
 import { installationLine, requestedInstallation, requireInstallation } from './install.js';
 import { Store } from './store.js';
@@ -63,6 +63,6 @@ export function roadmapRequest(req: IncomingMessage, res: ServerResponse) {
   }
 }
 
-if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+if (isEntrypoint(import.meta.url)) {
   createServer(roadmapRequest).listen(port, host, () => console.log(`Roadmap view: http://localhost:${port} — ${installationLine(install, store.installationIdentity())}`));
 }

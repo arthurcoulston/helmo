@@ -9,7 +9,7 @@
 import { randomBytes } from 'node:crypto';
 import { createServer, IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
-import { apiJson, JSON_HEADERS, uiRequest } from '@helmo/core';
+import { apiJson, isEntrypoint, JSON_HEADERS, uiRequest } from '@helmo/core';
 import { actedRequest } from './acted.js';
 import { answerRequest } from './answer.js';
 import { loaded, running } from './build.js';
@@ -273,7 +273,7 @@ export function workListening(boundPort: number) {
   sameOrigin.add(`http://localhost:${boundPort}`);
 }
 
-if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+if (isEntrypoint(import.meta.url)) {
 const server = createServer(workRequest);
 server.listen(port, host, () => {
   const address = server.address();

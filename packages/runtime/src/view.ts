@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Runtime data projection and the shared standard shadcn application.
 import { createServer, IncomingMessage, ServerResponse } from 'node:http';
-import { apiJson, JSON_HEADERS, uiRequest } from '@helmo/core';
+import { apiJson, isEntrypoint, JSON_HEADERS, uiRequest } from '@helmo/core';
 import { ESTATE_REACH } from './estate-reach.generated.js';
 import { readCodexUsage, readUsage, usageLine, worstSeverity } from './usage.js';
 import { existsSync, readFileSync } from 'node:fs';
@@ -161,6 +161,6 @@ export function runtimeRequest(req: IncomingMessage, res: ServerResponse) {
   res.end('Unknown Runtime route.');
 }
 
-if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+if (isEntrypoint(import.meta.url)) {
   createServer(runtimeRequest).listen(port, host, () => console.log(`Rev view (read-only): http://localhost:${port} — home: ${revHome()}`));
 }

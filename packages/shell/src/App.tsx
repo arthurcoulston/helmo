@@ -547,8 +547,15 @@ function DecisionCard({
       {awaiting.operator && answerable ? (
         <CardFooter className="flex-wrap items-center gap-3">
           {ratifiable ? (
+            /* `data-helmo-control` is how the estate's acceptance smoke names
+               this control: by what it IS, the way the record tables are
+               addressed by `data-column`, rather than by the words on its face.
+               The smoke's Helmo stop proves an operator can still answer a
+               seeded question, and a label this card reworded would quietly
+               soften that stop to "no question to answer" (H-2998). */
             <Button
               type="button"
+              data-helmo-control="ratify"
               disabled={shut}
               onClick={() => answer({ ratify: true })}
             >

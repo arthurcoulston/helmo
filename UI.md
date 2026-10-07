@@ -393,7 +393,15 @@ no other measurement in the run can see a state cut in half. At every width it
 compares the column geometry of a view's groups against each other, by offset
 and width from each table's own left edge, and fails naming the shapes that
 disagree; it also fails on any cell whose content is wider than the column
-holding it. Every one of those 30 layouts is audited against
+holding it.
+
+**A control an outside check drives carries a name.** `data-column` is one; the
+Ratify button's `data-helmo-control="ratify"` is the other. The estate's
+acceptance smoke (`npm run smoke` in `~/projects/estate`) drives the running
+app, so it can only address a control through the DOM — and addressing it by
+its visible words means a reworded label silently turns that stop into "no
+question to answer" rather than red (H-2998). Rename or restyle freely; keep
+the hook. Every one of those 30 layouts is audited against
 WCAG 2 A/AA by axe-core, a devDependency of `@helmo/shell` resolved from the
 package — there is nothing to set and no way to skip it, and the run asserts
 the audit count so a layout that went unaudited is a failure rather than a

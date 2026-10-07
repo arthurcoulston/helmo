@@ -53,30 +53,51 @@ severity rule.
 | `info` | information, in progress | `#496A8A` / `#EDF2F7` | `#A9C3DB` / `#26333F` |
 | `success` | success, healthy | `#496B55` / `#EDF4EF` | `#AECBB7` / `#29372E` |
 | `attention` | needs Arthur | `#886528` / `#FAF3E5` | `#D9BD87` / `#3D3424` |
-| `failure` | failure, urgent intervention | `#994F52` / `#F8EEEE` | `#DEAAAA` / `#412C30` |
+| `failure` | failure, urgent intervention | `#8A4145` / `#F3D6D6` | `#E9B0B0` / `#563636` |
 
-Two rules make it a signal rather than decoration, and both are enforced:
+Three roles are Arthur's specimen exactly. `failure` is his revision of it
+(H-2987@dev.rev, 2026-10-06), for something the specimen could not show him
+until it was on a page: all four roles came out the same weight — the four light
+tints measured 1.10, 1.12, 1.12 and 1.14 against white — so the role meaning
+"this needs you now" carried no more weight than the one meaning "this is
+waiting for you", and a reader had only the word to go on. The revision is the
+tint above all, because at table density a chip's fill is what an eye crosses
+the page to and its ink is four words. Same hue as the approved ink, chroma
+still far below a saturated red, and the other three roles untouched.
+
+Three rules make it a signal rather than decoration, and all three are enforced:
 
 - **Ordinary and deliberate states take no color.** Queued work, a capacity
   hold, a dependency wait, a date gate, a parked project, a stopped or idle
   loop, and a closed ticket under a "Done" heading all stay the chrome they
   were. Colouring them is how a backlog starts looking like an incident, and
-  then nothing stands out. Amber means Arthur; red means it has failed.
-- **Color is never the carrier.** The tint is deliberately 1.10–1.45:1 against
-  its surface, so it cannot meet the 3:1 a meaningful non-text indicator would
-  need — which is exactly why every role is applied to something that already
-  says what it means in words. The ink is what is measured: ≥4.5:1 on its own
-  tint and on every preset surface it can land on bare, including a row while
-  it is hovered and while it is expanded.
+  then nothing stands out. Amber means Arthur; red means it has failed. A loop
+  in `BLOCKED` is amber, not neutral: the neutral cases are the deliberate ones,
+  and a blocked loop has downed tools and will not restart on its own — asked
+  and answered rather than left to taste.
+- **Red outranks amber.** `failure`'s tint stands off the ground it is on by at
+  least 0.2 more than any other role's, in both themes. Asserted as an ordering
+  with a floor under the margin rather than as four fixed ratios, because the
+  point is the relationship: a later revision may move any of these colours, and
+  what must not survive it is failure quietly flattening back to the rest.
+- **Color is never the carrier.** The tint is deliberately 1.10–1.87:1 against
+  its surface, so even the loudest of them cannot meet the 3:1 a meaningful
+  non-text indicator would need — which is exactly why every role is applied to
+  something that already says what it means in words. The ink is what is
+  measured: ≥4.5:1 on its own tint and on every preset surface it can land on
+  bare, including a row while it is hovered and while it is expanded.
 
-`test/status-palette.test.mjs` holds the tokens, the meanings and the
-arithmetic; Arthur's approved hexes are written out there the way his preset
-selection is written out in `test/upstream.test.mjs`, so the file cannot check
-itself against itself. `scripts/verify-ui.mjs` measures the computed colors of
+`test/status-palette.test.mjs` holds the tokens, the meanings, the arithmetic
+and the ordering; Arthur's approved hexes are written out there the way his
+preset selection is written out in `test/upstream.test.mjs`, so the file cannot
+check itself against itself. `scripts/verify-ui.mjs` measures the computed colors of
 every rendered role on every layout in both themes, finds them by the
 `data-status-role` marker rather than by the selectors this change touched, and
 fails if a role is never rendered at all — an unpainted palette would otherwise
-pass every assertion above it.
+pass every assertion above it. It checks the red-outranks-amber ordering too, on
+the rendered fills and on each ground a chip was actually found standing on, and
+refuses to pass unless failure and `attention` were really compared on one
+ground in both themes.
 
 Two things about how it reads a color, because both were wrong once and each
 hid the other. **The renderer resolves every value, not a regex.** Preset

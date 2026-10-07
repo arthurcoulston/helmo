@@ -12,7 +12,7 @@
    - Ordinary queued work and a DELIBERATE hold stay neutral. A dependency
      wait, a capacity hold and a date gate are the system working; colouring
      them makes a backlog look like an incident and then nothing stands out.
-   - Colour is never the carrier. The tint is 1.10–1.45:1 against its surface
+   - Colour is never the carrier. The tint is 1.10–1.87:1 against its surface
      by design, so every role is applied to something that already says what it
      means in words. Reading the palette out loud is how you check a mapping:
      if the word were removed, would the colour have to be read? */
@@ -111,7 +111,15 @@ export function acceptanceRole(state: string, reason?: string): StatusRole | nul
 /** A loop's state, as Rev's sentinels report it (packages/runtime `state()`).
  *  STOP, HOLD, PARKED, SEAT_HELD and halted are all somebody's decision, and
  *  IDLE is the fleet with nothing to do; none of them is a problem. WEDGED and
- *  CRASHED are a loop that cannot continue on its own. */
+ *  CRASHED are a loop that cannot continue on its own.
+ *
+ *  BLOCKED is amber, and that was questioned and settled rather than left to
+ *  taste. A reviewer read it as a contract conflict — the palette says a
+ *  dependency wait stays neutral, so why is this one coloured? Because the
+ *  neutral rule is about DELIBERATE pauses, which is why the five states above
+ *  are neutral, and a blocked loop is one that has downed tools and will not
+ *  restart on its own. Arthur confirmed it: a loop needing his intervention is
+ *  amber (H-2987@dev.rev). */
 export function loopStateRole(state: string): StatusRole | null {
   if (state === "WEDGED" || state === "CRASHED") return "failure"
   if (["BLOCKED", "BACKOFF", "LIMIT", "UNKNOWN"].includes(state)) return "attention"

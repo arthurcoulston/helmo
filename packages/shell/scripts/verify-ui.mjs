@@ -30,7 +30,13 @@ copyFileSync(join(root, 'packages/runtime/examples/roster.toml'), join(dir, 'run
 mkdirSync(join(dir, 'runtime/constitutions'));
 writeFileSync(join(dir, 'runtime/constitutions/example-worker.md'), 'A fixture member profile with a clear responsibility.');
 mkdirSync(join(dir, 'runtime/state/example-worker'), { recursive: true });
-writeFileSync(join(dir, 'runtime/state/example-worker/BLOCKED'), 'reason=The fixture needs a prerequisite before work can resume.');
+/* A stoppage, not a queue. The wording here used to describe a wait — "needs a
+   prerequisite before work can resume" — and a reviewer reading the ochre chip
+   beside it took BLOCKED for an ordinary dependency wait and called the colour a
+   contract conflict (H-2981). It is not: `loopStateRole` keeps every DELIBERATE
+   pause neutral and BLOCKED is a loop that has downed tools, which Arthur
+   confirmed should stay amber (H-2987@dev.rev). The fixture says so now. */
+writeFileSync(join(dir, 'runtime/state/example-worker/BLOCKED'), 'reason=The fixture worker has downed tools and will not resume without intervention.');
 writeFileSync(join(dir, 'runtime/state/example-worker/events.log'), '2026-10-06 fixture event: a complete recent trace.\n');
 const actor = { name: 'fixture', kind: 'orchestrator', model: 'fixture', version: 'fixture' };
 const store = new Store(join(dir, 'work/helmo.db'));
@@ -148,7 +154,7 @@ try {
     info: { light: ['rgb(73, 106, 138)', 'rgb(237, 242, 247)'], dark: ['rgb(169, 195, 219)', 'rgb(38, 51, 63)'] },
     success: { light: ['rgb(73, 107, 85)', 'rgb(237, 244, 239)'], dark: ['rgb(174, 203, 183)', 'rgb(41, 55, 46)'] },
     attention: { light: ['rgb(136, 101, 40)', 'rgb(250, 243, 229)'], dark: ['rgb(217, 189, 135)', 'rgb(61, 52, 36)'] },
-    failure: { light: ['rgb(153, 79, 82)', 'rgb(248, 238, 238)'], dark: ['rgb(222, 170, 170)', 'rgb(65, 44, 48)'] },
+    failure: { light: ['rgb(138, 65, 69)', 'rgb(243, 214, 214)'], dark: ['rgb(233, 176, 176)', 'rgb(86, 54, 54)'] },
   };
   const luminance = (css) => {
     const [r, g, b] = css.match(/[\d.]+/g).slice(0, 3)
@@ -161,6 +167,15 @@ try {
     return (hi + 0.05) / (lo + 0.05);
   };
   const seen = new Set();
+  /* How far each role's fill stands off the ground it is on, grouped by that
+     exact ground so the comparison is between chips on the same page and never
+     between a chip on a card and one on a hovered row. Arthur's H-2987 decision
+     is an ordering — red louder than amber — so what is asserted is the
+     ordering, measured on what the renderer actually produced rather than on
+     the hexes. `test/status-palette.test.mjs` is where the 0.2 floor under the
+     margin is decided and explained; this is the same floor on real pixels. */
+  const LOUDER_BY = 0.2;
+  const standoff = new Map();
   /** Measure every rendered role on the current page, in the current theme. */
   async function measurePalette(where, theme) {
     /* A theme class put on from script cross-fades every `transition-all`
@@ -200,18 +215,26 @@ try {
            `bg-muted/50` — half-transparent — and the reader sees the blend. The
            declared colour of a translucent layer is a ratio nobody is looking
            at, and reading it as solid can report a pass the screen never gave. */
-        const layers = [];
-        for (let node = el; node; node = node.parentElement) {
-          const [r, g, b, a] = srgb(getComputedStyle(node).backgroundColor);
-          if (a > 0) layers.push([r, g, b, a]);
-          if (a === 1) break;
-        }
-        /* Bottom layer first, each one painted onto what is already under it. */
-        const [br, bg, bb] = layers.reduceRight(
-          (under, [r, g, b, a]) => [r, g, b].map((channel, i) => Math.round(channel * a + under[i] * (1 - a))),
-          [255, 255, 255],
-        );
-        const background = `rgb(${br}, ${bg}, ${bb})`;
+        const composite = (from) => {
+          const layers = [];
+          for (let node = from; node; node = node.parentElement) {
+            const [r, g, b, a] = srgb(getComputedStyle(node).backgroundColor);
+            if (a > 0) layers.push([r, g, b, a]);
+            if (a === 1) break;
+          }
+          /* Bottom layer first, each one painted onto what is already under it. */
+          const [br, bg, bb] = layers.reduceRight(
+            (under, [r, g, b, a]) => [r, g, b].map((channel, i) => Math.round(channel * a + under[i] * (1 - a))),
+            [255, 255, 255],
+          );
+          return `rgb(${br}, ${bg}, ${bb})`;
+        };
+        const background = composite(el);
+        /* And the ground the element sits ON, which is a different question from
+           the surface its own text sits on, and the one "stands out" is asked
+           against. Started from the parent, so a tinted chip's own fill is not
+           mistaken for the page it is standing off. */
+        const ground = composite(el.parentElement);
         return {
           /* The marker first: StatusBadge and StatusAlert set it from the role
              PROP, so an element carrying it must be fully painted whatever its
@@ -223,6 +246,7 @@ try {
           text: el.textContent.trim(),
           color: `rgb(${srgb(getComputedStyle(el).color).slice(0, 3).join(', ')})`,
           background,
+          ground,
         };
       });
     });
@@ -240,6 +264,11 @@ try {
          never be the carrier: every role has to say what it means in words. */
       assert.ok(item.text, `${where} ${theme}: a ${item.role} element carries colour and no text`);
       seen.add(`${item.role}/${theme}`);
+      if (item.tinted) {
+        const key = `${theme} on ${item.ground}`;
+        const group = standoff.get(key) ?? standoff.set(key, new Map()).get(key);
+        group.set(item.role, contrast(item.background, item.ground));
+      }
     }
     return found.length;
   }
@@ -586,6 +615,30 @@ try {
     ['attention/dark', 'attention/light', 'failure/dark', 'failure/light', 'info/dark', 'info/light', 'success/dark', 'success/light'],
     'a role was never rendered anywhere, so nothing measured it',
   );
+  /* Red outranks amber, as Arthur decided in H-2987@dev.rev — on the rendered
+     fills, on each ground a chip was actually found on. Only grounds carrying
+     failure AND something else can say anything, and the pair that has to be
+     compared is named explicitly below, because an ordering asserted over an
+     empty set of comparisons is the failure mode this whole file exists for. */
+  const quieter = [];
+  let comparedWithAttention = new Set();
+  for (const [where, group] of standoff) {
+    const failure = group.get('failure');
+    if (failure === undefined) continue;
+    for (const [role, ratio] of group) {
+      if (role === 'failure') continue;
+      if (failure < ratio + LOUDER_BY) quieter.push(`${where}: failure stands off at ${failure.toFixed(3)}:1 and ${role} at ${ratio.toFixed(3)}:1`);
+      if (role === 'attention') comparedWithAttention.add(where.split(' ')[0]);
+    }
+  }
+  assert.deepEqual(quieter, [], `failure must stand off its ground at least ${LOUDER_BY} further than every other role`);
+  assert.deepEqual([...comparedWithAttention].sort(), ['dark', 'light'], 'failure and attention were never measured on one ground in both themes, so nothing compared red against amber');
+  /* Reported, not asserted: by how much. A pass says red outranks amber; this
+     says whether it does so by a hair or by a margin a reader can see. */
+  const redVsAmber = [...standoff].flatMap(([where, group]) => {
+    const [failure, attention] = [group.get('failure'), group.get('attention')];
+    return failure !== undefined && attention !== undefined ? [`${where} failure ${failure.toFixed(2)}:1 vs attention ${attention.toFixed(2)}:1`] : [];
+  });
   /* An area with no record table measures no fold, so the pass above is the
      empty set unless Work's and Roadmap's tables were really read. */
   assert.deepEqual(cut, [], 'a 390 window must read a row down to its state without scrolling');
@@ -610,7 +663,7 @@ try {
     `the WCAG audit ran on ${audited.length} layouts, not all ${areas.length * themes.length * widths.length}: ${audited.join(', ')}`,
   );
   assert.deepEqual(errors, []);
-  console.log(`All five areas, Work's and Roadmap's compact tables, bounded summaries and full records, held state, copy, focused refresh, embedded answer, runtime trace, team profiles, Inter, the four status roles measured at rest and on hovered and expanded rows in both themes, all ${audited.length} layouts verified and audited against WCAG 2 A/AA with axe-core ${axeVersion}, ${shapes.size} multi-group views aligned column for column, and nothing wider than the column holding it. At 390 the tightest of ${folds.length} state cells, "${tightest.text}" in ${tightest.table}, cleared the fold by ${-tightest.over}px. Evidence: ${dir}`);
+  console.log(`All five areas, Work's and Roadmap's compact tables, bounded summaries and full records, held state, copy, focused refresh, embedded answer, runtime trace, team profiles, Inter, the four status roles measured at rest and on hovered and expanded rows in both themes, all ${audited.length} layouts verified and audited against WCAG 2 A/AA with axe-core ${axeVersion}, ${shapes.size} multi-group views aligned column for column, and nothing wider than the column holding it. Red outranks amber by at least ${LOUDER_BY} on every ground both were found on: ${redVsAmber.join('; ')}. At 390 the tightest of ${folds.length} state cells, "${tightest.text}" in ${tightest.table}, cleared the fold by ${-tightest.over}px. Evidence: ${dir}`);
   writeFileSync(join(dir, 'result.json'), JSON.stringify({ origin, artifacts: dir, errors, verified: new Date().toISOString() }, null, 2));
 } finally {
   await browser?.close();

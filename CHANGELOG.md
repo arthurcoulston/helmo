@@ -13,6 +13,17 @@ longer.
 
 ## Unreleased — 0.9.5
 
+- Red now outranks amber. The four status colours all came out the same weight:
+  their fills measured 1.10, 1.12, 1.12 and 1.14 against a white page, a three
+  percent spread, so a failed review carried no more weight than something merely
+  waiting for you and the word was the only thing telling them apart. Failure's
+  fill now stands off the page further than any other role's — in both themes,
+  at the same hue, still dusty rather than alarming — and the ink on it is the
+  darkest of the four. The other three roles are untouched. A blocked loop stays
+  amber, which was questioned and is now settled: the states that take no colour
+  are the deliberate ones, and a blocked loop has downed tools and will not
+  restart on its own.
+
 - A row's title gets the column, and a view's groups line up. The reference and
   its copy control came first in the record column and took the width before
   the title had any: in a 640 pixel window the title of a record was left about

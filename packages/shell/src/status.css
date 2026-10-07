@@ -5,16 +5,31 @@
    two colours per role and no third, because that is what the specimen shows.
    Each role is an `ink` (the text) read on its own `tint` (the fill behind it).
 
+   The FAILURE pair is the one revision to that specimen, and it is Arthur's own
+   (H-2987@dev.rev, 2026-10-06): the specimen gave all four roles the same
+   weight — the four tints measured 1.10, 1.12, 1.12 and 1.14 against white, a
+   three percent spread — so red did not outrank amber, and he asked for it to.
+   Loudness is carried by the tint rather than the ink, because at table density
+   the fill is the thing an eye crosses the page to. Failure's tint now stands
+   off its ground further than any other role's by a stated margin, at the same
+   hue as the approved ink and at a chroma still far below a saturated red; the
+   other three roles are the specimen untouched. `test/status-palette.test.mjs`
+   asserts that ordering, so flattening it again goes red rather than quietly
+   returning the interface to equal weight.
+
    These are the only colour literals the application owns. The Mauve
    foundation, the radius, the font and every generated component stay exactly
    as the b6YWkyPAm preset wrote them — this file adds names beside them and
    patches nothing, which is the bounded theming UI.md records.
 
-   The tint can never carry a meaning on its own: it is 1.10–1.45:1 against the
-   surface it sits on, by design, because a quiet interface was the point. Every
-   role is therefore applied to something that also says what it means in words.
-   The ink is what is measured: 4.8–7.2:1 on its tint, and ≥4.7:1 on every
-   preset surface it can land on bare.
+   The tint can never carry a meaning on its own: it is 1.10–1.87:1 against the
+   surface it sits on, by design, nowhere near the 3:1 a meaningful non-text
+   indicator would need, because a quiet interface was the point. Every role is
+   therefore applied to something that also says what it means in words — making
+   failure the loudest of the four changes which role an eye reaches first, not
+   whether colour is allowed to be the carrier. The ink is what is measured:
+   4.8–7.2:1 on its tint, and ≥4.7:1 on every preset surface it can land on
+   bare.
 
    `App.tsx` imports this file — not `Status.tsx`, whose classes it serves,
    because the result contract's proof renders those components in Node, where
@@ -28,8 +43,8 @@
     --helmo-success-tint: #EDF4EF;
     --helmo-attention-ink: #886528;
     --helmo-attention-tint: #FAF3E5;
-    --helmo-failure-ink: #994F52;
-    --helmo-failure-tint: #F8EEEE;
+    --helmo-failure-ink: #8A4145;
+    --helmo-failure-tint: #F3D6D6;
 }
 
 .dark {
@@ -39,6 +54,6 @@
     --helmo-success-tint: #29372E;
     --helmo-attention-ink: #D9BD87;
     --helmo-attention-tint: #3D3424;
-    --helmo-failure-ink: #DEAAAA;
-    --helmo-failure-tint: #412C30;
+    --helmo-failure-ink: #E9B0B0;
+    --helmo-failure-tint: #563636;
 }

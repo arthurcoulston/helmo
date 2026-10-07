@@ -25,13 +25,26 @@ const css = read('src/status.css');
    the way upstream.test.mjs carries his preset selection: a file that checks
    itself against itself passes any edit. Only he changes these. See UI.md and
    H-2978@dev.rev; the specimen is helmo-muted-palette.html in his 2026-10-06
-   visualizations. */
+   visualizations.
+
+   Three roles are that specimen exactly. FAILURE is not: Arthur revised it in
+   H-2987@dev.rev, on the same day and for a reason the specimen could not show
+   him until it was on a page — all four roles came out the same weight, so red
+   did not outrank amber. These two pairs are therefore chosen rather than
+   picked off his specimen, which is why the margin below exists to say what
+   they were chosen FOR. */
 const APPROVED = {
   info: { light: ['#496A8A', '#EDF2F7'], dark: ['#A9C3DB', '#26333F'] },
   success: { light: ['#496B55', '#EDF4EF'], dark: ['#AECBB7', '#29372E'] },
   attention: { light: ['#886528', '#FAF3E5'], dark: ['#D9BD87', '#3D3424'] },
-  failure: { light: ['#994F52', '#F8EEEE'], dark: ['#DEAAAA', '#412C30'] },
+  failure: { light: ['#8A4145', '#F3D6D6'], dark: ['#E9B0B0', '#563636'] },
 };
+
+/* The ground each theme's roles sit on, which is what "stands out" is measured
+   against. The light card and background are the same white; in dark the
+   background is the darker of the two, so it is the one that flatters every
+   tint equally and the one the comparison below uses. */
+const GROUND = { light: '#ffffff', dark: '#0c090c' };
 
 /** The declarations of one selector's block, as name → value. */
 function block(selector) {
@@ -143,6 +156,30 @@ test('what needs Arthur is amber and what has failed is red', () => {
      review: nobody else resolves it. */
   assert.equal(acceptanceRole('accepted', 'contested'), 'failure');
   assert.equal(acceptanceRole('accepted', 'independently_accepted'), 'success');
+});
+
+test('failure stands further off the page than any other role, in both themes', () => {
+  /* Arthur's decision in H-2987@dev.rev, as the one measurable thing it asked
+     for: red reads louder than amber. The specimen he first approved did not do
+     this — its four tints were 1.10, 1.12, 1.12 and 1.14 against white, so the
+     role meaning "this needs you now" carried the same weight as the one
+     meaning "this is waiting for you", and a reader had only the word to go on.
+
+     Asserted on the TINT because that is what carries the weight at table
+     density: a chip's fill is a block an eye crosses the page to, and its ink
+     is four words. Asserted as an ordering with a floor under the margin rather
+     than as four fixed ratios, because the point is the relationship — a future
+     revision may move any of these colours, and what must not survive it is
+     failure quietly flattening back to the rest. */
+  for (const [theme, ground] of Object.entries(GROUND)) {
+    const standoff = Object.fromEntries(Object.entries(APPROVED).map(([role, pairs]) => [role, ratio(pairs[theme][1], ground)]));
+    const { failure, ...rest } = standoff;
+    const loudest = Math.max(...Object.values(rest));
+    assert.ok(
+      failure >= loudest + 0.2,
+      `${theme}: failure's tint stands off ${ground} at ${failure.toFixed(3)}:1 and the loudest of the other three at ${loudest.toFixed(3)}:1 — red has to outrank amber (${JSON.stringify(standoff)})`,
+    );
+  }
 });
 
 test('in motion is blue and a shipped project that settled is green', () => {

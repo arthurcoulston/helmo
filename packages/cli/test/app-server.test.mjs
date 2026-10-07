@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createServer } from 'node:http';
+import { createServer, request } from 'node:http';
 import { appConfig, startAppServer } from '../app-server.mjs';
 
 function listen(server, port = 0) {
@@ -19,6 +19,20 @@ async function freePort() {
   const port = await listen(server);
   await close(server);
   return port;
+}
+
+function rawRequest(port, host) {
+  return new Promise((resolve, reject) => {
+    const headers = host === undefined ? {} : { host };
+    const outgoing = request({ host: '127.0.0.1', port, path: '/', headers, setHost: false }, (response) => {
+      let body = '';
+      response.setEncoding('utf8');
+      response.on('data', (chunk) => { body += chunk; });
+      response.on('end', () => resolve({ status: response.statusCode, body }));
+    });
+    outgoing.on('error', reject);
+    outgoing.end();
+  });
 }
 
 test('configuration is loopback-only and legacy listeners default empty', () => {
@@ -54,6 +68,28 @@ test('redirects preserve path and query and ignore a poisoned Host header', asyn
   });
   assert.equal(response.status, 301);
   assert.equal(response.headers.get('location'), `${running.origin}/roadmap/next?whole=1`);
+});
+
+test('the app answers only for a loopback Host naming its bound port', async (t) => {
+  let handled = 0;
+  const running = await startAppServer(
+    { host: '127.0.0.1', port: 0, legacy: [] },
+    (_request, response) => {
+      handled += 1;
+      response.end('app');
+    },
+  );
+  t.after(() => running.close());
+  const port = running.app.address().port;
+
+  for (const host of [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`]) {
+    assert.deepEqual(await rawRequest(port, host), { status: 200, body: 'app' });
+  }
+  for (const host of ['evil.example:4400', `127.0.0.1:${port + 1}`]) {
+    assert.deepEqual(await rawRequest(port, host), { status: 421, body: 'Misdirected Request\n' });
+  }
+  assert.deepEqual(await rawRequest(port), { status: 400, body: '' });
+  assert.equal(handled, 3);
 });
 
 test('duplicate and app-listener port collisions refuse before binding', async () => {

@@ -72,6 +72,13 @@ function urlHost(host) {
   return host.includes(':') ? `[${host}]` : host;
 }
 
+function acceptsHost(request, portNumber) {
+  const host = request.headers.host;
+  return host === `127.0.0.1:${portNumber}`
+    || host === `localhost:${portNumber}`
+    || host === `[::1]:${portNumber}`;
+}
+
 /** Start one app listener and its bounded compatibility redirects as one
  * lifecycle. Nothing is returned to the caller until every bind succeeded;
  * any failed bind closes all listeners opened earlier in the attempt. */
@@ -86,7 +93,15 @@ export async function startAppServer(config, handler) {
   const ports = [appPort, ...legacy.map((item) => item.port)];
   if (new Set(ports).size !== ports.length) throw new Error('app and legacy listener ports must be distinct');
 
-  const app = createServer(handler);
+  const app = createServer((request, response) => {
+    const address = app.address();
+    if (!address || typeof address === 'string' || !acceptsHost(request, address.port)) {
+      response.writeHead(421, { 'content-type': 'text/plain; charset=utf-8' });
+      response.end('Misdirected Request\n');
+      return;
+    }
+    handler(request, response);
+  });
   const opened = [];
   try {
     await listen(app, appPort, config.host);

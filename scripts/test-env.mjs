@@ -16,6 +16,21 @@ export function testEnv(sourceEnv, { home } = {}) {
   return env;
 }
 
+/**
+ * The same scrub, applied to a live environment rather than to a copy handed
+ * to a child. A suite is launched by more doors than the root `npm test` —
+ * one workspace's `npm test`, one file under `npx vitest run` — and the rule
+ * belongs to the suite rather than to the door it came in by, so
+ * `scripts/vitest-setup.mjs` runs this before any test file (H-2975).
+ * Returns the scratch home, for the caller to remove when the suite is done.
+ */
+export function scrubInPlace(env = process.env, home = mkdtempSync(join(tmpdir(), 'helmo-test-home-'))) {
+  const scrubbed = testEnv(env, { home });
+  for (const key of Object.keys(env)) if (!(key in scrubbed)) delete env[key];
+  Object.assign(env, scrubbed);
+  return home;
+}
+
 if (process.argv[1] === new URL(import.meta.url).pathname) {
   const separator = process.argv.indexOf('--');
   const [command, ...args] = separator === -1 ? [] : process.argv.slice(separator + 1);

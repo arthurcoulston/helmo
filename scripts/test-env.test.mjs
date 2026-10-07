@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
-import { fileURLToPath } from 'node:url';
-import { testEnv } from './test-env.mjs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { scrubInPlace, testEnv } from './test-env.mjs';
 
 const SELF = fileURLToPath(new URL('./test-env.mjs', import.meta.url));
+const ROOT = dirname(dirname(SELF));
 const LEAKED = {
   PATH: '/usr/bin:/bin',
   HOME: homedir(),
@@ -49,4 +51,37 @@ test('the command wrapper scrubs its child and preserves a red exit', () => {
     const result = spawnSync(process.execPath, [${JSON.stringify(SELF)}, '--', process.execPath, '-e', 'process.exit(7)'], { stdio: 'ignore' });
     process.stdout.write(String(result.status));`;
   assert.equal(execFileSync(process.execPath, ['-e', probe], { encoding: 'utf8' }), '7');
+});
+
+test('the same scrub applies in place, so a suite is isolated by where it runs', () => {
+  const env = { ...LEAKED };
+  const home = scrubInPlace(env);
+  try {
+    for (const key of ['INSTALLATION_RELEASE', 'REV_LABEL', 'REV_LOOP', 'REV_CLI', 'HELMO_HOME']) {
+      assert.equal(env[key], undefined, `${key} survived the scrub`);
+    }
+    assert.equal(env.REV_HOME, home);
+    assert.notEqual(home, join(homedir(), '.rev'));
+    assert.equal(env.PATH, LEAKED.PATH);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('every workspace whose suite runs vitest loads the one shared config', async () => {
+  const shared = (await import('./vitest.shared.mjs')).default;
+  const setup = shared.test.setupFiles[0];
+  assert.ok(existsSync(setup), `the shared config names ${setup}, which does not exist`);
+
+  const script = (dir) => JSON.parse(readFileSync(join(ROOT, dir, 'package.json'), 'utf8')).scripts?.test ?? '';
+  const workspaces = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).workspaces
+    .filter((dir) => /\bvitest\b/.test(script(dir)));
+  assert.ok(workspaces.length >= 4, `expected the vitest workspaces, found ${workspaces.join(', ') || 'none'}`);
+
+  // The root too: `npx vitest run <file>` from the root is its own door.
+  for (const dir of ['.', ...workspaces]) {
+    const config = join(ROOT, dir, 'vitest.config.mjs');
+    assert.ok(existsSync(config), `${dir} runs vitest with no vitest.config.mjs, so its suite inherits the live installation`);
+    assert.equal((await import(pathToFileURL(config))).default, shared, `${dir}'s config is not the shared one`);
+  }
 });

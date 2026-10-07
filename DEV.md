@@ -261,12 +261,21 @@ legacy reader.
   `scripts/stage-legacy-launch-paths.mjs`, and it is never part of a build: it
   is run by hand against a staged release, and it refuses the layout whose
   real builds live at the paths it writes.
-- **Tests do not inherit an installation.** The root suite runs every workspace
-  through `scripts/test-env.mjs`, which clears all `HELMO_`, `ROADMAP_`,
-  `REV_`, and `INSTALLATION_` variables and points `REV_HOME` at a disposable
-  empty directory. Merely unsetting it would fall back to the operator's live
-  `~/.rev` selection, making the same checkout pass or fail according to who
-  launched the suite.
+- **Tests do not inherit an installation.** `scripts/test-env.mjs` clears all
+  `HELMO_`, `ROADMAP_`, `REV_`, and `INSTALLATION_` variables and points
+  `REV_HOME` at a disposable empty directory. Merely unsetting it would fall
+  back to the operator's live `~/.rev` selection, making the same checkout pass
+  or fail according to who launched the suite.
+  The rule belongs to the suite, not to the door it is launched by: the root
+  `npm test` wraps every workspace in that scrub, and every vitest workspace
+  *also* applies it to its own process through `scripts/vitest-setup.mjs`,
+  which `scripts/vitest.shared.mjs` loads and each `vitest.config.mjs`
+  re-exports. Enforced at the root alone it was not enforced at all —
+  `npm test --workspace rev` and `npx vitest run <file>` inherited the live
+  installation, so on a pinned one every CLI-spawning case refused with
+  `incoherent release set` and the suite appeared red on a clean tree
+  (H-2975). `scripts/test-env.test.mjs` fails if a vitest workspace carries no
+  config or carries a different one.
 - **One version.** Every package carries the root version and depends on
   `@helmo/core` at exactly that version — in `devDependencies` for the shell,
   which reads core at build time and bundles none of it;

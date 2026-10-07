@@ -149,7 +149,11 @@ function useFragment() {
   return id
 }
 
-function useArea(area: string, selected: string): AreaState {
+/* `extra` is the area's own query, owned by the view above: Team's usage
+   period is a reading the reader chooses, and it has to reach the server
+   because the server is what windows the token-log. It is part of the deps, so
+   choosing a period re-reads rather than waiting for the fifteen-second poll. */
+function useArea(area: string, selected: string, extra: Record<string, string> = {}): AreaState {
   const [state, setState] = React.useState<AreaState>({ status: "loading" })
   React.useEffect(() => {
     const controller = new AbortController()
@@ -163,6 +167,7 @@ function useArea(area: string, selected: string): AreaState {
           if (new URLSearchParams(location.search).get("whole") === "1") query.set("whole", "1")
           if (/^H-\d+$/.test(selected)) query.set("ticket", selected)
         }
+        for (const [key, value] of Object.entries(extra)) query.set(key, value)
         const response = await fetch(`/api/v1/${area}${query.size ? `?${query}` : ""}`, { headers: { accept: "application/json" }, signal: controller.signal })
         if (!response.ok) throw new Error(`${response.status} ${response.statusText}`)
         const document_ = await response.json()
@@ -178,7 +183,8 @@ function useArea(area: string, selected: string): AreaState {
     void read()
     const timer = window.setInterval(read, 15_000)
     return () => { controller.abort(); clearInterval(timer) }
-  }, [area, selected])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [area, selected, JSON.stringify(extra)])
   return state
 }
 
@@ -735,8 +741,10 @@ function Loading() {
 }
 
 function AreaView({ area, areas }: { area: Destination; areas: string[] }) {
+  /* Team's usage period. Held here because `useArea` is what reads with it. */
+  const [period, setPeriod] = React.useState("7d")
   const selected = useFragment()
-  const state = useArea(area.id, selected)
+  const state = useArea(area.id, selected, area.id === "team" ? { period } : {})
 
   if (state.status === "loading") {
     return (
@@ -759,13 +767,13 @@ function AreaView({ area, areas }: { area: Destination; areas: string[] }) {
   const provenance = state.data as { installation?: { id?: string; label?: string }; running?: { state: string; commit?: string; dirty?: boolean; detail: string } }
   return <>
     {state.warning ? <StatusAlert status="attention"><AlertTitle>Refresh failed</AlertTitle><AlertDescription>Showing the last good reading from {state.readAt}: {state.warning}</AlertDescription></StatusAlert> : null}
-    <AreaContent area={area} state={state} selected={selected} areas={areas} />
+    <AreaContent area={area} state={state} selected={selected} areas={areas} period={period} onPeriodChange={setPeriod} />
     <p className="text-muted-foreground text-xs">Refreshed {state.readAt} · updates every 15 seconds{provenance.installation?.id ? ` · installation ${provenance.installation.id}` : ""}</p>
     {provenance.running && typeof provenance.running.state === "string" ? <Collapsible><CollapsibleTrigger asChild><Button variant="ghost" size="sm">Build details</Button></CollapsibleTrigger><CollapsibleContent className="text-muted-foreground pt-2 text-xs [overflow-wrap:anywhere]">Running {provenance.running.commit?.slice(0, 7) ?? "unstamped"}{provenance.running.dirty ? " (dirty)" : ""} · {provenance.running.state} · {provenance.running.detail}</CollapsibleContent></Collapsible> : null}
   </>
 }
 
-function AreaContent({ area, state, selected, areas }: { area: Destination; state: Extract<AreaState, { status: "ready" }>; selected: string; areas: string[] }) {
+function AreaContent({ area, state, selected, areas, period, onPeriodChange }: { area: Destination; state: Extract<AreaState, { status: "ready" }>; selected: string; areas: string[]; period: string; onPeriodChange: (period: string) => void }) {
   const rows = state.records
   const empty = (
     <p className="text-sm text-muted-foreground">
@@ -797,7 +805,7 @@ function AreaContent({ area, state, selected, areas }: { area: Destination; stat
     </>
   }
 
-  if (area.id === "team") return <TeamView data={state.data as TeamData} />
+  if (area.id === "team") return <TeamView data={state.data as TeamData} period={period} onPeriodChange={onPeriodChange} />
 
   if (area.id === "runtime") return <RuntimeView data={state.data as RuntimeData} workAvailable={areas.includes("work")} />
 

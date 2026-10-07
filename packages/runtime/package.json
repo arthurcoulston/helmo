@@ -30,7 +30,8 @@
   },
   "dependencies": {
     "@helmo/core": "0.9.5",
-    "smol-toml": "^1.7.1"
+    "smol-toml": "^1.7.1",
+    "js-tiktoken": "^1.0.21"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",

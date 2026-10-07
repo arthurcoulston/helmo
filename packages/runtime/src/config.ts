@@ -162,7 +162,7 @@ const LOOP_KEYS = new Set([
   'seat', 'project', 'tickets', 'lane',
   'workstream', 'cwd', 'constitution', 'version', 'pace', 'idle_floor_s',
   'runtime', 'model', 'provider', 'tier', 'probe_tier', 'probe_model', 'rotation', 'fallback', 'routing',
-  'mcp_extra', 'skills', 'mock_cmd', 'burn_usd_per_hour', 'burn_usd_per_day', 'continue_cap',
+  'mcp_extra', 'skills', 'memory_dir', 'mock_cmd', 'burn_usd_per_hour', 'burn_usd_per_day', 'continue_cap',
 ]);
 
 export function loadRoster(): Roster {
@@ -236,6 +236,7 @@ export function loadRoster(): Roster {
       idle_floor_s: Number(l['idle_floor_s'] ?? 0),
       mcp_extra: l['mcp_extra'] ? resolveHome(String(l['mcp_extra'])) : undefined,
       skills: Array.isArray(l['skills']) ? (l['skills'] as unknown[]).map((s) => resolveHome(String(s))) : undefined,
+      memory_dir: l['memory_dir'] ? resolveHome(String(l['memory_dir'])) : undefined,
       mock_cmd: l['mock_cmd'] ? String(l['mock_cmd']) : undefined,
       burn_usd_per_hour: l['burn_usd_per_hour'] === undefined ? undefined : Number(l['burn_usd_per_hour']),
       burn_usd_per_day: l['burn_usd_per_day'] === undefined ? undefined : Number(l['burn_usd_per_day']),

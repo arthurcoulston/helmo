@@ -96,6 +96,7 @@ export interface LoopConfig {
   idle_floor_s: number;    // min seconds idle before a wake is honored; 0 = immediate (H-336/H-545)
   mcp_extra?: string;      // optional path to JSON with additional MCP servers
   skills?: string[];       // crew skill files appended to the constitution at spawn (H-247)
+  memory_dir?: string;     // path to this seat's memory corpus — inventoried by the Team reading, never loaded at spawn (H-3001)
   mock_cmd?: string;       // mock runtime only: shell command to run per iteration
   burn_usd_per_hour?: number;  // breaker overrides for this loop (else the global)
   burn_usd_per_day?: number;

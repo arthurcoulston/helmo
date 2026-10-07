@@ -13,6 +13,21 @@ longer.
 
 ## Unreleased — 0.9.5
 
+- Team now says what each member is configured to carry into a session, and what
+  its sessions have spent. A row gives the seat, a composition bar over its
+  configured context and the period's tokens and notional dollars; opening one
+  gives every configured file with its size and its own cap, a bounded reading of
+  any of them, and the usage broken down by model and by day. Three things it
+  deliberately will not do: count a seat's memory corpus as startup context, when
+  it is read a file at a time and runs to hundreds of files; show a whole-session
+  cap, because none is configured and a model's context window is not one; or let
+  the dollar figures read as money, because they are an API-rate equivalent on a
+  flat plan and the roster's own notional prices. What nobody can measure — the
+  CLI's own system prompt, the tool schemas, the iteration prompt — is named
+  rather than left to read as zero. A new roster key, `memory_dir`, is how a seat
+  names its corpus; a seat without one says so rather than reporting an empty
+  one.
+
 - Red now outranks amber. The four status colours all came out the same weight:
   their fills measured 1.10, 1.12, 1.12 and 1.14 against a white page, a three
   percent spread, so a failed review carried no more weight than something merely

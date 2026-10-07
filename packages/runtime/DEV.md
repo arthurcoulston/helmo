@@ -358,6 +358,27 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   burns it exists for both spanned process restarts; the window is floored at
   `.burn_floor` (stamped at loop start) so a resumed loop starts clean instead
   of tripping again on money already accounted for (H-412).
+- `team.ts` — the Team projection (H-3001): what each seat is CONFIGURED to
+  carry into a session, and what the token-log says its sessions spent. The
+  inventory measures the files the roster itself names — the constitution and
+  each roster skill, which is `systemPrompt`'s own composition — with
+  js-tiktoken `o200k_base`, the same encoding the estate's context check uses,
+  so one file never reports two sizes on two surfaces. Three distinctions it
+  exists to keep, each of which was a way to mislead: what Rev COMPOSES against
+  what the runtime's CLI DISCOVERS by walking up from `cwd` to the enclosing
+  repository (measured the same, attributed differently); what LOADS at startup
+  against what is AVAILABLE to read, because a seat's `memory_dir` corpus runs
+  to hundreds of files and counting it in would overstate every seat by two
+  orders of magnitude; and what is MEASURED against what is not — the CLI's own
+  system prompt, its tool schemas and the iteration prompt are named rather
+  than left to read as zero. It invents no whole-session cap, because none is
+  configured anywhere and a model's context window is not one. `seatSpend`
+  windows the same token-log `burn.ts` reads, by period, with per-model and
+  per-day sums; a line the shim wrote as `tokens=? cost_usd=?` is counted as an
+  unmetered session rather than totalled as a free one. The ~20MB of BPE ranks
+  load on the first measurement, so no command that never asks for context pays
+  for them. `view.ts` adds `state()` to the document, rather than team.ts
+  deriving loop state a second time and letting two surfaces disagree.
 - `capacity.ts` — plan capacity and runaway detection, pure (H-185), consumed
   by the loop before subscription-provider runs (H-186). Metered providers
   retain the legacy dollar and transient-limit gates; declaring a provider

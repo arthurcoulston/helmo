@@ -414,6 +414,25 @@ the browser's behavior; they do not define the new component structure.
 
 `H-2940@dev.rev` and `H-2941@dev.rev` are the independent integrated reviews.
 
+**Team reads what a seat is configured to carry, and what it spent.** Its one
+`RecordTable` gives the configured-context composition the column after the
+member, because context is what this view is for; memory, period tokens and
+notional dollars are what the region's label offers to scroll for. The
+composition bar is the preset's own chart colours — a category is not a
+severity, and the four status roles keep their meanings. A member opens in an
+unmodified Sheet: every configured file with its size, its own `cap_tokens` and
+a bounded reading of it, the memory corpus beside the startup total rather than
+inside it, the overhead nobody can measure named rather than left at zero, and
+the period's usage by model and by day. Three distinctions are load-bearing and
+each is asserted in `verify:ui` on a fixture configured to exercise it — what
+Rev composes against what the CLI discovers, what loads at startup against what
+is available to read, and what is measured against what is not. Only two states
+take colour: a file over its ratified cap is amber because only Arthur ratifies
+a new one, and one the shim cannot read is red because that seat's next launch
+already fails. `tight` and `uncapped` stay neutral — a file deliberately kept
+near its cap is the system working. No whole-session cap is shown, because none
+is configured and a model's context window is not one.
+
 **The four status colors are in.** Work's state and signal badges, Roadmap's
 state badges, the three awaiting-request chips, Runtime's supervisor, loop
 states and usage severities, and every alert now read in the approved roles;

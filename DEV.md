@@ -178,9 +178,14 @@ aggregate machine reading remains at
 `/health.json`. The product view entries remain executable compatibility
 surfaces; importing them never binds their old ports.
 Overview reads each product snapshot independently and summarizes them without
-joining their stores. Team projects only configured roster metadata and a link
-to each operator-owned constitution; profile contents, memory, doctrine,
-credentials, and crew history never enter the app document.
+joining their stores. Team projects the roster's own configuration — each
+seat's identity, the files it is configured to load, what those files measure
+against their own `cap_tokens`, and what the token-log says its sessions spent.
+No file's CONTENTS enter the app document: a body is served only by
+`/api/v1/team/members/<seat>/files/<path>`, and only for a path that seat's own
+inventory names, so there is no arbitrary-path reader and no way to reach a file
+this installation did not configure. Doctrine, credentials and crew history
+remain outside the product entirely.
 
 `app-server.mjs` is the listener kernel under it: one app listener plus the
 installation's configured retired set, started as one lifecycle and closed as

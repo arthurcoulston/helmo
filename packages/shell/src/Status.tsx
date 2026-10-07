@@ -127,6 +127,24 @@ export function loopStateRole(state: string): StatusRole | null {
   return null
 }
 
+/** A configured context file's standing against its own `cap_tokens`.
+ *
+ *  `tight` and `uncapped` are deliberately neutral. A file kept just under its
+ *  cap is the system working — the cap is a ceiling, and consolidation keeps
+ *  these files close to it on purpose — and an uncapped file is a gap in the
+ *  record rather than a fault in the run. Colouring either is how ten of ten
+ *  rows go amber and the signal stops being one.
+ *
+ *  `over` is amber because a cap is ratified and only Arthur ratifies a new
+ *  one, so a breach is his to settle. `unreadable` is red because the shim
+ *  refuses to launch a seat whose profile or roster skill it cannot read (rc
+ *  78, apparatus): that loop is already down. */
+export function contextFileRole(state: string): StatusRole | null {
+  if (state === "unreadable") return "failure"
+  if (state === "over") return "attention"
+  return null
+}
+
 /** A usage window's severity, in the provider's own escalation words
  *  (packages/runtime `usage.ts`) — never a threshold of ours. "unknown" is a
  *  reading we could not take, which is worth seeing but is not a limit. */

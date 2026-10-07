@@ -10,6 +10,7 @@ import { buildReport, compare, loaded, parseMarker, snapshot } from './build.js'
 import { revHome, loadRoster, stateDir, tokenLogPath } from './config.js';
 import { target } from './install.js';
 import { processObservation, sGet, sHas, sValue } from './sentinels.js';
+import { isPeriod, seatContext, teamDocument, type Period } from './team.js';
 
 const port = Number(process.env['REV_VIEW_PORT'] ?? 4500);
 const host = process.env['REV_VIEW_HOST'] ?? '127.0.0.1';
@@ -144,6 +145,60 @@ export function runtimeSnapshot() {
     ] },
     work_link: { local: process.env.REV_HELMO_VIEW_URL ?? `${ESTATE_REACH['helmo-app']!.url.replace(/\/$/, '')}/work`, remote: `${ESTATE_REACH['helmo-app']!.path.replace(/\/$/, '')}/work` },
   };
+}
+
+/** Team's own document. Loop state comes from `state()` here rather than being
+ *  re-derived inside team.ts, so Runtime and Team can never disagree about
+ *  whether a loop is running. */
+export function teamSnapshot(period: Period = '7d') {
+  return teamDocument(period, state);
+}
+export function teamPeriod(url: string | undefined): Period {
+  const asked = new URL(url ?? '/', 'http://x').searchParams.get('period') ?? undefined;
+  return isPeriod(asked) ? asked : '7d';
+}
+
+/** One member's configured profile and the inventory behind it. The `body` key
+ *  is the reading this route has always offered, kept so the profile is one
+ *  request away; `context` is the inventory the Team page draws. */
+export async function teamMember(name: string) {
+  const loop = loadRoster().loops[name];
+  if (!loop) return null;
+  return {
+    id: loop.name,
+    name: loop.seat ?? loop.name,
+    cwd: loop.cwd,
+    runtime: loop.runtime,
+    model: loop.model,
+    context: await seatContext(loop),
+    body: loop.constitution ? readFileSync(loop.constitution, 'utf8') : 'No profile is configured.',
+  };
+}
+
+/** The body of one inventoried file, bounded.
+ *
+ *  `path` must be a path this seat's own inventory lists — its constitution, a
+ *  roster skill, a working-tree instruction file, or its memory index. Anything
+ *  else is unknown rather than read, so this is not a file reader with a path
+ *  argument: the set of readable files is whatever THIS installation
+ *  configured, and no request can widen it. */
+export async function teamFile(name: string, path: string) {
+  const loop = loadRoster().loops[name];
+  if (!loop) return null;
+  const context = await seatContext(loop);
+  const inventory = [
+    ...(context.composed.profile ? [{ file: context.composed.profile, role: 'profile' }] : []),
+    ...context.composed.skills.map((file) => ({ file, role: 'skill' })),
+    ...context.discovered.files.map((file) => ({ file, role: 'working tree' })),
+    ...(context.memory.index ? [{ file: context.memory.index, role: 'memory index' }] : []),
+  ];
+  const found = inventory.find((item) => item.file.path === path);
+  if (!found) return null;
+  // Bounded: a reader on a dashboard wants the file, not an unbounded transfer,
+  // and the cut is reported rather than silent.
+  const whole = readFileSync(path, 'utf8');
+  const body = whole.slice(0, 200_000);
+  return { ...found.file, role: found.role, body, truncated: body.length < whole.length };
 }
 
 export function runtimeRequest(req: IncomingMessage, res: ServerResponse) {

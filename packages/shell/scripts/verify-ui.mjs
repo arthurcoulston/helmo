@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -38,6 +38,49 @@ mkdirSync(join(dir, 'runtime/state/example-worker'), { recursive: true });
    confirmed should stay amber (H-2987@dev.rev). The fixture says so now. */
 writeFileSync(join(dir, 'runtime/state/example-worker/BLOCKED'), 'reason=The fixture worker has downed tools and will not resume without intervention.');
 writeFileSync(join(dir, 'runtime/state/example-worker/events.log'), '2026-10-06 fixture event: a complete recent trace.\n');
+/* Team's readings exist only where the configuration puts them. A live
+   installation today has no roster skill on most seats, no file over its cap
+   and no unreadable one, so without these three the skills segment, the amber
+   over-cap alert and the red unreadable alert render nowhere and pass every
+   assertion below by being absent (H-3001). The shipped example roster stays
+   documentation; these seats are appended to the copy. */
+const seatTree = join(dir, 'runtime/seat');
+mkdirSync(join(seatTree, 'memory'), { recursive: true });
+writeFileSync(join(seatTree, '.git'), 'a fixture repository boundary the instruction walk stops at');
+writeFileSync(join(seatTree, 'CLAUDE.md'), '---\ncap_tokens: 400\n---\nWhat the CLI finds for itself in the working tree.');
+writeFileSync(join(seatTree, 'memory/MEMORY.md'), '---\ncap_tokens: 1200\n---\nThe fixture memory index.');
+/* Large enough that counting the corpus as startup context would be obvious on
+   the page — which is the distinction the view exists to keep. */
+for (let i = 0; i < 12; i += 1) writeFileSync(join(seatTree, `memory/lesson-${i}.md`), `A fixture lesson about ${i}.\n`.repeat(60));
+writeFileSync(join(dir, 'runtime/constitutions/well-found.md'), '---\ncap_tokens: 400\n---\nA fixture seat whose configuration is in good order.');
+writeFileSync(join(dir, 'runtime/constitutions/fixture-skill.md'), 'A fixture roster skill, appended to the constitution at spawn.');
+writeFileSync(join(dir, 'runtime/constitutions/over-cap.md'), `---\ncap_tokens: 5\n---\n${'A fixture profile written past its ratified cap. '.repeat(30)}`);
+appendFileSync(join(dir, 'runtime/roster.toml'), [
+  '',
+  '[loops.well-found]',
+  'workstream = "fixture"',
+  `cwd = ${JSON.stringify(seatTree)}`,
+  'runtime = "claude"',
+  'model = "fixture-model"',
+  'constitution = "constitutions/well-found.md"',
+  'skills = ["constitutions/fixture-skill.md"]',
+  `memory_dir = ${JSON.stringify(join(seatTree, 'memory'))}`,
+  '',
+  '[loops.over-its-cap]',
+  'workstream = "fixture"',
+  `cwd = ${JSON.stringify(seatTree)}`,
+  'runtime = "claude"',
+  'model = "fixture-model"',
+  'constitution = "constitutions/over-cap.md"',
+  '',
+  '[loops.cannot-be-read]',
+  'workstream = "fixture"',
+  `cwd = ${JSON.stringify(seatTree)}`,
+  'runtime = "claude"',
+  'model = "fixture-model"',
+  'constitution = "constitutions/no-such-profile.md"',
+  '',
+].join('\n'));
 const actor = { name: 'fixture', kind: 'orchestrator', model: 'fixture', version: 'fixture' };
 const store = new Store(join(dir, 'work/helmo.db'));
 const create = (title, extra = {}) => store.createTicket(actor, { title, body: `Full record for ${title}`, type: 'build', workstream: 'fixture', labels: ['acct:direction'], ...extra });
@@ -453,9 +496,45 @@ try {
   await page.getByText(/a complete recent trace/).waitFor();
   await page.getByRole('button', { name: 'Build and installation details' }).click();
   await page.getByText(/supervisor: not running/).waitFor();
+  /* Team. The three readings this view exists to keep apart are each asserted
+     on the rendered page, because each of them is a way to mislead and none of
+     them is visible in a JSON test (H-3001). */
   await page.goto(`${origin}/team`);
-  await page.getByRole('button', { name: 'Profile for example-worker' }).click();
-  await page.getByText('A fixture member profile with a clear responsibility.', { exact: true }).waitFor();
+  await page.getByRole('table', { name: 'Team', exact: true }).waitFor();
+  /* A configured file past its ratified cap, and one the shim could not read at
+     all, both reach the top of the page — red for the one that stops a launch. */
+  const attention = page.getByRole('alert').filter({ hasText: 'need your attention' });
+  await attention.getByText(/over-cap\.md/).waitFor();
+  await attention.getByText(/no-such-profile\.md \(cannot be read\)/).waitFor();
+  assert.equal(await attention.getAttribute('data-status-role'), 'failure', 'an unreadable profile outranks an over-cap one');
+  await page.getByRole('button', { name: "well-found", exact: true }).click();
+  /* Composed, discovered and available, each in its own words. The memory
+     corpus is reported beside the startup total and never inside it: the
+     fixture seat's twelve lessons are an order of magnitude larger than
+     everything it actually loads, so a view that added them in would say so. */
+  const teamSheet = page.getByRole('dialog');
+  await teamSheet.getByText(/Profile \d/).waitFor();
+  await teamSheet.getByText(/Skills \d/).waitFor();
+  await teamSheet.getByText(/Working tree \d/).waitFor();
+  await teamSheet.getByText(/Rev does not compose these/).waitFor();
+  await teamSheet.getByText(/13 files · roughly [\d,]+ tokens if every one were read/).waitFor();
+  await teamSheet.getByText(/No whole-session cap is configured anywhere/).waitFor();
+  await teamSheet.getByText(/the tool and MCP schemas the session is given/).waitFor();
+  const startup = Number((await teamSheet.getByText(/^[\d,]+ tok$/).first().innerText()).replace(/[^\d]/g, ''));
+  const corpus = Number((await teamSheet.getByText(/roughly [\d,]+ tokens/).innerText()).match(/roughly ([\d,]+)/)[1].replace(/,/g, ''));
+  assert.ok(corpus > startup * 10, `the fixture corpus (${corpus}) must dwarf the startup reading (${startup}), or this distinction is untested`);
+  /* The bounded file route, through the page: a file the inventory names reads,
+     and the reading is the file rather than a summary of it. */
+  await teamSheet.getByRole('button', { name: 'Read fixture-skill.md' }).click();
+  await teamSheet.getByText('A fixture roster skill, appended to the constitution at spawn.').waitFor();
+  await page.keyboard.press('Escape');
+  /* The period really re-reads the server rather than re-labelling the page. */
+  await page.getByRole('button', { name: '24 hours' }).click();
+  await page.getByRole('button', { name: '24 hours' }).and(page.locator('[aria-pressed="true"]')).waitFor();
+  await page.getByRole('button', { name: "well-found", exact: true }).click();
+  await page.getByRole('dialog').getByText(/USAGE · 24 HOURS|Usage · 24 hours/i).waitFor();
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: '7 days' }).click();
   /* A row's surface is not fixed, and the layouts above only ever measured it
      at rest. Upstream's TableRow tints on hover and for as long as a row stays
      expanded (`hover:bg-muted/50`, `has-aria-expanded:bg-muted/50`), and both
@@ -663,7 +742,7 @@ try {
     `the WCAG audit ran on ${audited.length} layouts, not all ${areas.length * themes.length * widths.length}: ${audited.join(', ')}`,
   );
   assert.deepEqual(errors, []);
-  console.log(`All five areas, Work's and Roadmap's compact tables, bounded summaries and full records, held state, copy, focused refresh, embedded answer, runtime trace, team profiles, Inter, the four status roles measured at rest and on hovered and expanded rows in both themes, all ${audited.length} layouts verified and audited against WCAG 2 A/AA with axe-core ${axeVersion}, ${shapes.size} multi-group views aligned column for column, and nothing wider than the column holding it. Red outranks amber by at least ${LOUDER_BY} on every ground both were found on: ${redVsAmber.join('; ')}. At 390 the tightest of ${folds.length} state cells, "${tightest.text}" in ${tightest.table}, cleared the fold by ${-tightest.over}px. Evidence: ${dir}`);
+  console.log(`All five areas, Work's and Roadmap's compact tables, bounded summaries and full records, held state, copy, focused refresh, embedded answer, runtime trace, Team's composed/discovered/available context with its bounded file reads, Inter, the four status roles measured at rest and on hovered and expanded rows in both themes, all ${audited.length} layouts verified and audited against WCAG 2 A/AA with axe-core ${axeVersion}, ${shapes.size} multi-group views aligned column for column, and nothing wider than the column holding it. Red outranks amber by at least ${LOUDER_BY} on every ground both were found on: ${redVsAmber.join('; ')}. At 390 the tightest of ${folds.length} state cells, "${tightest.text}" in ${tightest.table}, cleared the fold by ${-tightest.over}px. Evidence: ${dir}`);
   writeFileSync(join(dir, 'result.json'), JSON.stringify({ origin, artifacts: dir, errors, verified: new Date().toISOString() }, null, 2));
 } finally {
   await browser?.close();

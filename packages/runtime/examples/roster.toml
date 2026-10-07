@@ -81,6 +81,9 @@ probe_tier = "small"                  # empty-handed iterations run here (H-412)
 constitution = "constitutions/example-worker.md"  # relative to ~/.rev
 version = "0.1"                       # bump when the constitution changes — it's provenance
 pace = 1.0                            # velocity fraction; 0.5 = half speed
+# memory_dir = "~/notes/example-worker/memory"  # this seat's memory corpus. NOT loaded at
+#   spawn — a session reads it a file at a time — but the Team page inventories it, so the
+#   reading can say what is available beside what is actually configured to load (H-3001).
 # rotation = ["claude", "codex"]      # alternate providers per iteration, same tier ("codex:small" pins a tier)
 # routing = "headroom"                # rank same-tier rotation by allowance/hour until reset; first choice when telemetry is stale
 # fallback = ["codex:mid"]            # tried when every scheduled provider's cap is out

@@ -286,6 +286,13 @@ where the three products live at `packages/work`, `packages/roadmap` and
 partial, extended or mixed manifest refuses rather than falling through to the
 legacy reader.
 
+A rollback moves the code but not `roster.toml`, which is instance data and
+release-versioned in practice: `loadRoster` refuses any loop key outside
+`LOOP_KEYS`, so a roster written for a newer release stops the older one dead —
+supervisor, every loop and the app alike — the moment the selection moves back.
+Restore the roster of the outgoing release's era as part of the rollback, never
+after it. `memory_dir` (H-3001) is the first key to make this bite.
+
 ## Boundaries the build enforces
 
 - **The runtime never reads the work record's store.** Runtime talks to Work

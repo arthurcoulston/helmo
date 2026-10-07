@@ -766,11 +766,12 @@ try {
   assert.deepEqual([...new Set(spill)], [], 'a column must be wide enough for what it holds');
   /* The assertion the old `state` key could not make. Counting cells says the
      loop ran; naming the columns says WHICH views it ran on, and Team's two
-     are only in this set because the table declares them — keyed on "state"
-     this list came back without them and the check was green regardless. */
+     and Runtime's loop are only in this set because those tables declare them
+     — keyed on "state" this list came back without them and the check was green
+     regardless. */
   assert.deepEqual(
     [...new Set(folds.map((fold) => fold.column))].sort(),
-    ['context', 'member', 'project', 'state', 'work'],
+    ['context', 'loop', 'member', 'project', 'state', 'work'],
     'every above-fold column every view declares must be measured at 390',
   );
   assert.ok(folds.length >= 24, `only ${folds.length} above-fold columns were measured at 390, so the fold was not really read`);

@@ -15,6 +15,14 @@ export type RuntimeData = {
   work_link: { local: string; remote: string }
 }
 
+/* Each column's name beside its heading, so the two stay together: the heading
+   is what a reader sees and the name is what an outside check addresses, and a
+   renamed heading must not move the measurement. */
+const COLUMNS = [
+  ["loop", "Loop"], ["state", "State"], ["workstream", "Workstream"],
+  ["model", "Runtime / model"], ["pace", "Pace"], ["spend", "Spend"], ["trace", "Recent trace"],
+] as const
+
 export function RuntimeView({ data, workAvailable }: { data: RuntimeData; workAvailable: boolean }) {
   return <>
     <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -41,23 +49,32 @@ export function RuntimeView({ data, workAvailable }: { data: RuntimeData; workAv
     </div>
     <p className="text-muted-foreground text-xs">{data.loops.length} loops · scroll the table horizontally to read every column.</p>
     <div className="min-w-0 rounded-lg border" role="region" aria-label="Loop status — scroll horizontally for all columns">
-      <Table tabIndex={0} aria-label="Loop status">
+      {/* Not a `RecordTable`: this one is still upstream's Table under automatic
+          layout, so its widths come from its content rather than a declaration.
+          Where its fold falls is measurable all the same, and it carries the
+          same `data-column`/`data-above-fold` contract the three compact views
+          do — the loop and its state are what a 390 window has to read, and
+          `verify:ui` fails naming either one the fold cuts. Measured on the
+          live roster at 390: loop ends at x61 and state at x151 inside a 356px
+          container, with workstream clearing it too. Before H-3001@dev.rev this
+          table was in no fold measurement at all. */}
+      <Table tabIndex={0} aria-label="Loop status" data-above-fold="loop state">
         <TableCaption className="sr-only">Current loop status, runtime, spend and recent events</TableCaption>
         <TableHeader><TableRow>
-          {['Loop', 'State', 'Workstream', 'Runtime / model', 'Pace', 'Spend', 'Recent trace'].map((label) => <TableHead key={label}>{label}</TableHead>)}
+          {COLUMNS.map(([id, label]) => <TableHead key={id} data-column={id}>{label}</TableHead>)}
         </TableRow></TableHeader>
         <TableBody>
           {data.loops.map((loop) => <TableRow key={loop.name}>
-            <TableCell className="align-top font-medium">{loop.name}</TableCell>
-            <TableCell className="align-top">
+            <TableCell data-column="loop" className="align-top font-medium">{loop.name}</TableCell>
+            <TableCell data-column="state" className="align-top">
               <StatusBadge variant="outline" status={loopStateRole(loop.state)}>{loop.state}</StatusBadge>
               {loop.reason ? <p className="mt-2 max-w-64 whitespace-normal text-xs [overflow-wrap:anywhere]">{loop.reason}</p> : null}
             </TableCell>
-            <TableCell className="align-top">{loop.workstream}</TableCell>
-            <TableCell className="align-top">{loop.runtime} / {loop.model}</TableCell>
-            <TableCell className="align-top">{loop.pace}</TableCell>
-            <TableCell className="align-top">{loop.spend.tokens ? `${(loop.spend.tokens / 1000).toFixed(1)}k tokens` : "—"}{loop.spend.cost ? ` · $${loop.spend.cost.toFixed(2)}` : ""}</TableCell>
-            <TableCell className="align-top">
+            <TableCell data-column="workstream" className="align-top">{loop.workstream}</TableCell>
+            <TableCell data-column="model" className="align-top">{loop.runtime} / {loop.model}</TableCell>
+            <TableCell data-column="pace" className="align-top">{loop.pace}</TableCell>
+            <TableCell data-column="spend" className="align-top">{loop.spend.tokens ? `${(loop.spend.tokens / 1000).toFixed(1)}k tokens` : "—"}{loop.spend.cost ? ` · $${loop.spend.cost.toFixed(2)}` : ""}</TableCell>
+            <TableCell data-column="trace" className="align-top">
               {loop.recent_events.length ? <Collapsible>
                 <CollapsibleTrigger asChild><Button variant="outline" size="sm">Recent events for {loop.name}</Button></CollapsibleTrigger>
                 <CollapsibleContent className="flex max-w-lg flex-col gap-2 pt-3">

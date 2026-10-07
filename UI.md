@@ -340,18 +340,23 @@ load-bearing.
 The record column's floor cannot be a minimum on the cell — fixed layout does
 not consult one — so it is the table's own `minWidth`, which each view states as
 its fixed columns plus that floor; a column widened without it moves the fold.
+Roadmap's floor is smaller than Work's, because the rank column in front of it
+spends width Work's does not.
+
 Which columns that floor has to keep inside a 390 window is each view's own
 call, declared beside the widths as `RecordTable`'s `aboveFold` and carried to
 the browser as `data-above-fold`: Work's work and state, Roadmap's project and
-state, Team's member and context. `verify:ui` measures exactly what a table
-declares, fails naming any column the fold cuts, and fails a table that
-declares nothing at all. Until H-3001@dev.rev it instead measured whatever
-column was named `state` — so it read Work and Roadmap, and never read Team,
-whose state badge lives inside its member cell. A view could have put its own
-subject beyond the fold under a green run; the point of the declaration is that
-the skip is impossible rather than unlikely.
-Roadmap's floor is smaller than Work's, because the rank column in front of it
-spends width Work's does not.
+state, Team's member and context. Runtime's loop table is still upstream's
+Table under automatic layout rather than a `RecordTable`, so its widths come
+from its content — it carries the same contract regardless, for its loop and
+that loop's state, because where a fold falls is measurable whether or not the
+geometry was declared. `verify:ui` measures exactly what a table declares,
+fails naming any column the fold cuts, and fails a table that declares nothing
+at all. Until H-3001@dev.rev it instead measured whatever column was named
+`state` — so it read Work and Roadmap, and read neither Team, whose state badge
+lives inside its member cell, nor Runtime, which named no column at all. A view
+could have put its own subject beyond the fold under a green run; the point of
+the declaration is that the skip is impossible rather than unlikely.
 
 Every other column declares what the real record actually asks it to carry, plus
 the cell's padding, because under fixed layout a column keeps what it declares

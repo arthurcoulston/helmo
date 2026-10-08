@@ -310,6 +310,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
         heldOnRestart: poolWorker(l) && (w.held_count ?? 0) > 0,
         newlyReadyCount: w.newly_ready_count,
         newlyUnblockedHeldCount: w.newly_unblocked_held_ids?.length,
+        newlyTouchedHeldCount: w.newly_touched_held_ids?.length,
         resyncDue,
       });
       firstPoll = false;
@@ -1092,6 +1093,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
           offered: [...(before.ready_ids ?? []), ...(claimedTicket ? [claimedTicket] : [])],
           newlyReadyIds: after?.newly_ready_ids,
           newlyUnblockedHeldIds: after?.newly_unblocked_held_ids,
+          newlyTouchedHeldIds: after?.newly_touched_held_ids,
         });
         if (missed.length) logEvent(l.name, 'missed-mid-run', `tickets=${missed.join(',')} cursor=${cursor}`);
         const ready = after?.ready_count ?? before.ready_count;

@@ -2038,6 +2038,42 @@ describe('harness queries (wake cursor)', () => {
     expect(s.wakeCheck(s.maxSeq(), 'alpha', builder.name).newly_unblocked_held_ids).toEqual([]);
     expect(s.wakeCheck(idleSeq, 'alpha', reviewer.name).newly_unblocked_held_ids).toEqual([]);
   });
+  it('wakeCheck names a held claim someone else wrote on, never the holder\'s own writes (H-578)', () => {
+    const s = freshStore();
+    const assigned = (title: string, assignee: string) =>
+      s.createTicket(orch, { title, body: 'fixture', workstream: 'alpha', type: 'build', assignee });
+    const awaiting = assigned('Kept claim waiting on review', builder.name);
+    const noted = assigned('Kept claim a coordinator notes', builder.name);
+    const quiet = assigned('Kept claim nobody touches', builder.name);
+    const another = assigned('Another seat\'s claim', reviewer.name);
+    for (const t of [awaiting, noted, quiet]) s.updateTicket(builder, { ticket_id: t.id, note: 'claimed', status: 'in_progress' });
+    s.updateTicket(reviewer, { ticket_id: another.id, note: 'claimed', status: 'in_progress' });
+    s.recordProductCompletion(builder, { ticket_id: awaiting.id, artifacts: [{ ref: `helmo@${'a'.repeat(40)}`, author: builder.name }], note: 'Ready for review.' });
+    const idleSeq = s.maxSeq();
+
+    // The holder's own notes, links and spend are its own exhaust.
+    s.updateTicket(builder, { ticket_id: quiet.id, note: 'still waiting' });
+    s.linkTickets(orch, quiet.id, another.id, 'relates', 'add');
+    s.recordSpend(orch, quiet.id, { tokens: 10, cost_usd: 0.01, note: 'metered' });
+    expect(s.wakeCheck(idleSeq, 'alpha', builder.name).newly_touched_held_ids).toEqual([]);
+
+    // A verdict and a coordinator's note on the kept claim itself are the
+    // H-1091 signals: neither is a readiness edge nor a blocker closing.
+    s.recordAcceptanceVerdict(reviewer, { ticket_id: awaiting.id, refs: [`helmo@${'a'.repeat(40)}`], verdict: 'pass', note: 'PASS' });
+    s.updateTicket(orch, { ticket_id: noted.id, note: 'Your next step is unblocked.' });
+    s.updateTicket(orch, { ticket_id: another.id, note: 'Not the builder\'s claim.' });
+    const w = s.wakeCheck(idleSeq, 'alpha', builder.name);
+    expect(w.newly_ready_ids).toEqual([]);
+    expect(w.newly_unblocked_held_ids).toEqual([]);
+    expect(w.newly_touched_held_ids).toEqual([awaiting.id, noted.id].sort());
+
+    // An edge, not a standing property; and a claim released by the note is
+    // no longer held, so readiness carries it instead.
+    expect(s.wakeCheck(s.maxSeq(), 'alpha', builder.name).newly_touched_held_ids).toEqual([]);
+    const releasedSeq = s.maxSeq();
+    s.updateTicket(orch, { ticket_id: quiet.id, note: 'Releasing this claim.', status: 'open' });
+    expect(s.wakeCheck(releasedSeq, 'alpha', builder.name).newly_touched_held_ids).toEqual([]);
+  });
   it('newlyReadySince follows capacity release and excludes the caller\'s untouched filing', () => {
     const s = freshStore();
     const held = create(s, { workstream: 'alpha' });

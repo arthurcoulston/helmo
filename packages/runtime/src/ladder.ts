@@ -60,6 +60,7 @@ export function wakeDecide(c: {
   readyCount: number;
   newlyReadyCount?: number;
   newlyUnblockedHeldCount?: number;
+  newlyTouchedHeldCount?: number;
   resyncDue?: boolean;
   /** A pool worker's seat holds in-progress work (H-824). Held work is not
    *  ready, so without this a worker that went down holding a claim — parked
@@ -72,7 +73,9 @@ export function wakeDecide(c: {
   if (c.newlyReadyCount === undefined) return c.changedSince || (c.firstPoll && c.readyCount > 0);
   // A claim the seat already holds is never ready, so its last blocker closing
   // is not a readiness edge; it is the same "your work can move" signal (H-804).
-  return c.newlyReadyCount > 0 || (c.newlyUnblockedHeldCount ?? 0) > 0
+  // So is someone else's verdict or note on the claim itself: a kept claim
+  // waiting on review has no blocker to close (H-578, after H-1091).
+  return c.newlyReadyCount > 0 || (c.newlyUnblockedHeldCount ?? 0) > 0 || (c.newlyTouchedHeldCount ?? 0) > 0
     || (c.firstPoll && c.readyCount > 0) || (Boolean(c.resyncDue) && c.readyCount > 0);
 }
 
@@ -85,7 +88,9 @@ export function wakeDecide(c: {
 // the cursor at the launch seq, so the next poll wakes on them. What the run
 // was offered and declined stays acknowledged (H-426): its own release of a
 // claim back to open is an edge since launch, and must not re-wake it every
-// pass. A held claim unblocked mid-run is an edge once and always missed. An
+// pass. A held claim unblocked mid-run is an edge once and always missed. So
+// is someone else's write on a held claim mid-run (H-578): the run may have
+// read it, but one resume costs less than a verdict nobody acts on. An
 // older store without the edge sets keeps the post-run cursor; store-wide
 // loops keep the launch seq for their own reason (H-223, in loop.ts).
 export function idleCursorDecide(c: {
@@ -95,12 +100,14 @@ export function idleCursorDecide(c: {
   offered: string[];
   newlyReadyIds?: string[];
   newlyUnblockedHeldIds?: string[];
+  newlyTouchedHeldIds?: string[];
 }): { cursor: number; missed: string[] } {
   if (c.workstream === '*' || c.afterSeq === undefined) return { cursor: c.launchSeq, missed: [] };
   const offered = new Set(c.offered);
   const missed = [...new Set([
     ...(c.newlyReadyIds ?? []).filter((id) => !offered.has(id)),
     ...(c.newlyUnblockedHeldIds ?? []),
+    ...(c.newlyTouchedHeldIds ?? []),
   ])].sort();
   return { cursor: missed.length ? c.launchSeq : c.afterSeq, missed };
 }

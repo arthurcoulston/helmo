@@ -22,6 +22,10 @@ export interface WakeCheck {
   /** in_progress claims in the loop's own hands whose last blocker closed
    *  after the cursor (H-804) — absent from a helmo that predates it. */
   newly_unblocked_held_ids?: string[];
+  /** in_progress claims in the loop's own hands that someone else wrote on
+   *  after the cursor — a verdict, a note, an answer (H-578). Absent from a
+   *  helmo that predates it. */
+  newly_touched_held_ids?: string[];
   ready_ids?: string[];
 }
 

@@ -1989,6 +1989,7 @@ export class Store {
     newly_ready_ids: string[];
     held_count?: number;
     newly_unblocked_held_ids?: string[];
+    newly_touched_held_ids?: string[];
     changed_since: boolean;
   } {
     return this.db.transaction(() => {
@@ -2007,7 +2008,11 @@ export class Store {
         // held_count only when the caller is identified: work already in hand.
         // With ready_count it lets a harness spot the probe case — nothing to
         // draw, nothing mid-flight — and run that pass cheap (rev H-412).
-        ...(assignee ? { held_count: this.heldCount(assignee), newly_unblocked_held_ids: this.newlyUnblockedHeld(seq, assignee) } : {}),
+        ...(assignee ? {
+          held_count: this.heldCount(assignee),
+          newly_unblocked_held_ids: this.newlyUnblockedHeld(seq, assignee),
+          newly_touched_held_ids: this.newlyTouchedHeld(seq, assignee),
+        } : {}),
         changed_since: this.scopeChangedSince(seq, workstream, assignee),
       };
       // .immediate() for the reason in the constructor: the ready read
@@ -2166,6 +2171,25 @@ export class Store {
          ORDER BY t.id`,
       )
       .all(assignee, seq, seq) as { id: string }[]).map((r) => r.id);
+  }
+
+  /** In-progress tickets held by `assignee` that someone else wrote on after
+   *  `seq` (H-578): a note, a verdict, an answer, a reported action. A holder
+   *  that kept its claim waiting on review is never ready and has no blocker
+   *  to close, so a Reviewer PASS or a coordinator's "go ahead" landing on the
+   *  claim itself left it idle until its hourly resync (H-1091). The holder's
+   *  own writes — and links, spend and the scheduler — are not news to it, so
+   *  they stay quiet and a pass cannot wake itself. */
+  newlyTouchedHeld(seq: number, assignee: string): string[] {
+    return (this.db
+      .prepare(
+        `SELECT DISTINCT t.id AS id FROM tickets t JOIN events e ON e.ticket_id = t.id
+         WHERE t.status = 'in_progress' AND t.assignee = ? AND e.seq > ?
+           AND e.event_type IN ('updated','acceptance_verdict','answered','acted')
+           AND COALESCE(json_extract(e.actor, '$.name'), '') NOT IN (?, 'helmo-scheduler')
+         ORDER BY t.id`,
+      )
+      .all(assignee, seq, assignee) as { id: string }[]).map((r) => r.id);
   }
 
   /** Count of in_progress tickets assigned to `assignee` — work already in

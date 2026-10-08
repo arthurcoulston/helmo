@@ -72,6 +72,16 @@ describe('wakeDecide (H-92/H-426)', () => {
     expect(wakeDecide(held)).toBe(false); // a helmo that predates the field
     expect(wakeDecide({ ...held, workstream: '*', newlyUnblockedHeldCount: 1 })).toBe(false);
   });
+
+  it('a verdict or note on a kept claim wakes its scoped holder, with nothing ready (H-578)', () => {
+    // H-1091: builder-copy-engine idled holding the claim; Reviewer's PASS
+    // and Orchestrator's note landed on it and it slept until a manual reload.
+    const kept = { changedSince: true, firstPoll: false, workstream: 'goodplumb', readyCount: 0, newlyReadyCount: 0, newlyUnblockedHeldCount: 0 };
+    expect(wakeDecide({ ...kept, newlyTouchedHeldCount: 1 })).toBe(true);
+    expect(wakeDecide({ ...kept, newlyTouchedHeldCount: 0 })).toBe(false);
+    expect(wakeDecide(kept)).toBe(false); // a helmo that predates the field
+    expect(wakeDecide({ ...kept, workstream: '*', newlyTouchedHeldCount: 1 })).toBe(true); // store-wide wakes on motion already
+  });
 });
 
 describe('idleCursorDecide (H-804)', () => {
@@ -97,6 +107,11 @@ describe('idleCursorDecide (H-804)', () => {
   it('holds the launch seq when a held claim was unblocked mid-run, claimed or not', () => {
     expect(idleCursorDecide({ ...scoped, offered: ['H-877'], newlyReadyIds: [], newlyUnblockedHeldIds: ['H-877'] }))
       .toEqual({ cursor: 15357, missed: ['H-877'] });
+  });
+
+  it('holds the launch seq when someone else wrote on a held claim mid-run (H-578)', () => {
+    expect(idleCursorDecide({ ...scoped, offered: ['H-1091'], newlyReadyIds: [], newlyTouchedHeldIds: ['H-1091'] }))
+      .toEqual({ cursor: 15357, missed: ['H-1091'] });
   });
 
   it('keeps the old cursors where it cannot tell', () => {

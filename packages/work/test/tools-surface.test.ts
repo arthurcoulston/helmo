@@ -549,3 +549,45 @@ describe('the acceptance gate asked by commit (H-3012)', () => {
     store.close();
   });
 });
+
+// H-3031. The same surface, asked the question the holds read cannot answer:
+// who has CLEARED these commits. An agent about to publish has to be able to
+// see "one reviewer passed it and nobody asked the second" as different from
+// "cleared", and through the holds read those are the same empty list.
+describe('acceptance coverage on the agent surface (H-3031)', () => {
+  const builder: Actor = { name: 'mason', kind: 'agent', model: 'claude-opus-5', version: 'claude-code-2.1.221' };
+  const proof: Actor = { name: 'proof', kind: 'agent', model: 'gpt-6-astra', version: 'rev 0.4' };
+  const reviewed = `helmo@${'a'.repeat(40)}`;
+  const unoffered = `helmo@${'b'.repeat(40)}`;
+
+  async function coverage(store: Store, args: Record<string, unknown>) {
+    const client = await connect(store);
+    const res = await client.callTool({ name: 'helmo_acceptance_coverage', arguments: args });
+    const text = (res.content as { text: string }[])[0]!.text;
+    await client.close();
+    return { isError: res.isError === true, body: JSON.parse(text) as { result?: { coverage: unknown[] }; error?: string } };
+  }
+
+  it('names each reviewer who judged the commit, and reports silence as an empty list', async () => {
+    const store = new Store(':memory:');
+    const t = store.createTicket(builder, { title: 'Ship the read', body: 'Goal: answer who cleared it. Current state: landed.', workstream: 'helmo-dev', type: 'build' });
+    store.recordProductCompletion(builder, { ticket_id: t.id, artifacts: [{ ref: reviewed, author: 'someone-else' }], note: 'Ready for the technical read.' });
+    store.recordAcceptanceVerdict(proof, { ticket_id: t.id, refs: [reviewed], verdict: 'pass', note: 'Suite green; read the diff.' });
+
+    const answer = await coverage(store, { refs: [reviewed, unoffered] });
+    expect(answer.body.result!.coverage).toMatchObject([
+      { ref: reviewed, completions: [{ ticket_id: t.id, state: 'accepted', reviewers: [{ name: 'proof', verdict: 'pass' }] }] },
+      { ref: unoffered, completions: [] },
+    ]);
+    store.close();
+  });
+
+  it('says in its own description that it does not judge sufficiency, where an agent reads it before calling', async () => {
+    const store = new Store(':memory:');
+    const client = await connect(store);
+    const tool = (await client.listTools()).tools.find((t) => t.name === 'helmo_acceptance_coverage')!;
+    expect(tool.description).toContain('SUFFICIENT');
+    await client.close();
+    store.close();
+  });
+});

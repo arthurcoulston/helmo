@@ -30,6 +30,20 @@ function qualifies(completion: ProductCompletion, verdict: AcceptanceVerdict): b
   return true;
 }
 
+/** §2.2: a reviewer's latest verdict is their verdict. A Map keyed on actor
+ *  name and filled in seq order leaves exactly that, so aggregation runs across
+ *  reviewers rather than across writes. This is the only place last-write-wins
+ *  survives, and it is scoped to one actor's own opinion.
+ *
+ *  Exported because `acceptanceCoverage` reports who has cleared a commit, and
+ *  a second derivation of "whose verdict stands" could disagree with the state
+ *  beside it — the reason `projectAcceptance` itself lives outside Store. */
+export function standingVerdicts(qualifying: AcceptanceVerdict[]): AcceptanceVerdict[] {
+  const perReviewer = new Map<string, AcceptanceVerdict>();
+  for (const v of qualifying) perReviewer.set(v.actor.name, v);
+  return [...perReviewer.values()];
+}
+
 function toCompletion(event: HelmoEvent): ProductCompletion {
   return {
     seq: event.seq,
@@ -98,13 +112,7 @@ export function projectAcceptance(events: HelmoEvent[], expectedRefs?: string[])
     };
   }
 
-  // §2.2: a reviewer's latest verdict is their verdict. A Map keyed on actor
-  // name and filled in seq order leaves exactly that, and aggregation below
-  // then runs across reviewers rather than across writes. This is the only
-  // place last-write-wins survives, and it is scoped to one actor's own opinion.
-  const perReviewer = new Map<string, AcceptanceVerdict>();
-  for (const v of qualifying) perReviewer.set(v.actor.name, v);
-  const standing = [...perReviewer.values()];
+  const standing = standingVerdicts(qualifying);
   const fails = standing.filter((v) => v.verdict === 'fail');
 
   // §2.3: strictest governs, and a FAIL is sticky. The governing verdict is the

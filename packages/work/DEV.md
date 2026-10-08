@@ -520,6 +520,22 @@ Pinned releases accept both the historical three-component layout and C1's one
   the decision on each is `productAcceptance` itself, so the two reads cannot
   disagree. A repo is matched as an exact prefix, never a LIKE: a ref's repo
   part is `[^\s@]+`, which admits `%` and `_`.
+  `acceptance-coverage --refs '[...]'` is the half that read cannot answer
+  (`Store.acceptanceCoverage`, `helmo_acceptance_coverage`, H-3031): holds
+  returns only `pending` and `failed`, so an ACCEPTED review and a commit
+  nobody ever offered are one empty answer. Crew's gate read that silence as
+  "nothing is holding this" and left four commits publishable to a public
+  remote by any seat's push for the seven minutes between a technical PASS
+  resolving the only completion naming them and a clearance first being filed
+  — the pass is what opened the gate, and nothing rode out (H-3029).
+  Coverage answers per asked ref: the tickets whose CURRENT completion names it
+  with their state and each reviewer's own standing verdict, the tickets that
+  named it only in a superseded offer, and an empty list for a commit nobody
+  offered. It always exits zero: how many reviews a destination requires is the
+  caller's policy, the same reason `acceptance.ts` §2.5 keeps one PASS
+  sufficient here. The standing-verdict rule is `standingVerdicts`, exported
+  from `acceptance.ts` and used by both reads, because a second derivation of
+  whose verdict stands could disagree with the state printed beside it.
 - `view.ts` — the dashboard at :4400 (H-2). The constitutional line, restated
   with Arthur in H-90: the page carries no record DATA-ENTRY (agents write
   the record), but answering an awaiting_human question is operator steering

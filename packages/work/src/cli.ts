@@ -45,6 +45,7 @@ const COMMAND_FLAGS: Record<string, readonly string[]> = {
   'acceptance-verdict': ['ticket', 'refs', 'verdict', 'note'],
   'acceptance-check': ['ticket', 'refs'],
   'acceptance-holds': ['repo', 'refs'],
+  'acceptance-coverage': ['refs'],
   'release-handoff': ['ticket', 'record'],
   create: ['title', 'body', 'workstream', 'type', 'priority', 'status', 'assignee', 'dep', 'dep-type', 'schedule', 'not-before', 'needs-human', 'sitting-with', 'lane', 'workflow-attempt'],
   update: ['ticket', 'note', 'status', 'evidence-kind', 'evidence-ref', 'evidence-role', 'confidence', 'uncertainty-note', 'blast-radius', 'tokens', 'cost-usd', 'handoff-to', 'not-before', 'lane', 'needs-human', 'sitting-with', 'no-needs-human', 'takeover', 'body-append', 'body-old', 'body-new'],
@@ -373,6 +374,15 @@ try {
       if (holds.length) process.exitCode = 1;
       break;
     }
+    case 'acceptance-coverage': {
+      // The other half of the gate's question: not "what is holding these
+      // commits" but "who has cleared them, and which carry no completion at
+      // all" (H-3031). Exit 0 whatever it finds — how many reviews a
+      // destination requires is the caller's policy, and an exit code here
+      // would be this store answering it.
+      out({ coverage: store.acceptanceCoverage(JSON.parse(req('refs'))) });
+      break;
+    }
     case 'release-handoff': {
       const record = JSON.parse(req('record')) as Record<string, unknown>;
       out(store.recordReleaseHandoff(actor(), {
@@ -501,6 +511,7 @@ try {
   acceptance-verdict --ticket H-n --refs '["repo@<40hex>"]' --verdict pass|fail --note N
   acceptance-check --ticket H-n [--refs '["repo@<40hex>"]'] (exit 0 only for independent acceptance of that manifest)
   acceptance-holds --repo R | --refs '["repo@<40hex>"]'     (the same gate by commit instead of by ticket: completions still pending or failed on those refs, whatever their ticket's status; exit 0 only when none)
+  acceptance-coverage --refs '["repo@<40hex>"]'             (who has judged those commits: each ticket whose standing completion names one, its state and each reviewer's own verdict, plus an empty list for a commit nobody offered; always exit 0 — sufficiency is the caller's policy)
   release-handoff --ticket H-n --record '{...}'                (atomic evidence-bound release sitting; publishing handoff tool only)
   answers        --since-seq N [--session S]                    (answers recorded since a cursor, + max_seq; --session dashboard for the sweep's replay)
   verdicts       --since-seq N [--actor A] [--workstream W]     (acceptance verdicts recorded since a cursor, + max_seq; the sweep's forged-PASS replay)

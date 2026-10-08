@@ -1,11 +1,11 @@
 import Database from 'better-sqlite3';
-import { projectAcceptance } from './acceptance.js';
+import { projectAcceptance, standingVerdicts } from './acceptance.js';
 import { namesInstallation, type Installation } from './install.js';
 import { actionFingerprint, questionFingerprint } from './presentation.js';
 import { parseSchedule } from './schedule.js';
 import {
   ActionReport, ActionRequest, Actor, ActorKind, ACTOR_KINDS, Answer, AnswerEvent, BlastRadius, BLAST_RADII, CapacityHold, Confidence, Dep, DepType, Evidence, EVIDENCE_ROLES,
-  HelmoError, HelmoEvent, HumanRequest, Notice, ProductAcceptance, ProductArtifact, Question, QuestionInput, ReleaseHandoff, Status, Ticket, TicketProgress, UnresolvedCompletion, VerdictEvent, Workstream, WorkstreamInfo,
+  AcceptanceCoverage, CoveringCompletion, HelmoError, HelmoEvent, HumanRequest, Notice, ProductAcceptance, ProductArtifact, Question, QuestionInput, ReleaseHandoff, Status, Ticket, TicketProgress, UnresolvedCompletion, VerdictEvent, Workstream, WorkstreamInfo,
 } from './types.js';
 
 const STALE_CLAIM_HOURS = 24;
@@ -1408,6 +1408,87 @@ export class Store {
     }
     // Oldest hold first: the one that has been waiting longest on a reviewer.
     return held.sort((a, b) => a.completion_seq - b.completion_seq);
+  }
+
+  /** Who has judged the commits a caller names, and which of them nobody has
+   *  offered at all — `unresolvedCompletions` asked of the other states.
+   *
+   *  That read returns only `pending` and `failed`, which is right for a hold
+   *  and blind as a clearance: an accepted completion and a commit nobody ever
+   *  reviewed are the same empty answer. Crew's publication gate read that
+   *  silence as "nothing is holding this" and left four commits publishable
+   *  to a PUBLIC remote by any seat's push for the seven minutes between a
+   *  technical PASS resolving the only completion naming them and a security
+   *  clearance first being filed — the pass is what opened the gate, and
+   *  nothing happened to ride out through it (H-3029). So this read states
+   *  facts about every state, including the absence of one.
+   *
+   *  It does NOT say whether that is enough. How many reviews a destination
+   *  requires is policy, and acceptance.ts §2.5 deliberately leaves it to the
+   *  caller; the exit code of `acceptance-coverage` carries no verdict for the
+   *  same reason. The decision each row reports is the same
+   *  `productAcceptance` every other reader runs, and the standing-verdict
+   *  rule is `standingVerdicts` itself rather than a second derivation of it.
+   */
+  acceptanceCoverage(refs: string[]): AcceptanceCoverage[] {
+    // An unnamed question would be answered by every completion in the store,
+    // which no caller means — and the ref validator's wording is about a
+    // verdict's own refs, which is not what was asked here.
+    if (!refs?.length) throw new HelmoError('Say which commits to ask about: the exact refs, each repo@<40hex>.');
+    // Validated by the same rule as a verdict's refs — which also sorts them,
+    // and the sorted order is not the one to answer in: a caller asks about an
+    // outgoing range in git's order, and a person reading the rows back wants
+    // the commits as they listed them. So the refusals come from `normalizeRefs`
+    // and the row order from the question.
+    const asked = refs.map((r) => r.trim());
+    normalizeRefs(asked);
+    // Every completion that ever named one of these refs, current or
+    // superseded, as one bounded query — the same shape unresolvedCompletions
+    // uses, keeping the ref and now also the completion's own seq so a later
+    // offer can be told from the standing one.
+    const rows = this.db
+      .prepare(
+        `WITH completed(ticket_id, seq, ref) AS (
+           SELECT e.ticket_id, e.seq, json_extract(a.value, '$.ref')
+             FROM events e, json_each(e.payload, '$.artifacts') a
+            WHERE e.event_type = 'product_completed'
+         )
+         SELECT DISTINCT ticket_id, seq, ref FROM completed
+          WHERE ref IN (${asked.map(() => '?').join(',')})`,
+      )
+      .all(...asked) as { ticket_id: string; seq: number; ref: string }[];
+    const covering = new Map<string, CoveringCompletion>();
+    const byRef = new Map(asked.map((ref) => [ref, { ref, completions: [], superseded: [] } as AcceptanceCoverage]));
+    for (const row of rows) {
+      const here = byRef.get(row.ref)!;
+      let judged = covering.get(row.ticket_id);
+      if (!judged) {
+        const acceptance = this.productAcceptance(row.ticket_id);
+        // A completion row exists, so the projection cannot be not_requested.
+        judged = {
+          ticket_id: row.ticket_id,
+          state: acceptance.state as CoveringCompletion['state'],
+          reason: acceptance.reason,
+          completion_seq: acceptance.completion!.seq,
+          reviewers: standingVerdicts(acceptance.verdicts).map((v) => ({ name: v.actor.name, verdict: v.verdict, seq: v.seq })),
+        };
+        covering.set(row.ticket_id, judged);
+      }
+      // Only the ticket's CURRENT offer is coverage: a verdict answers the
+      // offer it was recorded against, and an earlier completion's refs are
+      // not what the ticket stands behind (acceptance.ts §2.1). A ref dropped
+      // from a re-offered manifest therefore reports as superseded, not as
+      // judged — it has no standing verdict even though its ticket does.
+      if (judged.completion_seq === row.seq) here.completions.push(judged);
+      else if (!here.superseded.includes(row.ticket_id)) here.superseded.push(row.ticket_id);
+    }
+    for (const here of byRef.values()) {
+      here.completions.sort((a, b) => a.completion_seq - b.completion_seq);
+      // A ticket both ways round — an earlier offer and the standing one both
+      // naming this ref — is coverage, not a supersession to report.
+      here.superseded = here.superseded.filter((id) => !here.completions.some((c) => c.ticket_id === id)).sort();
+    }
+    return [...byRef.values()];
   }
 
   /** Latest recorded human-readable update for each requested ticket. This is

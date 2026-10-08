@@ -76,7 +76,7 @@ For Claude Code: `claude mcp add helmo -e HELMO_ACTOR='{"name":"...","kind":"age
 Tools include ticket creation, reading, updates, links, human questions and
 answers, workstream budgets and seats, record-hygiene scanning and disposition, plus
 `helmo_record_product_completion`, `helmo_record_acceptance_verdict`,
-`helmo_check_product_acceptance`, and `helmo_acceptance_holds`. The tool descriptions teach correct usage;
+`helmo_check_product_acceptance`, `helmo_acceptance_holds`, and `helmo_acceptance_coverage`. The tool descriptions teach correct usage;
 no separate convention doc is required.
 
 Workflow-bound tickets use immutable definitions, attempts, manifests,
@@ -120,6 +120,21 @@ It lists every completion still pending or failed on that repo's commits, with
 the ticket holding it, and exits zero only when there are none. Ticket status
 does not participate: a closed ticket holds an outstanding verdict exactly as
 an open one does. `--refs '[...]'` asks about one exact manifest instead.
+
+An empty answer there means nothing recorded is holding those commits — never
+that anyone reviewed them. Who HAS judged them is a second question:
+
+```
+helmo-cli acceptance-coverage \
+  --refs '["helmo@0123456789abcdef0123456789abcdef01234567"]'
+```
+
+Each commit comes back with the tickets whose current completion names it,
+their acceptance state, and each reviewer's own standing verdict — so one
+reviewer having passed it reads differently from nobody having been asked,
+which through the holds read alone it does not. It exits zero whatever it
+finds: how many reviews a destination requires is the caller's policy, not a
+fact this record holds.
 Actor names, models, harness versions, and authors are provenance asserted by
 the callers; Helmo records and checks those assertions but does not authenticate
 their real-world identities.

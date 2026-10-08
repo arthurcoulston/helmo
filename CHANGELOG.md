@@ -28,6 +28,22 @@ longer.
   plays no part, which is the whole point of it. An empty answer means nothing
   on the record is holding those commits — never that they were reviewed.
 
+- The same gate can now be asked who has CLEARED a commit, not only what is
+  still holding it. The hold read answers with completions still pending or
+  failed, so an accepted review and a commit nobody ever offered come back
+  identically empty — and a publication gate reading that silence as "nothing
+  is holding this" left four commits publishable to a public remote by any
+  push for seven minutes, from one reviewer's PASS resolving the only
+  completion naming them until the second review was first filed. The pass is
+  what opened the gate, and nothing rode out through it.
+  `helmo-cli acceptance-coverage --refs '[...]'` and
+  `helmo_acceptance_coverage` state the facts instead: per commit, the tickets
+  whose current offer names it, that offer's state, each reviewer's own
+  standing verdict, the tickets that named it only in a superseded offer, and
+  an empty list when nobody has offered it at all. It never judges whether the
+  review was enough — how many reviews a destination requires is the caller's
+  policy, and the record deliberately does not answer it.
+
 - Team now says what each member is configured to carry into a session, and what
   its sessions have spent. A row gives the seat, a composition bar over its
   configured context and the period's tokens and notional dollars; opening one

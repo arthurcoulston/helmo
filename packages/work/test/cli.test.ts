@@ -568,3 +568,42 @@ describe('acceptance-holds answers the gate by commit (H-3012)', () => {
     expect(neither.stderr).toContain('Say what to ask about');
   });
 });
+
+// H-3031. The gate's other question, on the surface crew's publication gate
+// actually reads: it spawns this CLI and parses the JSON on stdout. What it
+// needs and `acceptance-holds` cannot give it is the difference between a
+// commit one reviewer passed and a commit nobody was ever asked about.
+describe('acceptance-coverage says who has judged a commit (H-3031)', () => {
+  const reviewer: Actor = { name: 'proof', kind: 'agent', model: 'gpt-6-astra', version: 'rev 0.4' };
+  const sha = 'a'.repeat(40);
+  const unoffered = 'b'.repeat(40);
+
+  it('answers both commits, and exits 0 either way because sufficiency is the caller\'s policy', () => {
+    const s = new Store(dbPath);
+    s.recordProductCompletion(orch, { ticket_id: ticket, artifacts: [{ ref: `helmo@${sha}`, author: 'mason' }], note: 'Ready for the technical read.' });
+    s.recordAcceptanceVerdict(reviewer, { ticket_id: ticket, refs: [`helmo@${sha}`], verdict: 'pass', note: 'Suite green; read the diff.' });
+    s.close();
+
+    // The hold read is silent about both — the silence that left four
+    // commits publishable to a public remote with no clearance filed (H-3029).
+    expect(cli('acceptance-holds', '--refs', JSON.stringify([`helmo@${sha}`, `helmo@${unoffered}`])).status).toBe(0);
+
+    const r = cli('acceptance-coverage', '--refs', JSON.stringify([`helmo@${sha}`, `helmo@${unoffered}`]));
+    expect(r.status).toBe(0);
+    expect(JSON.parse(r.stdout).coverage).toMatchObject([
+      { ref: `helmo@${sha}`, completions: [{ ticket_id: ticket, state: 'accepted', reviewers: [{ name: 'proof', verdict: 'pass' }] }] },
+      { ref: `helmo@${unoffered}`, completions: [], superseded: [] },
+    ]);
+  });
+
+  it('reports a bad question on stderr rather than an empty answer', () => {
+    const none = cli('acceptance-coverage');
+    expect(none.status).toBe(1);
+    expect(none.stderr).toContain('--refs');
+    expect(none.stdout).toBe('');
+
+    const empty = cli('acceptance-coverage', '--refs', '[]');
+    expect(empty.status).toBe(1);
+    expect(empty.stderr).toContain('Say which commits');
+  });
+});

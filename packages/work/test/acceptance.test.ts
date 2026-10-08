@@ -346,3 +346,114 @@ describe('acceptance holds asked by commit', () => {
     expect(() => s.unresolvedCompletions({ refs: [] })).toThrow(/Say what to ask about/);
   });
 });
+
+// H-3031. The other end of the same read. `unresolvedCompletions` returns only
+// `pending` and `failed`, so an accepted review and a commit nobody ever
+// offered are one empty answer — and crew's publication gate, reading that
+// silence as "nothing is holding this", left four commits publishable to a
+// PUBLIC remote by any seat's push for seven minutes: from a technical PASS
+// resolving the only completion naming them until a security clearance was
+// first filed (H-3029). The pass is what opened the gate; nothing rode out
+// through it. These tests are the two situations told apart.
+describe('acceptance coverage: who has judged a commit', () => {
+  const ward: Actor = { name: 'ward', kind: 'agent', model: 'gpt-6-astra', version: 'rev 0.4', session: 'rev:ward' };
+
+  function offer(s: Store, refs: string[], author = builder.name) {
+    const t = ticket(s);
+    s.recordProductCompletion(builder, {
+      ticket_id: t.id,
+      artifacts: refs.map((ref) => ({ ref, author })),
+      note: 'This exact source is ready for review.',
+    });
+    return t.id;
+  }
+
+  function pass(s: Store, id: string, refs: string[], who: Actor) {
+    s.recordAcceptanceVerdict(who, { ticket_id: id, refs, verdict: 'pass', note: 'Reviewed and cleared.' });
+  }
+
+  it('tells one reviewer having passed apart from nobody having been asked — which the holds read cannot', () => {
+    const s = new Store(':memory:');
+    const id = offer(s, [sha('a')], 'someone-else');
+    pass(s, id, [sha('a')], proof);
+
+    // The defect, stated: both commits read identically to the gate's hold read.
+    expect(s.unresolvedCompletions({ refs: [sha('a')] })).toEqual([]);
+    expect(s.unresolvedCompletions({ refs: [sha('9')] })).toEqual([]);
+
+    const [reviewed, never] = s.acceptanceCoverage([sha('a'), sha('9')]);
+    expect(reviewed).toEqual({
+      ref: sha('a'),
+      completions: [{
+        ticket_id: id,
+        state: 'accepted',
+        reason: 'independently_accepted',
+        completion_seq: expect.any(Number),
+        reviewers: [{ name: 'proof', verdict: 'pass', seq: expect.any(Number) }],
+      }],
+      superseded: [],
+    });
+    expect(never).toEqual({ ref: sha('9'), completions: [], superseded: [] });
+  });
+
+  it('reports each reviewer once, as their own standing verdict, and both sides of a disagreement', () => {
+    const s = new Store(':memory:');
+    const id = offer(s, [sha('b')], 'someone-else');
+    s.recordAcceptanceVerdict(proof, { ticket_id: id, refs: [sha('b')], verdict: 'fail', note: 'The guard cannot fire.' });
+    pass(s, id, [sha('b')], proof); // the same reviewer, changing their mind
+    s.recordAcceptanceVerdict(ward, { ticket_id: id, refs: [sha('b')], verdict: 'fail', note: 'A secret rides in the history.' });
+
+    const [row] = s.acceptanceCoverage([sha('b')]);
+    expect(row.completions[0]!.reviewers).toEqual([
+      { name: 'proof', verdict: 'pass', seq: expect.any(Number) },
+      { name: 'ward', verdict: 'fail', seq: expect.any(Number) },
+    ]);
+    // §2.2 governs here exactly as it does in the per-ticket read: proof's
+    // earlier FAIL is not a third row, and ward's standing FAIL is the state.
+    expect(row.completions[0]!.state).toBe('failed');
+    expect(s.productAcceptance(id).reason).toBe('contested');
+  });
+
+  it('carries a pending completion too, so an unanswered offer is coverage of a kind', () => {
+    const s = new Store(':memory:');
+    const id = offer(s, [sha('c')]);
+
+    expect(s.acceptanceCoverage([sha('c')])).toMatchObject([
+      { ref: sha('c'), completions: [{ ticket_id: id, state: 'pending', reason: 'missing_verdict', reviewers: [] }] },
+    ]);
+  });
+
+  it('counts only the standing offer as coverage, and says the dropped commit was once offered', () => {
+    const s = new Store(':memory:');
+    const id = offer(s, [sha('d')]);
+    s.recordProductCompletion(builder, {
+      ticket_id: id,
+      artifacts: [{ ref: sha('e'), author: builder.name }],
+      note: 'The remediation replaces it; review this instead.',
+    });
+
+    const [dropped, standing] = s.acceptanceCoverage([sha('d'), sha('e')]);
+    expect(dropped).toEqual({ ref: sha('d'), completions: [], superseded: [id] });
+    expect(standing.completions.map((c) => c.ticket_id)).toEqual([id]);
+    expect(standing.superseded).toEqual([]);
+  });
+
+  it('gathers every ticket that offered one commit, oldest offer first', () => {
+    const s = new Store(':memory:');
+    const first = offer(s, [sha('f')], 'someone-else');
+    const second = offer(s, [sha('f'), sha('8')], 'someone-else');
+    pass(s, first, [sha('f')], proof);
+
+    const [row] = s.acceptanceCoverage([sha('f')]);
+    expect(row.completions.map((c) => [c.ticket_id, c.state])).toEqual([[first, 'accepted'], [second, 'pending']]);
+  });
+
+  it('answers about exactly the commits it was asked about, and refuses an unanswerable question', () => {
+    const s = new Store(':memory:');
+    offer(s, [sha('a'), sha('b')]);
+
+    expect(s.acceptanceCoverage([sha('a')]).map((r) => r.ref)).toEqual([sha('a')]);
+    expect(() => s.acceptanceCoverage([])).toThrow(/Say which commits/);
+    expect(() => s.acceptanceCoverage(['helmo@abc1234'])).toThrow(/not immutable/);
+  });
+});

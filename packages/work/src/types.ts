@@ -140,6 +140,43 @@ export interface UnresolvedCompletion {
   completion_seq: number;
 }
 
+/** One ticket whose CURRENT completion names a commit a caller asked about —
+ *  the row `acceptanceCoverage` reports under each ref. Where
+ *  `UnresolvedCompletion` says what is still holding a commit, this says who
+ *  has judged it, including when the answer is "one reviewer, and nobody
+ *  asked a second" (H-3031). */
+export interface CoveringCompletion {
+  ticket_id: string;
+  /** Every state a completion can be in, `accepted` included — the one
+   *  `UnresolvedCompletion` cannot carry, and the one a publication gate has
+   *  to see to know a review happened at all. */
+  state: Exclude<ProductAcceptance['state'], 'not_requested'>;
+  reason: ProductAcceptance['reason'];
+  /** `seq` of that completion — when the work was offered. */
+  completion_seq: number;
+  /** Each reviewer's OWN standing verdict on that completion
+   *  (VERDICT-SET-CONTRACT §2.2), in the order they first qualified.
+   *  Superseded earlier opinions by the same reviewer are not here; a
+   *  disagreement between two reviewers is, as two rows. Every reviewer
+   *  listed is independent of the completion's writer and of its artifacts'
+   *  authors, because a verdict that is not never qualifies. */
+  reviewers: { name: string; verdict: 'pass' | 'fail'; seq: number }[];
+}
+
+/** What the record knows about one commit a caller named. An empty
+ *  `completions` means nobody has offered this commit for review — the
+ *  situation an `acceptance-holds` read cannot distinguish from a cleared one,
+ *  and the whole point of this read. */
+export interface AcceptanceCoverage {
+  ref: string;
+  completions: CoveringCompletion[];
+  /** Tickets that named this ref only in a completion since superseded by a
+   *  later offer. Their verdicts answer an offer nobody is standing behind, so
+   *  they are not coverage — but a reader deciding whether a commit was ever
+   *  looked at needs to see that it once was. */
+  superseded: string[];
+}
+
 export interface ReleaseHandoffReceipt {
   path: string;
   sha256: string;

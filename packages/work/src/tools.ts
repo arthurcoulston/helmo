@@ -617,5 +617,23 @@ Workstream-level findings have no ticket_id and cannot be disposed.`,
     },
   );
 
+  server.registerTool(
+    'helmo_acceptance_coverage',
+    {
+      description:
+        `Who has judged commits you name — the question helmo_acceptance_holds cannot answer, because it returns only pending and failed, so an accepted review and a commit nobody ever offered are the same empty answer. Each asked ref comes back with every ticket whose CURRENT completion names it, that completion's acceptance state, and each reviewer's own standing verdict; a commit nobody offered comes back with an empty list, which is how silence is read as silence. Ask this before publishing anything, alongside the holds read: nothing here says the review was SUFFICIENT — how many reviews a destination requires is policy, not a fact this store holds. For a process exit suitable for release scripts, use helmo-cli acceptance-coverage.`,
+      inputSchema: strict({
+        refs: z.array(z.string()).describe('Exact refs, each repo@<40hex>'),
+      }),
+    },
+    async ({ refs }) => {
+      try {
+        return ok({ coverage: store.acceptanceCoverage(refs) });
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
+
   return server;
 }

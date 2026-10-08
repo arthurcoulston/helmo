@@ -24,8 +24,13 @@ export function roadmapHealth() {
 }
 
 export function roadmapSnapshot() {
-  const projects = (store.dumpState()['projects'] as Project[]).map((project) => ({
+  const all = store.dumpState()['projects'] as Project[];
+  // The note a reader sees first when a row is expanded (H-2988). Batched for
+  // the whole list, like Work's, rather than read per project as the view draws.
+  const progress = store.latestProgress(all.map((p) => p.id));
+  const projects = all.map((project) => ({
     ...project,
+    progress: progress.get(project.id) ?? null,
     usage_disclosure: {
       value: project.actual_usd,
       basis: 'ticket_cost_usd_rollup_legacy_mixed_unknown',

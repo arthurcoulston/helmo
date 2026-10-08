@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
-import { excerpt, expandColumn, RecordTable, recordColumn, type RecordColumn } from "./RecordTable"
+import { expandColumn, RecordPreview, RecordTable, recordColumn, time, type RecordColumn } from "./RecordTable"
 import { acceptanceRole, StatusAlert, StatusBadge, ticketStateRole, type StatusRole } from "./Status"
 
 type Evidence = { kind: string; ref: string; note?: string; role?: string }
@@ -39,10 +39,6 @@ type Row = {
 export type WorkRecordData = {
   whole: boolean; closed_tail: number; total: number; rows: Row[]
   hygiene: { check: string; ticket_id?: string; workstream?: string; detail: string }[]
-}
-
-function time(value: string) {
-  return new Date(value).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
 }
 
 export function CopyReference({ value }: { value: string }) {
@@ -288,7 +284,7 @@ export function TicketRecordContent({ row, standing = [] }: { row: Row; standing
     {standing.length ? <Alert><AlertTitle>Not ready to start</AlertTitle><AlertDescription>
       <div className="flex flex-col gap-1">{standing.map((line) => <span key={line}>{line}</span>)}</div>
     </AlertDescription></Alert> : null}
-    {d.progress ? <p>Last recorded update {time(d.progress.at)} by {d.progress.actor.name}: {d.progress.note}</p> : null}
+    {d.progress ? <p>Last recorded progress {time(d.progress.at)} by {d.progress.actor.name}: {d.progress.note}</p> : null}
     {row.sitting ? <p>Needs a sitting: {row.sitting}</p> : null}
     {row.status === "done" ? <Results row={row} /> : null}
     <TicketDetails id={row.id} revision={row.updated_at} drawn />
@@ -403,15 +399,12 @@ export function WorkRecord({ data, selected }: { data: WorkRecordData; selected:
         expanded={expanded}
         onExpandedChange={setExpanded}
         empty="No work in this section."
-        renderExpanded={(row) => {
-          const { text, truncated } = excerpt(row.body ?? "")
-          return <div className="flex flex-col items-start gap-2">
-            <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground [overflow-wrap:anywhere]">{text || "This record has no description."}</p>
-            <Button variant="outline" size="sm" onClick={(event) => openRecord(row.id, event.currentTarget)}>
-              {truncated ? "Open full view — this is the record's opening only" : "Open full view"}
-            </Button>
-          </div>
-        }}
+        renderExpanded={(row) => <RecordPreview
+          progress={row.display.progress}
+          body={row.body ?? ""}
+          openLabel={`${row.id} ${row.title}`}
+          onOpen={(from) => openRecord(row.id, from)}
+        />}
       />
     </section> : null)}
     {!data.rows.length ? <p className="text-muted-foreground text-sm">No work has been recorded.</p> : null}

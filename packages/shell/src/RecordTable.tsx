@@ -21,11 +21,79 @@ export type RecordColumn<T extends RowData> = ColumnDef<typeof features, T>
    sentence here would put a meaning in front of Arthur that nobody wrote.
    Nothing is lost: the full record is one control away. */
 export function excerpt(text: string, limit = 320) {
-  const whole = text.trim()
-  if (whole.length <= limit) return { text: whole, truncated: false }
-  const cut = whole.slice(0, limit)
+  /* By code point, not by UTF-16 unit: a limit landing inside a surrogate pair
+     cuts an emoji in half and the browser draws the replacement character. The
+     same reason `boundNote` counts this way, and the same rule — the two are
+     pinned together by `test/record-preview.test.mjs`, because the shell is a
+     browser bundle and cannot import the package the server bounds notes in. */
+  const whole = Array.from(text.trim())
+  if (whole.length <= limit) return { text: whole.join(""), truncated: false }
+  const cut = whole.slice(0, limit).join("")
   const boundary = cut.lastIndexOf(" ")
   return { text: `${(boundary > limit / 2 ? cut.slice(0, boundary) : cut).trimEnd()}…`, truncated: true }
+}
+
+/** The latest authored progress note a row carries, as both areas' servers
+    send it: already bounded there by `boundNote`, never re-cut here. */
+export type LatestProgress = { at: string; note: string; actor: { name: string } } | null
+
+/* The one date format a row and its preview use. */
+export function time(value: string) {
+  return new Date(value).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+}
+
+/* What an expanded row shows, and the one place both areas decide what that is.
+
+   Two readings, each labelled for what it IS, because neither is a description
+   and no stored field is one:
+
+   - The latest recorded progress note. Arthur chose this over adding an
+     author-written description field (H-2988): every live ticket has a note and
+     35 of 47 projects do, so it is useful today, where a new field would land
+     empty on three thousand existing records and tax every filing after.
+   - The record's own opening, verbatim and cut at a word boundary.
+
+   BOTH, rather than whichever is better, because each one alone goes blind on
+   real records: measured on the live store, seven of the 34 live tickets share
+   their latest note byte-for-byte with another's and three share their opening,
+   and they are not the same records. A cluster filed in one pass has one
+   paragraph of provenance; a cluster moved in one pass has one note. Showing
+   both means no record is drawn identically to its neighbour on both counts.
+
+   What this never does is derive a sentence. A summary composed here would read
+   as authored, pass every test written beside it, and put a meaning in front of
+   Arthur that nobody wrote. */
+export function RecordPreview({ progress, body, onOpen, openLabel }: {
+  progress: LatestProgress
+  body: string
+  onOpen: (from: HTMLElement) => void
+  /* What the full-record control is called for screen readers, which read it
+     out of context: "Open full view" alone is ambiguous once a page has one per
+     expanded row. */
+  openLabel: string
+}) {
+  const { text, truncated } = excerpt(body ?? "")
+  const label = "text-foreground text-xs font-medium uppercase tracking-wide"
+  return <div className="flex min-w-0 flex-col items-start gap-3 text-sm text-muted-foreground">
+    <div className="flex min-w-0 flex-col gap-1">
+      <span className={label}>Where it stands</span>
+      {progress
+        ? <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+            {progress.note}
+            {" "}
+            <span className="whitespace-nowrap">— {progress.actor.name}, {time(progress.at)}</span>
+          </p>
+        : <p>No progress has been recorded on this record yet.</p>}
+    </div>
+    <div className="flex min-w-0 flex-col gap-1">
+      <span className={label}>The record opens</span>
+      <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{text || "This record has no description."}</p>
+    </div>
+    <Button variant="outline" size="sm" onClick={(event) => onOpen(event.currentTarget)}>
+      {truncated ? "Open full view — this is the record's opening only" : "Open full view"}
+      <span className="sr-only">: {openLabel}</span>
+    </Button>
+  </div>
 }
 
 /* The first column carries the record itself and takes whatever width is left
@@ -100,7 +168,7 @@ export function RecordTable<T extends RowData>({ label, minWidth, aboveFold, col
      not — so Work's State column started at x317 in two groups and x340 in the
      third, and the eye had no straight edge to run down. Fixed layout takes
      every width from the header row, and the groups all share one of those. */
-  return <div className="min-w-0 overflow-hidden rounded-md border" role="region" aria-label={`${label} — scroll horizontally for all columns`}>
+  return <div className="@container min-w-0 overflow-hidden rounded-md border" role="region" aria-label={`${label} — scroll horizontally for all columns`}>
     <Table tabIndex={0} aria-label={label} data-above-fold={aboveFold.join(" ")} className={`table-fixed ${minWidth}`}>
       <TableHeader>{table.getHeaderGroups().map((group) => <TableRow key={group.id} className="hover:bg-transparent">
         {/* `data-column` is how the browser verification addresses a column —
@@ -120,7 +188,18 @@ export function RecordTable<T extends RowData>({ label, minWidth, aboveFold, col
             </TableCell>)}
           </TableRow>
           {row.getIsExpanded() ? <TableRow className="hover:bg-transparent">
-            <TableCell colSpan={columns.length} data-expanded-for={row.id} className="whitespace-normal bg-muted/50 px-3 pb-3">{renderExpanded(row.original)}</TableCell>
+            {/* The preview reads at the window's width, not the table's. A
+                disclosure cell spans every column, so it inherited the table's
+                min-width: at 390 a third of every line of Work's preview sat
+                past the fold and had to be scrolled to line by line, which is
+                the opposite of a short reading. Sticky to the scrollport's left
+                edge, sized by the region around the table — which is the width
+                actually available — so the words wrap where the reader can see
+                them while the COLUMNS above still scroll. `verify:ui` measures
+                it at 390. */}
+            <TableCell colSpan={columns.length} data-expanded-for={row.id} className="whitespace-normal bg-muted/50 px-3 pb-3">
+              <div className="sticky left-0 w-[calc(100cqi-1.5rem)] min-w-0">{renderExpanded(row.original)}</div>
+            </TableCell>
           </TableRow> : null}
         </React.Fragment>) : <TableRow className="hover:bg-transparent">
           <TableCell colSpan={columns.length} className="h-16 whitespace-normal text-center text-muted-foreground">{empty}</TableCell>

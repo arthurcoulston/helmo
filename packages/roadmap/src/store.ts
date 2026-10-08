@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { boundNote, LatestProgress } from '@helmo/core';
 import {
   ACTOR_KINDS, Actor, ActorKind, Bet, Citation, Claim, Dep, DepType, EFFORT_SIZES, Horizon, Objective,
   Project, ProjectSnapshot, Ranked, ReadinessReview, ReadinessVerdict, RoadmapError, RoadmapEvent, SHIPPED, Status, TERMINAL, VALUE_LEVELS,
@@ -256,6 +257,44 @@ export class Store {
     const fails = verdicts.filter((v) => v.verdict === 'fail').length;
     const passes = verdicts.filter((v) => v.verdict === 'pass').length;
     return { reviewed_revision, state: fails ? (passes ? 'contested' : 'failed') : 'ready', verdicts };
+  }
+
+  /** The latest authored progress note per project, in the shape Work's store
+   *  returns for a ticket — the rows of both areas are drawn through one shared
+   *  preview, so they have to carry one field (H-2988).
+   *
+   *  'actual_recorded' is excluded for the same reason Work's `latestProgress`
+   *  excludes 'spend': a cost rollup is accounting, and "Rollup of 10 tickets
+   *  tagged project R-10 via helmo work get + cost_usd_total sum" shown as where
+   *  R-10 stands tells the reader nothing about the project. Measured on the
+   *  live record before excluding it — four projects' newest note is a rollup,
+   *  and all four have an earlier 'updated' note behind it, so the exclusion
+   *  costs no coverage at all.
+   *
+   *  A project with no note is absent rather than empty: twelve parked projects
+   *  have never been updated since they were filed, and the preview says so in
+   *  words instead of drawing a blank line. */
+  latestProgress(projectIds: string[]): Map<string, LatestProgress> {
+    const ids = [...new Set(projectIds)];
+    if (!ids.length) return new Map();
+    const placeholders = ids.map(() => '?').join(',');
+    const rows = this.db
+      .prepare(
+        `SELECT e.subject_id, e.ts, e.actor, json_extract(e.payload, '$.note') AS note
+           FROM events e
+           JOIN (
+             SELECT subject_id, MAX(seq) AS seq FROM events
+              WHERE subject_id IN (${placeholders}) AND event_type = 'updated'
+                AND json_type(payload, '$.note') = 'text'
+                AND TRIM(json_extract(payload, '$.note')) != ''
+              GROUP BY subject_id
+           ) latest ON latest.seq = e.seq`,
+      )
+      .all(...ids) as { subject_id: string; ts: string; actor: string; note: string }[];
+    return new Map(rows.map((r) => {
+      const actor = JSON.parse(r.actor) as Actor;
+      return [r.subject_id, { at: r.ts, note: boundNote(r.note), actor: { name: actor.name, kind: actor.kind } }];
+    }));
   }
 
   getEvents(subjectId: string): RoadmapEvent[] {

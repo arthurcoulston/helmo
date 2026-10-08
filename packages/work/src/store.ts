@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { boundNote } from '@helmo/core';
 import { projectAcceptance, standingVerdicts } from './acceptance.js';
 import { namesInstallation, type Installation } from './install.js';
 import { actionFingerprint, questionFingerprint } from './presentation.js';
@@ -1513,7 +1514,7 @@ export class Store {
       .all(...ids) as { ticket_id: string; ts: string; actor: string; note: string }[];
     return new Map(rows.map((r) => {
       const actor = JSON.parse(r.actor) as Actor;
-      const note = Array.from(r.note).slice(0, 280).join('');
+      const note = boundNote(r.note);
       return [r.ticket_id, { at: r.ts, note, actor: { name: actor.name, kind: actor.kind } }];
     }));
   }

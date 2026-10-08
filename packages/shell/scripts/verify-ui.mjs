@@ -112,6 +112,13 @@ const longWork = create('A work record whose opening is not the work', {
   assignee: 'fixture-member',
   body: `${'Filing provenance recorded when this ticket was last reconciled, which is context rather than the work itself. '.repeat(5)}\n\nOutcome: the thing a reader actually wants from this record.`,
 });
+/* And a progress note longer than the 280 characters the store sends, so the
+   bound is proved where a reader meets it. Until H-2988 the cut was a hard
+   slice at exactly 280: it landed mid-word on 1,787 of the 2,066 notes in the
+   live store and said nothing about having cut, which is the one failure a
+   reader cannot see — a half-word reads as a finished sentence. */
+const LONG_NOTE = 'Reconciled the fixture record against the real one and found the same drift again. '.repeat(5).trim();
+store.updateTicket(actor, { ticket_id: longWork.id, note: LONG_NOTE });
 
 const decision = create('A decision awaiting the operator');
 store.returnToHuman(actor, decision.id, { situation: 'Fixture situation', question: 'Use the standard baseline?', recommendation: 'Use the selected baseline.' });
@@ -326,14 +333,46 @@ try {
   await page.locator(`tr#${blocked.id}`).getByText('On hold', { exact: true }).waitFor();
   assert.equal(await page.locator(`tr#${blocked.id}`).getByText('Waiting for the chosen spending window').count(), 0, "a hold's reason belongs in the record");
   await page.locator(`tr#${longWork.id}`).getByText('fixture-member', { exact: true }).waitFor();
-  // The one short reading a row offers is the record's own opening, bounded.
+  /* An expanded row offers two readings and labels each for what it IS: where
+     the record stands, from its latest progress note, and how it opens,
+     verbatim. Neither is a summary, because no stored field is one (H-2988). */
   await page.locator(`tr#${longWork.id}`).getByRole('button', { name: `Summary of ${longWork.id}`, exact: true }).click();
   const opening = page.locator(`[data-expanded-for="${longWork.id}"]`);
-  const shown = await opening.locator('p').innerText();
-  assert.ok(shown.startsWith('Filing provenance recorded when'), `the preview is not the record's opening: ${shown.slice(0, 40)}`);
-  assert.ok(shown.length <= 321 && shown.endsWith('…'), `the preview is not bounded: ${shown.length} characters`);
+  await opening.getByText('Where it stands', { exact: true }).waitFor();
+  await opening.getByText('The record opens', { exact: true }).waitFor();
+  const stands = await opening.locator('p').first().innerText();
+  // The author's own words, cut at a word boundary, the cut admitted, attributed.
+  const visible = stands.split('…')[0];
+  assert.ok(stands.includes('…'), `the bounded note must admit its cut: ${stands}`);
+  assert.ok(LONG_NOTE.startsWith(visible), `the note shown is not the author's own words: ${visible.slice(0, 40)}`);
+  assert.equal(LONG_NOTE[visible.length], ' ', `the note must be cut at a word boundary, not mid-word: "${visible.slice(-20)}"`);
+  assert.match(stands, /— fixture, /, 'a progress note must say who recorded it and when');
+  const shown = await opening.locator('p').nth(1).innerText();
+  assert.ok(shown.startsWith('Filing provenance recorded when'), `the second reading is not the record's opening: ${shown.slice(0, 40)}`);
+  assert.ok(shown.length <= 321 && shown.endsWith('…'), `the opening is not bounded: ${shown.length} characters`);
   assert.equal(await opening.getByRole('button', { name: 'History', exact: true }).count(), 0, 'an expanded row carries no history');
-  await opening.getByRole('button', { name: /^Open full view/ }).waitFor();
+  /* And the control names the record it opens, for a reader who meets it out of
+     context: a page with one "Open full view" per expanded row says nothing.
+     Read as text rather than as an accessible name, so the assertion is about
+     the words rather than about how a name is composed from them. */
+  const fullView = opening.getByRole('button', { name: /^Open full view/ });
+  await fullView.waitFor();
+  const fullViewLabel = (await fullView.textContent()).trim();
+  assert.match(fullViewLabel, /^Open full view — this is the record's opening only/);
+  assert.ok(fullViewLabel.includes(longWork.id), `the full-view control must name its record: ${fullViewLabel}`);
+  /* And a record nobody has recorded progress on says so, rather than drawing a
+     blank line where a reader expects words. Twelve parked projects are in this
+     state on the live record. */
+  const unnotedToggle = page.locator(`tr#${ready.id}`).getByRole('button', { name: `Summary of ${ready.id}`, exact: true });
+  await unnotedToggle.click();
+  const unnoted = page.locator(`[data-expanded-for="${ready.id}"]`);
+  await unnoted.getByText('No progress has been recorded on this record yet.', { exact: true }).waitFor();
+  // A record short enough to be shown whole does not claim to be an excerpt.
+  const wholeView = unnoted.getByRole('button', { name: /^Open full view/ });
+  await wholeView.waitFor();
+  assert.equal((await wholeView.textContent()).trim(), `Open full view: ${ready.id} ${ready.title}`);
+  await unnotedToggle.click();
+  await unnoted.waitFor({ state: 'detached' });
   // Expansion and focus are the reader's state, and a poll may move neither.
   await page.getByRole('button', { name: `Copy ${ready.id}`, exact: true }).click();
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), ready.id);
@@ -349,7 +388,7 @@ try {
   await record.getByText('On hold · Waiting for the chosen spending window', { exact: true }).waitFor();
   // Work's history is written out under its own heading, not behind a toggle.
   await record.getByRole('heading', { name: 'History', exact: true }).waitFor();
-  await record.getByText(/Last recorded update .* by fixture: Held by the fixture operator\./).waitFor();
+  await record.getByText(/Last recorded progress .* by fixture: Held by the fixture operator\./).waitFor();
   await record.locator(`[aria-label="${blocked.id} history"]`).getByText('Held by the fixture operator.', { exact: true }).waitFor();
   await record.getByRole('button', { name: `Copy ${blocked.id}`, exact: true }).click();
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), blocked.id);
@@ -446,14 +485,28 @@ try {
     1,
     'the row must not render the same ranking fact twice',
   );
-  // An expanded row is the record's opening, bounded, and nothing else.
+  /* The same two labelled readings as Work, from the same component, over
+     Roadmap's own progress note — which is the project's latest 'updated' note
+     and never its cost rollup. */
   await page.locator(`tr#${unruly.id}`).getByRole('button', { name: `Summary of ${unruly.id}`, exact: true }).click();
   const summary = page.locator(`[data-expanded-for="${unruly.id}"]`);
-  const preview = await summary.locator('p').innerText();
-  assert.ok(preview.startsWith('Filing provenance recorded when'), `the preview is not the record's opening: ${preview.slice(0, 40)}`);
-  assert.ok(preview.length <= 321 && preview.endsWith('…'), `the preview is not bounded: ${preview.length} characters`);
+  await summary.getByText('Where it stands', { exact: true }).waitFor();
+  await summary.getByText('The record opens', { exact: true }).waitFor();
+  assert.match(await summary.locator('p').first().innerText(), /^Parked by the fixture operator\. — fixture, /);
+  const preview = await summary.locator('p').nth(1).innerText();
+  assert.ok(preview.startsWith('Filing provenance recorded when'), `the second reading is not the record's opening: ${preview.slice(0, 40)}`);
+  assert.ok(preview.length <= 321 && preview.endsWith('…'), `the opening is not bounded: ${preview.length} characters`);
   assert.equal(await summary.getByRole('button', { name: 'History', exact: true }).count(), 0, 'an expanded row carries no history');
-  await summary.getByRole('button', { name: /^Open full view/ }).waitFor();
+  const projectView = summary.getByRole('button', { name: /^Open full view/ });
+  await projectView.waitFor();
+  const projectViewLabel = (await projectView.textContent()).trim();
+  assert.match(projectViewLabel, /^Open full view — this is the record's opening only/);
+  assert.ok(projectViewLabel.includes(unruly.id), `the full-view control must name its record: ${projectViewLabel}`);
+  const unshaped = page.locator(`tr#${shaping.id}`).getByRole('button', { name: `Summary of ${shaping.id}`, exact: true });
+  await unshaped.click();
+  await page.locator(`[data-expanded-for="${shaping.id}"]`).getByText('No progress has been recorded on this record yet.', { exact: true }).waitFor();
+  await unshaped.click();
+  await page.locator(`[data-expanded-for="${shaping.id}"]`).waitFor({ state: 'detached' });
   // Expansion is keyed by the record, so a refresh cannot close it.
   await page.waitForTimeout(15500);
   assert.equal(await page.locator(`[data-expanded-for="${unruly.id}"]`).count(), 1, 'refresh must keep the row expanded');
@@ -626,6 +679,8 @@ try {
      the real record asks it to carry, so this is the measurement that keeps
      that true as the words change. */
   const spill = [];
+  /* Every expanded preview measured at 390 — see where they are pushed. */
+  const previews = [];
   for (const area of areas) for (const theme of themes) for (const width of widths) {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`${origin}/${area}`);
@@ -678,6 +733,24 @@ try {
         else if (row.over > 0) cut.push(`${area} ${theme}: ${row.table} cuts ${row.column} ("${row.text}") by ${row.over}px`);
       }
       folds.push(...measured.filter((row) => row.column !== null));
+      /* And an expanded row's preview, which is a different measurement from
+         the columns above it. A disclosure cell spans every column, so it
+         inherited the table's min-width and wrapped its words at 588 inside a
+         390 window: a third of every line of Work's preview was past the fold,
+         to be scrolled to line by line. A short reading you cannot read in one
+         pass is not one, and nothing here could see it — the fold check reads
+         declared columns, and a disclosure cell has none. */
+      // Nothing is expanded on a freshly loaded page; open the first row of
+      // every table so there is a preview to measure at all.
+      for (const toggle of await page.locator('tbody tr[id] button[aria-expanded="false"]').all()) {
+        if (await toggle.isVisible()) await toggle.click();
+      }
+      await page.waitForTimeout(250);
+      previews.push(...(await page.evaluate(() => [...document.querySelectorAll('[data-expanded-for]')].map((cell) => {
+        const scroller = cell.closest('[data-slot="table-container"]');
+        const content = cell.firstElementChild;
+        return { id: cell.dataset.expandedFor, over: Math.round(content.getBoundingClientRect().width - scroller.clientWidth) };
+      }))).map((item) => ({ ...item, where: `${area} ${theme}` })));
     }
     /* By offset and width from the table's own left edge, never from the
        viewport: a view whose groups agree is one shape however the page around
@@ -775,6 +848,12 @@ try {
      not one view that happens to have a single group. */
   assert.ok(shapes.size >= 12, `only ${shapes.size} multi-group views were measured for alignment: ${[...shapes.keys()].join(', ')}`);
   assert.deepEqual([...new Set(spill)], [], 'a column must be wide enough for what it holds');
+  assert.ok(previews.length, 'no expanded preview was measured at 390, so its fold is unproved');
+  assert.deepEqual(
+    previews.filter((p) => p.over > 1).map((p) => `${p.where}: ${p.id}'s preview is ${p.over}px wider than the window`),
+    [],
+    'an expanded preview must read without scrolling sideways',
+  );
   /* The assertion the old `state` key could not make. Counting cells says the
      loop ran; naming the columns says WHICH views it ran on, and Team's two
      and Runtime's loop are only in this set because those tables declare them
@@ -797,7 +876,7 @@ try {
     `the WCAG audit ran on ${audited.length} layouts, not all ${areas.length * themes.length * widths.length}: ${audited.join(', ')}`,
   );
   assert.deepEqual(errors, []);
-  console.log(`All five areas, Work's and Roadmap's compact tables, bounded summaries and full records, held state, copy, focused refresh, embedded answer, runtime trace, Team's composed/discovered/available context with its bounded file reads, Inter, the four status roles measured at rest and on hovered and expanded rows in both themes, all ${audited.length} layouts verified and audited against WCAG 2 A/AA with axe-core ${axeVersion}, ${shapes.size} multi-group views aligned column for column, and nothing wider than the column holding it. Red outranks amber by at least ${LOUDER_BY} on every ground both were found on: ${redVsAmber.join('; ')}. At 390 the tightest of ${folds.length} declared above-fold columns, ${tightest.column} ("${tightest.text}") in ${tightest.table}, cleared the fold by ${-tightest.over}px. Evidence: ${dir}`);
+  console.log(`All five areas, Work's and Roadmap's compact tables, bounded summaries and full records, held state, copy, focused refresh, embedded answer, runtime trace, Team's composed/discovered/available context with its bounded file reads, Inter, the four status roles measured at rest and on hovered and expanded rows in both themes, all ${audited.length} layouts verified and audited against WCAG 2 A/AA with axe-core ${axeVersion}, ${shapes.size} multi-group views aligned column for column, and nothing wider than the column holding it. Red outranks amber by at least ${LOUDER_BY} on every ground both were found on: ${redVsAmber.join('; ')}. At 390 the tightest of ${folds.length} declared above-fold columns, ${tightest.column} ("${tightest.text}") in ${tightest.table}, cleared the fold by ${-tightest.over}px, and all ${previews.length} expanded previews read inside the window, the tightest with ${-Math.max(...previews.map((p) => p.over))}px to spare. Evidence: ${dir}`);
   writeFileSync(join(dir, 'result.json'), JSON.stringify({ origin, artifacts: dir, errors, verified: new Date().toISOString() }, null, 2));
 } finally {
   await browser?.close();

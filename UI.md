@@ -321,8 +321,14 @@ on, that it is on hold, a date it cannot start before, a stale release
 handoff, a confidence below routine, an acceptance state, a closed ticket with
 no evidence — in their short form only. The sentence behind a hold or a stale
 handoff is in the record, exactly as Roadmap's parked reason is: a sentence in
-a row is what made the cards tall. Expanding gives the record's own opening,
-bounded the same way and never called a summary, plus the way in. The full
+a row is what made the cards tall. Expanding gives two readings and names each
+for what it is — where the record stands, from its latest recorded progress
+note, and how the record opens, verbatim and bounded the same way — plus the
+way in. Neither is ever called a summary, because no stored field is one
+(H-2988): a sentence composed here would read as authored and nobody wrote it.
+Both are shown rather than whichever is better, because each alone goes blind
+on real records — a cluster filed in one pass shares one opening, a cluster
+moved in one pass shares one note. The full
 ticket is an unmodified Sheet reading in the order a reader wants it — what
 the work is, what stands in front of it, the last recorded progress, what it
 produced, its dependencies and history, and the recorded token and usage

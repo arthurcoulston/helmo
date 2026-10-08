@@ -6,12 +6,12 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
-import { excerpt, expandColumn, RecordTable, recordColumn, type RecordColumn } from "./RecordTable"
+import { expandColumn, type LatestProgress, RecordPreview, RecordTable, recordColumn, type RecordColumn } from "./RecordTable"
 import { CopyReference } from "./WorkRecord"
 import { projectStatusRole, StatusAlert, StatusBadge } from "./Status"
 
 type Usage = { value: number; basis: string; coverage: string }
-type Project = { id: string; title: string; body: string; status: string; actual_usd: number; updated_at: string; parked_reason?: string; unpark_condition?: string; usage_disclosure?: Usage }
+type Project = { id: string; title: string; body: string; status: string; actual_usd: number; updated_at: string; parked_reason?: string; unpark_condition?: string; usage_disclosure?: Usage; progress?: LatestProgress }
 type Claim = { kind: string; level?: string; size?: string; predicted_usd?: number; reason: string; author: string; ts: string }
 type Citation = { objective_id: string; claim: string }
 type Ranked = { project: Project; rank: number; explanation: string; blocked_by: string[]; citations: Citation[]; value: Claim | null; effort: Claim | null }
@@ -193,15 +193,12 @@ export function RoadmapView({ data, selected }: { data: RoadmapData; selected: s
           expanded={expanded}
           onExpandedChange={setExpanded}
           empty={group.empty}
-          renderExpanded={(row) => {
-            const { text, truncated } = excerpt(row.project.body)
-            return <div className="flex flex-col items-start gap-2">
-              <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground [overflow-wrap:anywhere]">{text}</p>
-              <Button variant="outline" size="sm" onClick={(event) => openRecord(row.project.id, event.currentTarget)}>
-                {truncated ? "Open full view — this is the record's opening only" : "Open full view"}
-              </Button>
-            </div>
-          }}
+          renderExpanded={(row) => <RecordPreview
+            progress={row.project.progress ?? null}
+            body={row.project.body}
+            openLabel={`${row.project.id} ${row.project.title}`}
+            onOpen={(from) => openRecord(row.project.id, from)}
+          />}
         />
       </section> : null}
       {index === 0 && (data.objectives.length || data.bets.length) ? <Card>

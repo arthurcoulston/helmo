@@ -1,4 +1,5 @@
 export * from './install.js';
+export * from './progress.js';
 export * from './reference.js';
 export * from './server.js';
 export * from './api.js';

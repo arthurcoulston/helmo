@@ -106,8 +106,11 @@ Each group is a `RecordTable` (H-2974). A row carries the reference, the
 title, the stream/project/type line, the signals that should reach Arthur
 before he opens anything, the state, the priority, the owner and the last
 update; a sentence-length reason — a hold's, a stale handoff's — is in the
-record, not the row. Expanding gives the record's own opening, bounded, and
-nothing else. `TicketRecord` is the full record in a Sheet, opened from the
+record, not the row. Expanding gives two readings, each labelled for what it
+is: where the record stands, from its latest progress note, and how the record
+opens, verbatim and bounded. `RecordPreview` in `RecordTable.tsx` is the one
+place both areas decide that, and `boundNote` in `@helmo/core` is the one rule
+both servers bound a note by. `TicketRecord` is the full record in a Sheet, opened from the
 title without expanding first or by a `#H-n` fragment, and `TicketRecordContent`
 is its body — exported because a Sheet is a Radix portal into `document.body`
 and the result contract's proof server-renders it. The Sheet opens only for a

@@ -352,13 +352,13 @@ spends width Work's does not.
 Which columns that floor has to keep inside a 390 window is each view's own
 call, declared beside the widths as `RecordTable`'s `aboveFold` and carried to
 the browser as `data-above-fold`: Work's work and state, Roadmap's project and
-state, Team's member and context. Runtime's loop table is still upstream's
-Table under automatic layout rather than a `RecordTable`, so its widths come
-from its content — it carries the same contract regardless, for its loop and
-that loop's state, because where a fold falls is measurable whether or not the
-geometry was declared. `verify:ui` measures exactly what a table declares,
-fails naming any column the fold cuts, and fails a table that declares nothing
-at all. Until H-3001@dev.rev it instead measured whatever column was named
+state, Team's member and context, Runtime's loop and that loop's state.
+Runtime's loop table is not a `RecordTable` — it has no expanding record and
+drives no TanStack table — but it declares the same geometry in its own file:
+`table-fixed`, a width per column, a floor of 944, and State as the `w-full`
+column, because State is the one holding prose. `verify:ui` measures exactly
+what a table declares, fails naming any column the fold cuts, and fails a table
+that declares nothing at all. Until H-3001@dev.rev it instead measured whatever column was named
 `state` — so it read Work and Roadmap, and read neither Team, whose state badge
 lives inside its member cell, nor Runtime, which named no column at all. A view
 could have put its own subject beyond the fold under a green run; the point of
@@ -370,17 +370,56 @@ whether it needs it or not, and what it keeps it takes from the title. Those
 widths are measurements rather than round numbers: across 2,988 records the
 widest state is "Cancelled" at 76px, the latest movement "Aug 28, 12:44 AM" at
 102px, the largest project estimate "$175.01" at 59px, and the disclosure
-control 28px. Who is the exception and wraps — the record holds a
-`claude-code-interactive` from before assignees were short names, and a column
-sized for that would cost every row. What fixed layout gives up is the browser's
-own guarantee that content fits, so `verify:ui` fails on any cell wider than its
-column: a longer word goes red rather than reaching into its neighbour.
+control 28px. Runtime's are measured the same way on the live roster: its loop
+45px, State's badge 75, workstream 111, a current loop's runtime and model 111,
+pace 34, spend's token line 124, the trace control 105.
+
+Two things are the exception and wrap rather than widen a column for one row.
+Work's assignee: the record holds a `claude-code-interactive` from before
+assignees were short names. Runtime's model: a parked loop still runs
+`claude-haiku-4-5-20251001`, a dated id from the same era. What fixed layout
+gives up is the browser's own guarantee that content fits, so `verify:ui` fails
+on anything wider than the column holding it: a longer word goes red rather
+than reaching into its neighbour. That is measured as geometry — every
+descendant's right edge against the cell's content box, plus the cell's own
+text where it cannot wrap. It read the direct children's widths until
+H-3048@dev.rev, which left a control behind a block child invisible (Runtime's
+trace button sits inside a Collapsible's div, and a block reports the cell's
+width however far the button reaches) and the text of a `whitespace-nowrap`
+cell invisible too, which upstream's `TableCell` is by default. A column
+declared at 105px under what it held passed that reading and fails this one.
 
 And because the geometry no longer depends on which records are in a group,
 measuring it on a fixture measures the product. The same floor that clears the
 fold by 24px on Work's fixtures clears it by 24px on the real record, where
 automatic layout had the live Blocked group's state still cut by 32px at 390
 while the fixtures passed.
+
+What a fixture still cannot do is make a column meet the widest words that
+exist, which is why a fixture row has to carry them. All three of Runtime's
+fixture loops were on `workstream = "fixture"` and `model = "fixture-model"`,
+so nothing in the run came near a declared width and leaving those columns
+`whitespace-nowrap` was green — while the live roster spilled 15px and 57px.
+One fixture loop now carries the live roster's widest workstream and that dated
+model id, and the figures match exactly. A column sized under its content is a
+decision; the fixture row is what keeps it one.
+
+Two things on Runtime the fixture still does not hold, stated so nobody reads
+its green as covering them. **`table-fixed` itself**: with the floor and the
+widths in place, taking fixed layout away leaves the fixture's content inside
+944 and nothing goes red — the page-overflow assertion only fires once content
+reaches the slot, which is the content-dependence this all removes. A fixture
+loop named long enough to force it would have to be ~20 characters past any
+real seat name, and such a name spills Team's member column by 106px, so the
+fixture would be distorting a second view to assert on this one. The live
+geometry probe is what holds this. **State's 256**: the reason paragraph wraps,
+so narrowing that column does not spill anything — it just turns prose into a
+tall ribbon. The fold bounds the column from above; nothing bounds it from
+below, and the number is a judgement the comment at the call site has to carry.
+
+That 106px on Team's member column is itself a latent defect the widened spill
+reading surfaced: like Runtime's before this, it is a `whitespace-nowrap`
+column that only fits because every seat name today is short.
 
 Decision needed, Action for you and Needs a sitting keep their own cards above
 the tables, with their own controls, their complete question or action and the
@@ -413,8 +452,21 @@ itself never overflows there — the table scrolls inside its own container — 
 no other measurement in the run can see a state cut in half. At every width it
 compares the column geometry of a view's groups against each other, by offset
 and width from each table's own left edge, and fails naming the shapes that
-disagree; it also fails on any cell whose content is wider than the column
+disagree; it also fails on anything inside a cell reaching past the column
 holding it.
+
+It asserts at every width that the page itself does not scroll sideways, and
+that assertion is only as good as the declarations behind it. It was green for
+as long as Runtime's loop table sized itself from its content: the automatic
+minimum of a table 995px wide in a 992px slot reached out through the scrollable
+container to `SidebarInset` and scrolled the whole page by 3px at 1280, on a
+roster this run does not hold (H-3048@dev.rev). Three readings, each measured on
+the running release rather than reasoned about: `overflow: hidden` on the
+container does NOT stop that — it is `container-type: inline-size`, which the
+three `RecordTable` views carry for their sticky previews, that does; declaring
+the geometry stops it at 390, 640 and 1280 on its own; and declaring it is the
+one of the two that leaves this assertion able to fire here again, because
+containment would have hidden the content-dependence rather than removed it.
 
 **A control an outside check drives carries a name.** `data-column` is one,
 `data-above-fold` the declaration it is measured against; the Ratify button's

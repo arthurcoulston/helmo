@@ -66,11 +66,19 @@ appendFileSync(join(dir, 'runtime/roster.toml'), [
   'skills = ["constitutions/fixture-skill.md"]',
   `memory_dir = ${JSON.stringify(join(seatTree, 'memory'))}`,
   '',
+  /* This one carries the widest workstream and model the live roster holds, so
+     the two columns Runtime deliberately sizes UNDER their widest row are
+     exercised here rather than only in a live probe (H-3048). Both are real
+     values: "knowledge-base" is a live workstream, and a parked loop still runs
+     the dated model id from before the names were short. Each is wider than its
+     column and so must wrap — and the fixture is where that stays true, because
+     with three loops named "fixture" nothing in this run reached a column's
+     declared width at all and leaving them nowrap was green. */
   '[loops.over-its-cap]',
-  'workstream = "fixture"',
+  'workstream = "knowledge-base"',
   `cwd = ${JSON.stringify(seatTree)}`,
   'runtime = "claude"',
-  'model = "fixture-model"',
+  'model = "claude-haiku-4-5-20251001"',
   'constitution = "constitutions/over-cap.md"',
   '',
   '[loops.cannot-be-read]',
@@ -765,13 +773,49 @@ try {
     if (geometry.length > 1) shapes.set(`${area} ${theme} ${width}`, [...new Set(geometry)]);
     spill.push(...(await page.evaluate(() => [...document.querySelectorAll('tbody td[data-column]')].flatMap((cell) => {
       const style = getComputedStyle(cell);
-      const room = cell.getBoundingClientRect().width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
-      /* The cell's own children, not its text: a wrapping cell's box already
-         holds its text by definition, and what overflows is an element that
-         will not wrap — a badge, a date, a name. */
-      return [...cell.children]
-        .map((el) => ({ column: cell.dataset.column, over: Math.round(el.getBoundingClientRect().width - room), text: el.textContent.trim().slice(0, 30) }))
-        .filter((item) => item.over > 1);
+      const box = cell.getBoundingClientRect();
+      const right = box.right - parseFloat(style.paddingRight);
+      const room = box.width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      /* Every descendant's right edge against the cell's content box — geometry
+         rather than structure. This read the direct children's widths until
+         H-3048, which is a narrower question than it looks and left two whole
+         classes of spill invisible:
+
+         - A control behind a BLOCK child. Runtime's trace column holds its
+           button inside a Collapsible's own div, and a block stretches to the
+           cell — so it reports the cell's width however far the button inside
+           it reaches. Measured on this run's own fixture: a trace column
+           holding a button 105px wider than it was green on the structural
+           reading and is red on this one.
+         - The cell's own text, excluded deliberately on the argument that a
+           wrapping cell's box holds its text by definition — true, and silent
+           about the cells that do NOT wrap. Upstream's TableCell is
+           `whitespace-nowrap`, so that was most of them.
+
+         Both are the same failure the check exists for: fixed layout gives up
+         the browser's guarantee that content fits, and a column declared at
+         half what it holds reaches into its neighbour with nothing in the
+         page's own overflow to show for it. */
+      const found = [];
+      for (const el of cell.querySelectorAll('*')) {
+        if (getComputedStyle(el).display === 'none') continue;
+        const over = Math.round(el.getBoundingClientRect().right - right);
+        if (over > 1) found.push({ column: cell.dataset.column, over, text: el.textContent.trim().slice(0, 30) });
+      }
+      /* Text has no box of its own, so it is measured with a range. Only where
+         the cell cannot wrap: where it can, the box holds the text by
+         definition and this would report every wrapped line. */
+      if (style.whiteSpace !== 'normal') for (const node of cell.childNodes) {
+        if (node.nodeType !== Node.TEXT_NODE || !node.textContent.trim()) continue;
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        const over = Math.round(range.getBoundingClientRect().width - room);
+        if (over > 1) found.push({ column: cell.dataset.column, over, text: node.textContent.trim().slice(0, 30) });
+      }
+      /* One line per column and content, not one per row: a hundred records
+         holding the same oversized control is one defect, and a failure a
+         reader scrolls past is one they do not read. */
+      return [...new Map(found.map((item) => [`${item.column}/${item.text}`, item])).values()];
     }))).map((item) => `${area} ${theme} ${width}: ${item.column} holds "${item.text}", ${item.over}px wider than its column`));
   }
   // A real iframe receives both its count and size without a second renderer.

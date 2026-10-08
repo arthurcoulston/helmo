@@ -90,7 +90,9 @@ compact Data Tables composed in `RoadmapView.tsx` over the shared
 `RecordTable.tsx`; the charter, claims and lazy history are in the Sheet that
 table opens. Work's record groups are the same composition in
 `WorkRecord.tsx`. Runtime's complete status projection uses the official Table
-in `RuntimeView.tsx`. Team profiles
+in `RuntimeView.tsx`, which declares its own column geometry rather than
+composing `RecordTable` — it has no expanding record — and UI.md says what that
+geometry is and why. Team profiles
 are fetched only from configured roster members and shown in standard
 Collapsible components; a missing profile is an explicit Alert. All standalone
 entries serve the same application with navigation limited to their API areas.

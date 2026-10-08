@@ -35,7 +35,7 @@ import { StatusAlert, StatusBadge, contextFileRole, loopStateRole } from "./Stat
 export type FileState = "ok" | "tight" | "over" | "uncapped" | "unreadable"
 export type MeasuredFile = { path: string; name: string; bytes: number; tokens: number; cap: number | null; state: FileState; error?: string }
 export type SeatContext = {
-  composed: { profile: MeasuredFile | null; skills: MeasuredFile[]; tokens: number }
+  composed: { profile: MeasuredFile | null; skills: MeasuredFile[]; framing: { tokens: number; note: string }; tokens: number }
   discovered: { files: MeasuredFile[]; tokens: number; note: string }
   memory: { configured: boolean; index: MeasuredFile | null; files: number; tokens: number; note: string }
   startup_tokens: number
@@ -84,7 +84,11 @@ const tokens = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M`
 function parts(context: SeatContext) {
   return [
     { ...CATEGORIES[0], tokens: context.composed.profile?.tokens ?? 0 },
-    { ...CATEGORIES[1], tokens: context.composed.skills.reduce((sum, file) => sum + file.tokens, 0) },
+    // Skills carries the `--- Skill: … ---` headers Rev writes before the files
+    // as well as the files, because the prompt does. They are stated as their
+    // own line beside the rows below, so the segment stays checkable against
+    // what the reader can see (H-3009).
+    { ...CATEGORIES[1], tokens: context.composed.skills.reduce((sum, file) => sum + file.tokens, 0) + context.composed.framing.tokens },
     { ...CATEGORIES[2], tokens: context.discovered.tokens },
   ]
 }
@@ -181,7 +185,9 @@ function FileLine({ file, role, member }: { file: MeasuredFile; role: string; me
       .catch((e: Error) => { if (!controller.signal.aborted) setError(e.message) })
     return () => controller.abort()
   }, [open, body, error, member, file.path])
-  return <div className="flex flex-col gap-1 border-l pl-3">
+  /* Declared so a check can address one file's reading rather than count `tok`
+     spans down the page, the way the fold check declares its own columns. */
+  return <div className="flex flex-col gap-1 border-l pl-3" data-context-file={file.name}>
     <div className="flex flex-wrap items-baseline gap-2">
       <span className="text-sm font-medium [overflow-wrap:anywhere]">{file.name}</span>
       <Badge variant="outline">{role}</Badge>
@@ -231,6 +237,7 @@ function MemberRecord({ member, basis }: { member: Member; basis: TeamData["basi
         <h3 className="text-xs font-medium tracking-wide uppercase">What a session loads</h3>
         {context.composed.profile ? <FileLine file={context.composed.profile} role="profile" member={member.id} /> : null}
         {context.composed.skills.map((file) => <FileLine key={file.path} file={file} role="skill" member={member.id} />)}
+        {context.composed.skills.length ? <p className="text-muted-foreground text-xs">Plus {count(context.composed.framing.tokens)} tokens that belong to no file: {context.composed.framing.note}</p> : null}
         <p className="text-muted-foreground text-xs">{context.discovered.note}</p>
         {context.discovered.files.map((file) => <FileLine key={file.path} file={file} role="working tree" member={member.id} />)}
       </section>

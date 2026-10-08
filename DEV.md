@@ -181,6 +181,12 @@ Overview reads each product snapshot independently and summarizes them without
 joining their stores. Team projects the roster's own configuration — each
 seat's identity, the files it is configured to load, what those files measure
 against their own `cap_tokens`, and what the token-log says its sessions spent.
+The composed figure counts the `--- Skill: … ---` header the shim writes before
+each appended skill as well as the skill files: real prompt bytes belonging to
+no file, so they are summed under Skills and stated as their own line beside the
+rows. `skillHeader` is exported from `shim.ts` and measured from there — a
+second copy of that string in `team.ts` would be the same omission with a number
+on it (H-3009).
 A seat's identity carries `models`, the rotation it selects among, beside the
 `model` that is only its primary: a rotating seat has no single configured
 model. It is the rotation rather than every model a seat could run — quota

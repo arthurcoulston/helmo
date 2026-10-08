@@ -157,9 +157,12 @@ describe('the document work budget', () => {
     expect(c.composed.skills[2]!.bytes).toBeGreaterThan(0);
     expect(c.composed.skills[2]!.error).toMatch(/already spent its [\d,]+-unit tokenizer budget/);
     // The budget cuts a count, never invents one: the total is the two files
-    // that were measured, and the third is reported, not folded in as a zero.
+    // that were measured plus the headers written before all three, and the
+    // third file is reported, not folded in as a zero. The headers are composed
+    // rather than read, so a spent budget does not withhold them.
+    expect(c.composed.framing.tokens).toBeGreaterThan(0);
     expect(c.composed.tokens).toBe(
-      c.composed.profile!.tokens + c.composed.skills[0]!.tokens + c.composed.skills[1]!.tokens,
+      c.composed.profile!.tokens + c.composed.skills[0]!.tokens + c.composed.skills[1]!.tokens + c.composed.framing.tokens,
     );
     expect(pass.work).toBeLessThanOrEqual(pass.budget);
   });

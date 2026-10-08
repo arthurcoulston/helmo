@@ -25,6 +25,7 @@ import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import type { Tiktoken } from 'js-tiktoken';
 import { loadRoster, tokenLogPath, type Roster } from './config.js';
+import { skillHeader } from './shim.js';
 import type { LoopConfig } from './types.js';
 
 /** The tokenizer, named wherever a token figure is shown. Not Anthropic's own
@@ -349,9 +350,41 @@ export function workingTreeInstructions(cwd: string, runtime: string): string[] 
   return found;
 }
 
+/** The bytes Rev writes AROUND the skills rather than in them: one
+ *  `--- Skill: <path> ---` header per appended file. Not a file, so it carries
+ *  no path, no cap and no state — a figure and the sentence that explains it.
+ *  Small (25 tokens for one skill on this installation) and it was absent from
+ *  the composed total until H-3009, which is a gap that grows with every skill
+ *  a seat is given and with the length of its path. */
+export interface ComposedFraming {
+  tokens: number;
+  note: string;
+}
+
+/** Composed here rather than read, so the file ceiling, the cap and the
+ *  unreadable states have nothing to say about it; the only thing that can fail
+ *  is the tokenizer load, and that is reported in the note rather than thrown.
+ *  It spends no document budget: a few dozen bytes against a 2,000,000-unit
+ *  allowance is not a spend worth accounting for. */
+async function measureFraming(skills: string[]): Promise<ComposedFraming> {
+  if (!skills.length) {
+    return { tokens: 0, note: 'No skills are appended for this seat, so Rev writes no headers between them.' };
+  }
+  const where = skills.length === 1 ? 'before the one appended file' : `before each of the ${skills.length} appended files`;
+  try {
+    const tokens = (await tokenizer()).encode(skills.map(skillHeader).join(''), [], []).length;
+    return { tokens, note: `The \`--- Skill: … ---\` header Rev writes ${where}. Composed rather than read from disk, and counted in the composed total.` };
+  } catch (e) {
+    return { tokens: 0, note: `${TOKENIZER} could not measure the header Rev writes ${where}: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
 export interface SeatContext {
-  /** What Rev writes into the session's system prompt, byte for byte. */
-  composed: { profile: MeasuredFile | null; skills: MeasuredFile[]; tokens: number };
+  /** What Rev writes into the session's system prompt: the profile, each roster
+   *  skill, and the framing it writes between them. Every piece is measured on
+   *  its own, so the total can sit a token or two off encoding the whole prompt
+   *  in one pass — but nothing in the prompt is left out of it. */
+  composed: { profile: MeasuredFile | null; skills: MeasuredFile[]; framing: ComposedFraming; tokens: number };
   /** What the runtime's CLI finds in the working tree. Measured, not composed. */
   discovered: { files: MeasuredFile[]; tokens: number; note: string };
   /** Read a file at a time during a session. Never part of the startup total. */
@@ -406,10 +439,11 @@ export async function seatContext(l: LoopConfig, pass: MeasurePass = measurePass
   const profile = l.constitution ? await measure(l.constitution, pass) : null;
   const skills = await Promise.all((l.skills ?? []).map((p) => measure(p, pass)));
   const discoveredFiles = await Promise.all(workingTreeInstructions(l.cwd, l.runtime).map((p) => measure(p, pass)));
-  const composedTokens = (profile?.tokens ?? 0) + skills.reduce((s, f) => s + f.tokens, 0);
+  const framing = await measureFraming(l.skills ?? []);
+  const composedTokens = (profile?.tokens ?? 0) + skills.reduce((s, f) => s + f.tokens, 0) + framing.tokens;
   const discoveredTokens = discoveredFiles.reduce((s, f) => s + f.tokens, 0);
   return {
-    composed: { profile, skills, tokens: composedTokens },
+    composed: { profile, skills, framing, tokens: composedTokens },
     discovered: {
       files: discoveredFiles,
       tokens: discoveredTokens,

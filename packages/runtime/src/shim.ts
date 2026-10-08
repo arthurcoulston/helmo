@@ -273,12 +273,19 @@ function sessionArgv(cmd: string, args: string[], groupFile?: string): [string, 
 const unrunnable = (res: { error?: Error; status: number | null; stderr?: string | null }, groupFile?: string): string | null =>
   res.error ? res.error.message : groupFile && (res.status === 126 || res.status === 127) ? (res.stderr ?? '').trim().slice(0, 300) : null;
 
+/** The framing written before each appended skill — real bytes in the prompt
+ *  that belong to no file. Exported because the Team page measures the prompt
+ *  `systemPrompt` composes and used to count only the files, so its "byte for
+ *  byte" total was short by every header (H-3009). A lookalike string there
+ *  would be the same omission with a number on it, so there is one. */
+export const skillHeader = (path: string): string => `\n\n--- Skill: ${path} ---\n\n`;
+
 // The system prompt a session carries: the constitution, then each roster
 // skill whole (H-247) — a loop that touches Drive carries file-stewardship
 // the way a desk session loads it. One file because the CLI takes one path.
 export function systemPrompt(l: LoopConfig): string {
   const parts = [readFileSync(l.constitution, 'utf8')];
-  for (const s of l.skills ?? []) parts.push(`\n\n--- Skill: ${s} ---\n\n${readFileSync(s, 'utf8')}`);
+  for (const s of l.skills ?? []) parts.push(`${skillHeader(s)}${readFileSync(s, 'utf8')}`);
   return parts.join('');
 }
 

@@ -532,6 +532,17 @@ try {
   const startup = Number((await teamSheet.getByText(/^[\d,]+ tok$/).first().innerText()).replace(/[^\d]/g, ''));
   const corpus = Number((await teamSheet.getByText(/roughly [\d,]+ tokens/).innerText()).match(/roughly ([\d,]+)/)[1].replace(/,/g, ''));
   assert.ok(corpus > startup * 10, `the fixture corpus (${corpus}) must dwarf the startup reading (${startup}), or this distinction is untested`);
+  /* The `--- Skill: … ---` header Rev writes before each appended skill is real
+     prompt bytes belonging to no file. The page states it instead of letting
+     the skill rows quietly fall short of the segment above them, and the
+     segment counts it — `parts()` does that sum itself, so nothing but the
+     rendered page proves this half of H-3009. */
+  const framing = Number((await teamSheet.getByText(/^Plus [\d,]+ tokens that belong to no file/).innerText()).match(/Plus ([\d,]+)/)[1].replace(/,/g, ''));
+  const skillFile = Number((await teamSheet.locator('[data-context-file="fixture-skill.md"]').getByText(/^[\d,]+ tok/).innerText()).replace(/[^\d]/g, ''));
+  const skillsSegment = Number((await teamSheet.getByText(/^Skills [\d,]+$/).innerText()).match(/([\d,]+)/)[1].replace(/,/g, ''));
+  assert.ok(framing > 0, 'the skill headers must be counted, not reported as a zero');
+  assert.equal(skillsSegment, skillFile + framing, `the Skills segment (${skillsSegment}) must be the one fixture skill (${skillFile}) plus its header (${framing})`);
+
   /* The bounded file route, through the page: a file the inventory names reads,
      and the reading is the file rather than a summary of it. */
   await teamSheet.getByRole('button', { name: 'Read fixture-skill.md' }).click();

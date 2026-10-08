@@ -6,6 +6,7 @@ import {
   seatContext, seatSpend, spendBasis, workingTreeInstructions, isPeriod, readBounded,
   teamDocument, tokenizeWork, chunkPattern, MEASURE_BYTE_CEILING, TOKENIZE_WORK_CEILING, WORKING_LEVEL,
 } from '../src/team.js';
+import { systemPrompt } from '../src/shim.js';
 import type { LoopConfig } from '../src/types.js';
 
 const NOW = Date.parse('2026-10-07T12:00:00.000Z');
@@ -43,13 +44,52 @@ describe('seatContext', () => {
 
     expect(c.composed.profile?.tokens).toBeGreaterThan(0);
     expect(c.composed.skills).toHaveLength(1);
-    expect(c.composed.tokens).toBe(c.composed.profile!.tokens + c.composed.skills[0]!.tokens);
+    expect(c.composed.tokens).toBe(c.composed.profile!.tokens + c.composed.skills[0]!.tokens + c.composed.framing.tokens);
     expect(c.discovered.files.map((f) => f.name)).toEqual(['CLAUDE.md']);
     expect(c.discovered.tokens).toBe(c.discovered.files[0]!.tokens);
     expect(c.startup_tokens).toBe(c.composed.tokens + c.discovered.tokens);
     // Both halves are non-zero, so the sum is not accidentally one of them.
     expect(c.composed.tokens).toBeGreaterThan(0);
     expect(c.discovered.tokens).toBeGreaterThan(0);
+  });
+
+  // The composed total claims to be the system prompt Rev writes. It was the
+  // FILES of that prompt: `systemPrompt` puts a `--- Skill: <path> ---` header
+  // before each appended skill, and nothing counted those bytes, so every seat
+  // with a skill configured read lighter than it is — by 25 tokens on this
+  // installation's one such seat, and by more with every skill or longer path
+  // (H-3009).
+  it('counts the headers Rev writes before the appended skills, not only the skill files', async () => {
+    writeFileSync(join(tree, 'PROFILE.md'), 'the seat itself');
+    const skills = ['one', 'two'].map((n) => join(tree, `skill-${n}.md`));
+    for (const p of skills) writeFileSync(p, 'a roster skill appended at spawn');
+    const l = loop({ skills });
+
+    const c = await seatContext(l);
+    const files = c.composed.profile!.tokens + c.composed.skills.reduce((s, f) => s + f.tokens, 0);
+    expect(c.composed.framing.tokens).toBeGreaterThan(0);
+    expect(c.composed.tokens).toBe(files + c.composed.framing.tokens);
+    expect(c.composed.framing.note).toMatch(/2 appended files/);
+
+    // The figure is the header the shim really writes, not a lookalike kept in
+    // step by hand: encoding the whole prompt `systemPrompt` composes lands on
+    // the same count, within what BPE merging across a boundary can move. The
+    // files alone do not — which is what makes the headers load-bearing here
+    // rather than decoration on a total that was already right.
+    const { getEncoding } = await import('js-tiktoken');
+    const whole = getEncoding('o200k_base').encode(systemPrompt(l), [], []).length;
+    expect(Math.abs(whole - c.composed.tokens)).toBeLessThanOrEqual(2);
+    expect(whole - files).toBeGreaterThan(2);
+  });
+
+  it('reports no framing for a seat with no skills, rather than a figure with nothing behind it', async () => {
+    writeFileSync(join(tree, 'PROFILE.md'), 'the seat itself');
+    const c = await seatContext(loop());
+
+    expect(c.composed.skills).toEqual([]);
+    expect(c.composed.framing.tokens).toBe(0);
+    expect(c.composed.framing.note).toMatch(/No skills are appended/);
+    expect(c.composed.tokens).toBe(c.composed.profile!.tokens);
   });
 
   it('reads cap_tokens from the file itself, and grades ok / tight / over against it', async () => {

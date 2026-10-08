@@ -224,6 +224,14 @@ longer.
   was not a readiness edge, so the worker slept until its periodic resync; it
   now wakes on the next poll, and moving a ticket back to the general pool
   wakes the general worker instead.
+- Wake a worker that keeps its claim and goes idle when someone else writes on
+  that claim — a note, an acceptance verdict, an answer or a reported action.
+  Held work is never ready, and a claim kept waiting on review has no blocker
+  to close, so nothing could wake it: a reviewer's PASS and a coordinator's
+  note landed on such a claim and the worker slept through both until someone
+  reloaded it by hand. The holder's own writes, links and spend stay quiet, so
+  a pass cannot wake itself; notes on open tickets stay inert as before; and
+  gates, holds and blockers still decide what the holder may resume.
 
 ## v0.9.4 — 2026-10-05
 

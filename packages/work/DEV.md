@@ -487,7 +487,13 @@ Pinned releases accept both the historical three-component layout and C1's one
   gate changes, removal or closure of blockers, clearing a human sitting, and
   moving unassigned work into the watched stream, and moving an open ticket
   into or out of a lane; notes, spend, unrelated close-out, and
-  self-filed untouched work cannot enter through that intersection. The first
+  self-filed untouched work cannot enter through that intersection. A note is
+  the one exception, and only on a claim the caller itself holds: such a claim
+  is never ready and a claim kept waiting on review has no blocker to close, so
+  another actor's `updated`, `acceptance_verdict`, `answered` or `acted` event
+  on it is an edge (H-3064). The holder's own writes, the scheduler's, links and
+  spend stay quiet — a pass cannot wake itself — and notes on work the caller
+  does not hold remain inert. The first
   non-meter touch by another actor (or a human/orchestrator relay) is also an
   edge: it releases self-triage for the filing or its recurring template;
   subsequent notes stay inert. `wake-check`

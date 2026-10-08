@@ -196,6 +196,37 @@ describe('pool workers on one seat (H-574)', { timeout: 60000 }, () => {
     }
   });
 
+  it('a worker idle on a kept claim wakes when another seat writes on it, and only then', async () => {
+    // A deployed fleet hit this: the claim was kept waiting on review, the
+    // worker idled on it, and a Reviewer PASS and a coordinator's note on the
+    // claim itself left it asleep until a manual reload.
+    const kept = `${BOUND}; if [ -f $REV_HOME/go ]; then ${FINISH}; elif [ ! -f $REV_HOME/noted ]; then touch $REV_HOME/noted; node ${HELM_CLI} update --ticket $T --note "candidate ready; waiting for review"; fi`;
+    const e = setup((h) => worker('w1', h, kept, 'idle_floor_s = 0\n') + worker('w2', h, 'true'));
+    const id = seed(e, 'Kept claim waiting on review');
+    const child = spawn(process.execPath, ['--import', 'tsx', REV_CLI, 'run', 'w1'], { env: e.env, cwd: join(import.meta.dirname, '..'), stdio: ['ignore', 'ignore', 'pipe'] });
+    let err = ''; child.stderr!.on('data', (d) => { err += String(d); });
+    try {
+      await waitFor(() => /run-end\s+iter=1 .*action=idle/.test(events(e, 'w1'))).catch(() => { throw new Error(events(e, 'w1') + err); });
+      expect(events(e, 'w1')).toMatch(new RegExp(`claim-kept\\s+${id} session ended ok`));
+      expect(ticket(e, id)).toMatchObject({ status: 'in_progress', assignee: 'builder' });
+      // Main already resumes a fresh keep once on its own claim edge; after
+      // that the worker idles on its own exhaust: many polls, no wake.
+      await waitFor(() => /run-end\s+iter=2 .*action=idle/.test(events(e, 'w1'))).catch(() => { throw new Error(events(e, 'w1') + err); });
+      const settled = events(e, 'w1');
+      await new Promise((r) => setTimeout(r, 1500));
+      expect(events(e, 'w1')).toBe(settled);
+
+      writeFileSync(join(e.home, 'go'), '');
+      helm(e, ['update', '--ticket', id, '--note', 'Reviewer PASS recorded; your next step is unblocked.']);
+      await waitFor(() => ticket(e, id).status === 'done').catch(() => { throw new Error(events(e, 'w1') + err); });
+      expect(events(e, 'w1').slice(settled.length)).toMatch(new RegExp(`wake\\s+since=\\d+ ready=0\\n.*launch-claimed\\s+resumed ${id}`));
+      expect(readFileSync(join(e.home, 'bound'), 'utf8').trim().split('\n').at(-1)).toBe(`w1 ${id}`);
+    } finally {
+      child.kill('SIGTERM');
+      await exited(child);
+    }
+  });
+
   it('an ordinary claim set back to open while it waits stays with the seat and frees the worker for ready work', () => {
     // A resumed claim blocked on a prerequisite held its worker, and the
     // only-ticket rule kept that worker off the prerequisite. Setting the claim

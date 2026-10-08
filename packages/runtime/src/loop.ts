@@ -895,12 +895,19 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     }
 
     // Write metered spend back to the ticket(s) this iteration touched (H-19).
-    // Whole session charged to the most-touched ticket — finer attribution
-    // would be pretend precision; the note names any others. Runs after close
-    // (record-spend accepts terminal tickets) and must never affect the run.
+    // Whole session charged to one ticket — finer attribution would be
+    // pretend precision; the note names any others. A pool worker was
+    // launched on the ticket Helmo claimed (or resumed) for it, so that ticket
+    // carries the session even when the worker touched a ticket it filed more;
+    // a free-roaming loop's best guess is its most-touched ticket.
+    // Runs after close (record-spend accepts terminal tickets) and must never
+    // affect the run.
     if (res.tokens || res.cost_usd) {
       try {
-        const touched = actorTickets(g, l, before.max_seq);
+        const actorTouched = actorTickets(g, l, before.max_seq);
+        const touched = claimedTicket
+          ? [{ id: claimedTicket, events: 0 }, ...actorTouched.filter((t) => t.id !== claimedTicket)]
+          : actorTouched;
         if (touched.length) {
           const [primary, ...rest] = touched;
           // Net out anything the agent self-reported this session: the meter

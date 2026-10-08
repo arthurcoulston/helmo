@@ -161,6 +161,29 @@ describe('pool workers on one seat (H-574)', { timeout: 60000 }, () => {
     expect(events(e, idle[0]!)).not.toMatch(/run-start/);
   });
 
+  it('charges the metered session to the claimed ticket, not to one the worker filed and touched more', () => {
+    // The worker claims A, files B with several notes (so B is its most-touched
+    // ticket), and finishes A. A carries the session; the note names B.
+    const fileB = `B=$(node ${HELM_CLI} create --title "Residual found while working" --body residual --workstream rev-test --type ops | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d).id))"); for n in 1 2 3; do node ${HELM_CLI} update --ticket $B --note "residual note $n"; done; echo $B > $REV_HOME/filed`;
+    const e = setup((h) => worker('w1', h, `${BOUND}; ${fileB}; ${FINISH}; echo "rev-mock-usage tokens=4200 cost_usd=0.42"`) + worker('w2', h, 'true'));
+    const a = seed(e, 'Claimed work');
+    execFileSync('npx', ['tsx', REV_CLI, 'run', 'w1', '--count', '1'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') });
+
+    const b = readFileSync(join(e.home, 'filed'), 'utf8').trim();
+    const touched = (helm(e, ['actor-tickets', '--name', 'builder', '--session', 'rev:w1', '--since-seq', '0']) as { tickets: { id: string }[] }).tickets;
+    expect(touched[0]!.id).toBe(b);
+    const spent = (id: string) => helm(e, ['get', id]) as { tokens_total: number; cost_usd_total: number };
+    expect(spent(a).tokens_total).toBe(4200);
+    expect(spent(a).cost_usd_total).toBeCloseTo(0.42);
+    expect(spent(b).tokens_total).toBe(0);
+    expect(events(e, 'w1')).toMatch(new RegExp(`spend\\s+iter=1 ticket=${a} tokens=4200 cost=0\\.42`));
+    const store = new Store(e.db);
+    try {
+      const notes = (store.getEvents(a) as { payload: { note?: string } }[]).map((ev) => ev.payload.note ?? '');
+      expect(notes.join('\n')).toContain(`session also touched ${b}`);
+    } finally { store.close?.(); }
+  });
+
   it('keeps unfinished work with its worker, and that worker\'s next launch resumes it', () => {
     // The first session works the ticket and stops mid-way, leaving it in
     // progress; the second finds it handed back to it, not to the queue.

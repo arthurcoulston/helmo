@@ -232,6 +232,12 @@ longer.
   reloaded it by hand. The holder's own writes, links and spend stay quiet, so
   a pass cannot wake itself; notes on open tickets stay inert as before; and
   gates, holds and blockers still decide what the holder may resume.
+- Charge a pool worker's metered session to the ticket it was launched on. Rev
+  charged every session to the actor's most-touched ticket, so a worker that
+  filed a residual and wrote a few notes on it billed the residual instead of
+  the claimed work. When the iteration holds a claim, fresh or resumed, that
+  ticket now carries the session and the note names the others; free-roaming
+  loops keep the most-touched rule.
 
 ## v0.9.4 — 2026-10-05
 

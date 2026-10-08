@@ -2250,6 +2250,23 @@ export class Store {
       if (releasedAt !== null && releasedAt > seq) candidates.add(t.id);
     }
 
+    // A claim the caller holds is never ready and may have no blocker to
+    // close: one kept waiting on review moves when someone else writes on it
+    // — a verdict, a note, an answer, a reported action. The holder's own
+    // writes, links, spend and the scheduler are not news to it, so they stay
+    // quiet and a pass cannot wake itself. Open tickets keep notes inert.
+    const heldIds = ready.filter((t) => t.status === 'in_progress' && t.assignee === caller).map((t) => t.id);
+    if (heldIds.length) {
+      for (const r of this.db
+        .prepare(
+          `SELECT DISTINCT ticket_id AS id FROM events
+           WHERE seq > ? AND ticket_id IN (SELECT value FROM json_each(?))
+             AND event_type IN ('updated','acceptance_verdict','answered','acted')
+             AND COALESCE(json_extract(actor, '$.name'), '') NOT IN (?, 'helmo-scheduler')`,
+        )
+        .all(seq, JSON.stringify(heldIds), caller) as { id: string }[]) candidates.add(r.id);
+    }
+
     // Closing either kind of terminal blocker opens the waiting ticket, not
     // the blocker itself. Deps are already indexed by their primary key's
     // from_id prefix; events use idx_events_ticket.

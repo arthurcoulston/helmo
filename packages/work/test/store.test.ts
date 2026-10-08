@@ -2070,6 +2070,28 @@ describe('harness queries (wake cursor)', () => {
     expect(released.newly_ready_ids).toEqual([held.id]);
     expect(s.wakeCheck(s.maxSeq(), 'alpha', builder.name).newly_ready_ids).toEqual([]);
   });
+  it('wakeCheck reports another actor writing on the caller\'s in-progress claim', () => {
+    const s = freshStore();
+    const held = s.createTicket(builder, {
+      title: 'Kept claim', body: 'waiting on review', workstream: 'elsewhere', type: 'build',
+      status: 'in_progress', assignee: builder.name,
+    });
+    const open = s.createTicket(reviewer, { title: 'Open work', body: 'ready for anyone', workstream: 'alpha', type: 'build' });
+    const seq = s.maxSeq();
+
+    // The holder's own note and anyone's note on open work stay inert.
+    s.updateTicket(builder, { ticket_id: held.id, note: 'kept for review' });
+    s.updateTicket(reviewer, { ticket_id: open.id, note: 'context on open work' });
+    expect(s.wakeCheck(seq, 'alpha', builder.name).newly_ready_ids).toEqual([]);
+
+    s.updateTicket(reviewer, { ticket_id: held.id, note: 'PASS on the exact refs' });
+    const touched = s.wakeCheck(seq, 'alpha', builder.name);
+    expect(touched.ready_ids).toEqual([open.id]);
+    expect(touched.newly_ready_ids).toEqual([held.id]);
+    expect(s.wakeCheck(s.maxSeq(), 'alpha', builder.name).newly_ready_ids).toEqual([]);
+    // Another seat's touch is news only to the holder.
+    expect(s.wakeCheck(seq, 'alpha', reviewer.name).newly_ready_ids).toEqual([]);
+  });
   it('wakeCheck answers from one ready read, taken inside one transaction (rev H-1895)', () => {
     const s = freshStore();
     const routed = create(s, { workstream: 'alpha', assignee: reviewer.name });

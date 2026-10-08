@@ -332,6 +332,17 @@ after it. `memory_dir` (H-3001) is the first key to make this bite.
   `incoherent release set` and the suite appeared red on a clean tree
   (H-2975). `scripts/test-env.test.mjs` fails if a vitest workspace carries no
   config or carries a different one.
+- **The suite takes about six minutes, and one workspace is nearly all of it.**
+  A green root `npm test` measured 5m59s: root harness 0.7s, app 0.1s, core
+  0.4s, cli 7.4s, shell 4.4s, roadmap 2.8s, work 16.4s — and
+  `packages/runtime` 324.7s, 92% of the wall clock. Almost all of that is
+  `test/loop.e2e.test.ts` and `test/supervisor.e2e.test.ts`, which spawn real
+  processes and wait on real backoff ladders, so that workspace sitting for
+  five minutes is the suite working. `verify:ui` is a further 82s on top.
+  Budget fifteen minutes before you call it a hang, and quote the duration in
+  any brief that asks someone else to run this: a reviewer who allowed five
+  minutes killed a sound run 33 seconds from the end and recorded a FAIL
+  against a clean candidate (H-3019).
 - **One version.** Every package carries the root version and depends on
   `@helmo/core` at exactly that version — in `devDependencies` for the shell,
   which reads core at build time and bundles none of it;

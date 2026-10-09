@@ -232,6 +232,10 @@ longer.
   reloaded it by hand. The holder's own writes, links and spend stay quiet, so
   a pass cannot wake itself; notes on open tickets stay inert as before; and
   gates, holds and blockers still decide what the holder may resume.
+- Wake the owner when a withdrawn ask or a reported action reopens its ticket.
+  Both move a ticket from `awaiting_human` back to open, but only a resume
+  answer counted as a readiness edge, so an idle owner slept until its
+  periodic resync. `return_withdrawn` and `acted` now wake it on the next poll.
 
 ## v0.9.4 — 2026-10-05
 

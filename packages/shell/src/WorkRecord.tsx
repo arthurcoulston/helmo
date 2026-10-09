@@ -375,16 +375,14 @@ export function WorkRecord({ data, selected }: { data: WorkRecordData; selected:
   const open = React.useMemo(() => groups.flatMap((group) => group.rows), [groups]).find((row) => row.id === openId)
 
   return <>
-    <nav aria-label="Record scope" className="flex flex-wrap items-center gap-2 text-sm">
-      <span className="text-muted-foreground">{data.whole ? "Whole record" : `Current record · every live ticket and the newest ${data.closed_tail} closed`}</span>
-      <Button variant="outline" size="sm" asChild><a href={data.whole ? "?" : "?whole=1"}>{data.whole ? "Return to current record" : "Whole record"}</a></Button>
-    </nav>
-    <div className="flex flex-wrap gap-2">{groups.map((group) => <Badge key={group.key} variant="secondary">{group.rows.length} {group.label.toLowerCase()}</Badge>)}</div>
+    {data.whole ? <nav aria-label="Record scope" className="flex flex-wrap items-center gap-2 text-sm">
+      <Button variant="outline" size="sm" asChild><a href="?">Return to current record</a></Button>
+    </nav> : null}
     {data.hygiene.length ? <Collapsible>
       <CollapsibleTrigger asChild><Button variant="outline">Needs grooming · {data.hygiene.length}</Button></CollapsibleTrigger>
       <CollapsibleContent className="flex flex-col gap-2 pt-3">{data.hygiene.map((f, i) => <p key={i} className="text-sm"><Badge variant="outline">{f.check.replaceAll("_", " ")}</Badge> {f.ticket_id ? <a className="underline" href={`?whole=1#${f.ticket_id}`}>{f.ticket_id}</a> : f.workstream} · {f.detail}</p>)}</CollapsibleContent>
     </Collapsible> : null}
-    {groups.map((group) => group.rows.length ? <section key={group.key} className="flex flex-col gap-2" aria-label={group.label}>
+    {groups.map((group) => group.rows.length ? <React.Fragment key={group.key}><section className="flex flex-col gap-2" aria-label={group.label}>
       <h2 className="text-muted-foreground text-xs font-medium uppercase tracking-wide">{group.label} · {group.rows.length}</h2>
       <RecordTable<Row>
         label={group.label}
@@ -406,7 +404,7 @@ export function WorkRecord({ data, selected }: { data: WorkRecordData; selected:
           onOpen={(from) => openRecord(row.id, from)}
         />}
       />
-    </section> : null)}
+    </section>{group.key === "done" && !data.whole ? <a className="text-sm underline underline-offset-4" href="?whole=1">See all completed tickets.</a> : null}</React.Fragment> : null)}
     {!data.rows.length ? <p className="text-muted-foreground text-sm">No work has been recorded.</p> : null}
     <Sheet open={!!open} onOpenChange={(next) => { if (!next) setOpenId("") }}>
       <SheetContent

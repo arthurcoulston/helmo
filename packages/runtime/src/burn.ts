@@ -67,9 +67,9 @@ export function burnWindow(loop: string, now = Date.now(), path = tokenLogPath()
   return { hourUsd, dayUsd };
 }
 
-/** The last parseable per-iteration costs, newest last. Unknown costs never
- *  become zero: doing so would depress the baseline and make the next ordinary
- *  iteration look anomalous. */
+/** The last non-zero, parseable per-iteration costs, newest last. Zero-cost
+ *  probes must not depress the work baseline. Unknown costs are skipped,
+ *  never turned into zero. */
 export function recentCosts(loop: string, limit = 5, path = tokenLogPath()): number[] {
   if (!existsSync(path) || limit <= 0) return [];
   const costs: number[] = [];
@@ -77,7 +77,7 @@ export function recentCosts(loop: string, limit = 5, path = tokenLogPath()): num
     const m = LINE.exec(line);
     if (!m || m[2] !== loop) continue;
     const cost = Number(m[3]);
-    if (Number.isFinite(cost)) costs.push(cost);
+    if (Number.isFinite(cost) && cost !== 0) costs.push(cost);
   }
   return costs.slice(-limit);
 }

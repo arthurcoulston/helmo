@@ -1360,6 +1360,27 @@ describe('return to human / answer', () => {
     expect(() => s.withdrawHumanReturn(builder, t.id, fingerprint, builder.name, 'Stale retry.')).toThrow(/no longer asking/);
   });
 
+  it('wakes the owner when a withdrawn ask or a completed action reopens its ticket', () => {
+    const s = freshStore();
+    const t = create(s); triage(s, t.id);
+    const asked = s.returnToHuman(builder, t.id, q);
+    const idle = s.maxSeq();
+    expect(s.wakeCheck(idle, 'helmo-dev', builder.name)).toMatchObject({ ready_count: 0, newly_ready_ids: [] });
+    s.withdrawHumanReturn(orch, t.id, questionFingerprint(asked.question!), builder.name, 'Team-solvable after all.');
+    expect(s.wakeCheck(idle, 'helmo-dev', builder.name)).toMatchObject({ ready_ids: [t.id], newly_ready_ids: [t.id] });
+
+    const u = create(s); triage(s, u.id);
+    s.requestAction(builder, u.id, {
+      situation: 'The DNS record is missing.',
+      action: 'Add the TXT record in the registrar dashboard.',
+      why_human: 'Only the operator holds the registrar login.',
+    });
+    const waiting = s.maxSeq();
+    expect(s.wakeCheck(waiting, 'helmo-dev', builder.name).newly_ready_ids).toEqual([]);
+    s.reportAction({ name: 'arthur', kind: 'human' }, u.id, { did: 'Added the TXT record.' });
+    expect(s.wakeCheck(waiting, 'helmo-dev', builder.name).newly_ready_ids).toEqual([u.id]);
+  });
+
   it('lets a concurrent real answer win and refuses ownerless or stale withdrawal (H-391)', () => {
     const s = freshStore();
     const t = create(s);

@@ -2305,6 +2305,7 @@ export class Store {
              event_type = 'created'
              OR (event_type = 'unlinked' AND json_extract(payload, '$.type') = 'blocks')
              OR (event_type = 'answered' AND json_extract(payload, '$.resolution') = 'resume')
+             OR event_type IN ('return_withdrawn', 'acted')
              OR (event_type = 'updated' AND (
                json_type(payload, '$.diffs.assignee') IS NOT NULL
                OR json_extract(payload, '$.diffs.status.to') = 'open'

@@ -484,7 +484,9 @@ Pinned releases accept both the historical three-component layout and C1's one
   events after the cursor and date gates that crossed after that event's
   timestamp. Held work participates only in this edge calculation, never the
   open claim queue. Indexed event queries cover direct route /
-  gate changes, removal or closure of blockers, clearing a human sitting, and
+  gate changes, removal or closure of blockers, clearing a human sitting,
+  every way out of `awaiting_human` (a resume answer, a withdrawn ask, a
+  reported action), and
   moving unassigned work into the watched stream, and moving an open ticket
   into or out of a lane; notes, spend, unrelated close-out, and
   self-filed untouched work cannot enter through that intersection. A note is

@@ -285,7 +285,8 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   in the loop log once per pass.
   After
   each iteration it writes the session's metered spend back to the
-  most-touched ticket via session-filtered helm-cli event queries and
+  claimed ticket for a pool worker, or the most-touched ticket for a
+  free-roaming loop, via session-filtered helm-cli event queries and
   `record-spend` (H-19, H-878), so desk writes under the same actor name cannot
   capture the loop's charge — as the rev
   actor, since Rev is the meter, not the spender — net of anything the agent

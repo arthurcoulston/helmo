@@ -149,10 +149,13 @@ draws comes from `location.pathname` in the browser, and its content from the
 existing `/api/v1/<area>` JSON. There is no injected stylesheet, no adopted
 DOM and no rewritten selector anywhere.
 
-Upstream's generated `theme-provider.tsx` is in the build and does two things
-Helmo did not do before: it stores a theme choice in `localStorage` and it
-toggles light/dark on the `d` key. Both are the official template's behavior,
-kept because keeping it unmodified is the requirement — not a product decision.
+Upstream's generated `theme-provider.tsx` is in the build and stores the theme
+choice in `localStorage`; the header's documented icon control composes that
+provider without modifying it. It also retains the generated `d` shortcut.
+The sidebar is the generated icon-collapse composition, controlled by one
+`sessionStorage` choice per window so refreshes persist without coupling two
+monitoring windows. Popout creation supplies no geometry that could be
+reapplied after the browser's initial policy decision.
 
 ## What `packages/cli` owns
 

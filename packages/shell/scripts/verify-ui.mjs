@@ -334,6 +334,21 @@ try {
   // no record body, and a sentence-length reason is in the record not the row.
   await page.goto(`${origin}/work`);
   await page.getByRole('heading', { name: 'Ready · 2', exact: true }).waitFor();
+  assert.equal(await page.getByRole('heading', { name: 'Work', exact: true }).count(), 1, 'the header is the page title; content must not repeat it');
+  assert.equal(await page.getByText(/Current record ·/).count(), 0, 'the retired current-record line must stay absent');
+  await page.getByText('2 ready', { exact: true }).waitFor();
+  assert.equal(await page.getByRole('link', { name: 'Archived', exact: true }).getAttribute('href'), '?whole=1');
+  assert.equal(await page.getByRole('link', { name: 'See all completed tickets.', exact: true }).getAttribute('href'), '?whole=1');
+  const sidebar = page.locator('[data-slot="sidebar"]');
+  assert.equal(await sidebar.getAttribute('data-state'), 'collapsed', 'a fresh desktop window starts with the icon rail collapsed');
+  await page.getByRole('button', { name: 'Toggle Sidebar', exact: true }).click();
+  assert.equal(await sidebar.getAttribute('data-state'), 'expanded');
+  await page.reload();
+  assert.equal(await sidebar.getAttribute('data-state'), 'expanded', 'this window keeps its explicit sidebar choice across reload');
+  const theme = page.getByRole('button', { name: /Use (dark|light) theme/ });
+  await theme.click();
+  const storedTheme = await page.evaluate(() => localStorage.getItem('theme'));
+  assert.ok(storedTheme === 'light' || storedTheme === 'dark', 'the visible theme control stores through the generated provider');
   assert.equal(await page.getByRole('table', { name: 'Ready', exact: true }).getByText(ready.title, { exact: true }).count(), 1);
   assert.equal(await page.getByRole('table', { name: 'Blocked', exact: true }).getByText(blocked.title, { exact: true }).count(), 1);
   assert.equal(await page.locator(`#${oldest.id}`).count(), 0, 'default reading must bound terminal history');
@@ -452,6 +467,9 @@ try {
   const popup = await popupPromise;
   await popup.waitForLoadState();
   assert.equal(popup.url(), page.url());
+  const parentSidebarState = await page.locator('[data-slot="sidebar"]').getAttribute('data-state');
+  await popup.getByRole('button', { name: 'Toggle Sidebar', exact: true }).click();
+  assert.equal(await page.locator('[data-slot="sidebar"]').getAttribute('data-state'), parentSidebarState, 'one window cannot change another window\'s sidebar');
   await popup.locator(`#${stale.id}`).getByRole('button', { name: 'Ratify recommendation' }).click();
   await popup.locator(`#${stale.id}`).getByRole('button', { name: 'Ratify recommendation' }).waitFor({ state: 'detached' });
   const refused = page.waitForResponse((response) => response.url().endsWith('/answer') && response.request().method() === 'POST');

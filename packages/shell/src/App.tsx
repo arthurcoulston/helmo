@@ -9,10 +9,13 @@ import {
   ClipboardListIcon,
   LayoutDashboardIcon,
   MapIcon,
+  MoonIcon,
   SquareArrowOutUpRightIcon,
+  SunIcon,
   UsersIcon,
   type LucideIcon,
 } from "lucide-react"
+import { useTheme } from "@/components/theme-provider"
 
 import { AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -24,7 +27,6 @@ import {
   Breadcrumb,
   BreadcrumbItem,
   BreadcrumbList,
-  BreadcrumbPage,
 } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
 import {
@@ -740,11 +742,20 @@ function Loading() {
   )
 }
 
-function AreaView({ area, areas }: { area: Destination; areas: string[] }) {
+function AreaView({ area, areas, onHeaderBadges }: { area: Destination; areas: string[]; onHeaderBadges?: (badges: HeaderBadge[]) => void }) {
   /* Team's usage period. Held here because `useArea` is what reads with it. */
   const [period, setPeriod] = React.useState("7d")
   const selected = useFragment()
   const state = useArea(area.id, selected, area.id === "team" ? { period } : {})
+  React.useEffect(() => {
+    if (!onHeaderBadges) return
+    if (area.id !== "work" || state.status !== "ready") return onHeaderBadges([])
+    const record = (state.data as { record?: WorkRecordData }).record
+    onHeaderBadges(record ? [
+      ...[["motion", "in motion"], ["ready", "ready"], ["blocked", "blocked"], ["standing", "standing"], ["done", "done"], ["cancelled", "cancelled"]].map(([group, label]) => ({ label: `${record.rows.filter((row) => row.display.group === group).length} ${label}` })),
+      { label: "Archived", href: "?whole=1" },
+    ] : [])
+  }, [area.id, state, onHeaderBadges])
 
   if (state.status === "loading") {
     return (
@@ -880,14 +891,14 @@ function OpenInNewWindow() {
     const opened = window.open(
       window.location.href,
       "_blank",
-      "popup=yes,width=1100,height=900"
+      "popup=yes"
     )
     setBlocked(!opened)
     opened?.focus()
   }
 
   return (
-    <div className="ml-auto flex items-center gap-2">
+    <div className="flex items-center gap-2">
       {blocked ? (
         <a
           className="text-xs text-muted-foreground underline underline-offset-2"
@@ -916,6 +927,22 @@ function OpenInNewWindow() {
   )
 }
 
+function ThemeToggle() {
+  const { theme, setTheme } = useTheme()
+  const dark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches)
+  const label = dark ? "Use light theme" : "Use dark theme"
+  return <Tooltip>
+    <TooltipTrigger asChild>
+      <Button type="button" variant="ghost" size="icon-sm" aria-label={label} onClick={() => setTheme(dark ? "light" : "dark")}>
+        {dark ? <SunIcon /> : <MoonIcon />}
+      </Button>
+    </TooltipTrigger>
+    <TooltipContent>{label}</TooltipContent>
+  </Tooltip>
+}
+
+type HeaderBadge = { label: string; href?: string }
+
 function Embedded({ children }: { children: React.ReactNode }) {
   const root = React.useRef<HTMLElement>(null)
   React.useEffect(() => {
@@ -936,6 +963,12 @@ function Embedded({ children }: { children: React.ReactNode }) {
 export function App() {
   const [config, setConfig] = React.useState<{ areas: string[]; defaultArea: string } | null>(null)
   const [error, setError] = React.useState("")
+  const [headerBadges, setHeaderBadges] = React.useState<HeaderBadge[]>([])
+  const [sidebarOpen, setSidebarOpen] = React.useState(() => sessionStorage.getItem("helmo-sidebar-open") === "true")
+  const rememberSidebar = React.useCallback((open: boolean) => {
+    sessionStorage.setItem("helmo-sidebar-open", String(open))
+    setSidebarOpen(open)
+  }, [])
   React.useEffect(() => {
     fetch("/api/v1/ui").then(async (r) => {
       if (!r.ok) throw new Error(`Could not read navigation (${r.status})`)
@@ -951,8 +984,8 @@ export function App() {
 
   return (
     <TooltipProvider>
-      <SidebarProvider>
-        <Sidebar>
+      <SidebarProvider open={sidebarOpen} onOpenChange={rememberSidebar}>
+        <Sidebar collapsible="icon">
           <SidebarHeader className="px-4 py-3 text-sm font-medium">
             Helmo
           </SidebarHeader>
@@ -982,25 +1015,32 @@ export function App() {
           {/* One row: the trigger, this view's title, and the pop-out. The
               menu never gets a row of its own. */}
           <header className="flex h-12 shrink-0 items-center gap-2 border-b">
-            <div className="flex flex-1 items-center gap-2 px-4">
+            <div className="flex min-w-0 flex-1 items-center gap-2 px-4">
               <SidebarTrigger className="-ml-1" />
               <Separator
                 orientation="vertical"
                 className="mr-2 data-vertical:h-4 data-vertical:self-auto"
               />
-              <Breadcrumb>
+              <Breadcrumb className="shrink-0">
                 <BreadcrumbList>
                   <BreadcrumbItem>
-                    <BreadcrumbPage>{area.label}</BreadcrumbPage>
+                    <h1 className="text-sm font-normal text-foreground" aria-current="page">{area.label}</h1>
                   </BreadcrumbItem>
                 </BreadcrumbList>
               </Breadcrumb>
-              <OpenInNewWindow />
+              <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+                {headerBadges.map((badge) => badge.href
+                  ? <Badge key={badge.label} variant="outline" asChild><a href={badge.href}>{badge.label}</a></Badge>
+                  : <Badge key={badge.label} variant="secondary">{badge.label}</Badge>)}
+              </div>
+              <div className="ml-auto flex shrink-0 items-center gap-1">
+                <ThemeToggle />
+                <OpenInNewWindow />
+              </div>
             </div>
           </header>
           <div className="flex min-w-0 flex-1 flex-col gap-4 p-4 [overflow-wrap:anywhere]">
-            <h1 className="text-lg font-medium">{area.label}</h1>
-            <AreaView area={area} areas={config.areas} />
+            <AreaView area={area} areas={config.areas} onHeaderBadges={setHeaderBadges} />
           </div>
         </SidebarInset>
       </SidebarProvider>

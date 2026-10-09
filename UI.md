@@ -199,9 +199,10 @@ authorization to replace the navigation framework.
 The sidebar show/hide trigger shares one compact header row with the current
 view title and breadcrumb, when present, following the
 [shadcn sidebar blocks](https://ui.shadcn.com/blocks/sidebar). Do not give the
-menu toggle a separate row. Hiding the sidebar reclaims its complete column:
-no collapsed icon rail or reserved navigation gutter remains. Use the standard
-offcanvas collapse behavior; the trigger stays in the existing view header.
+menu toggle a separate row. Use the standard icon-collapse behavior: a fresh
+desktop window starts collapsed with its icon rail visible, and each window
+keeps its own explicit choice across refreshes. The trigger stays in the
+existing view header; mobile retains the generated offcanvas behavior.
 Use the selected generation's upstream header composition, including the
 separator alignment. The inspected `radix-nova/sidebar-07` page uses
 `data-vertical:h-4 data-vertical:self-auto` on its vertical separator; the
@@ -215,12 +216,19 @@ current view context, including applicable filters and scope, and keep the
 original window in place. Navigation and sidebar changes in one window must
 not unexpectedly change another monitoring window.
 
+A light/dark icon control sits immediately beside that popout control and uses
+the generated theme provider, including its stored choice. Work's group-count
+badges follow its title in the header; an Archived badge and the completed-list
+footer both lead to the existing whole-record reading. Content does not repeat
+the page title already present in the header.
+
 Request the new window directly from the user's click. Browser preferences
 and popup policies control the final window/tab behavior; verify the actual
 supported desktop browsers and provide a usable fallback if opening is
 blocked. Opening the page must not perform work actions or submit forms.
-Initial sidebar visibility in the new window, automatic window placement,
-and a particular multi-monitor arrangement have not been decided.
+The application supplies no size or placement after the initial open request:
+browser policy chooses the initial window, and later polling, navigation and
+reload must not resize, reposition or recreate it.
 
 ## Preserve the product while aligning it
 

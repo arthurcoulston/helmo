@@ -9,7 +9,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { stateDir, tokenLogPath } from './config.js';
-import { BillingMode, ProviderConfig, RunChoice } from './types.js';
+import { BillingMode, ProviderConfig, RunChoice, Runtime } from './types.js';
 
 export interface BurnWindow {
   hourUsd: number;
@@ -67,17 +67,18 @@ export function burnWindow(loop: string, now = Date.now(), path = tokenLogPath()
   return { hourUsd, dayUsd };
 }
 
-/** The last non-zero, parseable per-iteration costs, newest last. Zero-cost
- *  probes must not depress the work baseline. Unknown costs are skipped,
- *  never turned into zero. */
-export function recentCosts(loop: string, limit = 5, path = tokenLogPath()): number[] {
+/** The last parseable per-iteration costs, newest last. When runtime is given,
+ *  take the last matching entries; missing runtime tags cannot establish a
+ *  same-runtime baseline. Known zeros count; unknown costs never become zero. */
+export function recentCosts(loop: string, limit = 5, path = tokenLogPath(), runtime?: Runtime): number[] {
   if (!existsSync(path) || limit <= 0) return [];
   const costs: number[] = [];
   for (const line of readFileSync(path, 'utf8').split('\n')) {
     const m = LINE.exec(line);
     if (!m || m[2] !== loop) continue;
+    if (runtime !== undefined && /(?:^|\s)runtime=(\S+)/.exec(line)?.[1] !== runtime) continue;
     const cost = Number(m[3]);
-    if (Number.isFinite(cost) && cost !== 0) costs.push(cost);
+    if (Number.isFinite(cost)) costs.push(cost);
   }
   return costs.slice(-limit);
 }

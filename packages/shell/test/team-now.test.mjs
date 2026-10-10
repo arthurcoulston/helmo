@@ -78,10 +78,12 @@ describe('the condensed team card', () => {
     const r = reading([
       session({ agent: 'mason', source_state: 'WEDGED', detail: 'cannot reach Helm' }),
       session({ agent: 'ward', source_state: 'CRASHED', detail: 'the recorded session process (pid 4812) is gone' }),
+      session({ agent: 'herald', source_state: 'BACKOFF', detail: 'restart attempt 3' }),
     ]);
     assert.match(r.text, /mason Failed/);
     assert.match(r.text, /ward Failed/);
-    assert.deepEqual(r.roles, ['failure', 'failure']);
+    assert.match(r.text, /herald Failed/);
+    assert.deepEqual(r.roles, ['failure', 'failure', 'failure']);
   });
 
   it('reads a state it does not recognise as unknown, and says which state', () => {

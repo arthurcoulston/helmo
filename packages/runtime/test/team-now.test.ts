@@ -58,7 +58,7 @@ describe('the state words this build can read', () => {
     expect(displayState('SEAT_HELD')).toBe('awaiting');
     expect(displayState('BLOCKED')).toBe('blocked');
     expect(displayState('LIMIT')).toBe('blocked');
-    expect(displayState('BACKOFF')).toBe('blocked');
+    expect(displayState('BACKOFF')).toBe('failed');
     expect(displayState('STOP')).toBe('stopped');
     expect(displayState('HOLD')).toBe('stopped');
     expect(displayState('PARKED')).toBe('stopped');
@@ -237,7 +237,7 @@ describe('reading a real installation', () => {
     expect([find('held').source_state, find('held').state]).toEqual(['SEAT_HELD', 'awaiting']);
     expect([find('stuck').source_state, find('stuck').state]).toEqual(['BLOCKED', 'blocked']);
     expect([find('limited').source_state, find('limited').state]).toEqual(['LIMIT', 'blocked']);
-    expect([find('backed-off').source_state, find('backed-off').state]).toEqual(['BACKOFF', 'blocked']);
+    expect([find('backed-off').source_state, find('backed-off').state]).toEqual(['BACKOFF', 'failed']);
     expect([find('wedged').source_state, find('wedged').state]).toEqual(['WEDGED', 'failed']);
     expect([find('crashed').source_state, find('crashed').state]).toEqual(['CRASHED', 'failed']);
     expect([find('stopped').source_state, find('stopped').state]).toEqual(['STOP', 'stopped']);

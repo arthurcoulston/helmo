@@ -10,12 +10,12 @@
    of them is a way to read the fleet wrongly:
 
    - **Having nothing to do is not being unable to work.** `IDLE` is a session
-     that polled and found no ready work; `BLOCKED`, `LIMIT` and `BACKOFF` are
-     sessions that cannot draw work at all. Both look like "not running" from
-     outside, and only the first is the fleet working as intended.
+     that polled and found no ready work; `BLOCKED` and `LIMIT` are sessions
+     that cannot draw work at all. Both look like "not running" from outside,
+     and only the first is the fleet working as intended.
    - **A decision is not a fault.** `STOP`, `HOLD` and `PARKED` are somebody's
      instruction and `halted` is a loop nothing has started; none of them is a
-     problem to be alarmed about. `WEDGED` and `CRASHED` are.
+     problem to be alarmed about. `BACKOFF`, `WEDGED` and `CRASHED` are.
    - **An unread state is not a known one.** A session whose process cannot be
      inspected reports `UNKNOWN`, and a state word this build has never heard of
      is in the same position: both say the reading failed, which is the one
@@ -79,20 +79,15 @@ export type TeamNowData = {
    — the same situation as an idle poll, with a different reason. Its reason
    travels with it either way.
 
-   `LIMIT` and `BACKOFF` are Blocked, which is the one judgment here a reviewer
-   should weigh. Both carry a recorded obstacle (a provider's capacity reply, a
-   restart streak) and neither is anybody's decision, so neutral would be
-   wrong; both also recover on their own, so Blocked slightly overstates them.
-   The source state travels with the row, so the overstatement is readable
-   rather than hidden — and it is the direction that keeps the significance of
-   a fleet that cannot draw work. */
+   `BACKOFF` is Failed because the supervisor writes it only after a loop
+   crashes. Retrying the crash does not turn it into a blockage. */
 const DISPLAY: Record<string, AgentState> = {
   RUNNING: 'working',
   IDLE: 'awaiting',
   SEAT_HELD: 'awaiting',
   BLOCKED: 'blocked',
   LIMIT: 'blocked',
-  BACKOFF: 'blocked',
+  BACKOFF: 'failed',
   WEDGED: 'failed',
   CRASHED: 'failed',
   STOP: 'stopped',

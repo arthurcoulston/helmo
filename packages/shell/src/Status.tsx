@@ -110,8 +110,9 @@ export function acceptanceRole(state: string, reason?: string): StatusRole | nul
 
 /** A loop's state, as Rev's sentinels report it (packages/runtime `state()`).
  *  STOP, HOLD, PARKED, SEAT_HELD and halted are all somebody's decision, and
- *  IDLE is the fleet with nothing to do; none of them is a problem. WEDGED and
- *  CRASHED are a loop that cannot continue on its own.
+ *  IDLE is the fleet with nothing to do; none of them is a problem. BACKOFF,
+ *  WEDGED and CRASHED record an unexpected loop failure; a supervisor retry
+ *  does not turn the crash into a blockage.
  *
  *  BLOCKED is amber, and that was questioned and settled rather than left to
  *  taste. A reviewer read it as a contract conflict — the palette says a
@@ -121,8 +122,8 @@ export function acceptanceRole(state: string, reason?: string): StatusRole | nul
  *  restart on its own. Arthur confirmed it: a loop needing his intervention is
  *  amber (H-2987@dev.rev). */
 export function loopStateRole(state: string): StatusRole | null {
-  if (state === "WEDGED" || state === "CRASHED") return "failure"
-  if (["BLOCKED", "BACKOFF", "LIMIT", "UNKNOWN"].includes(state)) return "attention"
+  if (["BACKOFF", "WEDGED", "CRASHED"].includes(state)) return "failure"
+  if (["BLOCKED", "LIMIT", "UNKNOWN"].includes(state)) return "attention"
   if (state === "RUNNING") return "info"
   return null
 }

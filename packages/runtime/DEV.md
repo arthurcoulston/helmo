@@ -1274,16 +1274,13 @@ as a deliberate stop.
 | --- | --- | --- |
 | `RUNNING` | working | executing |
 | `IDLE`, `SEAT_HELD` | awaiting | up and available; nothing to draw, or the seat's holder has it |
-| `BLOCKED`, `LIMIT`, `BACKOFF` | blocked | cannot draw work, and nobody chose it |
+| `BLOCKED`, `LIMIT` | blocked | cannot draw work, and nobody chose it |
 | `STOP`, `HOLD`, `PARKED`, `halted` | stopped | somebody's instruction, or never started |
-| `WEDGED`, `CRASHED` | failed | down and will not recover on its own |
+| `BACKOFF`, `WEDGED`, `CRASHED` | failed | an unexpected crash or failure, whether or not the supervisor will retry it |
 | `UNKNOWN`, anything else | unknown | the reading failed |
 
-`LIMIT` and `BACKOFF` as *blocked* is the one judgment here worth a second
-opinion: both carry a recorded obstacle and neither is anybody's decision, so
-neutral would be wrong, but both do recover on their own, so Blocked slightly
-overstates them. The source word travels with every row, so the overstatement
-is readable rather than hidden.
+`BACKOFF` remains *failed*: the supervisor writes it only after the loop
+crashes, and retrying the crash does not turn it into a blockage.
 
 **The roll-up is by severity, never by convenience.** One agent is one
 accountable seat, and a seat may be served by several sessions (`seat` in the

@@ -147,9 +147,9 @@ test('a deliberate or ordinary state takes no colour', () => {
 test('what needs Arthur is amber and what has failed is red', () => {
   assert.equal(ticketStateRole('awaiting_human'), 'attention');
   assert.equal(projectStatusRole('blocked'), 'attention');
-  for (const state of ['BLOCKED', 'BACKOFF', 'LIMIT', 'UNKNOWN']) assert.equal(loopStateRole(state), 'attention', state);
+  for (const state of ['BLOCKED', 'LIMIT', 'UNKNOWN']) assert.equal(loopStateRole(state), 'attention', state);
   assert.equal(usageSeverityRole('warning'), 'attention');
-  for (const state of ['WEDGED', 'CRASHED']) assert.equal(loopStateRole(state), 'failure', state);
+  for (const state of ['BACKOFF', 'WEDGED', 'CRASHED']) assert.equal(loopStateRole(state), 'failure', state);
   assert.equal(usageSeverityRole('critical'), 'failure');
   assert.equal(acceptanceRole('failed', 'rejected'), 'failure');
   /* Two reviewers disagreeing about whether work is sound is not a pending

@@ -582,9 +582,11 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   trade this bug was about. A journaled launch's replacement waits for that
   orphan rather than running beside it (H-685, under the pool section). After a CLI returns normally, the shim terminates
   background children still in that session group (H-1013); this cleanup is
-  deliberately unreachable when the loop dies during `spawnSync`, so H-467's
-  orphaned session still finishes. `test/shim.test.ts` proves both sides with
-  real process groups.
+  unreachable when the loop is killed while awaiting its session, so H-467's
+  close-out protection against external group signals still stands. Mock
+  sessions use the same async spawn as real CLIs, so drain tests
+  exercise delivery of signals during a session. `test/shim.test.ts` proves both
+  sides with real process groups.
 
   **`sessionSpec()` is that composition as data** (H-1152), so a consumer that
   is not a loop can run a seat's session without a second copy of the recipe.
@@ -616,27 +618,23 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
 
 - `ladder.ts` — pure decision functions for the failure ladder (transient ≠
   failure ≠ apparatus). Unit-tested; change with tests.
-- `supervisor.ts` — the fleet (v1, H-18): one child process per roster loop
-  (the shim is spawnSync, so a loop process can only drive one loop), respawn
-  decided by `respawnDecide` in the ladder (halt sentinel → await clearance;
-  healthy clean exit → fresh spawn; crash/short-lived → exponential backoff,
-  BACKOFF sentinel). Drain = SIGTERM cascade: a loop process sits inside a
-  blocking `spawnSync`, so its handler cannot run until the session returns —
-  the deferral is real, and everything the loop does after a session (run-end,
-  the ladder, `record-spend`) is synchronous, so it completes before the
-  handler's first chance to fire. That synchronous stretch used to run straight
-  past the iteration boundary and into the NEXT session (H-1109): `await` on an
-  already-resolved promise drains microtasks without turning libuv, so the
-  signal watcher never got its turn and a busy loop swallowed the drain
-  outright — six loops gone in milliseconds while mason ran three more
-  full-price iterations on the old code and held the fleet down for ten
-  minutes. `loop.ts` yields once (`setImmediate`) at the top of every
-  iteration, which is the only thing making the deferral end where it is
-  documented to end, and the handler logs `loop-stop reason=drain` so the
-  loop's own events.log says why it went. What that deferral never covered is
-  a signal aimed at the process GROUP rather than the loop, which is where
-  H-467's orphaned artifacts came from: see the session process group under
-  `shim.ts`.
+- `supervisor.ts` — the fleet (v1, H-18): one child process per roster loop,
+  respawn decided by `respawnDecide` in the ladder (halt sentinel → await
+  clearance; healthy clean exit → fresh spawn; crash/short-lived → exponential
+  backoff, BACKOFF sentinel). Drain = SIGTERM cascade. Each loop explicitly
+  records a pending signal while its async session or close-out is in flight,
+  then logs `loop-stop reason=drain` and exits 143 after run-end,
+  journal settlement, metering and the ladder's state writes. Terminal ladder
+  paths honor the pending drain too. Idle, parked, capacity, transient and
+  throttle waits exit promptly rather than adding their wait to the drain.
+  The top-of-loop `setImmediate` still gives queued signals a turn before a
+  new iteration (H-1109), including paths whose awaits resolve synchronously.
+  Deferral used to rely on `spawnSync`; once real CLIs streamed asynchronously,
+  the old handler instead exited immediately, orphaning the detached session
+  beside the returning fleet. Synchronous mocks hid this failure. A wedged
+  session is still bounded by `drain_grace_seconds`; the supervisor enumerates
+  and ends its detached group when killing the runner (H-1089). Group isolation
+  still protects sessions from external broadcast signals (H-467, above).
   Child stdout/err goes to state/<loop>/console.log; supervisor decisions to
   state/supervisor/events.log. 'supervisor' is a reserved loop name.
   An installation may also opt this same poll into the narrow Good Plumb

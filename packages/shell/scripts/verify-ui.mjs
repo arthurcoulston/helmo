@@ -192,6 +192,32 @@ store.updateTicket(actor, { ticket_id: moving.id, status: 'in_progress', note: '
    orchestrator's, and a seat holding nothing draws no link at all (H-3091). */
 const seatHolds = create('The work a configured seat is holding');
 store.updateTicket({ name: 'well-found', kind: 'agent', model: 'fixture', version: 'fixture' }, { ticket_id: seatHolds.id, status: 'in_progress', note: 'Claimed by the configured seat.' });
+/* Overview's forecast (H-3089). Its outcomes are the work a seat the roster
+   actually configures can draw next, and every OTHER ticket in this fixture
+   belongs to a workstream with no seat and is correctly excluded as such — so
+   without these four the card renders a true "no work the team can start" and
+   passes 30 layouts by drawing nothing. The seed is the only part that makes
+   that pass a statement about the product.
+   Reserved to a seat rather than seating the workstream, which would change
+   what every other fixture row discloses.
+   This fixture deliberately has NO measured history: nothing it closes was
+   ever claimed, so there is no claim-to-close elapsed time to band and the card
+   reads in its fresh-installation state — outcomes named, hours unavailable
+   with the missing basis said. The hours arithmetic itself is proved against
+   hand-calculated ranges in packages/work/test/{forecast,runway}.test.ts and in
+   test/runway.test.mjs; what the browser proves is that an untimed forecast
+   still draws the work, in both themes, at three widths. */
+const forecast = (title, extra = {}) => create(title, { assignee: 'well-found', ...extra });
+const nextUp = forecast('The next thing a configured seat will do');
+const alsoNext = forecast('And the one after it', { assignee: 'pair' });
+const needsArthur = forecast('A step the team cannot take without Arthur');
+store.updateTicket(actor, { ticket_id: needsArthur.id, blast_radius: 'published', note: 'This one ends in a publication, which is Arthur\u2019s to perform.' });
+const notRunway = forecast('Deliberately held work is not runway');
+store.updateTicket(actor, { ticket_id: notRunway.id, note: 'Held while the commissioned tranche finishes.', capacity_hold: {
+  reason: 'A later phase that must not start ahead of the current tranche.',
+  provenance: 'The fixture operator\u2019s recorded direction.',
+  reconsider_when: 'The current tranche is reconciled and this phase is selected.',
+} });
 const reviewer = { name: 'fixture-reviewer', kind: 'agent', model: 'fixture', version: 'fixture' };
 const reviewed = (title, verdict) => {
   const t = create(title);
@@ -398,10 +424,12 @@ try {
   // Work is a compact reading: the groups are tables, a collapsed row carries
   // no record body, and a sentence-length reason is in the record not the row.
   await page.goto(`${origin}/work`);
-  await page.getByRole('heading', { name: 'Ready · 2', exact: true }).waitFor();
+  // Five since the forecast fixture reserved four tickets to roster seats, one
+  // of which is held and groups as blocked (H-3089).
+  await page.getByRole('heading', { name: 'Ready · 5', exact: true }).waitFor();
   assert.equal(await page.getByRole('heading', { name: 'Work', exact: true }).count(), 1, 'the header is the page title; content must not repeat it');
   assert.equal(await page.getByText(/Current record ·/).count(), 0, 'the retired current-record line must stay absent');
-  await page.getByText('2 ready', { exact: true }).waitFor();
+  await page.getByText('5 ready', { exact: true }).waitFor();
   assert.equal(await page.getByRole('link', { name: 'Archived', exact: true }).getAttribute('href'), '?whole=1');
   assert.equal(await page.getByRole('link', { name: 'See all completed tickets.', exact: true }).getAttribute('href'), '?whole=1');
   const sidebar = page.locator('[data-slot="sidebar"]');
@@ -796,6 +824,41 @@ try {
     { timeout: 30_000 },
   );
   await teamNow.getByText(/pair · session pair-2 · IDLE/).waitFor({ timeout: 1_000 });
+  /* Overview's forecast (H-3089), read here for the same reason as the roster
+     above: a card with no admitted work draws its own honest copy, audits
+     clean, and reports 30 layouts verified. */
+  const runway = page.locator('[aria-label="What happens next"]');
+  await runway.getByText('What happens next', { exact: true }).waitFor();
+  const forecastRows = await runway.evaluate((el) => [...el.querySelectorAll('ol > li')]
+    .map((li) => [...li.children].map((c) => c.textContent.replace(/\s+/g, ' ').trim()).join(' ') || li.textContent.trim()));
+  /* The work a configured seat can really draw, in queue order, with the seat
+     accountable for each — and the count of the rest, because the glance view
+     stops at three. */
+  assert.deepEqual(
+    forecastRows,
+    [
+      `${seatHolds.id} The work a configured seat is holding well-found timing unknown`,
+      `${nextUp.id} The next thing a configured seat will do well-found timing unknown`,
+      `${alsoNext.id} And the one after it pair timing unknown`,
+      // Four outcomes, not five: the held ticket is excluded, which is the
+      // whole point of admitting work rather than listing the backlog.
+      '+1 more in the forecast',
+    ],
+    `the forecast is not the work this fixture's seats can draw: ${JSON.stringify(forecastRows)}`,
+  );
+  /* The fresh-installation headline, said in words rather than drawn as a zero.
+     This fixture records no claim-to-close time anywhere, and a card that
+     answered "0 minutes" to that would be the single worst reading it could
+     give. */
+  await runway.getByText('Hours unavailable').waitFor();
+  await runway.getByText(/comparable closed build work to measure \(0 of 5 needed\)/).waitFor();
+  /* The step Arthur keeps, named even though nothing can time it. */
+  await runway.getByText(/Publishing needs Arthur, timing unknown/).waitFor();
+  /* And the basis behind the disclosure, which no server-rendered proof sees. */
+  await runway.getByRole('button', { name: 'How this was estimated', exact: true }).click();
+  await runway.getByText(/25th to 75th percentile/).waitFor();
+  await runway.getByText(new RegExp(`${notRunway.id} Deliberately held work is not runway . Deliberately held`)).waitFor();
+  await runway.getByText(/Seats counted as able to continue/).waitFor();
   const areas = ['overview', 'work', 'roadmap', 'team', 'run'], themes = ['light', 'dark'], widths = [390, 640, 1280];
   const audited = [];
   /* Where the horizontal fold falls on a phone. Nothing above can see this:

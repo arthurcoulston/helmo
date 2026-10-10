@@ -453,6 +453,25 @@ empty window says so rather than drawing nothing. The window itself comes from
 the server with the rows, so a card held over from a failed refresh labels the
 window it describes instead of being redrawn against the browser's clock.
 
+**Overview says what happens next.** The second selected widget (R-43) is one
+wide Card in `packages/shell/src/Runway.tsx`: a headline range, three named
+outcomes with the seat accountable for each, and the first step Arthur keeps.
+Its whole discipline is in the headline, which distinguishes three readings a
+single number would collapse — *About N hours* when everything admitted was
+measurable, *At least N hours* when part was not and this is the floor, and
+*Hours unavailable* with the concrete missing basis when nothing could be
+measured. A floor presented as a total is the one way this card could mislead
+him into not checking in, so it is labelled in those words with the count of
+unmeasured items beside it. An outcome nobody can time is still named and reads
+*timing unknown* rather than borrowing the row above's hours. Sub-hour ranges
+are read in minutes, because a reader wants to know whether to come back after
+a coffee or after lunch, not to see the arithmetic. Everything justifying the
+number — the exclusions and why, the unmeasured items, the sample basis, which
+seats were counted, and what the forecast does not model — is behind one
+disclosure. Colour follows the same restraint as everywhere: queued work, a
+deliberate hold and a date gate stay neutral, and the two readings that are
+about Arthur carry a role.
+
 **All five areas now use the same standard application.** Overview, Work,
 Roadmap, Team and Runtime share the official sidebar and components. Work,
 Roadmap and Runtime standalone entry points serve that same built document;

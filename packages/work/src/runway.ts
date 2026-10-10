@@ -19,7 +19,7 @@
    is needed here" is a ticket's own recorded blast radius: a claim authorises
    work up to `records`, and `sent`/`published` is the step he keeps. That is a
    field somebody set, not a guess about what the work will turn out to need. */
-import { forecast, Forecast, ForecastJob } from './forecast.js';
+import { forecast, Forecast, ForecastJob, Span } from './forecast.js';
 import { Ticket, WorkstreamInfo } from './types.js';
 
 /** A seat's state as the runtime reports it. The states are Team-now's six;
@@ -59,7 +59,9 @@ export interface RunwayOutcome {
   id: string;
   title: string;
   owner: string;
-  finishes_after: { low: number; high: number };
+  /** Null when nothing can put this job on a clock. The job is still named:
+   *  it is what happens next whether or not it can be timed. */
+  finishes_after: Span | null;
 }
 
 export interface RunwayDocument {
@@ -70,10 +72,10 @@ export interface RunwayDocument {
   /** The complete reading: hours until the admitted work runs out. Null while
    *  anything admitted has no duration — read `floor` instead and say "at
    *  least". */
-  range: { low: number; high: number } | null;
-  floor: { low: number; high: number } | null;
+  range: Span | null;
+  floor: Span | null;
   outcomes: RunwayOutcome[];
-  first_human_boundary: { id: string; title: string; after: { low: number; high: number }; reason: string } | null;
+  first_human_boundary: { id: string; title: string; after: Span | null; reason: string } | null;
   unknown_duration: { id: string; title: string; owner: string; reason: string }[];
   excluded: { id: string; title: string; reason: ExclusionReason; detail: string }[];
   coverage: {

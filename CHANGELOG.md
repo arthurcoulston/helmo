@@ -13,6 +13,21 @@ longer.
 
 ## Unreleased — 0.9.5
 
+- Overview now answers "what will happen next without my intervention?" The
+  new **What happens next** card names the work the team can draw on its own,
+  the seat accountable for each piece, the first step that needs Arthur, and an
+  estimated range of wall-clock hours before the queue runs out. The hours come
+  from measured history and nothing else: elapsed claim-to-close time on
+  comparable closed work, taken as the middle half of the last 90 days' samples
+  so that one ticket claimed and left for three weeks cannot quietly extend the
+  runway. Work that is held, gated, out of budget, waiting on Arthur, or owned
+  by a seat that cannot draw it is excluded with its reason, and a recurring
+  template is never counted — only the instances it has already spawned. When
+  part of the queue cannot be measured the card says *at least* and calls the
+  number a floor; when none of it can, it says so and names what is missing
+  rather than drawing a zero. A range is an estimate, never a guarantee, and
+  the whole basis for it sits behind one disclosure.
+
 - Completing work now says what it produced. A `done` status was never an
   account of anything: the record said a ticket had ended, and the only way to
   learn what came out of it was to open the body and infer. So `update_ticket`

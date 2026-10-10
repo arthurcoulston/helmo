@@ -4,6 +4,7 @@ import * as React from "react"
 import { RoadmapView, type RoadmapData } from "./RoadmapView"
 import { CopyReference, TicketDetails, WorkRecord, type WorkRecordData } from "./WorkRecord"
 import { RecentResults, resultsOf } from "./RecentResults"
+import { Runway, runwayOf } from "./Runway"
 import { TeamNow, teamNowOf } from "./TeamNow"
 import {
   ActivityIcon,
@@ -831,6 +832,7 @@ function AreaContent({ area, state, selected, areas, period, onPeriodChange }: {
        has always been, and a missing widget is not a broken page. */
     const results = resultsOf(state.data)
     const team = teamNowOf(state.data)
+    const next = runwayOf(state.data)
     return (
       <>
         <p className="text-sm text-muted-foreground">4 areas</p>
@@ -855,6 +857,15 @@ function AreaContent({ area, state, selected, areas, period, onPeriodChange }: {
               Team now
             </h2>
             <TeamNow data={team} />
+          </section>
+        </> : null}
+        {next ? <>
+          <Separator />
+          <section className="flex flex-col gap-2">
+            <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+              What happens next
+            </h2>
+            <Runway data={next} />
           </section>
         </> : null}
         {results ? <>

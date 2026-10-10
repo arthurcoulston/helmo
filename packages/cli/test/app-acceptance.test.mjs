@@ -184,6 +184,26 @@ test('the app answers its own port directly and renders the record a recorded UR
   assert.equal(member.state, 'stopped');
   assert.deepEqual(member.work.map((w) => w.id), [claimed], 'the ticket the seat claimed did not reach its roster entry');
 
+  /* The forecast rides along on the same read, and needs the join in the other
+     direction: which seats can draw work decides which backlog is runway at
+     all (H-3089). The example roster's only seat is `halted`, so this asserts
+     the honest NEGATIVE reading — the work is correctly not runway, and that is
+     a conclusion the card reached rather than an empty document. */
+  const next = withTeam.data.next;
+  assert.ok(next, 'the Overview API carries no forecast document for the card to draw');
+  assert.ok(Date.parse(next.as_of), 'the forecast carries no instant it was taken at');
+  assert.equal(next.unavailable, null, `the forecast refused the fixture roster: ${next.unavailable}`);
+  const held = next.excluded.find((item) => item.id === claimed);
+  assert.ok(held, `the stopped seat's claim is not accounted for: ${JSON.stringify(next.excluded)}`);
+  assert.equal(held.reason, 'unavailable_seat');
+  assert.match(held.detail, /example-worker is stopped/);
+  // No measured history in this fixture, so hours must be withheld rather than
+  // drawn as a zero — the one reading that would mislead the operator most.
+  assert.equal(next.range, null);
+  assert.equal(next.floor, null);
+  assert.ok(next.coverage.window_days > 0, 'the forecast does not disclose the window it measured');
+  assert.deepEqual(next.coverage.seats.available, [], 'a halted seat was counted as able to continue');
+
   /* The results widget's document reaches Overview, carried from Work rather
      than recomputed, with the window the server fixed (R-44). Asserted here
      because `verify:ui` is a release gate rather than part of this suite: a

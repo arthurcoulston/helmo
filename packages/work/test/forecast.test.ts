@@ -44,6 +44,32 @@ describe('bounded autonomous runway', () => {
     expect(result.unknown_duration).toEqual(['unknown', 'external']);
   });
 
+  it('still names a job it cannot time, and stops that owner\'s clock', () => {
+    const result = forecast([
+      { id: 'untimed', title: 'untimed', owner: 'mason', duration_hours: null },
+      job('after', 'mason', 1),
+      job('elsewhere', 'ward', 2),
+    ]);
+    expect(result.outcomes.map((x) => [x.id, x.finishes_after])).toEqual([
+      ['untimed', null],
+      // Same owner, behind something untimed: it happens next and no hour can
+      // say when, so borrowing the clock would be a schedule with a hole in it.
+      ['after', null],
+      ['elsewhere', { low: 2, high: 2 }],
+    ]);
+    expect(result.unknown_duration).toEqual(['untimed', 'after']);
+    expect(result.floor).toEqual({ low: 2, high: 2 });
+    expect(result.range).toBeNull();
+  });
+
+  it('names a boundary it cannot time and sorts it behind one it can', () => {
+    const result = forecast([
+      { id: 'untimed', title: 'untimed', owner: 'mason', duration_hours: null, human_boundary: 'Publishing needs Arthur' },
+      job('timed', 'ward', 1, 2, { human_boundary: 'Sending needs Arthur' }),
+    ]);
+    expect(result.first_human_boundary).toEqual({ id: 'timed', after: { low: 1, high: 2 }, reason: 'Sending needs Arthur' });
+  });
+
   it('keeps a measured floor when only part of the work is unknown', () => {
     const result = forecast([job('known', 'mason', 2, 3), { id: 'guess', title: 'guess', owner: 'ward', duration_hours: null }]);
     expect(result.range).toBeNull();

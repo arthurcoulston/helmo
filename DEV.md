@@ -191,8 +191,13 @@ joining their stores — with one deliberate exception. The condensed roster
 running comes from the runtime and what each seat has claimed comes from the
 work record, and neither may import the other (R-47 C1), so `serve.js` composes
 `teamNowSnapshot(seatWork(work.records))` in the one process that already holds
-both. No store reads the other, and the join is named here because a reader of
-the sentence above would otherwise be entitled to assume it cannot happen. Team projects the roster's own configuration — each
+both. The forecast (`next`, R-43 H-3089) is the same join needed in the other
+direction — which seats can draw work decides which backlog is runway at all —
+and is composed in the same place, passing the team reading's seat states into
+`runwaySnapshot`. An unreadable roster travels as `null` rather than an empty
+seat list, because a fleet nobody could read is not a fleet with no agents.
+No store reads the other, and the joins are named here because a reader of
+the sentence above would otherwise be entitled to assume they cannot happen. Team projects the roster's own configuration — each
 seat's identity, the files it is configured to load, what those files measure
 against their own `cap_tokens`, and what the token-log says its sessions spent.
 The composed figure counts the `--- Skill: … ---` header the shim writes before

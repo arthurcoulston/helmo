@@ -155,6 +155,10 @@ describe('autonomous runway', () => {
     expect(result.unknown_duration).toEqual([
       { id: 'waiting', title: 'waiting', owner: 'ward', reason: 'Waits on held, which is not itself runway' },
     ]);
+    expect(result.outcomes.map((o) => [o.id, o.finishes_after])).toEqual([
+      ['live', { low: 2, high: 4 }],
+      ['waiting', null],
+    ]);
   });
 
   it('says what measurement is missing rather than inventing hours', () => {
@@ -164,6 +168,9 @@ describe('autonomous runway', () => {
     }));
     expect(result.range).toBeNull();
     expect(result.floor).toBeNull();
+    // Named anyway: an installation with no closed history still has a next
+    // thing that happens, and this is the state a fresh install reads in.
+    expect(result.outcomes).toEqual([{ id: 'H-1', title: 'H-1', owner: 'mason', finishes_after: null }]);
     expect(result.unknown_duration).toEqual([
       { id: 'H-1', title: 'H-1', owner: 'mason', reason: 'No comparable closed build work to measure (3 of 5 needed)' },
     ]);

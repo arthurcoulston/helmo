@@ -2,7 +2,7 @@
 // Contract: run one non-interactive session in the loop's cwd; return the exit
 // code classified per the ladder (0 clean / 75 transient / 78 apparatus),
 // token accounting when the runtime reports it, and the output tail.
-import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync, rmSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -229,7 +229,7 @@ export function sessionGroupsOf(pid: number | undefined): number[] {
 
 // End one detached session group: TERM for a short grace, then KILL to bound it.
 // Two callers, both narrow. Here, after a CLI has returned, to sweep background
-// children it left behind — if the loop dies while spawnSync is blocked this
+// children it left behind — if the loop dies while awaiting the session this
 // code never runs, and H-467's close-out protection stays intact. And from the
 // supervisor's drain escalation, where the loop is being SIGKILLed anyway and
 // the session must not outlive it.
@@ -261,10 +261,9 @@ export function endSessionGroup(pid: number | undefined): void {
 }
 
 // A journaled launch's session writes its own group id before it becomes the
-// CLI (H-685). spawnSync only learns the pid once the session has ended, and a
-// loop SIGKILLed in between never does; the next process reads this file to
-// tell whether the dead launch's session is still running before it launches
-// a replacement in the same workspace. Detached, so the shell leads the group
+// CLI (H-685). A loop SIGKILLed mid-session cannot finish its journal; the next
+// process reads this file to tell whether that session is still running before
+// it launches a replacement in the same workspace. Detached, so the shell leads the group
 // and exec keeps its pid. A CLI exec cannot find exits 126/127 here instead of
 // surfacing as a spawn error, so callers read those as apparatus too.
 function sessionArgv(cmd: string, args: string[], groupFile?: string): [string, string[]] {
@@ -543,13 +542,13 @@ async function runCodex(g: GlobalConfig, l: LoopConfig, prompt: string, model: s
 // the harness itself is testable (and installs verifiable) without an agent CLI
 // or tokens. The command's exit code flows through the ladder unchanged, so
 // tests can exercise every failure class.
-function runMock(l: LoopConfig, prompt: string, model: string, generation?: string, groupFile?: string): SessionResult {
+async function runMock(l: LoopConfig, prompt: string, model: string, generation?: string, groupFile?: string): Promise<SessionResult> {
   if (!l.mock_cmd) return { rc: 78, cls: 'apparatus', outputTail: "mock runtime requires 'mock_cmd' in the roster" };
-  const res = spawnSync(...sessionArgv('bash', ['-c', l.mock_cmd], groupFile), {
+  // Exercise the same async lifetime as real CLIs: a synchronous mock hides
+  // signals delivered while the runner is awaiting its session (H-1273).
+  const res = await spawnSession(...sessionArgv('bash', ['-c', l.mock_cmd], groupFile), {
     cwd: l.cwd,
-    encoding: 'utf8',
     env: { ...sessionEnv(l), REV_PROMPT: prompt, REV_MODEL: model, HELMO_ACTOR: JSON.stringify(loopActor(l, model, undefined, generation)) },
-    ...SESSION_GROUP,
   });
   endSessionGroup(res.pid);
   const rc = res.status ?? 1;

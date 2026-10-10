@@ -734,7 +734,7 @@ mock_cmd = "true"
       }
     }
   });
-  it('the drain escalation ends the straggler\'s session, not just its loop (H-1089)', { timeout: 60000 }, async () => {
+  it('the drain grace kills a wedged async session and its whole group (H-1089, H-281, H-1273)', { timeout: 60000 }, async () => {
     // The shape that cost H-1086 a gate run: a redeploy drains while an agent
     // CLI is mid-turn, the grace expires, the loop is SIGKILLed — and the CLI,
     // in its own detached group (H-467), reparents to init and keeps working
@@ -747,8 +747,11 @@ workstream = "ws-slow"
 cwd = "/tmp"
 runtime = "mock"
 mock_cmd = '''
+trap '' TERM
 echo $$ > "$REV_HOME/session.pid"
-sleep 300
+sleep 300 &
+echo $! > "$REV_HOME/descendant.pid"
+wait
 '''
 `,
       'drain_grace_seconds = 3',
@@ -765,20 +768,26 @@ sleep 300
     };
     let session = 0;
     try {
-      await waitFor(() => existsSync(join(e.home, 'session.pid')), 'session started');
+      await waitFor(() => existsSync(join(e.home, 'descendant.pid')), 'session and descendant started');
       session = sessionPid();
+      const descendant = Number(readFileSync(join(e.home, 'descendant.pid'), 'utf8'));
       // Two assertions, not one: the session must be genuinely mid-flight when
       // the drain lands, or its absence afterwards proves nothing.
       expect(alive(session)).toBe(true);
+      expect(alive(descendant)).toBe(true);
 
-      const exited = new Promise<number | null>((r) => proc.on('exit', (code) => r(code)));
       rev(e, ['stop']);
-      expect(await exited).toBe(0);
+      await waitFor(() => proc.exitCode !== null, 'bounded drain completed', 12000);
+      expect(proc.exitCode).toBe(0);
 
-      await waitFor(() => !alive(session), 'session ended with its loop', 10000);
+      await waitFor(() => !alive(session) && !alive(descendant) && !alive(-session), 'entire session group ended with its loop', 10000);
       const log = readFileSync(join(e.home, 'state', 'supervisor', 'events.log'), 'utf8');
       expect(log).toMatch(/drain-kill\s+loop=slow/);
       expect(log).toMatch(new RegExp(`drain-kill-session\\s+loop=slow group=${session}`));
+      const drainAt = Date.parse(log.split('\n').find((line) => /drain\s+signal=/.test(line))!.split(' ')[0]!);
+      const killAt = Date.parse(log.split('\n').find((line) => /drain-kill\s+loop=slow/.test(line))!.split(' ')[0]!);
+      expect(killAt - drainAt).toBeGreaterThanOrEqual(3000);
+      expect(killAt - drainAt).toBeLessThan(12000);
     } finally {
       proc.kill('SIGKILL');
       try {

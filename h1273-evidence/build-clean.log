@@ -1,0 +1,40 @@
+
+> helmo-workspace@0.9.2 build
+> node scripts/build.mjs
+
+
+> @helmo/core@0.9.2 build
+> tsc
+
+
+> helmo-roadmap@0.9.2 build
+> tsc
+
+
+> helmo-roadmap@0.9.2 postbuild
+> node scripts/stamp-build.mjs
+
+helmo-roadmap: stamped dist as 4421214
+
+> helmo@0.9.2 build
+> tsc
+
+
+> helmo@0.9.2 postbuild
+> node scripts/stamp-build.mjs
+
+helmo: stamped dist as 4421214
+
+> rev@0.9.2 prebuild
+> node scripts/check-import-boundary.mjs
+
+  ok  import boundary: 37 shipped files import nothing from the work record
+
+> rev@0.9.2 build
+> tsc
+
+
+> rev@0.9.2 postbuild
+> node scripts/stamp-build.mjs
+
+rev: stamped dist as 4421214

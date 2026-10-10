@@ -1,0 +1,92 @@
+
+> rev@0.9.2 test
+> vitest run --maxWorkers=2 --reporter=verbose test/loop.e2e.test.ts test/supervisor.e2e.test.ts -t a drain|drain grace kills
+
+
+ RUN  v4.1.11 /Users/arthurcoulston/projects/gp-contrib/helmo-h1273/packages/runtime
+
+ ↓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > keeps a scheduled-capacity loop down until its resume time
+ ↓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > general start runs every roster loop; both complete their work; rev stop drains cleanly
+ ↓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > a SIGKILLed loop returns through the backoff; STOP holds until resume
+ ↓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > reload respawns one loop on the edited roster after its turn, leaving siblings running (H-891)
+ ↓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > a STOP set by someone else during a reload survives it and keeps the loop down (H-891)
+ ↓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > a HOLD set by someone else during a reload survives it and keeps the loop down (H-891)
+ ↓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > turns a human resume answer into a healthy running loop and closes the escalation (H-1038)
+ ↓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > stops completing a resume once another agent has already closed its escalation (H-2164)
+ ↓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > leaves a blocked loop down when the dashboard answer chooses investigate (H-1320)
+ ↓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > accepts one matching peer false-alarm disposition without involving the human (H-188)
+ ↓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > does not consume a new incident disposition from stale release state (H-2779)
+ ↓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > keeps a same-reason relapse with its peer investigator instead of releasing twice (H-2779)
+ ↓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > restores structured peer ownership when the released loop trips its own fail ladder (H-2779)
+ ↓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > keeps peer-owned recovery structured across a supervisor drain (H-2779)
+ ↓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > blocks again and returns the answered ticket when the restarted loop fails (H-1038)
+ ↓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > an abandoned tree drains itself: killing an ancestor takes the whole fleet down (H-281)
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > does not launch a workflow-bound candidate whose requirements are missing
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > does not launch a workflow-bound candidate whose requirements are stale
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > does not launch a workflow-bound candidate whose requirements are failed
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > launches ordinary ready work and an exactly admitted workflow candidate once
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > denies when the ready candidate changes between classification and admission
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > rechecks launch admission after a direct restart instead of bypassing the prior denial
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > suppresses a second model session when workflow work is replayed after restart
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > quarantines an in-flight workflow launch after SIGKILL and never launches it twice
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > launches ordinary work against a store with no launch-admit command
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > fails closed only for workflow-bound work when launch admission is unsupported
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > wakes on ready work, session completes it via helm-cli, then idles
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > stands down while a desk session holds work in its name, resumes when the seat clears (H-558)
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a note-only session is not production — the loop idles instead of running on (H-412)
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > names held-but-non-executable work without changing the compatible cursor line (H-954)
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a restarted loop ignores the old idle floor once, then goes motion-only (H-426/H-995)
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a handoff wakes an idle scoped seat on the next poll, with the idle floor still fresh (H-1072)
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a note on in-scope work is motion, but never wakes an idle scoped seat (H-1072)
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a ticket that becomes ready during a run wakes the seat on the next poll, not the hourly resync (H-804)
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > an hour asleep on standing ready work resyncs the seat (H-1072)
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a drain waits for an async session and its close-out, then exits 143 without another iteration (H-1109, H-1273) 3280ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a drain exits promptly while parked between iterations (H-1273) 218ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a drain exits promptly while idle between iterations (H-1273) 2076ms
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > an empty-handed iteration runs on the probe model; one with work in reach does not (H-412)
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a rotation alternates providers every other run, signed everywhere (H-479)
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > headroom selection reaches the Codex adapter and meters the selected high model (H-892)
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a loop that cannot reach Helm at all is declared wedged, not left polling (H-448)
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > the burn breaker halts a loop that keeps spending and escalates it (H-412)
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a subscription cost-rate anomaly writes the structured investigation record
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > ignores cheap foreign-runtime history with a same-runtime baseline present=true (H-1249)
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > ignores cheap foreign-runtime history with a same-runtime baseline present=false (H-1249)
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > hands an anomaly to the seat of a pool worker that can draw it, never a worker name (H-676)
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > keeps an anomaly open for peer investigation when no investigator is live (H-2779)
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > nets out agent self-reported spend so the session lands in the totals exactly once (H-57)
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > cancels a self-report on the ticket that carries it, not on the ticket the session is charged to (H-187)
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > the workstream budget lands in the iteration prompt as numbers in fixed wording (H-1186)
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > states that zero is uncapped and leaves runnable work runnable (H-267)
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > names only the supervisor's own CLI for a redeploy, never a bare rev (H-646)
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > steering names every stream the seat holds work in, not just the one it watches (H-954)
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a held stream without steering stays out of the prompt (H-1127)
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > three held streams without goals or budgets produce no steering block (H-1127)
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > the idle rule covers the assigned list, not only the watched stream (H-987)
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > held work in the seat's own stream keeps the single-stream wording (H-954)
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a scoped loop is told how to signal idle — the ladder scores it on that contract (H-740)
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > routes three silent declines through team coordination without inventing a human dependency
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > retries a failed coordination write before marking declined work as routed
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a second seat routing its own declines reuses no human channel and files its own team record
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > work already routed to team coordination does not buy an hourly resync until it changes
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a routed ticket that a coordinator changes (body) wakes the seat at the next resync; a note does not
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a routed ticket that a coordinator changes (link) wakes the seat at the next resync; a note does not
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a real disposition resets silent-decline tracking (H-1071)
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > evidence-only update counts as production — why the idle instruction has to exist (H-740)
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > store-wide loop ('*', H-92) draws work from any workstream under the wildcard prompt
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > store-wide loop ('*', H-92) wakes on motion only — standing backlog never wakes it
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > does not advance a store-wide cursor past a filing that arrived after the session final read (H-223)
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > the triage feed excludes terminal, triaged, held, date-gated and dependency-blocked filings (H-223)
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > repeated failure hits the cap, sets BLOCKED, and escalates into the Helm queue
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > resume restores the retry budget; a re-block does not file a duplicate escalation (H-401)
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > an agent park set by the CLI still holds after the CLI has exited (H-738)
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > STOP halts before any iteration; apparatus fault fails closed
+ ↓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > survives a wake-check failure instead of dying with it (H-134)
+ ✓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > the drain grace kills a wedged async session and its whole group (H-1089, H-281, H-1273) 11790ms
+ ↓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > a loop redeploys the fleet to activate its own fix, with no human in the path (H-1046)
+ ↓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > a redeploy nothing comes back from reaches the human, named (H-1046)
+
+ Test Files  2 passed (2)
+      Tests  4 passed | 75 skipped (79)
+   Start at  17:39:20
+   Duration  12.15s (transform 253ms, setup 0ms, import 352ms, tests 17.37s, environment 0ms)
+

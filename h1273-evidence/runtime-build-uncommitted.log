@@ -1,0 +1,14 @@
+
+> rev@0.9.2 prebuild
+> node scripts/check-import-boundary.mjs
+
+  ok  import boundary: 37 shipped files import nothing from the work record
+
+> rev@0.9.2 build
+> tsc
+
+
+> rev@0.9.2 postbuild
+> node scripts/stamp-build.mjs
+
+rev: stamped dist as cdf6747 (dirty tree — the sha does not certify this build)

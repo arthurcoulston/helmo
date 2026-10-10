@@ -1,0 +1,788 @@
+
+> helmo-workspace@0.9.2 test
+> node scripts/assert-built.mjs && node --test scripts/build.test.mjs scripts/stage-legacy-launch-paths.test.mjs scripts/test-env.test.mjs && node scripts/test-env.mjs -- npm run test --workspaces --if-present
+
+✔ allows a marked writable checkout (2.251417ms)
+✔ refuses an unmarked checkout before any package build runs (0.78525ms)
+✔ refuses a marker with unrelated contents (0.79675ms)
+✔ allows tests in a marked and built checkout (2.885458ms)
+✔ refuses a checkout missing one build artifact (2.760625ms)
+✔ every workspace package carries the product version (1.358625ms)
+✔ the front command depends on nothing (0.152375ms)
+✔ the changelog opens on this version, cut or in development (0.94875ms)
+✔ every product-wide document exists once, at the root (0.5475ms)
+✔ every area names the one issue tracker (0.329667ms)
+✔ each retired path starts the server the one-component layout holds (156.790084ms)
+✔ the deprecation notice goes to stderr and leaves stdout to the protocol (147.815083ms)
+✔ past the window each retired path refuses and names the replacement (139.277417ms)
+✔ refuses the legacy layout, where these paths are the real builds (127.757583ms)
+✔ refuses an unbuilt release rather than forwarding to nothing (2.828834ms)
+✔ refuses to overwrite a file it did not generate, and re-runs over one it did (3.356375ms)
+✔ refuses a directory that is not a release at all (0.671667ms)
+✔ clears inherited product state and redirects REV_HOME away from the live installation (0.85775ms)
+✔ refuses to run without a scratch REV_HOME (0.217667ms)
+✔ the command wrapper scrubs its child and preserves a red exit (358.083459ms)
+ℹ tests 20
+ℹ suites 0
+ℹ pass 20
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 674.083708
+
+> @helmo/app@0.9.2 test
+> node --test test/*.test.mjs
+
+✔ five-area shell marks every direct route and its API (1.118583ms)
+✔ team renders configured metadata and operator-owned links without their contents (0.182625ms)
+✔ overview and empty states are explicit (0.121292ms)
+✔ interactive links use the dark-mode-safe estate token directly (0.067875ms)
+✔ mobile area navigation stays on one scrollable row (0.077958ms)
+✔ fixture-backed app request renders a real record (0.162791ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 101.067625
+
+> @helmo/core@0.9.2 test
+> vitest run
+
+
+ RUN  v4.1.11 /Users/arthurcoulston/projects/gp-contrib/helmo-h1273/packages/core
+
+
+ Test Files  5 passed (5)
+      Tests  22 passed (22)
+   Start at  17:45:47
+   Duration  264ms (transform 205ms, setup 0ms, import 306ms, tests 33ms, environment 0ms)
+
+
+> @helmo/cli@0.9.2 test
+> node --test test/*.test.mjs
+
+✔ the app answers its own port directly and renders the record a recorded URL names (292.145584ms)
+▶ a missing or invalid runtime roster returns 500 without killing the app
+  ✔ missing (155.223708ms)
+  ✔ invalid (161.386625ms)
+✔ a missing or invalid runtime roster returns 500 without killing the app (318.450833ms)
+✔ every retired port answers 301 to a location that answers 200 and renders its surface (177.553375ms)
+✔ a retired port preserves the path and query it was given (158.352958ms)
+✔ the app binds exactly the ports it was configured with and leaves every other listener alone (192.392583ms)
+✔ a configured port something else already holds refuses the whole start (163.383792ms)
+✔ health is a reading of this installation, and does not speak for the remote write surface (157.181125ms)
+✔ two installations each serve their own records, and one shutting down leaves the other serving (550.555792ms)
+✔ unified routes retain the established product workflows and common navigation (284.78675ms)
+✔ decisions and actions work through the unified app with their original protections (173.046875ms)
+✔ configuration is loopback-only and legacy listeners default empty (1.774416ms)
+✔ the app root survives being read twice: appConfig normalizes it, startAppServer accepts it (20.637292ms)
+✔ redirects preserve path and query and ignore a poisoned Host header (4.137959ms)
+✔ duplicate and app-listener port collisions refuse before binding (0.666167ms)
+✔ a later bind failure closes every listener opened by the attempt (1.18675ms)
+✔ shutdown closes the app and every redirect listener (0.531167ms)
+✔ helmo with no arguments names every group it fronts (81.722292ms)
+✔ helmo --version is the one product version (76.359334ms)
+✔ an unknown group refuses on stderr, names the groups, and prints nothing on stdout (75.067375ms)
+✔ a compatibility dashboard name must be one the app fronts (75.489292ms)
+✔ helmo work and helmo-cli are the same entry point: each sees the other’s writes (417.273583ms)
+✔ helmo-cli says it is leaving: one line on stderr, and stdout is still one JSON object (105.790625ms)
+✔ the new name says nothing about deprecation (110.906208ms)
+✔ a bound caller works through the front command and legacy CLI, while a copied command aimed elsewhere refuses before opening a store (512.564584ms)
+✔ runtime control and release surfaces refuse a foreign control home under the same binding (197.310417ms)
+✔ helmo-view names its replacement and its own shorter window (126.272167ms)
+✔ every retired name refuses after its documented window before starting its old entry point (303.636375ms)
+✔ usage under the front command names the front command, and rev stays rev (198.797792ms)
+✔ a runtime group stands in for its verb, and the verb it stands for is reached (211.801542ms)
+✔ a runtime refusal names the command the caller actually typed (196.268375ms)
+✔ a verb group names every OTHER verb under the runtime group (355.57125ms)
+✔ helmo mcp work starts the Helmo MCP server (198.930375ms)
+✔ helmo mcp starts the unified Work and Roadmap MCP server (162.106875ms)
+✔ helmo-mcp still starts the Helmo MCP server without polluting its protocol (157.425084ms)
+✔ roadmap-mcp still starts the roadmap MCP server, and says it is leaving (159.18375ms)
+✔ helmo serve work serves the Helmo view (126.815167ms)
+✔ bare helmo serve starts the one app listener (137.964166ms)
+✔ the app listener serves every product and aggregate health (179.129291ms)
+ℹ tests 40
+ℹ suites 0
+ℹ pass 40
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4304.404333
+
+> helmo-roadmap@0.9.2 test
+> vitest run
+
+
+ RUN  v4.1.11 /Users/arthurcoulston/projects/gp-contrib/helmo-h1273/packages/roadmap
+
+Roadmap MCP (stdio) — install: dev.roadmap.customer-a.101ccbab (/var/folders/pt/wc4sf2ts7993fhl8fr7q3pch0000gn/T/roadmap-install-H1sXqO/customer-a/.helmo-roadmap) — db: /var/folders/pt/wc4sf2ts7993fhl8fr7q3pch0000gn/T/roadmap-install-H1sXqO/customer-a/.helmo-roadmap/roadmap.db — running: UNVERIFIABLE
+
+ Test Files  12 passed (12)
+      Tests  114 passed | 2 skipped (116)
+   Start at  17:45:52
+   Duration  2.51s (transform 668ms, setup 0ms, import 1.70s, tests 4.96s, environment 3ms)
+
+
+> helmo@0.9.2 test
+> vitest run --exclude 'test/view-viewport-render.test.ts' --exclude 'test/view-release-floor.test.ts' && vitest run test/view-release-floor.test.ts
+
+
+ RUN  v4.1.11 /Users/arthurcoulston/projects/gp-contrib/helmo-h1273/packages/work
+
+helmo record-spend H-1: tokens -62304 floored to -1000
+Helmo MCP (stdio) — install: dev.helmo.customer-a.5ed27933 (/var/folders/pt/wc4sf2ts7993fhl8fr7q3pch0000gn/T/helmo-install-2SVfpr/customer-a/.helmo) — db: /var/folders/pt/wc4sf2ts7993fhl8fr7q3pch0000gn/T/helmo-install-2SVfpr/customer-a/.helmo/helmo.db — running: UNVERIFIABLE — no compiled JavaScript could be read in /Users/arthurcoulston/projects/gp-contrib/helmo-h1273/packages/work/src, so nothing can confirm what this process is running (a source run under tsx looks exactly like this)
+
+ Test Files  28 passed (28)
+      Tests  533 passed | 2 skipped (535)
+   Start at  17:45:55
+   Duration  11.70s (transform 1.90s, setup 0ms, import 4.76s, tests 36.75s, environment 2ms)
+
+
+ RUN  v4.1.11 /Users/arthurcoulston/projects/gp-contrib/helmo-h1273/packages/work
+
+floor: 246 rows, 4686946 bytes of record text | current 1707007B/146r/81ms | whole 3836844B/246r/103ms | section 53698B/4r/19ms
+
+ Test Files  1 passed (1)
+      Tests  21 passed (21)
+   Start at  17:46:07
+   Duration  3.34s (transform 113ms, setup 0ms, import 147ms, tests 3.07s, environment 0ms)
+
+
+> rev@0.9.2 test
+> vitest run --maxWorkers=2 --reporter=verbose
+
+
+ RUN  v4.1.11 /Users/arthurcoulston/projects/gp-contrib/helmo-h1273/packages/runtime
+
+ ✓ test/release.test.ts > reading a release set (H-2493) > accepts one Helmo component only when all three shipped packages carry its exact clean stamp 5ms
+ ✓ test/release.test.ts > reading a release set (H-2493) > refuses a partial or mixed component manifest instead of interpreting it as a legacy set 2ms
+ ✓ test/release.test.ts > reading a release set (H-2493) > accepts a set whose manifest, stamps and artifacts agree 3ms
+ ✓ test/release.test.ts > reading a release set (H-2493) > names every problem at once, so a set is fixed in one pass rather than three 2ms
+ ✓ test/release.test.ts > reading a release set (H-2493) > refuses a component built from a dirty tree, whose commit does not identify its bytes 2ms
+ ✓ test/release.test.ts > reading a release set (H-2493) > refuses a component whose dist holds no JavaScript to load 2ms
+ ✓ test/release.test.ts > reading a release set (H-2493) > refuses a declaration that contradicts itself, or that belongs to another release 5ms
+ ✓ test/release.test.ts > upgrading (H-2493) > maintains a bound installation deed through upgrade, repeat repair, and rollback 115ms
+ ✓ test/release.test.ts > upgrading (H-2493) > writes one component for a unified release, which all three products consume 20ms
+ ✓ test/release.test.ts > upgrading (H-2493) > writes a coherent selection that install.ts can verify, and leaves no temp file behind 22ms
+ ✓ test/release.test.ts > upgrading (H-2493) > refuses an unverifiable set without touching the selection 21ms
+ ✓ test/release.test.ts > upgrading (H-2493) > retains the whole selection it replaces, inside the file it replaces it in 32ms
+ ✓ test/release.test.ts > upgrading (H-2493) > run twice, writes nothing the second time 19ms
+ ✓ test/release.test.ts > activating a selected release (H-2571) > moves through activating to running only on replacement-supervisor evidence 35ms
+ ✓ test/release.test.ts > activating a selected release (H-2571) > records a bounded restart failure with an exact recovery path 32ms
+ ✓ test/release.test.ts > activating a selected release (H-2571) > does not let a stale replacement complete another selection's attempt 44ms
+ ✓ test/release.test.ts > rolling back (H-2493) > restores the retained selection and retains the one it left, so it can be rolled forward again 66ms
+ ✓ test/release.test.ts > rolling back (H-2493) > refuses to roll back out of a one-way migration, in the limit's own words 39ms
+ ✓ test/release.test.ts > rolling back (H-2493) > refuses when nothing was retained, rather than guessing a release to go to 18ms
+ ✓ test/release.test.ts > rolling back (H-2493) > refuses when the retained directory has been rebuilt into something else 39ms
+ ✓ test/release.test.ts > rolling back (H-2493) > refuses when the retained directory is gone 45ms
+ ✓ test/release.test.ts > rolling back (H-2493) > refuses out of a selection made before a declaration was recorded, rather than assuming it was safe 3ms
+ ✓ test/release.test.ts > describing a selection (H-2493) > reports an incoherent selection as lines rather than throwing, because it is what an operator runs to find out 20ms
+ ✓ test/release.test.ts > describing a selection (H-2493) > says an unpinned installation is unpinned, and how to pin it 0ms
+ ✓ test/release.test.ts > describing a selection (H-2493) > keeps selected and running distinct and exposes stale live evidence with its recovery 54ms
+ ✓ test/release.test.ts > describing a selection (H-2493) > reports a partial deployment record without losing release status 20ms
+ ✓ test/release.test.ts > describing a selection (H-2493) > does not call a saved running phase live when coverage, identity, refs, or the process disagree 44ms
+ ✓ test/release.test.ts > describing a selection (H-2493) > compares every recorded running component with the selected release 70ms
+ ✓ test/release.test.ts > describing a selection (H-2493) > rejects duplicate process names instead of hiding one observation in a map 33ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > does not launch a workflow-bound candidate whose requirements are missing 1093ms
+ ✓ test/release.test.ts > describing a selection (H-2493) > keeps malformed evidence diagnostic and keeps recovery visible when selection is broken 25ms
+ ✓ test/release.test.ts > the release commands (H-2493) > drives activate through the CLI, bounded drain, and replacement supervisor readback 386ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > does not launch a workflow-bound candidate whose requirements are stale 1077ms
+ ✓ test/release.test.ts > the release commands (H-2493) > records watch expiry and recovers only through a fresh activation attempt 1112ms
+ ✓ test/release.test.ts > the release commands (H-2493) > upgrades, rolls back, and says what a running process still has 517ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > does not launch a workflow-bound candidate whose requirements are failed 1075ms
+ ✓ test/release.test.ts > the release commands (H-2493) > runs while the selection is broken, which is exactly when every other command refuses 955ms
+ ✓ test/release.test.ts > the release commands (H-2493) > refuses a cross-installation assertion before it writes 147ms
+ ✓ test/release.test.ts > the release commands (H-2493) > says so, rather than writing a selection nothing reads, when the installation is not pinned 151ms
+ ✓ test/release.test.ts > the release commands (H-2493) > leaves the parent installation untouched when a pinned loop runs an unpinned test 172ms
+ ✓ test/release.test.ts > the declaration this release ships (H-2459) > is a declaration a release directory built from it can be selected with 2ms
+ ✓ test/release.test.ts > the declaration this release ships (H-2459) > names no release, because the id is the directory name the consumer picks 2ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > launches ordinary ready work and an exactly admitted workflow candidate once 3184ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > denies when the ready candidate changes between classification and admission 1023ms
+ ✓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > keeps a scheduled-capacity loop down until its resume time 3424ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > rechecks launch admission after a direct restart instead of bypassing the prior denial 2405ms
+ ✓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > general start runs every roster loop; both complete their work; rev stop drains cleanly 5890ms
+rev: suppressed replay of launch 'rev:replay-loop:workflow:4208fe2e039c797b316879f5f3c24188d3dbd0ba87baf20e74fcf2ffe0fc3de9' before model dispatch.
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > suppresses a second model session when workflow work is replayed after restart 6060ms
+rev: suppressed replay of launch 'rev:killed-loop:workflow:9885f29de3e6fa24edc214d412ff9d2b3b57918be5ed8729e05db9b0e3ea9395' before model dispatch.
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > quarantines an in-flight workflow launch after SIGKILL and never launches it twice 5230ms
+ ✓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > a SIGKILLed loop returns through the backoff; STOP holds until resume 8528ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > launches ordinary work against a store with no launch-admit command 5466ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > fails closed only for workflow-bound work when launch admission is unsupported 1072ms
+ ✓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > reload respawns one loop on the edited roster after its turn, leaving siblings running (H-891) 8977ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > wakes on ready work, session completes it via helm-cli, then idles 5570ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > stands down while a desk session holds work in its name, resumes when the seat clears (H-558) 1422ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a note-only session is not production — the loop idles instead of running on (H-412) 4439ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > names held-but-non-executable work without changing the compatible cursor line (H-954) 2280ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a restarted loop ignores the old idle floor once, then goes motion-only (H-426/H-995) 4752ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a handoff wakes an idle scoped seat on the next poll, with the idle floor still fresh (H-1072) 2863ms
+ ✓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > a STOP set by someone else during a reload survives it and keeps the loop down (H-891) 20487ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a note on in-scope work is motion, but never wakes an idle scoped seat (H-1072) 3880ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a ticket that becomes ready during a run wakes the seat on the next poll, not the hourly resync (H-804) 4879ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > an hour asleep on standing ready work resyncs the seat (H-1072) 2761ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a drain waits for an async session and its close-out, then exits 143 without another iteration (H-1109, H-1273) 3225ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a drain exits promptly while parked between iterations (H-1273) 267ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a drain exits promptly while idle between iterations (H-1273) 2100ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a pending drain survives the 'count exit' close-out path (H-1273) 2255ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a pending drain survives the 'transient wait' close-out path (H-1273) 1683ms
+ ✓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > a HOLD set by someone else during a reload survives it and keeps the loop down (H-891) 20317ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a pending drain survives the 'blocked exit' close-out path (H-1273) 2604ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > an empty-handed iteration runs on the probe model; one with work in reach does not (H-412) 4739ms
+ ✓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > turns a human resume answer into a healthy running loop and closes the escalation (H-1038) 7978ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a rotation alternates providers every other run, signed everywhere (H-479) 5041ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > headroom selection reaches the Codex adapter and meters the selected high model (H-892) 2699ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a loop that cannot reach Helm at all is declared wedged, not left polling (H-448) 3700ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > the burn breaker halts a loop that keeps spending and escalates it (H-412) 5269ms
+ ✓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > stops completing a resume once another agent has already closed its escalation (H-2164) 15681ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a subscription cost-rate anomaly writes the structured investigation record 2813ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > ignores cheap foreign-runtime history with a same-runtime baseline present=true (H-1249) 2387ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > ignores cheap foreign-runtime history with a same-runtime baseline present=false (H-1249) 2526ms
+ ✓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > leaves a blocked loop down when the dashboard answer chooses investigate (H-1320) 8233ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > hands an anomaly to the seat of a pool worker that can draw it, never a worker name (H-676) 2832ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > keeps an anomaly open for peer investigation when no investigator is live (H-2779) 3387ms
+ ✓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > accepts one matching peer false-alarm disposition without involving the human (H-188) 4128ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > nets out agent self-reported spend so the session lands in the totals exactly once (H-57) 3304ms
+ ✓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > does not consume a new incident disposition from stale release state (H-2779) 4025ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > cancels a self-report on the ticket that carries it, not on the ticket the session is charged to (H-187) 3387ms
+ ✓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > keeps a same-reason relapse with its peer investigator instead of releasing twice (H-2779) 4751ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > the workstream budget lands in the iteration prompt as numbers in fixed wording (H-1186) 2324ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > states that zero is uncapped and leaves runnable work runnable (H-267) 2597ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > names only the supervisor's own CLI for a redeploy, never a bare rev (H-646) 2293ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > steering names every stream the seat holds work in, not just the one it watches (H-954) 3067ms
+ ✓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > restores structured peer ownership when the released loop trips its own fail ladder (H-2779) 8329ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a held stream without steering stays out of the prompt (H-1127) 2598ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > three held streams without goals or budgets produce no steering block (H-1127) 2752ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > the idle rule covers the assigned list, not only the watched stream (H-987) 2380ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > held work in the seat's own stream keeps the single-stream wording (H-954) 2276ms
+ ✓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > keeps peer-owned recovery structured across a supervisor drain (H-2779) 11950ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a scoped loop is told how to signal idle — the ladder scores it on that contract (H-740) 2225ms
+ ✓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > blocks again and returns the answered ticket when the restarted loop fails (H-1038) 9625ms
+ ✓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > an abandoned tree drains itself: killing an ancestor takes the whole fleet down (H-281) 2021ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > routes three silent declines through team coordination without inventing a human dependency 14272ms
+ ✓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > the drain grace kills a wedged async session and its whole group (H-1089, H-281, H-1273) 10082ms
+temporary coordination write failure ✓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > a loop redeploys the fleet to activate its own fix, with no human in the path (H-1046) 7487ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > retries a failed coordination write before marking declined work as routed 19108ms
+ ✓ test/supervisor.e2e.test.ts > rev fleet e2e (supervisor over mock loops, real helm store) > a redeploy nothing comes back from reaches the human, named (H-1046) 9578ms
+ ✓ test/pool.e2e.test.ts > pool workers on one seat (H-574) > two workers launched together each claim, are told, and finish a different ticket 3229ms
+ ✓ test/pool.e2e.test.ts > pool workers on one seat (H-574) > a worker that finds the only ticket taken idles without spending a session 3326ms
+ ✓ test/pool.e2e.test.ts > pool workers on one seat (H-574) > charges the metered session to the claimed ticket, not to one the worker filed and touched more (H-695) 4338ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a second seat routing its own declines reuses no human channel and files its own team record 16647ms
+ ✓ test/pool.e2e.test.ts > pool workers on one seat (H-574) > keeps unfinished work with its worker, and that worker's next launch resumes it 5170ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > work already routed to team coordination does not buy an hourly resync until it changes 5264ms
+ ✓ test/pool.e2e.test.ts > pool workers on one seat (H-574) > a worker idle on a kept claim wakes when another seat writes on it, and only then (H-578) 6794ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a routed ticket that a coordinator changes (body) wakes the seat at the next resync; a note does not 7223ms
+ ✓ test/pool.e2e.test.ts > pool workers on one seat (H-574) > an ordinary claim set back to open while it waits stays with the seat and frees the worker for ready work 5816ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a routed ticket that a coordinator changes (link) wakes the seat at the next resync; a note does not 7322ms
+ ✓ test/pool.e2e.test.ts > pool workers on one seat (H-574) > puts the claim back when the session never started 3395ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > a real disposition resets silent-decline tracking (H-1071) 2252ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > evidence-only update counts as production — why the idle instruction has to exist (H-740) 2275ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > store-wide loop ('*', H-92) draws work from any workstream under the wildcard prompt 1936ms
+ ✓ test/pool.e2e.test.ts > pool workers on one seat (H-574) > a killed worker keeps its claim, holds its next launch while the dead launch's session runs, then resumes it, and the dead launch can write nothing 5908ms
+ ✓ test/pool.e2e.test.ts > pool workers on one seat (H-574) > a replayed launch id whose claim has since been resumed is refused and never reads as a claim to dispatch on 937ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > store-wide loop ('*', H-92) wakes on motion only — standing backlog never wakes it 1832ms
+{"error":"H-1 is your own filing, untouched by anyone else — executing your own discoveries takes a second pair of eyes first (the same triage rule that withholds it from your ready queue). Any event by a human, an orchestrator relaying the human, or another agent releases it: a meeting answer, a note, a handoff, a priority change. takeover does not apply — it exists for stale claims, not self-triage. If this cannot wait, helmo_return_to_human with the case for urgency; if you are starting genuinely new work, create the ticket with status 'in_progress' in the same call instead of filing it and drawing it back later.","installation":{"label":"dev.helmo.rev-e2e-FPAUol.92a8c4c9","home":"/var/folders/pt/wc4sf2ts7993fhl8fr7q3pch0000gn/T/rev-e2e-FPAUol","db":"/var/folders/pt/wc4sf2ts7993fhl8fr7q3pch0000gn/T/rev-e2e-FPAUol/helm.db","source":"derived","running":{"state":"unverifiable","dir":"/Users/arthurcoulston/projects/gp-contrib/helmo-h1273/packages/work/src","digest":null,"detail":"no compiled JavaScript could be read in /Users/arthurcoulston/projects/gp-contrib/helmo-h1273/packages/work/src, so nothing can confirm what this process is running (a source run under tsx looks exactly like this)"}}}
+ ✓ test/pool.e2e.test.ts > pool workers on one seat (H-574) > a claim whose reply was lost is reconciled by asking again under the same launch id 4457ms
+ ✓ test/pool.e2e.test.ts > pool workers on one seat (H-574) > a restart replays a claim its dead process asked but never heard, rather than settling it and resuming under a new id 2982ms
+ ✓ test/pool.e2e.test.ts > pool workers on one seat (H-574) > an unanswered claim that has since moved on is settled as stale and the launch takes a fresh id 3479ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > does not advance a store-wide cursor past a filing that arrived after the session final read (H-223) 13347ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > the triage feed excludes terminal, triaged, held, date-gated and dependency-blocked filings (H-223) 1795ms
+ ✓ test/pool.e2e.test.ts > pool workers on one seat (H-574) > a workflow-bound claim (H-687) > keeps an unfinished claim unquarantined, and its next launch resumes and revalidates it by the launch its admission belongs to 6401ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > repeated failure hits the cap, sets BLOCKED, and escalates into the Helm queue 4316ms
+ ✓ test/pool.e2e.test.ts > pool workers on one seat (H-574) > a workflow-bound claim (H-687) > keeps a claim whose session never started, because its launch admission is spent 3402ms
+ ✓ test/pool.e2e.test.ts > pool workers on one seat (H-574) > a workflow-bound claim (H-687) > a held claim whose authority has gone goes to the human, and the worker draws its next ticket 5750ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > resume restores the retry budget; a re-block does not file a duplicate escalation (H-401) 7650ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > an agent park set by the CLI still holds after the CLI has exited (H-738) 1588ms
+ ✓ test/pool.e2e.test.ts > pool workers on one seat (H-574) > a workflow-bound claim (H-687) > a killed worker's workflow claim is not quarantined at restart, and the restart resumes it 4433ms
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > STOP halts before any iteration; apparatus fault fails closed 2980ms
+ ✓ test/pool.e2e.test.ts > pool workers on one seat (H-574) > claims only inside its project lane 2703ms
+{"error":"SqliteError: database is locked"}
+rev: wake-check failed for 'flaky-loop' — retrying next poll. Error: Command failed: node /var/folders/pt/wc4sf2ts7993fhl8fr7q3pch0000gn/T/rev-e2e-OPqoNv/flaky-helm.cjs wake-check --workstream rev-test --assignee flaky-loop --since-seq 0
+{"error":"SqliteError: d
+ ✓ test/loop.e2e.test.ts > rev e2e (mock runtime, real helm store) > survives a wake-check failure instead of dying with it (H-134) 4909ms
+ ✓ test/cli.test.ts > gp-rev instance binding (H-2277) > always reads ~/.rev-gp, even when the caller supplies another REV_HOME 187ms
+ ✓ test/pool.e2e.test.ts > pool workers on one seat (H-574) > four workers in ONE project each claim only their allowlisted ticket, overlap, and write only their own checkout (H-671) 4075ms
+ ✓ test/cli.test.ts > Prime team control (H-2301) > stops and resumes only Prime-owned stops while preserving holds 533ms
+ ✓ test/cli.test.ts > Prime team control (H-2301) > reaches every worker of a pooled role (H-676) 374ms
+ ✓ test/cli.test.ts > Prime team control (H-2301) > refuses non-Prime callers 173ms
+ ✓ test/cli.test.ts > role-level control of pool workers (H-676) > stops and resumes every worker of a pooled role, and no other seat 1194ms
+ ✓ test/pool.e2e.test.ts > pool workers on one seat (H-574) > the role's worker with no allowlist leaves a lane's ticket to its owner (H-671) 2771ms
+ ✓ test/cli.test.ts > role-level control of pool workers (H-676) > narrows to the one loop of that name with --worker 1747ms
+ ✓ test/pool.e2e.test.ts > pool workers on one seat (H-574) > a worker whose allowlist holds nothing ready idles, leaving the project's other work alone (H-671) 1319ms
+ ✓ test/cli.test.ts > role-level control of pool workers (H-676) > prints each loop with its seat and claim scope under status --json 1209ms
+ ✓ test/cli.test.ts > rev command arguments (H-810) > honours run --help before loading the roster or treating it as a loop 554ms
+ ✓ test/cli.test.ts > rev command arguments (H-810) > honours stop --help before loading the roster or treating it as a loop 553ms
+ ✓ test/pool.e2e.test.ts > pool workers on one seat (H-574) > a store that ignores the allowlist is refused once, and the ticket it handed over is put back (H-671) 2172ms
+ ✓ test/cli.test.ts > rev command arguments (H-810) > honours resume --help before loading the roster or treating it as a loop 559ms
+ ✓ test/cli.test.ts > rev command arguments (H-810) > honours pace --help before loading the roster or treating it as a loop 562ms
+ ✓ test/cli.test.ts > rev command arguments (H-810) > honours tail --help before loading the roster or treating it as a loop 564ms
+ ✓ test/pool.e2e.test.ts > pool workers on one seat (H-574) > refuses to launch against a store with no launch-claim, leaving the ticket untouched 1557ms
+ ✓ test/cli.test.ts > rev command arguments (H-810) > refuses an unknown loop before run changes state 560ms
+ ✓ test/cli.test.ts > rev command arguments (H-810) > refuses an unknown loop before stop changes state 553ms
+ ✓ test/cli.test.ts > rev command arguments (H-810) > refuses an unknown loop before resume changes state 615ms
+ ✓ test/cli.test.ts > rev command arguments (H-810) > refuses an unknown loop before pace changes state 557ms
+stdout | test/pool.e2e.test.ts > lane workers on one seat (H-824) > claims a lane ticket filed after its worker went idle on the next poll, then a child the session filed mid-run
+H-824 lane claim: H-2 filed after w1 idled, bound in 1609 ms (poll_seconds 0.1)
+
+ ✓ test/cli.test.ts > rev command arguments (H-810) > refuses an unknown loop before tail changes state 559ms
+ ✓ test/cli.test.ts > rev session-spec (H-1152) > resolves the asked-for tier and stamps the actor the caller named 556ms
+ ✓ test/cli.test.ts > rev session-spec (H-1152) > reads --<flag>=<value> as well as the space-separated spelling 576ms
+ ✓ test/cli.test.ts > rev session-spec (H-1152) > refuses without --session rather than defaulting to the loop seat stamp 591ms
+ ✓ test/cli.test.ts > rev session-spec (H-1152) > composes a seat with no roster loop from --cwd and --constitution, and says so 613ms
+ ✓ test/pool.e2e.test.ts > lane workers on one seat (H-824) > claims a lane ticket filed after its worker went idle on the next poll, then a child the session filed mid-run 5434ms
+ ✓ test/cli.test.ts > rev session-spec (H-1152) > refuses a seat with no loop and no cwd/constitution, naming both 559ms
+ ✓ test/cli.test.ts > rev session-spec (H-1152) > refuses an empty constitution 585ms
+ ✓ test/cli.test.ts > installation target (H-2473) > names the installation a read surface read, with no flag and nothing set 189ms
+ ✓ test/cli.test.ts > installation target (H-2473) > accepts --installation naming this installation by label, and writes 193ms
+ ✓ test/cli.test.ts > installation target (H-2473) > accepts --installation naming this installation by home, and writes 205ms
+ ✓ test/cli.test.ts > installation target (H-2473) > refuses a mutation aimed at another installation, before writing, naming both 197ms
+ ✓ test/cli.test.ts > installation target (H-2473) > refuses --installation with no value rather than guessing 187ms
+ ✓ test/cli.test.ts > installation target (H-2473) > refuses a mutation whose inherited label belongs to another installation 195ms
+ ✓ test/cli.test.ts > installation target (H-2473) > lets a read through under the same conflict, saying the target is unclear 203ms
+ ✓ test/cli.test.ts > installation target (H-2473) > refuses a read aimed at another installation: status 197ms
+ ✓ test/cli.test.ts > installation target (H-2473) > refuses a read aimed at another installation: service 207ms
+ ✓ test/cli.test.ts > installation target (H-2473) > refuses a read aimed at another installation: release 172ms
+ ✓ test/cli.test.ts > installation target (H-2473) > refuses a read aimed at another installation: usage 214ms
+ ✓ test/cli.test.ts > installation target (H-2473) > refuses a read aimed at another installation: routing 203ms
+ ✓ test/cli.test.ts > installation target (H-2473) > takes --installation=<value>, and still refuses the wrong one 372ms
+ ✓ test/cli.test.ts > installation target (H-2473) > leaves a command’s own positional arguments alone wherever the flag sits 185ms
+ ✓ test/refinement-commit.test.ts > refinement commit executor > refuses envelopes that would write anywhere but the project directive on its own branch 3ms
+ ✓ test/refinement-commit.test.ts > refinement commit executor > records every pass, idle or failing, in the last-run file (H-1087) 277ms
+ ✓ test/refinement-commit.test.ts > refinement commit executor > commits the exact words on the job branch only, and proves them with raw Git objects 852ms
+ ✓ test/refinement-commit.test.ts > refinement commit executor > reports a refused claim as not retryable and pushes nothing 300ms
+ ✓ test/pool.e2e.test.ts > lane workers on one seat (H-824) > runs two lanes and the general worker at once, each on its own work, in its own checkout 5389ms
+ ✓ test/refinement-commit.test.ts > refinement commit executor > reuses a branch an earlier attempt pushed with the same words, and refuses one holding other words 1673ms
+ ✓ test/refinement-commit.test.ts > refinement commit executor > refuses a same-word branch whose history or other contents are not main's 1404ms
+ ✓ test/refinement-commit.test.ts > refinement commit executor > reuses an earlier attempt's branch after main has moved on 1274ms
+ ✓ test/refinement-commit.test.ts > refinement commit executor > keeps an unreachable commit leased and retries it, holding no words locally 853ms
+ ✓ test/refinement-commit.test.ts > refinement commit executor > hands the attempt back as retryable after 5 refusals 1806ms
+ ✓ test/refinement-commit.test.ts > refinement commit executor > drops a superseded attempt on 409 and reports an unreachable origin as retryable 1137ms
+ ✓ test/pool.e2e.test.ts > lane workers on one seat (H-824) > a worker swapped to a lane while it holds work launches nothing and releases nothing; restoring its allowlist resumes it 8145ms
+ ✓ test/shim.test.ts > parseCodexEvents (H-479) > reads the thread id, the last agent message, and the usage 1ms
+ ✓ test/shim.test.ts > parseCodexEvents (H-479) > a stream with no turn.completed is not a clean run, whatever the exit code said 0ms
+ ✓ test/shim.test.ts > parseCodexEvents (H-479) > keeps the failure message whole (the H-402 rule: never reduce a limit to a number) 0ms
+ ✓ test/shim.test.ts > parseCodexEvents (H-479) > names why a run failed even when the agent sent a final message (H-2164) 0ms
+ ✓ test/shim.test.ts > parseCodexEvents (H-479) > skips non-JSON lines rather than throwing 0ms
+ ✓ test/shim.test.ts > parseCodexEvents (H-479) > distinguishes a malformed/truncated event from harmless non-JSON chatter 0ms
+ ✓ test/shim.test.ts > streamed child output (H-387) > retains harmless output beyond spawnSync's former 32 MiB ceiling 157ms
+ ✓ test/shim.test.ts > streamed child output (H-387) > reports an actual missing executable as ENOENT 3ms
+ ✓ test/shim.test.ts > streamed child output (H-387) > keeps child exit failure distinct from launch failure 79ms
+ ✓ test/shim.test.ts > streamed child output (H-387) > bounds stdout overflow and terminates the child 248ms
+ ✓ test/shim.test.ts > streamed child output (H-387) > bounds stderr overflow and terminates the child 140ms
+ ✓ test/shim.test.ts > notionalCost (H-479) > prices uncached input, discounted cached input, and output per MTok 0ms
+ ✓ test/shim.test.ts > notionalCost (H-479) > an explicit cached price wins over the default discount 0ms
+ ✓ test/shim.test.ts > notionalCost (H-479) > no price table means no cost — the burn breaker stays honest about not knowing 0ms
+ ✓ test/shim.test.ts > selected runtime metering (H-1903) > records Claude under a Codex-default rotating loop (is_error=false) 230ms
+ ✓ test/shim.test.ts > selected runtime metering (H-1903) > records Claude under a Codex-default rotating loop (is_error=true) 115ms
+ ✓ test/shim.test.ts > a journaled session names its process group (H-685) > writes the group id the CLI runs in before the CLI starts, and a CLI it cannot find is apparatus 132ms
+ ✓ test/shim.test.ts > pool worker launch generation (H-574) > a Claude session's Helmo identity carries the launch generation, and an unbound one carries none 127ms
+ ✓ test/shim.test.ts > codex MCP override (H-479) > serializes the server table as valid TOML with tools auto-approved 1ms
+ ✓ test/shim.test.ts > codex MCP override (H-479) > a declared approval mode is not overridden 0ms
+ ✓ test/shim.test.ts > codex MCP override (H-479) > escapes quotes, backslashes, and newlines; strips raw control bytes 0ms
+ ✓ test/shim.test.ts > codexArgs (H-520) > is hermetic: user config ignored, everything explicit, prompt on stdin 0ms
+ ✓ test/shim.test.ts > codexArgs (H-520) > provider config entries become -c overrides in roster order 0ms
+ ✓ test/shim.test.ts > session process group (H-467) > sweeps background children after a completed iteration (H-1013) 137ms
+ ✓ test/shim.test.ts > session process group (H-467) > a signal to the whole process group does not reach the in-flight session 2820ms
+ ✓ test/shim.test.ts > session git identity (H-787) > sets committer to the seat and touches neither author nor the rest of the env 0ms
+ ✓ test/shim.test.ts > session git identity (H-787) > a real session commit carries the seat as committer and the human as author 126ms
+ ✓ test/shim.test.ts > sessionSpec (H-1152) > carries the same system prompt the loop spawn writes to its system file 1ms
+ ✓ test/shim.test.ts > sessionSpec (H-1152) > carries the roster MCP surface with the seat as the Helm actor 0ms
+ ✓ test/shim.test.ts > sessionSpec (H-1152) > carries the installation deed into both the session and its MCP server 0ms
+ ✓ test/shim.test.ts > sessionSpec (H-1152) > a session override reaches the Helm server env, not only the readable actor 0ms
+ ✓ test/shim.test.ts > sessionSpec (H-1152) > exports what rev sets and none of the caller environment 0ms
+ ✓ test/shim.test.ts > sessionSpec (H-1152) > declares the flags a loop actually runs with 0ms
+ ✓ test/redeploy-note.test.ts > the landing note on the ticket that asked for the redeploy > lands on a live ticket, with the events.log as its evidence 814ms
+ ✓ test/redeploy-note.test.ts > the landing note on the ticket that asked for the redeploy > records a closed ticket as a skip, not a failure — the record staying permanent is not a fault 625ms
+{"error":"Ticket \"H-999999\" not found. IDs look like \"H-42\"; use helmo_list_tickets to find the one you mean.","installation":{"label":"dev.helmo.rev-redeploy-note-UoKwQu.7fffe7d3","home":"/var/folders/pt/wc4sf2ts7993fhl8fr7q3pch0000gn/T/rev-redeploy-note-UoKwQu","db":"/var/folders/pt/wc4sf2ts7993fhl8fr7q3pch0000gn/T/rev-redeploy-note-UoKwQu/helm.db","source":"derived","running":{"state":"unverifiable","dir":"/Users/arthurcoulston/projects/gp-contrib/helmo-h1273/packages/work/src","digest":null,"detail":"no compiled JavaScript could be read in /Users/arthurcoulston/projects/gp-contrib/helmo-h1273/packages/work/src, so nothing can confirm what this process is running (a source run under tsx looks exactly like this)"}}}
+ ✓ test/redeploy-note.test.ts > the landing note on the ticket that asked for the redeploy > a real failure carries what Helm said, not just the command line 153ms
+stdout | test/service.test.ts > the migration retires this installation's previous definition, and only its own > boots out and removes a definition left at this home's previous label
+Retired this installation's previous service definition /var/folders/pt/wc4sf2ts7993fhl8fr7q3pch0000gn/T/rev-migrate-SqS2vJ/Library/LaunchAgents/dev.rev.plist: its identity is now dev.rev.customer-a.985a0c5b.
+
+stdout | test/service.test.ts > the migration retires this installation's previous definition, and only its own > the systemd path disables the old unit before removing it
+Retired this installation's previous service definition /var/folders/pt/wc4sf2ts7993fhl8fr7q3pch0000gn/T/rev-migrate-bHEW4q/.config/systemd/user/rev.service: its identity is now dev.rev.customer-a.985a0c5b.
+
+ ✓ test/service.test.ts > service unit generation > launchd: restarts on crash only — a graceful drain (exit 0) stays down 1ms
+ ✓ test/service.test.ts > service unit generation > launchd and systemd carry a bound installation into the stable launcher 0ms
+ ✓ test/service.test.ts > service unit generation > launchd: XML-escapes paths 0ms
+ ✓ test/service.test.ts > service unit generation > launchd: replaces a loaded service before bootstrapping the new plist 1ms
+ ✓ test/service.test.ts > service unit generation > launchd: installs when no service is loaded 0ms
+ ✓ test/service.test.ts > service unit generation > launchd: waits until bootout has released the label 0ms
+ ✓ test/service.test.ts > service unit generation > launchd: restores the previous definition and job after bootstrap fails 1ms
+ ✓ test/service.test.ts > service unit generation > systemd: on-failure restart with the embedded environment 0ms
+ ✓ test/service.test.ts > service identity follows the Rev home > unset home and the default home both stay dev.rev 3ms
+ ✓ test/service.test.ts > service identity follows the Rev home > a suffixed home gets a suffixed label 0ms
+ ✓ test/service.test.ts > service identity follows the Rev home > a home that is not a rev- name keeps its whole basename, sanitized, before the digest 1ms
+ ✓ test/service.test.ts > service identity follows the Rev home > REV_LABEL overrides the derivation, and the unit name follows it 0ms
+ ✓ test/service.test.ts > service identity follows the Rev home > HELMO_INSTALLATION is canonical while matching legacy keys remain accepted 0ms
+ ✓ test/service.test.ts > service identity follows the Rev home > the default unit name is plain rev 0ms
+ ✓ test/service.test.ts > service identity follows the Rev home > two homes with the same basename get different identities 0ms
+ ✓ test/service.test.ts > service identity follows the Rev home > the same home resolves to the same identity every time, however it is spelled 0ms
+ ✓ test/service.test.ts > service identity follows the Rev home > a redirected HOME cannot hand a second install the first one's identity 0ms
+ ✓ test/service.test.ts > service identity follows the Rev home > the pre-H-2452 label is still computable, which is what the migration looks for 0ms
+ ✓ test/service.test.ts > the installed definition carries the identity it was installed under > launchd: the label is in the environment, not only in the Label key 0ms
+ ✓ test/service.test.ts > the installed definition carries the identity it was installed under > systemd: the same 0ms
+ ✓ test/service.test.ts > the installed definition carries the identity it was installed under > a command run inside that environment resolves the label the job holds 0ms
+ ✓ test/service.test.ts > a service definition says which installation it belongs to > reads the home out of a plist, un-escaping what the writer escaped 0ms
+ ✓ test/service.test.ts > a service definition says which installation it belongs to > reads the home out of a systemd unit 0ms
+ ✓ test/service.test.ts > a service definition says which installation it belongs to > a definition with no REV_HOME reads as unowned, so an old install stays upgradeable 0ms
+ ✓ test/service.test.ts > the migration retires this installation's previous definition, and only its own > boots out and removes a definition left at this home's previous label 2ms
+ ✓ test/service.test.ts > the migration retires this installation's previous definition, and only its own > leaves a definition that names a DIFFERENT installation alone 0ms
+ ✓ test/service.test.ts > the migration retires this installation's previous definition, and only its own > a definition with no REV_HOME is not ours to remove either 0ms
+ ✓ test/service.test.ts > the migration retires this installation's previous definition, and only its own > a conventional home has nothing to retire: the label never moved 0ms
+ ✓ test/service.test.ts > the migration retires this installation's previous definition, and only its own > the systemd path disables the old unit before removing it 1ms
+ ✓ test/service.test.ts > a pinned installation starts through its own launcher > lives in the installation home, outside every release 0ms
+ ✓ test/service.test.ts > a pinned installation starts through its own launcher > hands over to the release the selection names, and to a different one after a change 179ms
+ ✓ test/service.test.ts > a pinned installation starts through its own launcher > resolves the unified manifest shape to its runtime 89ms
+ ✓ test/service.test.ts > a pinned installation starts through its own launcher > resolves the legacy manifest shape to its runtime 88ms
+ ✓ test/service.test.ts > a pinned installation starts through its own launcher > presents the resolved cli.js as argv[1], not itself 91ms
+ ✓ test/service.test.ts > a pinned installation starts through its own launcher > turns a carried deed into a fail-closed binding before handing over 88ms
+ ✓ test/service.test.ts > a pinned installation starts through its own launcher > refuses legibly when the selection is unreadable 86ms
+ ✓ test/service.test.ts > a pinned installation starts through its own launcher > refuses legibly when the selection is null 86ms
+ ✓ test/service.test.ts > a pinned installation starts through its own launcher > refuses legibly when the selection is naming no release 79ms
+ ✓ test/service.test.ts > a pinned installation starts through its own launcher > refuses legibly when the selection is with a non-string directory 89ms
+ ✓ test/service.test.ts > a pinned installation starts through its own launcher > refuses legibly when the selection is naming a release that holds no rev 89ms
+ ✓ test/service.test.ts > a pinned installation starts through its own launcher > refuses when the definition carries no selection at all 84ms
+ ✓ test/service.test.ts > a pinned installation starts through its own launcher > a definition still naming a release directory is reported > a frozen program is named, with the release directory it points into 1ms
+ ✓ test/service.test.ts > a pinned installation starts through its own launcher > a definition still naming a release directory is reported > a definition already naming the launcher is not stale, and neither is an unpinned one 1ms
+ ✓ test/service.test.ts > a pinned installation starts through its own launcher > a definition still naming a release directory is reported > another installation's definition is never this one's to report 1ms
+ ✓ test/service.test.ts > a pinned installation starts through its own launcher > reads back the program a definition names, on both managers 0ms
+ ✓ test/view-output.test.ts > view idle reasons (H-954) > presents all three bounded reasons in the HTML view 6ms
+ ✓ test/view-output.test.ts > view idle reasons (H-954) > presents all three bounded reasons in /health.json 3ms
+ ✓ test/view-output.test.ts > view idle reasons (H-954) > serves the same snapshot in the versioned application API envelope 3ms
+ ✓ test/view-output.test.ts > view idle reasons (H-954) > distinguishes the held seat in rev status 584ms
+ ✓ test/intake-preparation.test.ts > intake preparation executor > rejects a hash-valid signup attached to another occurrence 2ms
+ ✓ test/intake-preparation.test.ts > intake preparation executor > claims delayed work once, writes exact source and heartbeats the same attempt 31ms
+ ✓ test/intake-preparation.test.ts > intake preparation executor > stops lease retention when the assignment is done with nothing staged 2ms
+ ✓ test/intake-preparation.test.ts > intake preparation executor > stops lease retention when the assignment is cancelled with nothing staged 1ms
+ ✓ test/intake-preparation.test.ts > intake preparation executor > stops lease retention when the assignment is awaiting_human with nothing staged 1ms
+ ✓ test/intake-preparation.test.ts > intake preparation executor > delivers a result staged before the assignment became done 1ms
+ ✓ test/intake-preparation.test.ts > intake preparation executor > delivers a result staged before the assignment became cancelled 1ms
+ ✓ test/intake-preparation.test.ts > intake preparation executor > keeps the lease and the result while a refused result can still be repaired, and says why 2ms
+ ✓ test/intake-preparation.test.ts > intake preparation executor > prints only a Worker error phrase, never an arbitrary body 1ms
+ ✓ test/intake-preparation.test.ts > intake preparation executor > names the abandoned attempt and its commit when the same attempt is assigned again 2ms
+ ✓ test/intake-preparation.test.ts > intake preparation executor > marks a later attempt of the same occurrence as a retry 2ms
+ ✓ test/intake-preparation.test.ts > intake preparation executor > reports a bounded invariant failure and leaves retry ownership with the Worker 0ms
+ ✓ test/intake-preparation.test.ts > intake preparation executor > does not create a second assignment on concurrent claim replay 1ms
+ ✓ test/intake-preparation.test.ts > intake preparation executor > drops a stale completion after reschedule and cannot revive it 1ms
+ ✓ test/intake-preparation.test.ts > intake preparation executor > reports the current prompt hash, not a prior generated prompt 1ms
+ ✓ test/intake-preparation.test.ts > intake preparation executor > builds freshness evidence from the exact committed signup and prompt objects 371ms
+ ✓ test/launch-journal.test.ts > launch journal > durably records intent and the exact admitted authority before dispatch 21ms
+ ✓ test/launch-journal.test.ts > launch journal > makes replay idempotent and rejects a changed identity 23ms
+ ✓ test/launch-journal.test.ts > launch journal > suppresses a second dispatch after a crash in the pre-dispatch gap 56ms
+ ✓ test/launch-journal.test.ts > launch journal > exposes only unsettled recovered launches and durably settles them 34ms
+ ✓ test/launch-journal.test.ts > a dead launch's session (H-685) > reads a launch that never dispatched, or whose session never wrote its group, as not running 49ms
+ ✓ test/launch-journal.test.ts > a dead launch's session (H-685) > holds while the session group runs and releases once it has ended 57ms
+ ✓ test/launch-journal.test.ts > a dead launch's session (H-685) > does not mistake a later process that was given the same group id for the session 76ms
+ ✓ test/config.test.ts > roster skills (H-247) > loads skill paths and appends each whole after the constitution 4ms
+ ✓ test/config.test.ts > parallel workers > defaults one loop to one seat and groups explicitly shared workers by session 1ms
+ ✓ test/config.test.ts > parallel workers > refuses two workers on one seat sharing a writable checkout (H-574) 1ms
+ ✓ test/config.test.ts > parallel workers > writable destinations compare by what they are, not how they are spelled (H-671) > refuses a symlink alias of the same checkout 89ms
+ ✓ test/config.test.ts > parallel workers > writable destinations compare by what they are, not how they are spelled (H-671) > refuses a checkout nested inside another worker's, existing or not 76ms
+ ✓ test/config.test.ts > parallel workers > writable destinations compare by what they are, not how they are spelled (H-671) > refuses two directories of one worktree, which share its index 68ms
+ ✓ test/config.test.ts > parallel workers > writable destinations compare by what they are, not how they are spelled (H-671) > accepts distinct worktrees of one repository 143ms
+ ✓ test/config.test.ts > parallel workers > loads exact ticket allowlists and refuses one ticket in two (H-671) 5ms
+ ✓ test/config.test.ts > parallel workers > loads a lane per worker, marks the lane-null sibling, and refuses a shared, mixed or unpooled lane (H-824) 6ms
+ ✓ test/config.test.ts > parallel workers > refuses a store-wide pool worker, whose claim has no exact workstream (H-574) 1ms
+ ✓ test/config.test.ts > parallel workers > refuses a project lane on a loop with no pool to schedule (H-574) 1ms
+ ✓ test/config.test.ts > parallel workers > addresses a pooled role as every worker, and one worker only when asked (H-676) 1ms
+ ✓ test/config.test.ts > providers, tiers, rotation, fallbacks (H-479) > resolves provider + tier to a model, with the probe tier on the same provider 1ms
+ ✓ test/config.test.ts > providers, tiers, rotation, fallbacks (H-479) > a claude/codex runtime doubles as the provider name for tier resolution 1ms
+ ✓ test/config.test.ts > providers, tiers, rotation, fallbacks (H-479) > the v0 form (runtime + model strings) still loads unchanged 1ms
+ ✓ test/config.test.ts > providers, tiers, rotation, fallbacks (H-479) > rotation builds the cycle in order, defaulting each entry to the loop tier 1ms
+ ✓ test/config.test.ts > providers, tiers, rotation, fallbacks (H-479) > headroom routing is opt-in and refuses a proactive tier downgrade 3ms
+ ✓ test/config.test.ts > providers, tiers, rotation, fallbacks (H-479) > fails the whole roster loudly on a reference that cannot run 2ms
+ ✓ test/config.test.ts > providers, tiers, rotation, fallbacks (H-479) > refuses a loop key it does not name — the retired prompt tail first among them (H-1186) 2ms
+ ✓ test/config.test.ts > providers, tiers, rotation, fallbacks (H-479) > a future provider is a table entry naming its adapter, with config riding along (H-520) 1ms
+ ✓ test/config.test.ts > capacity roster keys (H-185) > defaults every new key to today’s behaviour 1ms
+ ✓ test/config.test.ts > capacity roster keys (H-185) > defaults a provider to metered, including the builtin entries 0ms
+ ✓ test/config.test.ts > capacity roster keys (H-185) > takes a declared subscription account 0ms
+ ✓ test/config.test.ts > capacity roster keys (H-185) > refuses a billing word it does not know 1ms
+ ✓ test/config.test.ts > capacity roster keys (H-185) > takes an overridden threshold from [global] 1ms
+ ✓ test/ancestry.test.ts > ancestry > stamps the live chain and reports it unbroken 124ms
+ps: process id too large: 99999999
+ ✓ test/ancestry.test.ts > ancestry > an empty lineage (launchd-parented from birth) can never break 0ms
+ ✓ test/ancestry.test.ts > ancestry > a dead ancestor breaks the chain 19ms
+ ✓ test/ancestry.test.ts > ancestry > a reparented ancestor breaks the chain 72ms
+ ✓ test/ancestry.test.ts > ancestry > a truncated stamp (walk cap hit) is not a broken chain — the last link only needs to be alive 11ms
+ ✓ test/pool.e2e.test.ts > lane workers on one seat (H-824) > cuts a worker over behind the barrier: a held listed ticket cannot be relaned; after release, relane and swap, the next poll takes new lane work 10685ms
+ ✓ test/remove.test.ts > rev install remove — the plan > names this installation's records and controls, and each store's write-ahead log with it 11ms
+ ✓ test/remove.test.ts > rev install remove — the plan > takes the selection when it sits inside the installation, and reports one sitting beside it 4ms
+ ✓ test/remove.test.ts > rev install remove — the plan > leaves a store that points into the other installation, and says why rather than following it 3ms
+ ✓ test/remove.test.ts > rev install remove — the plan > reports a neighbour's store it was aimed at even when that store has never been opened 3ms
+ ✓ test/remove.test.ts > rev install remove — the plan > assumes no default store for a product this installation does not name 3ms
+ ✓ test/remove.test.ts > rev install remove — the plan > takes the roadmap home's own store when only the home is named, the way the roadmap resolves it 3ms
+ ✓ test/remove.test.ts > rev install remove — the conventional ~/.rev-<suffix> layout > leaves the first installation's store a copied roster still names, and takes its own 7ms
+ ✓ test/remove.test.ts > rev install remove — the conventional ~/.rev-<suffix> layout > removes the second installation and leaves the first byte-for-byte 3ms
+ ✓ test/remove.test.ts > rev install remove — the conventional ~/.rev-<suffix> layout > falls back to the enclosing directory for a home the convention does not name 1ms
+ ✓ test/remove.test.ts > rev install remove — the conventional ~/.rev-<suffix> layout > holds for the bare ~/.rev as well, whose pair is the unsuffixed ~/.helmo 4ms
+ ✓ test/remove.test.ts > rev install remove — the conventional ~/.rev-<suffix> layout > does not pair reserved tail -roadmap with another installation's roadmap home 1ms
+ ✓ test/remove.test.ts > rev install remove — the conventional ~/.rev-<suffix> layout > does not pair reserved tail -roadmap-b with another installation's roadmap home 1ms
+ ✓ test/remove.test.ts > rev install remove — what stops it > refuses while a service definition stands, and names the command that takes it first 4ms
+ ✓ test/remove.test.ts > rev install remove — what stops it > refuses while the supervisor is running, and names the drain 4ms
+ ✓ test/remove.test.ts > rev install remove — what stops it > refuses outright when the Rev home would take the account's home directory with it 2ms
+ ✓ test/remove.test.ts > rev install remove — the removal > deletes exactly what it planned, and the other installation is byte-for-byte what it was 4ms
+ ✓ test/remove.test.ts > rev install remove — the removal > is repeatable: a second removal finds nothing of its own left and reaches for nothing else 4ms
+ ✓ test/helm-intake.test.ts > intake assignment > uses only fields supported by the installed Helmo CLI 135ms
+ ✓ test/logretention.test.ts > rotateIfOversized (events.log) > leaves an under-cap file untouched 2ms
+ ✓ test/logretention.test.ts > rotateIfOversized (events.log) > truncates an over-cap file down to the tail 9ms
+ ✓ test/logretention.test.ts > rotateIfOversized (events.log) > does nothing for a path that does not exist yet 1ms
+ ✓ test/logretention.test.ts > rotateOpenFd (console.log) > copy-truncates in place and further writes append from the new end 29ms
+ ✓ test/logretention.test.ts > rotateOpenFd (console.log) > leaves an under-cap open file untouched 1ms
+ ✓ test/sentinels.test.ts > pidAlive > rejects a live pid that is running something other than the marker owner 19ms
+ ✓ test/sentinels.test.ts > pidAlive > accepts the marker its own process just wrote 12ms
+ ✓ test/sentinels.test.ts > pidAlive > records the physical launcher for a pinned supervisor, but not its loop children 0ms
+ ✓ test/sentinels.test.ts > pidAlive > reports denied inspection as unknown and keeps the marker occupied 6ms
+ ✓ test/sentinels.test.ts > pidAlive > distinguishes a reused pid from unavailable inspection 1ms
+ ✓ test/sentinels.test.ts > pidAlive > rejects a dead pid without consulting the command at all 10ms
+ ✓ test/sentinels.test.ts > pidAlive > does not let the supervisor's command match a loop's, whose pid may be recycled to one 13ms
+ ✓ test/sentinels.test.ts > pidAlive > falls back to the pid for a marker written before the command was recorded 4ms
+ ✓ test/sentinels.test.ts > pidAlive > reads no marker as not running 0ms
+ ✓ test/sentinels.test.ts > owned sentinels > keeps legacy and malformed controls readable but unowned 1ms
+ ✓ test/sentinels.test.ts > owned sentinels > parses owned controls and releases only the exact observation 1ms
+ ✓ test/sentinels.test.ts > owned sentinels > auto-releases only expired or orphaned maintenance controls 0ms
+ ✓ test/sentinels.test.ts > owned sentinels > holds an unowned control by its expiry alone, never as orphaned (H-738) 0ms
+ ✓ test/usage-poll.test.ts > pollUsage after a 429 (H-740) > keeps a recent good read, and the spent streak still continues on it 44ms
+ ✓ test/usage-poll.test.ts > pollUsage after a 429 (H-740) > still waits when there was never a good read, rather than guessing 1ms
+ ✓ test/usage-poll.test.ts > pollUsage after a 429 (H-740) > still waits once the last good read is older than the window 1ms
+ ✓ test/build.test.ts > digestOf > identifies the code, so the same bytes in two checkouts agree 3ms
+ ✓ test/build.test.ts > digestOf > moves when a loaded file changes — a dirty rebuild of one commit is not the same bytes 1ms
+ ✓ test/build.test.ts > digestOf > ignores the stamp and the type declarations, which no process executes 1ms
+ ✓ test/build.test.ts > digestOf > reports nothing rather than throwing when the directory is gone 1ms
+ ✓ test/build.test.ts > digestOf > reports nothing for a directory holding no JavaScript at all 0ms
+ ✓ test/build.test.ts > readStamp > reads what the build wrote, dirty flag included 1ms
+ ✓ test/build.test.ts > readStamp > treats an unstamped or unparseable build as no stamp, not an error 1ms
+ ✓ test/build.test.ts > the marker a process writes about what it loaded > round-trips through the RUNNING marker 1ms
+ ✓ test/build.test.ts > the marker a process writes about what it loaded > survives a path with spaces in it, because a home may have one 0ms
+ ✓ test/build.test.ts > the marker a process writes about what it loaded > carries no build line when the build left no stamp 1ms
+ ✓ test/build.test.ts > the marker a process writes about what it loaded > recovers nothing from a marker written before this was recorded 0ms
+ ✓ test/build.test.ts > compare — the artifact question against the process question > confirms a process still running the code beside it 1ms
+ ✓ test/build.test.ts > compare — the artifact question against the process question > says a dirty build does not certify its own sha 1ms
+ ✓ test/build.test.ts > compare — the artifact question against the process question > calls a rebuild under a live process STALE and reports the commit it LOADED 1ms
+ ✓ test/build.test.ts > compare — the artifact question against the process question > catches a rebuild of the same commit, where only the bytes moved 1ms
+ ✓ test/build.test.ts > compare — the artifact question against the process question > names no commit when the loaded code carried no stamp 0ms
+ ✓ test/build.test.ts > compare — the artifact question against the process question > is unverifiable, never the artifact sha, when the process recorded nothing 0ms
+ ✓ test/build.test.ts > compare — the artifact question against the process question > is stale rather than verified when the code directory has vanished under it 1ms
+ ✓ test/build.test.ts > compare — the artifact question against the process question > reports a supervisor that is not running as running nothing 0ms
+ ✓ test/build.test.ts > loaded() > holds one reading, so a process outliving a rebuild answers with its own bytes 1ms
+ ✓ test/build.test.ts > loaded() > reads the directory the running code came from 1ms
+ ✓ test/build.test.ts > buildLine > names the commit, the build time and the bytes 1ms
+ ✓ test/build.test.ts > buildLine > says so plainly when there is nothing to name 0ms
+ ✓ test/burn.test.ts > burnWindow > sums only the named loop, and only inside each window 3ms
+ ✓ test/burn.test.ts > burnWindow > never reaches back past the floor — a resumed loop starts clean 1ms
+ ✓ test/burn.test.ts > burnWindow > does not stamp a burn floor for a subscription provider 1ms
+ ✓ test/burn.test.ts > burnWindow > selects only metered providers from runnable choices 0ms
+ ✓ test/burn.test.ts > burnWindow > skips malformed lines rather than halting a loop over a bad log line 1ms
+ ✓ test/burn.test.ts > burnWindow > keeps the last five known costs without turning unknowns into zero 0ms
+ ✓ test/burn.test.ts > burnWindow > is zero when there is no log at all 0ms
+ ✓ test/burn.test.ts > recentCosts anomaly baseline > compares alternating cheap Codex probes and $5–13 Claude sessions on their own runtimes 3ms
+ ✓ test/burn.test.ts > recentCosts anomaly baseline > still trips above the 6x same-runtime mean despite expensive foreign history 1ms
+ ✓ test/burn.test.ts > recentCosts anomaly baseline > keeps empty history without a same-runtime baseline 1ms
+ ✓ test/burn.test.ts > recentCosts anomaly baseline > keeps other runtime history without a same-runtime baseline 0ms
+ ✓ test/burn.test.ts > recentCosts anomaly baseline > keeps unknown cost history without a same-runtime baseline 0ms
+ ✓ test/burn.test.ts > recentCosts anomaly baseline > keeps missing runtime history without a same-runtime baseline 0ms
+ ✓ test/burn.test.ts > recentCosts anomaly baseline > handles legacy lines safely while preserving the unfiltered API and burn totals 1ms
+ ✓ test/burn.test.ts > recentCosts anomaly baseline > retains known zeros so skipping them cannot hide a same-runtime spike 1ms
+ ✓ test/burn.test.ts > recentCosts anomaly baseline > never rounds small known costs or invents costs for a missing log or unknown readings 1ms
+ ✓ test/codex-usage.test.ts > shared Codex allowance from local rollouts (H-892) > includes the newest desk session without persisting conversation content 5ms
+ ✓ test/codex-usage.test.ts > shared Codex allowance from local rollouts (H-892) > ignores the independent Spark bucket and cannot replace fresh usage with an older loop 2ms
+ ✓ test/codex-usage.test.ts > shared Codex allowance from local rollouts (H-892) > handles large rollouts and a partial tail without reading unbounded history 2ms
+ ✓ test/ladder.test.ts > classifyExit > maps the shim contract 1ms
+ ✓ test/ladder.test.ts > ladderDecide > ok+produced continues; ok+unproduced idles 0ms
+ ✓ test/ladder.test.ts > ladderDecide > a store-wide loop idles after a clean pass even when it produced (H-2164) 0ms
+ ✓ test/ladder.test.ts > ladderDecide > transient parks with the wait, never fails, until the cap 0ms
+ ✓ test/ladder.test.ts > ladderDecide > apparatus fails closed immediately 0ms
+ ✓ test/ladder.test.ts > ladderDecide > failures retry under the cap then block 0ms
+ ✓ test/ladder.test.ts > wakeDecide (H-92/H-426) > uses readiness edges for scoped loops, with fallback and resync 0ms
+ ✓ test/ladder.test.ts > wakeDecide (H-92/H-426) > motion wakes every loop 0ms
+ ✓ test/ladder.test.ts > wakeDecide (H-92/H-426) > standing ready work wakes a scoped loop once after restart 0ms
+ ✓ test/ladder.test.ts > wakeDecide (H-92/H-426) > a pool worker holding work wakes once after restart, so a held claim is asked for again (H-824) 0ms
+ ✓ test/ladder.test.ts > wakeDecide (H-92/H-426) > standing backlog never wakes a store-wide loop, including its first poll 0ms
+ ✓ test/ladder.test.ts > wakeDecide (H-92/H-426) > a held claim whose last blocker closed wakes its scoped holder, with nothing ready (H-804) 0ms
+ ✓ test/ladder.test.ts > wakeDecide (H-92/H-426) > a verdict or note on a kept claim wakes its scoped holder, with nothing ready (H-578) 0ms
+ ✓ test/ladder.test.ts > idleCursorDecide (H-804) > holds the launch seq when a ticket became ready mid-run without being offered 0ms
+ ✓ test/ladder.test.ts > idleCursorDecide (H-804) > advances past what the run was offered or claimed and declined (H-426) 0ms
+ ✓ test/ladder.test.ts > idleCursorDecide (H-804) > holds the launch seq when a held claim was unblocked mid-run, claimed or not 0ms
+ ✓ test/ladder.test.ts > idleCursorDecide (H-804) > holds the launch seq when someone else wrote on a held claim mid-run (H-578) 0ms
+ ✓ test/ladder.test.ts > idleCursorDecide (H-804) > keeps the old cursors where it cannot tell 0ms
+ ✓ test/ladder.test.ts > declineDecide > counts per ticket, resets dispositions, and escalates from the third pass 0ms
+ ✓ test/ladder.test.ts > respawnDecide > a halt sentinel always wins — never respawn over a decision 0ms
+ ✓ test/ladder.test.ts > respawnDecide > clean exit after healthy uptime respawns immediately (the ceiling working) 0ms
+ ✓ test/ladder.test.ts > respawnDecide > crashes climb an exponential backoff to the cap 0ms
+ ✓ test/ladder.test.ts > respawnDecide > a signal kill and a too-young clean exit are both unhealthy 0ms
+ ✓ test/ladder.test.ts > velocityToPause > full speed = no pause; fraction slows using measured duration 0ms
+ ✓ test/ladder.test.ts > rollingMean > keeps a bounded window 0ms
+ ✓ test/ladder.test.ts > breakerDecide (H-412) > passes an ordinary loop day 0ms
+ ✓ test/ladder.test.ts > breakerDecide (H-412) > trips on the hour cap, and says what it saw 0ms
+ ✓ test/ladder.test.ts > breakerDecide (H-412) > trips on the day cap — bosun's $86 and rolo's $108 would both have been caught 0ms
+ ✓ test/ladder.test.ts > breakerDecide (H-412) > trips on a loop that never idles — rolo's 52-iteration run 0ms
+ ✓ test/ladder.test.ts > breakerDecide (H-412) > leaves every legitimate figure in the token-log alone 0ms
+ ✓ test/ladder.test.ts > breakerDecide (H-412) > does not catch a small spin, and should not pretend to 0ms
+ ✓ test/ladder.test.ts > breakerDecide (H-412) > a zero cap disables that limb 0ms
+ ✓ test/ladder.test.ts > breakerDecide (H-412) > keeps notional dollar caps inert for a subscription provider 0ms
+ ✓ test/ladder.test.ts > limitDecide (H-402) > with no identifiable cap, behaves exactly as the old ladder did 0ms
+ ✓ test/ladder.test.ts > limitDecide (H-402) > waits to the reset when the cap comes back soon 0ms
+ ✓ test/ladder.test.ts > limitDecide (H-402) > blocks with the cap named when the reset is beyond the horizon — the 2026-08-26 case 1ms
+ ✓ test/ladder.test.ts > limitDecide (H-402) > schedules a resume beyond the wait horizon but inside the exhaustion ceiling 0ms
+ ✓ test/ladder.test.ts > limitDecide (H-402) > blocks rather than waiting forever when the cap names no reset time 0ms
+ ✓ test/ladder.test.ts > limitDecide (H-402) > a reset already past retries shortly rather than computing a negative wait 0ms
+ ✓ test/ladder.test.ts > probeDecide (H-412, pin H-625) > nothing ready and nothing in hand is the probe case 0ms
+ ✓ test/ladder.test.ts > probeDecide (H-412, pin H-625) > ready work runs at the working tier 0ms
+ ✓ test/ladder.test.ts > probeDecide (H-412, pin H-625) > work already in hand runs at the working tier — resuming an in_progress ticket is not a probe 0ms
+ ✓ test/ladder.test.ts > probeDecide (H-412, pin H-625) > an unknown held_count (older helmo) never probes — misrouting real work is the worse mistake 0ms
+ ✓ test/ladder.test.ts > probeDecide (H-412, pin H-625) > no probe model configured means no probe 0ms
+ ✓ test/ladder.test.ts > probeDecide (H-412, pin H-625) > store-wide loops never probe: their motion-only wakes ARE the triage work 0ms
+ ✓ test/ladder.test.ts > probeDecide (H-412, pin H-625) > a standing pin takes the probe, provider and all 0ms
+ ✓ test/ladder.test.ts > probeDecide (H-412, pin H-625) > the pin supplies the probe even for a loop with no probe model of its own 0ms
+ ✓ test/ladder.test.ts > probeDecide (H-412, pin H-625) > an exhausted pin yields to the loop's own probe model on the chosen provider 0ms
+ ✓ test/ladder.test.ts > probeDecide (H-412, pin H-625) > an exhausted pin with no fallback probe model means no probe 0ms
+ ✓ test/ladder.test.ts > probeDecide (H-412, pin H-625) > mock loops never leave mock — tests stay hermetic under a pinned roster 0ms
+ ✓ test/ladder.test.ts > probeDecide (H-412, pin H-625) > the pin does not widen the probe case: ready work still runs at the working tier 0ms
+ ✓ test/ladder.test.ts > choiceDecide (H-479) > a one-entry cycle always schedules that entry 0ms
+ ✓ test/ladder.test.ts > choiceDecide (H-479) > a two-entry cycle alternates every other run 0ms
+ ✓ test/ladder.test.ts > choiceDecide (H-479) > an exhausted provider is skipped for the rest of the cycle, and says so 0ms
+ ✓ test/ladder.test.ts > choiceDecide (H-479) > fallbacks are tried after the cycle, in order 0ms
+ ✓ test/ladder.test.ts > choiceDecide (H-479) > everything exhausted returns the scheduled choice unswitched — the ladder decides, not this 0ms
+ ✓ test/ladder.test.ts > seatDecide (H-558) > an empty seat and its own mid-flight work both mean work 0ms
+ ✓ test/ladder.test.ts > seatDecide (H-558) > a fresh foreign hold stands the loop down, naming the ticket and holder 0ms
+ ✓ test/ladder.test.ts > seatDecide (H-558) > a stale or undatable foreign hold does not block — takeover territory, not a live session 0ms
+ ✓ test/ladder.test.ts > seatDecide (H-558) > one fresh foreign hold among own work is enough to stand down; 0 disables the guard 0ms
+ ✓ test/ladder.test.ts > seatDecide (H-558) > allows another supervised worker in the same accountable seat 0ms
+ ✓ test/import-boundary.test.ts > the specifiers a source really imports > reads every import form, and no string that is not one 2ms
+ ✓ test/import-boundary.test.ts > the specifiers a source really imports > reports the line the specifier is actually on 0ms
+ ✓ test/import-boundary.test.ts > the specifiers a source really imports > ignores a commented-out import, which is not an import 0ms
+ ✓ test/import-boundary.test.ts > the specifiers a source really imports > ignores prose that merely contains the words of an import 0ms
+ ✓ test/import-boundary.test.ts > the specifiers a source really imports > is not confused by a URL, whose // is not a comment 0ms
+ ✓ test/import-boundary.test.ts > the specifiers a source really imports > reads an import that follows a regex holding a quote character 0ms
+ ✓ test/import-boundary.test.ts > the specifiers a source really imports > reads an import below a regex whose character class holds a slash 0ms
+ ✓ test/import-boundary.test.ts > the specifiers a source really imports > does not read the inside of a regex as an import 0ms
+ ✓ test/import-boundary.test.ts > the specifiers a source really imports > still reads a division as a division, not as an opening regex 0ms
+ ✓ test/import-boundary.test.ts > the specifiers a source really imports > reads a regex in the places this tree actually writes one 0ms
+ ✓ test/import-boundary.test.ts > which specifiers reach the work record > refuses the work record by its own package name 0ms
+ ✓ test/import-boundary.test.ts > which specifiers reach the work record > refuses it under a scoped rename, so the guard survives one 0ms
+ ✓ test/import-boundary.test.ts > which specifiers reach the work record > refuses a relative path into it, however that path is spelled 0ms
+ ✓ test/import-boundary.test.ts > which specifiers reach the work record > leaves the runtime its own neighbours and the shared core alone 0ms
+ ✓ test/import-boundary.test.ts > which specifiers reach the work record > does not mistake the roadmap for the work record on a shared prefix 0ms
+ ✓ test/import-boundary.test.ts > the guard refusing a real violation > refuses a static import of the store, naming file, line and specifier 1ms
+ ✓ test/import-boundary.test.ts > the guard refusing a real violation > refuses a dynamic import of the store 0ms
+ ✓ test/import-boundary.test.ts > the guard refusing a real violation > refuses a require of the store 0ms
+ ✓ test/import-boundary.test.ts > the guard refusing a real violation > refuses a re-export of the store, which is an import that hides 0ms
+ ✓ test/import-boundary.test.ts > the shipped runtime, as it stands > imports nothing from the work record 0ms
+ ✓ test/import-boundary.test.ts > the shipped runtime, as it stands > was actually read: shipped files, and real specifiers out of them 3ms
+ ✓ test/import-boundary.test.ts > the shipped runtime, as it stands > scans the shipped surface and leaves the tests out of it 0ms
+ ✓ test/import-boundary.test.ts > the verdict > calls an empty scan red, so a renamed directory cannot retire the guard 0ms
+ ✓ test/import-boundary.test.ts > the verdict > counts what it found, in words a reader can act on 0ms
+ ✓ test/usage.test.ts > parseUsage (H-278) > reads the limits array, and names the model a scoped cap belongs to 2ms
+ ✓ test/usage.test.ts > parseUsage (H-278) > keeps only parsed values — no raw upstream text reaches the file 1ms
+ ✓ test/usage.test.ts > parseUsage (H-278) > falls back to the top-level bars when limits is absent 0ms
+ ✓ test/usage.test.ts > parseUsage (H-278) > survives a shape it has never seen rather than throwing 0ms
+ ✓ test/usage.test.ts > usageLine > reads as one line, with the reset times 0ms
+ ✓ test/usage.test.ts > usageLine > says so when it never polled, and when the numbers are old 0ms
+ ✓ test/usage.test.ts > worstSeverity > reports the endpoint's own worst word, never a threshold of ours 0ms
+ ✓ test/usage.test.ts > exhaustedLimit (H-402) > finds nothing on an ordinary day 0ms
+ ✓ test/usage.test.ts > exhaustedLimit (H-402) > names the worst bar that is actually out 0ms
+ ✓ test/usage.test.ts > exhaustedLimit (H-402) > uses configured allowance despite a Claude critical warning 0ms
+ ✓ test/usage.test.ts > exhaustedLimit (H-402) > retains critical-cap refusal for an unknown provider bar 0ms
+ ✓ test/usage.test.ts > exhaustedLimit (H-402) > never lets stale numbers justify a wait 0ms
+ ✓ test/usage.test.ts > parseCodexRateLimits (H-479) > maps windows to the snapshot shape, naming the plan 1ms
+ ✓ test/usage.test.ts > parseCodexRateLimits (H-479) > keeps only parsed values — same posture as the Claude snapshot (H-298) 0ms
+ ✓ test/usage.test.ts > parseCodexRateLimits (H-479) > a reached cap is the endpoint speaking: fullest window goes critical, so exhaustedLimit sees it 0ms
+ ✓ test/usage.test.ts > parseCodexRateLimits (H-479) > continues past included exhaustion only on explicit spendable credit capacity (H-481) 0ms
+ ✓ test/usage.test.ts > parseCodexRateLimits (H-479) > honours unlimited credits but never crosses a spend-control refusal or stale snapshot (H-481) 0ms
+ ✓ test/usage.test.ts > parseCodexRateLimits (H-479) > survives a shape it has never seen rather than throwing 0ms
+ ✓ test/usage.test.ts > parseCodexRateLimits (H-479) > does not let credits from an unrelated Codex model bucket widen shared capacity 0ms
+ ✓ test/capacity.test.ts > capacityDecide — a productive backlog at real capacity (matrix 1) > continues at the bars that stopped the fleet on 2026-09-29 3ms
+ ✓ test/capacity.test.ts > capacityDecide — a productive backlog at real capacity (matrix 1) > never consults a dollar gate for a subscription account 0ms
+ ✓ test/capacity.test.ts > capacityDecide — Claude allowance warnings > continues below the chosen ceiling and schedules at the ceiling 0ms
+ ✓ test/capacity.test.ts > capacityDecide — Claude allowance warnings > keeps actual Codex reached-cap evidence binding below the percentage 0ms
+ ✓ test/capacity.test.ts > capacityDecide — the shared reserve > holds the last slice back from loops but not from a desk session 0ms
+ ✓ test/capacity.test.ts > capacityDecide — switching > switches to a fresh provider when the scheduled one is out 0ms
+ ✓ test/capacity.test.ts > capacityDecide — switching > does not read a rebuilt scheduled choice as a switch to itself 0ms
+ ✓ test/capacity.test.ts > capacityDecide — genuine exhaustion (matrix 4) > continues on fresh Codex credits after included plan bars are exhausted (H-481) 0ms
+ ✓ test/capacity.test.ts > capacityDecide — genuine exhaustion (matrix 4) > keeps runaway detection independent when credits make capacity runnable 0ms
+ ✓ test/capacity.test.ts > capacityDecide — genuine exhaustion (matrix 4) > waits out a reset inside the horizon 0ms
+ ✓ test/capacity.test.ts > capacityDecide — genuine exhaustion (matrix 4) > schedules its own resume past the horizon instead of asking a human 0ms
+ ✓ test/capacity.test.ts > capacityDecide — genuine exhaustion (matrix 4) > resumes at the soonest reset across every choice 0ms
+ ✓ test/capacity.test.ts > capacityDecide — genuine exhaustion (matrix 4) > blocks past the exhaustion ceiling, where the telemetry is wrong not the plan 0ms
+ ✓ test/capacity.test.ts > capacityDecide — genuine exhaustion (matrix 4) > blocks rather than guessing when an out bar reports no reset time 0ms
+ ✓ test/capacity.test.ts > capacityDecide — genuine exhaustion (matrix 4) > parks briefly when the reset has passed but the bars have not moved 0ms
+ ✓ test/capacity.test.ts > capacityDecide — stale or missing telemetry (matrix 5) > asks for one refresh first 0ms
+ ✓ test/capacity.test.ts > capacityDecide — stale or missing telemetry (matrix 5) > then continues under a bounded grace, and waits once it is spent 0ms
+ ✓ test/capacity.test.ts > capacityDecide — stale or missing telemetry (matrix 5) > treats a snapshot older than the freshness window as stale 0ms
+ ✓ test/capacity.test.ts > capacityDecide — stale or missing telemetry (matrix 5) > keeps a good read across a failed poll until it ages out (H-740) 0ms
+ ✓ test/capacity.test.ts > capacityDecide — stale or missing telemetry (matrix 5) > does not count a 429 after a recent good read toward the unreadable streak (H-740) 0ms
+ ✓ test/capacity.test.ts > capacityDecide — stale or missing telemetry (matrix 5) > never parks on out bars a failed poll could not confirm 0ms
+ ✓ test/capacity.test.ts > capacityDecide — stale or missing telemetry (matrix 5) > never invents a percent — an unreadable bar is not an exhausted one 0ms
+ ✓ test/capacity.test.ts > anomalyDecide — a runaway is a slope, not a total (matrix 3) > trips on a single iteration taking 12 plan points 0ms
+ ✓ test/capacity.test.ts > anomalyDecide — a runaway is a slope, not a total (matrix 3) > trips on the plan-points rule before a mean exists 0ms
+ ✓ test/capacity.test.ts > anomalyDecide — a runaway is a slope, not a total (matrix 3) > trips on a real cost blowout and names the numbers it measured 0ms
+ ✓ test/capacity.test.ts > anomalyDecide — a runaway is a slope, not a total (matrix 3) > does not trip on a productive straight line 0ms
+ ✓ test/capacity.test.ts > anomalyDecide — a runaway is a slope, not a total (matrix 3) > does not mistake the builder H-273 cheap-pass to build transition for a runaway 0ms
+ ✓ test/capacity.test.ts > anomalyDecide — a runaway is a slope, not a total (matrix 3) > does not mistake the cyber H-303 cheap-pass to build transition for a runaway 0ms
+ ✓ test/capacity.test.ts > anomalyDecide — a runaway is a slope, not a total (matrix 3) > does not mistake the cyber H-306 cheap-pass to build transition for a runaway 0ms
+ ✓ test/capacity.test.ts > anomalyDecide — a runaway is a slope, not a total (matrix 3) > does not trip on a cache-heavy iteration, whatever its token count 0ms
+ ✓ test/capacity.test.ts > anomalyDecide — a runaway is a slope, not a total (matrix 3) > does not trip on a multiple of a trivial base 0ms
+ ✓ test/capacity.test.ts > anomalyDecide — a runaway is a slope, not a total (matrix 3) > never trips on a cost the shim could not determine 0ms
+ ✓ test/capacity.test.ts > anomalyDecide — a runaway is a slope, not a total (matrix 3) > holds its peace before there is a mean to compare against 0ms
+ ✓ test/capacity.test.ts > planPointsConsumed > compares only the same plan window and reports its largest movement 0ms
+ ↓ test/estate-avatars.test.ts > vendored estate avatars > is the estate sprite verbatim
+ ✓ test/estate-avatars.test.ts > vendored estate avatars > carries a composed symbol for every mark at every kind 2ms
+ ✓ test/estate-avatars.test.ts > vendored estate avatars > composes a symbol at the one kind rev draws 1ms
+ ✓ test/estate-avatars.test.ts > vendored estate avatars > rests that kind on the roster refusing a loop with no constitution 2ms
+ ✓ test/estate-avatars.test.ts > vendored estate avatars > emits a crew mark from exactly one place, and that place emits the name too 0ms
+ ✓ test/estate-avatars.test.ts > vendored estate avatars > inlines the sprite into the page it serves 0ms
+ ✓ test/estate-avatars.test.ts > vendored estate avatars > does not mistake the frames themselves for a mark 0ms
+ ✓ test/estate-avatars.test.ts > vendored estate avatars > refuses a sprite it can find no composed symbols in 0ms
+ ✓ test/estate-avatars.test.ts > vendored estate avatars > refuses a sprite that is missing a mark at some kind 0ms
+ ✓ test/estate-avatars.test.ts > vendored estate avatars > refuses a source that cannot be vendored verbatim 0ms
+ ✓ test/routing.test.ts > allowance-aware routing (H-892) > uses the provider with allowance expiring sooner, not merely the lower percentage 3ms
+ ✓ test/routing.test.ts > allowance-aware routing (H-892) > reverses course after meeting usage changes the shared balance 0ms
+ ✓ test/routing.test.ts > allowance-aware routing (H-892) > preserves tier and cannot select a cheap fallback just to burn its allowance 0ms
+ ✓ test/routing.test.ts > allowance-aware routing (H-892) > stale, missing, malformed or expired telemetry keeps configured order without inventing headroom 1ms
+ ✓ test/routing.test.ts > allowance-aware routing (H-892) > skips exhausted candidates, including a binding short window 0ms
+ ✓ test/routing.test.ts > allowance-aware routing (H-892) > the Fable weekly bucket cannot exhaust Opus or the probe model 0ms
+ ✓ test/routing.test.ts > allowance-aware routing (H-892) > does not change the established alternating policy for unopted loops 0ms
+ ✓ test/stamp-build.test.ts > newestArtifact > finds the most recently written artifact 1ms
+ ✓ test/stamp-build.test.ts > newestArtifact > never counts the stamp itself, which would make every stale build look current 0ms
+ ✓ test/stamp-build.test.ts > newestArtifact > reports nothing rather than throwing when dist holds only the stamp 0ms
+ ✓ test/stamp-build.test.ts > verify > passes when the stamp is at least as new as the code beside it 0ms
+ ✓ test/stamp-build.test.ts > verify > fails when there is no stamp at all 0ms
+ ✓ test/stamp-build.test.ts > verify > fails on a rebuild nobody stamped, and names the file that gave it away 0ms
+ ✓ test/stamp-build.test.ts > describeBuild > records the tree state, because tsc compiles the working tree and not the commit 1ms
+ ✓ test/stamp-build.test.ts > describeBuild > keeps the full sha, so the record resolves in a repo with many short-sha collisions 0ms
+ ↓ test/estate-reach.test.ts > vendored estate reach table > is the estate registry rendered by the vendor script
+ ✓ test/estate-reach.test.ts > vendored estate reach table > holds every surface the view links to 1ms
+ ✓ test/estate-reach.test.ts > vendored estate reach table > ships both addresses on the link, never one 0ms
+ ✓ test/estate-reach.test.ts > vendored estate reach table > takes an explicit local URL without changing the composed reach 0ms
+ ✓ test/estate-reach.test.ts > vendored estate reach table > keeps an explicit URL inside its href attribute 0ms
+ ✓ test/estate-reach.test.ts > vendored estate reach table > refuses a surface the table does not hold 0ms
+ ✓ test/estate-reach.test.ts > vendored estate reach table > swaps the href for a reader who is not on this Mac 0ms
+ ✓ test/estate-reach.test.ts > vendored estate reach table > leaves the desk alone 0ms
+ ✓ test/estate-reach.test.ts > vendored estate reach table > puts the script after the links it rewrites 0ms
+ ✓ test/estate-reach.test.ts > vendored estate reach table > carries nothing that would close its own script tag 0ms
+ ✓ test/estate-reach.test.ts > vendored estate reach table > refuses a registry with no reach prefix 0ms
+ ✓ test/estate-reach.test.ts > vendored estate reach table > takes a surface at its own reach when it states one 0ms
+ ✓ test/estate-reach.test.ts > vendored estate reach table > keeps a desk-only surface on its loopback address 0ms
+ ✓ test/estate-reach.test.ts > vendored estate reach table > refuses a registry with nothing navigable 0ms
+ ✓ test/view-accessibility.test.ts > view accessibility > declares its language and does not use timed document reloads 1ms
+ ✓ test/view-accessibility.test.ts > view accessibility > keeps the loop table as a named, keyboard-focusable scroll region 0ms
+ ✓ test/view-accessibility.test.ts > view accessibility > uses the approved readable ink step for the title line 0ms
+ ✓ test/view-accessibility.test.ts > view accessibility > allows the title line to shrink on phones and keeps every quiet text state readable 0ms
+ ✓ test/view-accessibility.test.ts > view accessibility > polls in place and yields while a reader has keyboard focus 0ms
+ ↓ test/estate-tokens.test.ts > vendored estate tokens > is the estate token file verbatim
+ ✓ test/estate-tokens.test.ts > vendored estate tokens > carries the SURFACE tokens under prefers-color-scheme, not on a class alone 2ms
+ ✓ test/estate-tokens.test.ts > vendored estate tokens > has no seam alias that resolves to itself 0ms
+ ✓ test/estate-tokens.test.ts > vendored estate tokens > leaves no bare hex outside the token declarations 0ms
+ ✓ test/estate-tokens.test.ts > vendored estate tokens > refuses a source that cannot be vendored verbatim 1ms
+ ✓ test/health.test.ts > wedgeDecide (H-448) > treats early failures as contention, exactly as before 1ms
+ ✓ test/health.test.ts > wedgeDecide (H-448) > declares a wedge once "transient" has stopped being credible 0ms
+ ✓ test/health.test.ts > wedgeDecide (H-448) > a zero cap disables it 0ms
+
+ Test Files  33 passed (33)
+      Tests  600 passed | 3 skipped (603)
+   Start at  17:46:10
+   Duration  292.70s (transform 690ms, setup 0ms, import 1.48s, tests 578.54s, environment 2ms)
+

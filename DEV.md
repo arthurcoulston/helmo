@@ -186,7 +186,14 @@ aggregate machine reading remains at
 `/health.json`. The product view entries remain executable compatibility
 surfaces; importing them never binds their old ports.
 Overview reads each product snapshot independently and summarizes them without
-joining their stores — with one deliberate exception. The condensed roster
+joining their stores — with one deliberate exception.
+The four operator readings are the first Overview content: a two-column grid
+at the 1280×800 baseline and one column on narrow windows. Their own card
+titles are the only section titles; the legacy area links follow the grid.
+Dense readings use document scrolling, never clipped cards or nested scroll
+regions. `verify:ui` records each card's baseline top and content height and
+refuses a reading that begins below the desktop fold (H-3092).
+The condensed roster
 (`team` on the Overview document, R-44 H-3091) is a join: which sessions are
 running comes from the runtime and what each seat has claimed comes from the
 work record, and neither may import the other (R-47 C1), so `serve.js` composes

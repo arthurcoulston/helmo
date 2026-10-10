@@ -837,7 +837,13 @@ function AreaContent({ area, state, selected, areas, period, onPeriodChange }: {
     const activity = activityOf(state.data)
     return (
       <>
-        <p className="text-sm text-muted-foreground">4 areas</p>
+        <section aria-label="Overview readings" className="grid items-start gap-3 lg:grid-cols-2">
+          {team ? <TeamNow data={team} /> : null}
+          {next ? <Runway data={next} /> : null}
+          {results ? <RecentResults data={results} /> : null}
+          {activity ? <TeamActivity data={activity} /> : null}
+        </section>
+        <Separator />
         <section className="flex flex-col gap-3">
           <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
             Areas
@@ -851,53 +857,6 @@ function AreaContent({ area, state, selected, areas, period, onPeriodChange }: {
           ) : (
             empty
           )}
-        </section>
-        {team ? <>
-          <Separator />
-          <section className="flex flex-col gap-2">
-            <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-              Team now
-            </h2>
-            <TeamNow data={team} />
-          </section>
-        </> : null}
-        {next ? <>
-          <Separator />
-          <section className="flex flex-col gap-2">
-            <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-              What happens next
-            </h2>
-            <Runway data={next} />
-          </section>
-        </> : null}
-        {results ? <>
-          <Separator />
-          <section className="flex flex-col gap-2">
-            <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-              What got done
-            </h2>
-            <RecentResults data={results} />
-          </section>
-        </> : null}
-        {activity ? <>
-          <Separator />
-          <section className="flex flex-col gap-2">
-            <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-              Team activity
-            </h2>
-            <TeamActivity data={activity} />
-          </section>
-        </> : null}
-        <Separator />
-        <section className="flex flex-col gap-2">
-          <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-            Current work
-          </h2>
-          <p className="text-sm">
-            <a className="underline underline-offset-4" href="/work">
-              Open Work for decisions, actions, progress and evidence.
-            </a>
-          </p>
         </section>
       </>
     )

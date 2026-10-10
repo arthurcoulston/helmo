@@ -6,7 +6,7 @@ import { actionFingerprint, questionFingerprint } from './presentation.js';
 import { parseSchedule } from './schedule.js';
 import {
   ActionReport, ActionRequest, Actor, ActorKind, ACTOR_KINDS, Answer, AnswerEvent, BlastRadius, BLAST_RADII, CapacityHold, CompletionAccount, CompletionAccountInput, COMPLETION_CATEGORIES, COMPLETION_SUMMARY_MAX, Confidence, Dep, DepType, Evidence, EVIDENCE_ROLES,
-  AcceptanceCoverage, CoveringCompletion, HelmoError, HelmoEvent, HumanRequest, Notice, ProductAcceptance, ProductArtifact, Question, QuestionInput, ReleaseHandoff, Status, Ticket, TicketProgress, UnresolvedCompletion, VerdictEvent, Workstream, WorkstreamInfo,
+  AcceptanceCoverage, ActivityEvents, CoveringCompletion, HelmoError, HelmoEvent, HumanRequest, Notice, ProductAcceptance, ProductArtifact, Question, QuestionInput, ReleaseHandoff, Status, Ticket, TicketProgress, UnresolvedCompletion, VerdictEvent, Workstream, WorkstreamInfo,
 } from './types.js';
 
 const STALE_CLAIM_HOURS = 24;
@@ -144,6 +144,13 @@ CREATE TABLE IF NOT EXISTS events (
   payload    TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_events_ticket ON events(ticket_id);
+-- Events by instant, for the readings that window the log rather than walk one
+-- ticket's history (R-44 H-3090). Measured on the personal record — 25,073
+-- events, 3,123 tickets — the activity reading's two windowed event queries ran
+-- 65-110ms as full scans and 15-17ms against this index; Overview takes that
+-- reading every fifteen seconds. The index built in 14ms and is covering for
+-- the range scan itself.
+CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
 CREATE TABLE IF NOT EXISTS tickets (
   id             TEXT PRIMARY KEY,
   title          TEXT NOT NULL,
@@ -1754,6 +1761,114 @@ export class Store {
       const hours = (Date.parse(r.closed) - Date.parse(r.started)) / 3_600_000;
       return Number.isFinite(hours) && hours > 0 ? [{ id: r.id, type: r.type, hours }] : [];
     });
+  }
+
+
+  /** Everything the activity reading counts, inside one window, each item
+   *  carrying the instant the store stamped on it (R-44 H-3090).
+   *
+   *  Three sources, audited before anything was drawn, because each one is a
+   *  different kind of record and only one of them is an event at all:
+   *
+   *  - **Tokens come off EVERY event type that can carry a figure.** An agent's
+   *    own report rides on the `updated` event it wrote; a harness's metered
+   *    figure arrives later as a `spend` event. Reading only `spend` would show
+   *    a fraction of the week, and reading only `updated` would miss every
+   *    metered session. Deltas may be negative on purpose — a harness that
+   *    meters a session nets out the agent's own guess (H-57) — so this returns
+   *    the deltas and lets the reading net them in the bucket where each was
+   *    REPORTED. No delta is ever moved to the bucket of the work it describes:
+   *    nothing in the record says when that work ran.
+   *  - **Completions are read off the ticket, not the event log**, exactly as
+   *    `recentResults` reads them, so the chart and the results card cannot
+   *    disagree about what the past day held. One entry per ticket at its
+   *    current `closed_at`: a cancellation is not a completion, a reopened
+   *    ticket is absent until it closes again, and a ticket closed twice is
+   *    counted once, at the close that still stands.
+   *  - **Requests for the operator are four issuance paths, not one.** A
+   *    decision and an action are both `returned` events, distinguished by the
+   *    stored request's `kind`. A sitting is marked by `needs_human`, which
+   *    arrives either as a `created` payload or an `updated` diff — and ALSO
+   *    straight off a `release_handoff_recorded` event, which sets the marker
+   *    in the same transaction without writing a diff for it. Counting three
+   *    of the four would have quietly undercounted every release sitting.
+   *
+   *  `from`/`to` are the true window; the SQL bound is deliberately a day
+   *  wider at each end. These are text columns, an imported record can spell
+   *  an instant with any UTC offset, and the largest offset in use is ±14h — so
+   *  a lexicographic bound ON the window can drop a row that is inside it. The
+   *  margin covers every spelling and the instant comparison below decides. */
+  activityEvents(from: string, to: string): ActivityEvents {
+    const fromMs = Date.parse(from);
+    const toMs = Date.parse(to);
+    if (Number.isNaN(fromMs) || Number.isNaN(toMs)) {
+      throw new HelmoError(`activityEvents needs two instants; got "${from}" and "${to}".`);
+    }
+    const margin = 86_400_000;
+    const low = new Date(fromMs - margin).toISOString();
+    const high = new Date(toMs + margin).toISOString();
+    // Inclusive at the bottom, closed at the top. `from` is a BUCKET BOUNDARY,
+    // not a rolling offset, and a bucket owns the instant it opens — excluding
+    // it here would drop an event the reading would have placed in the oldest
+    // bucket. (`recentResults` is half-open at the bottom for the opposite
+    // reason: its bottom is exactly 24 hours ago, already read.)
+    const inside = (iso: string | null): number | null => {
+      if (!iso) return null;
+      const ms = Date.parse(iso);
+      return Number.isNaN(ms) || ms < fromMs || ms > toMs ? null : ms;
+    };
+
+    const tokenRows = this.db
+      .prepare(
+        `SELECT ts, json_extract(payload, '$.tokens') AS tokens FROM events
+          WHERE ts >= ? AND ts <= ? AND json_extract(payload, '$.tokens') IS NOT NULL`,
+      )
+      .all(low, high) as { ts: string; tokens: unknown }[];
+    const tokens = tokenRows.flatMap((r) =>
+      inside(r.ts) !== null && typeof r.tokens === 'number' && Number.isFinite(r.tokens) && r.tokens !== 0
+        ? [{ at: r.ts, tokens: r.tokens }]
+        : [],
+    );
+
+    const completionRows = this.db
+      .prepare(
+        `SELECT id, closed_at FROM tickets
+          WHERE status = 'done' AND closed_at IS NOT NULL AND closed_at >= ? AND closed_at <= ?`,
+      )
+      .all(low, high) as { id: string; closed_at: string }[];
+    const completions = completionRows.flatMap((r) =>
+      inside(r.closed_at) !== null ? [{ at: r.closed_at, id: r.id }] : [],
+    );
+
+    const requestRows = this.db
+      .prepare(
+        `SELECT ts, ticket_id, event_type, payload FROM events
+          WHERE ts >= ? AND ts <= ? AND (
+            event_type = 'returned'
+            OR event_type = 'release_handoff_recorded'
+            OR (event_type = 'created' AND json_extract(payload, '$.needs_human') IS NOT NULL)
+            OR (event_type = 'updated' AND json_extract(payload, '$.diffs.needs_human.to') IS NOT NULL)
+          )
+          ORDER BY seq ASC`,
+      )
+      .all(low, high) as { ts: string; ticket_id: string; event_type: string; payload: string }[];
+    const requests = requestRows.flatMap((r): ActivityEvents['requests'] => {
+      if (inside(r.ts) === null) return [];
+      if (r.event_type === 'release_handoff_recorded') return [{ at: r.ts, id: r.ticket_id, kind: 'sitting' }];
+      const payload = JSON.parse(r.payload) as Record<string, unknown>;
+      // An event carrying no kind reads as a decision, which is `HumanRequest`'s
+      // own migration rule in types.ts and not a guess made here.
+      if (r.event_type === 'returned') return [{ at: r.ts, id: r.ticket_id, kind: payload['kind'] === 'action' ? 'action' : 'decision' }];
+      // A marker being CLEARED is not a request being issued, and `false`/`0`
+      // is how clearing is written.
+      const marked = r.event_type === 'created'
+        ? payload['needs_human']
+        : (payload['diffs'] as Record<string, { to?: unknown }> | undefined)?.['needs_human']?.to;
+      return marked ? [{ at: r.ts, id: r.ticket_id, kind: 'sitting' }] : [];
+    });
+
+    const earliest = this.db.prepare('SELECT MIN(ts) AS first FROM events').get() as { first: string | null };
+    return { tokens, completions, requests, recording_began_at: earliest.first ?? null };
   }
 
   listTickets(filter: ListFilter): Ticket[] {

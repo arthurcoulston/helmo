@@ -437,6 +437,27 @@ export interface WorkstreamInfo extends Workstream {
   remaining_usd: number | null; // null when no finite cap is set (budget null or zero)
 }
 
+/** Which of the three ways work reaches the operator issued a request
+ *  (R-44 H-3090). The two stored `RequestKind`s plus the sitting, which is
+ *  deliberately not one of them: a sitting is the `needs_human` marker, it
+ *  carries no fingerprint and no control, and the response to it happens in
+ *  the sitting. For counting what arrived on the operator's dashboard the
+ *  three are one list; for answering it they are not. */
+export type ActivityRequestKind = RequestKind | 'sitting';
+
+/** The timestamped record the activity reading counts, as the store reads it.
+ *  Raw items rather than totals: bucketing is a projection's business, and the
+ *  window the caller asked for is not necessarily the window it will draw.
+ *  `recording_began_at` is the first event this store holds at all — the line
+ *  between "nothing happened" and "nothing was being recorded yet", which a
+ *  chart must never draw as a zero. */
+export interface ActivityEvents {
+  tokens: { at: string; tokens: number }[];
+  completions: { at: string; id: string }[];
+  requests: { at: string; id: string; kind: ActivityRequestKind }[];
+  recording_began_at: string | null;
+}
+
 export interface HelmoEvent {
   seq: number;
   ts: string;

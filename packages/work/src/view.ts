@@ -14,7 +14,7 @@ import { actedRequest } from './acted.js';
 import { answerRequest } from './answer.js';
 import { loaded, running } from './build.js';
 import { installationLine, requestedInstallation, requireInstallation } from './install.js';
-import { actionFingerprint, ask, CLOSED_TAIL, recentResults, recordTickets, resultDisplay } from './presentation.js';
+import { actionFingerprint, activityWindowStart, ask, CLOSED_TAIL, recentResults, recordTickets, resultDisplay, teamActivity } from './presentation.js';
 import { DURATION_WINDOW_DAYS, runway, SeatReading } from './runway.js';
 import { Store } from './store.js';
 import { Ticket } from './types.js';
@@ -201,6 +201,27 @@ function resultsDocument(complete: Ticket[]) {
     const acceptance = store.productAcceptance(id);
     return { state: acceptance.state, reason: acceptance.reason };
   });
+}
+
+/** Overview's activity reading: tokens, completions and requests for Arthur
+ *  over the past day and the past week (R-44 H-3090).
+ *
+ *  Both the instant and the ZONE are the server's. `as_of` is fixed once, as
+ *  every reading on this page is, so the day view and the week view agree about
+ *  the hour they share. The zone is this process's own, because "a day" here is
+ *  what a clock says and not 86,400,000 ms counted backwards: cutting local
+ *  days in the browser would give two readers on two machines different
+ *  buckets for the same events, and the labels travel with the instants so a
+ *  reader can always see which midnight they are being shown.
+ *
+ *  Called from `serve.js` for Overview rather than folded into
+ *  `workSnapshot`, the same way the forecast is: the Work page does not draw
+ *  this, and the whole-record document is already the heaviest thing Helmo
+ *  serves. */
+export function activitySnapshot() {
+  const asOf = new Date().toISOString();
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  return teamActivity(store.activityEvents(activityWindowStart(asOf, timeZone), asOf), asOf, timeZone);
 }
 
 /** Overview's forecast: what the team will do next and for roughly how long

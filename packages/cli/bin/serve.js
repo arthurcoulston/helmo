@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { appConfig, startAppServer } from '../app-server.mjs';
 import { appRequest, shellRequest } from '../../app/server.mjs';
-import { runwaySnapshot, workHealth, workListening, workRequest, workSnapshot } from '../../work/dist/view.js';
+import { activitySnapshot, runwaySnapshot, workHealth, workListening, workRequest, workSnapshot } from '../../work/dist/view.js';
 import { seatWork } from '../../work/dist/presentation.js';
 import { roadmapHealth, roadmapRequest, roadmapSnapshot } from '../../roadmap/dist/view.js';
 import { runtimeRequest, runtimeSnapshot, teamFile, teamMember, teamNowSnapshot, teamPeriod, teamSnapshot } from '../../runtime/dist/view.js';
@@ -77,7 +77,12 @@ function overviewSnapshot() {
   // draw work decides which backlog is runway at all. An unreadable roster is
   // passed through as null rather than an empty seat list, because a fleet
   // nobody could read is not a fleet with no agents (H-3089).
-  next: runwaySnapshot(team.unavailable ? null : team.agents.map((a) => ({ agent: a.agent, state: a.state }))) };
+  next: runwaySnapshot(team.unavailable ? null : team.agents.map((a) => ({ agent: a.agent, state: a.state }))),
+  // Tokens, completions and requests over the day and the week. Its own read,
+  // because it counts timestamped events rather than the current record, and
+  // its own `as_of` and zone for the same reason the others fix theirs (R-44
+  // H-3090).
+  activity: activitySnapshot() };
 }
 const appDocuments={overview:overviewSnapshot};
 const running = await startAppServer(appConfig(), (request, response) => {

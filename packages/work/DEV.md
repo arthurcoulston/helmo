@@ -1321,6 +1321,72 @@ store, MCP and CLI paths) and `packages/shell/test/recent-results.test.mjs`
 (what a reader sees). Both themes and the accessibility audit come from
 `verify-ui.mjs`, which already walks Overview at three widths.
 
+## Tokens, completions and requests over time (R-44 H-3090)
+
+`activityEvents()` in `src/store.ts` reads the record; `teamActivity()` in
+`src/presentation.ts` buckets it; `activitySnapshot()` in `src/view.ts` fixes
+the instant and the zone, and `packages/cli/bin/serve.js` joins it onto
+Overview. The contract is
+`crew:projects/r39/TEAM-ACTIVITY-CONTRACT.md`.
+
+**Three sources, and two of them have a path a partial reading would miss.**
+
+| Series | Read from | Watch for |
+| --- | --- | --- |
+| Tokens reported | `$.tokens` on **every** event type | an agent's own figure rides on its `updated` event; a harness's metered figure arrives later as `spend`. Reading one event type shows a fraction of the week. Deltas are signed: a meter nets out the self-report (H-57) |
+| Tickets completed | the ticket's current `closed_at` | read off the ticket exactly as `recentResults` reads it, so the chart and the results card cannot disagree |
+| New requests for you | `returned` events, `needs_human` in a `created` payload or an `updated` diff, **and** `release_handoff_recorded` | the release handoff sets the marker in its own transaction and writes no diff for it, so the three obvious paths undercount every release sitting |
+
+Counted when REPORTED, never when the work ran: nothing in the record says
+when that was, so a session-total report lands once, at its report instant, and
+a correction nets out where the correction landed. The widget says so in the
+same words `usageDisclosure` uses.
+
+`done` is terminal here, so a counted completion bucket is stable: no agent can
+reopen or re-close its own work, and the contract's reopen rule covers a record
+arriving by replay or import. Deduplication is structural — one row per ticket.
+
+**Buckets are cut on the server's local clock**, because a day is what a clock
+says and not 86,400,000 ms counted backwards. Both instants, a `length_ms` and
+the server's own label travel with every bucket, and the zone is named in the
+document: a browser must no more relabel these than it may re-window `as_of`.
+The newest bucket of each range is partial, which is why the Day range reaches
+back up to 25 hours rather than exactly 24.
+
+The local-clock arithmetic is the part to read carefully if you touch this. A
+wall-clock time names two instants the night a clock falls back and none the
+morning it springs forward, so `instantsOf` returns a list and keeps only
+candidates that read back as the time asked for. `alignedStart` takes the LAST
+candidate at or before the instant it was given — taking the first merged the
+repeated hour into one two-hour bucket, and a single-pass inversion made the
+backward walk stall on the transition and repeat a boundary. Each older
+boundary is then the aligned start of the millisecond BEFORE the newer one,
+which cannot drift even in a zone whose offset moves by half an hour. The
+invariant worth keeping is that the buckets partition
+`[window_started_at, as_of]` exactly: `test/team-activity.test.ts` asserts it
+through a 25-hour London day and a 23-hour New York one.
+
+Overview takes this reading every fifteen seconds, so it is indexed rather
+than scanned: `idx_events_ts` was added with it. Measured on the personal
+record (25,073 events, 3,123 tickets) the two windowed event queries ran
+65–110ms as full scans and 15–17ms against the index, which built in 14ms. What
+remains is reading and `json_extract`ing the payloads inside the window, which
+is the work itself.
+
+Unknown is not zero: a bucket that ends at or before this store's first event
+and holds nothing carries `before_record` and is drawn as a gap. It is marked
+after the counting, not before, because on an installation minutes old `as_of`
+and the first event are the same instant — which flagged a bucket with real
+counts in it.
+
+Proof: `test/team-activity.test.ts` (buckets, zones, both daylight-saving
+cases, the counting rules, and the sources through the real write paths),
+`packages/shell/test/team-activity.test.mjs` (what a reader sees, and the
+numbers table). The BARS are proved only in `verify-ui.mjs`: the chart
+container measures itself, so a server-rendered proof sees an empty div. That
+run also seeds a record spread over time — the product's own events, moved in
+time on a second connection, because nothing here can write a backdated event.
+
 ## Reading a title (R-42 I4, H-2476)
 
 I4 asked for "plain human titles" and left one question open: does that need a

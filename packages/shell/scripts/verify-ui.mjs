@@ -144,6 +144,7 @@ const blocked = create('Held work must never read ready', { capacity_hold: { rea
 // createTicket takes no capacity hold; set it through the same update path.
 store.updateTicket(actor, { ticket_id: blocked.id, capacity_hold: { reason: 'Waiting for the chosen spending window', provenance: 'Fixture operator', reconsider_when: 'Next fixture cycle' }, note: 'Held by the fixture operator.' });
 let oldest;
+const overTime = [];
 for (let i = 0; i < 24; i++) {
   const t = create(`Completed outcome ${i}`);
   /* The categories cycle so the Overview results card is measured on several
@@ -151,6 +152,7 @@ for (let i = 0; i < 24; i++) {
   const category = ['feature', 'improvement', 'bug_fix', 'maintenance', 'operations'][i % 5];
   store.updateTicket(actor, { ticket_id: t.id, status: 'done', note: `Finished outcome ${i}`, completion_account: { category, summary: `Outcome ${i} is in place: a reader can see what this fixture ticket produced without opening it.` }, evidence: [{ kind: 'url', ref: 'https://example.com/result', note: 'The result' }], confidence: 'routine' });
   oldest ??= t;
+  if (overTime.length < 7) overTime.push(t);
 }
 // A result that is a commit, with a file supporting it (R-42 contract §3.5):
 // the built bundle has to show the commit as what the work produced. Every row
@@ -268,6 +270,53 @@ store.returnToHuman(actor, choice.id, { situation: 'Both options are valid.', qu
 const action = create('Report the completed action');
 store.requestAction(actor, action.id, { situation: 'A fixture action is due.', action: 'Complete the fixture action.', why_human: 'The fixture operator performs it.' });
 const sitting = create('A sitting is a conversation', { needs_human: 'Discuss this with the fixture member.', sitting_with: 'fixture' });
+
+/* ---------- a record spread over TIME, for the activity reading (H-3090) ----------
+
+   Everything above happens in the same second, and a chart of a day and a week
+   drawn from it puts every bar in the newest bucket: it would audit clean,
+   report 30 layouts, and say nothing about an axis. Nothing in this repository
+   can write a backdated event — `now()` is the store's own clock, deliberately
+   — so these are the PRODUCT's own events, written through the real paths
+   above, moved in time afterwards on a second connection. The shapes are the
+   store's; only the instants are the fixture's. (`packages/work/test/
+   team-activity.test.ts` uses the same instrument to prove an imported
+   spelling.)
+
+   The spread is chosen to put each reading of the card in front of a browser:
+   several hours of the day with different heights, two earlier days, one hour
+   whose net is NEGATIVE because a meter cancelled a self-report there, and a
+   first recorded event four days back so the two oldest week buckets are
+   unknown rather than zero. */
+const { default: FixtureDatabase } = await import('better-sqlite3');
+const clock = new FixtureDatabase(join(dir, 'work/helmo.db'));
+const hoursAgo = (hours) => new Date(Date.now() - hours * 3_600_000).toISOString();
+/* Half past a whole hour, n hours back. An offset in bare hours from `now`
+   drifts across a bucket boundary depending on the minute the run starts — two
+   seeds an hour apart would share a bucket at five past, and the counts below
+   would be right most of the day and wrong for part of it. Anchoring to a clock
+   hour instead makes "a different hour" true at every minute, in any zone. */
+const pastHour = (n) => new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000 - n * 3_600_000 + 1_800_000).toISOString();
+/** Move everything one ticket recorded, and the close the chart reads. */
+const backdate = (id, at) => {
+  clock.prepare('UPDATE events SET ts = ? WHERE ticket_id = ?').run(at, id);
+  clock.prepare('UPDATE tickets SET closed_at = ?, updated_at = ? WHERE id = ? AND closed_at IS NOT NULL').run(at, at, id);
+};
+// Four of these land in four different hours of the past day; three are earlier
+// in the week, and the last of them is where the week's "no record" band ends.
+[pastHour(2), pastHour(6), pastHour(10), pastHour(20), hoursAgo(27), hoursAgo(51), hoursAgo(96)]
+  .forEach((at, i) => backdate(overTime[i].id, at));
+// Reported usage: a figure an agent wrote, a meter's later figure, and the
+// correction that nets the guess out where it was REPORTED.
+for (const [at, tokens] of [[pastHour(2), 412_000], [pastHour(5), 180_000], [pastHour(3), -90_000], [hoursAgo(27), 95_000], [hoursAgo(51), 260_000]]) {
+  store.recordSpend(actor, operational.id, { tokens, note: 'Fixture usage, attributed to this ticket.' });
+  clock.prepare('UPDATE events SET ts = ? WHERE seq = ?').run(at, store.getEvents(operational.id).at(-1).seq);
+}
+// And two of the three ways a request reaches the operator, at their own hours.
+for (const [id, at] of [[choice.id, pastHour(7)], [action.id, pastHour(14)]]) {
+  clock.prepare("UPDATE events SET ts = ? WHERE ticket_id = ? AND event_type = 'returned'").run(at, id);
+}
+clock.close();
 
 const child = spawn(process.execPath, [join(root, 'packages/cli/bin/serve.js')], {
   env: env({ HELMO_HOME: join(dir, 'work'), ROADMAP_HOME: join(dir, 'roadmap'), REV_HOME: join(dir, 'runtime'), HELMO_APP_PORT: '0', HELMO_OPERATOR: 'fixture-operator' }),
@@ -859,6 +908,143 @@ try {
   await runway.getByText(/25th to 75th percentile/).waitFor();
   await runway.getByText(new RegExp(`${notRunway.id} Deliberately held work is not runway . Deliberately held`)).waitFor();
   await runway.getByText(/Seats counted as able to continue/).waitFor();
+  /* ---------- Overview's activity reading (H-3090) ----------
+
+     Read here because a BAR is the one thing no server-rendered proof can see:
+     the chart container measures itself, so under `renderToStaticMarkup` it is
+     an empty div and every assertion about a drawn bar has to be made in a
+     browser. `test/team-activity.test.mjs` proves the words and the numbers
+     table; this proves there is a chart, that it is scaled per series, that it
+     reads in both themes, and that the other range and the numbers are
+     reachable. */
+  const activity = page.locator('[aria-label="Team activity"]');
+  await activity.getByText('Team activity', { exact: true }).waitFor();
+  await activity.getByText(/heights compare along a row and never between rows/).waitFor();
+  /* Each series' own total and its own ceiling, printed because the scale is
+     per series and two bars of one height are not two equal quantities. The
+     figures come from the fixture's backdated spend, so this is also the proof
+     that the tokens series reads an agent's own write AND a meter's. */
+  await activity.getByText('Tokens reported', { exact: true }).waitFor();
+  await activity.getByText(/502,000 tokens in this period · scaled to its own peak of 412,000 tokens/).waitFor();
+  await activity.getByText(/Tickets completed/).waitFor();
+  await activity.getByText(/New requests for you/).waitFor();
+
+  /* The numbers first, because they are what the bars are measured against:
+     the textual alternative is not a supplement here, it is the record the
+     drawing has to agree with. Behind one disclosure, so no server-rendered
+     proof sees it. */
+  await activity.getByRole('button', { name: 'Show the numbers', exact: true }).click();
+  await activity.getByText(/counted when the figure was REPORTED/).waitFor();
+  const table = () => activity.evaluate((card) => [...card.querySelectorAll('tbody tr')]
+    .map((row) => [...row.children].map((cell) => cell.textContent.replace(/\s+/g, ' ').trim())));
+  const hourly = await table();
+  assert.equal(hourly.length, 24, 'twenty-four hourly rows');
+  assert.match(hourly.at(-1)[0], /still filling/);
+  /* The negative hour: a meter cancelled a self-reported figure there, and the
+     net belongs to the hour the CORRECTION was reported in. Drawn as it is,
+     never clamped to zero. */
+  assert.ok(hourly.some((row) => row[1] === '-90,000'), `no hour nets negative: ${JSON.stringify(hourly.map((r) => r[1]))}`);
+  /* Several different hours carrying several different figures — the thing a
+     fixture written all in one second cannot show. */
+  const nonZero = [1, 2, 3].map((column) => hourly.filter((row) => row[column] !== '0' && row[column] !== 'no record').length);
+  assert.deepEqual(nonZero, [3, 5, 3], `the day's reading is not the backdated fixture: ${JSON.stringify(hourly)}`);
+
+  /** Every chart's drawn bars, and the colours they were drawn in, measured in
+   *  the current theme. */
+  const readBars = () => activity.evaluate((card) => {
+    const ctx = Object.assign(document.createElement('canvas'), { width: 1, height: 1 }).getContext('2d', { willReadFrequently: true });
+    ctx.globalCompositeOperation = 'copy';
+    const srgb = (css) => {
+      ctx.fillStyle = '#000';
+      ctx.fillStyle = css;
+      ctx.fillRect(0, 0, 1, 1);
+      const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+      return `rgb(${r}, ${g}, ${b})`;
+    };
+    return [...card.querySelectorAll('[data-slot="chart"]')].map((chart) => {
+      const bars = [...chart.querySelectorAll('.recharts-bar-rectangle path')];
+      return {
+        bars: bars.length,
+        bands: chart.querySelectorAll('.recharts-reference-area').length,
+        tallest: Math.max(0, ...bars.map((bar) => bar.getBoundingClientRect().height)),
+        fill: srgb(getComputedStyle(bars[0] ?? chart).fill),
+        ground: srgb(getComputedStyle(chart.closest('[data-slot="card"]')).backgroundColor),
+      };
+    });
+  });
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate((value) => document.documentElement.className = value, theme);
+    await page.waitForTimeout(250);
+    const charts = await readBars();
+    assert.equal(charts.length, 3, 'three series, three charts');
+    for (const [i, chart] of charts.entries()) {
+      /* Bars, really drawn, one for every figure the table carries. A chart
+         with no rectangles is the failure this whole block exists for: it looks
+         exactly like a quiet period. Recharts draws nothing for a zero, which
+         is why the band below is what tells an unrecorded bucket from an empty
+         one. */
+      assert.equal(chart.bars, nonZero[i], `${theme}: series ${i} drew ${chart.bars} bars for ${nonZero[i]} recorded figures`);
+      /* And one of them standing up. Per-series scaling means the peak bucket
+         of EVERY series reaches the top of its own row, however small its
+         number is, so a series whose tallest bar is a few pixels is a series
+         scaled against someone else's maximum. */
+      assert.ok(chart.tallest >= 24, `${theme}: series ${i}'s tallest bar is ${chart.tallest.toFixed(1)}px`);
+      /* A bar nobody can see is not a reading. The preset's chart ramp is one
+         sequence used in BOTH themes, and its ends vanish: `--chart-1` measures
+         1.51:1 on the light card and `--chart-5` 1.14:1 on the dark one. The
+         floor is what rejects them — the step this card uses measures 5.10 and
+         3.48 — rather than a fixed ratio, which would only pin today's choice. */
+      const standsOff = contrast(chart.fill, chart.ground);
+      assert.ok(standsOff >= 2, `${theme}: series ${i}'s bars read ${standsOff.toFixed(2)}:1 against the card (${chart.fill} on ${chart.ground})`);
+      /* No band in the day view: this fixture was recording through all of it,
+         so every bucket is a real figure or a real zero. */
+      assert.equal(chart.bands, 0, `${theme}: series ${i} shades a day bucket the record covers`);
+    }
+  }
+  await page.evaluate(() => document.documentElement.className = 'light');
+
+  /* An exact figure from the KEYBOARD, not only from a pointer. Arthur asked
+     for every value to be reachable by hover, focus and touch; hover and touch
+     share recharts' pointer path, and this is the one of the three that a
+     keyboard-only reader depends on and that nothing else here would notice
+     losing. */
+  const surface = activity.locator('[data-slot="chart"] .recharts-surface').first();
+  await surface.focus();
+  assert.equal(
+    await surface.evaluate((el) => document.activeElement === el || el.contains(document.activeElement)),
+    true,
+    'the chart is not reachable by keyboard: recharts\u2019 accessibility layer did not take focus',
+  );
+  await page.keyboard.press('ArrowRight');
+  await activity.locator('.recharts-tooltip-wrapper').getByText(/tokens$/).waitFor();
+
+  /* The other range Arthur asked for, which is a different section of one
+     reading and not a refetch: one `as_of`, both ranges. */
+  await activity.getByRole('button', { name: 'Week', exact: true }).click();
+  await activity.getByText(/the past 7 days, in days/).waitFor();
+  const daily = await table();
+  assert.equal(daily.length, 7, 'seven daily rows');
+  assert.ok(daily.some((row) => row.at(-1) === '24 h'), `no whole day in the week: ${JSON.stringify(daily)}`);
+  /* And the span this installation was not recording through: unknown in the
+     table, a shaded band on every chart, and said in words — never a run of
+     zeroes. */
+  const unrecorded = daily.filter((row) => row.includes('no record'));
+  assert.ok(unrecorded.length >= 1 && unrecorded.length <= 3, `the unrecorded band is ${unrecorded.length} of 7 days`);
+  await activity.getByText(/shaded band is before this installation began recording/).waitFor();
+  const banded = await readBars();
+  for (const [i, chart] of banded.entries()) assert.equal(chart.bands, 1, `series ${i} draws ${chart.bands} bands for the unrecorded span`);
+  /* And the reader's choice survives the fifteen-second refresh, as the
+     roster's disclosure does above: a card redrawn from a new reading every
+     poll must not put a reader back on the range they navigated away from. */
+  const drawn = await page.getByText(/^Refreshed /).innerText();
+  await page.waitForFunction(
+    (was) => [...document.querySelectorAll('p')].some((p) => p.textContent.startsWith('Refreshed ') && p.textContent !== was),
+    drawn,
+    { timeout: 30_000 },
+  );
+  await activity.getByText(/the past 7 days, in days/).waitFor({ timeout: 1_000 });
+  assert.equal((await table()).length, 7, 'the refresh closed the numbers or put the reader back on the day');
+
   const areas = ['overview', 'work', 'roadmap', 'team', 'run'], themes = ['light', 'dark'], widths = [390, 640, 1280];
   const audited = [];
   /* Where the horizontal fold falls on a phone. Nothing above can see this:

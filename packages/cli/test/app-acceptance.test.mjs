@@ -221,6 +221,32 @@ test('the app answers its own port directly and renders the record a recorded UR
   assert.equal(row.category, 'improvement');
   assert.deepEqual(row.results.map((item) => item.ref), ['helmo@0123456'], 'the recorded result did not reach the card');
 
+  /* And the activity reading, which is the one Overview document that counts
+     timestamped EVENTS rather than the current record (H-3090). Asserted here
+     for the same reason as the two above: an unwired document and a quiet
+     period draw exactly alike. */
+  const activity = withResult.data.activity;
+  assert.ok(activity, 'the Overview API carries no activity document for the card to draw');
+  assert.ok(Date.parse(activity.as_of), 'the activity reading carries no instant it was windowed at');
+  assert.ok(activity.time_zone, 'the activity reading does not say whose clock its buckets are cut on');
+  assert.equal(activity.day.buckets.length, 24, 'the day is not twenty-four local hours');
+  assert.equal(activity.week.buckets.length, 7, 'the week is not seven local days');
+  /* The buckets partition the window they name, exactly — no gap, no overlap,
+     and the newest one cut short at `as_of`. */
+  for (const range of [activity.day, activity.week]) {
+    assert.equal(
+      range.buckets.reduce((sum, bucket) => sum + bucket.length_ms, 0),
+      Date.parse(activity.as_of) - Date.parse(range.window_started_at),
+      `the ${range.unit} buckets do not partition the window they name`,
+    );
+  }
+  /* The close written through the shipped binary a moment ago, counted once,
+     in the newest bucket of both ranges. */
+  assert.equal(activity.day.buckets.at(-1).completions, 1, 'the close just recorded is not in the newest hour');
+  assert.equal(activity.week.buckets.at(-1).completions, 1, 'the close just recorded is not in the newest day');
+  assert.equal(activity.day.series.find((series) => series.key === 'completions').total, 1);
+  assert.match(activity.day.series.find((series) => series.key === 'tokens').coverage, /unmetered work is excluded/);
+
   // Work is drawn by the application now, so the record a reader sees on
   // /work comes from this document rather than from the HTML (H-2936). The
   // `#H-n` reading below still lands on Work's own document, which `/` serves

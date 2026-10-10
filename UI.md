@@ -113,6 +113,34 @@ assertion keeps that sound as the product grows: every role in a row paints its
 own opaque tint, which is the real reason a row's hover cannot change a ratio,
 and `inkRole` in a row is what would break it.
 
+### Charts: the preset's ramp is sequential, and theme-invariant
+
+The `chart` component (R-44 H-3090) is in the pinned inventory and arrives with
+`recharts` — the registry item's own pinned dependency, installed as a shell
+dependency like `radix-ui` or `@tanstack/react-table`, not vendored. A refresh
+that adds it churns the `"use client"` directive on unrelated generated files;
+that is upstream's output for the new inventory, not local drift.
+
+Two facts about the preset's chart colours, before composing anything with them.
+`--chart-1` through `--chart-5` resolve to **one sequential ramp**
+(L 0.865 → 0.263 at a single hue), and `:root` and `.dark` declare the **same
+five values**. So they cannot carry categories: whichever step tells two series
+apart on a light card disappears on it or on a dark one. Measured against the
+card each lands on, light / dark: `--chart-1` 1.51 / 11.72, `--chart-2`
+5.10 / 3.48, `--chart-3` 8.05 / 2.20, `--chart-4` 10.83 / 1.64, `--chart-5`
+15.52 / 1.14. Only the middle of the ramp survives both. They are the right
+tokens for one measure, or for an ordered ramp, and the wrong thing to reach for
+when a reader has to tell series apart.
+
+What that means in practice: a multi-series reading is drawn as small multiples
+— one chart per series, each with its own scale and its own label — and colour
+carries nothing. Team activity does that, in the one ramp step that reads on
+both themes (`--chart-2`), and `verify-ui.mjs` holds the rendered bars to a
+floor of 2:1 against the card they are drawn on, in both — which is what
+rejects either end of the ramp. Colour is never the carrier here either: a
+series is identified by its row and its label, and every figure is in words in
+the numbers table.
+
 Compose the application through documented shadcn components, props, variants
 and block patterns in the standard React/Tailwind setup. The framework owns the
 page styling. Replace the old DOM-adoption and runtime CSS-rewriting bridge;

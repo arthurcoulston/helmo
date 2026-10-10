@@ -4,6 +4,7 @@ import * as React from "react"
 import { RoadmapView, type RoadmapData } from "./RoadmapView"
 import { CopyReference, TicketDetails, WorkRecord, type WorkRecordData } from "./WorkRecord"
 import { RecentResults, resultsOf } from "./RecentResults"
+import { TeamActivity, activityOf } from "./TeamActivity"
 import { Runway, runwayOf } from "./Runway"
 import { TeamNow, teamNowOf } from "./TeamNow"
 import {
@@ -833,6 +834,7 @@ function AreaContent({ area, state, selected, areas, period, onPeriodChange }: {
     const results = resultsOf(state.data)
     const team = teamNowOf(state.data)
     const next = runwayOf(state.data)
+    const activity = activityOf(state.data)
     return (
       <>
         <p className="text-sm text-muted-foreground">4 areas</p>
@@ -875,6 +877,15 @@ function AreaContent({ area, state, selected, areas, period, onPeriodChange }: {
               What got done
             </h2>
             <RecentResults data={results} />
+          </section>
+        </> : null}
+        {activity ? <>
+          <Separator />
+          <section className="flex flex-col gap-2">
+            <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+              Team activity
+            </h2>
+            <TeamActivity data={activity} />
           </section>
         </> : null}
         <Separator />

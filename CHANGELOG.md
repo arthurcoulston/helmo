@@ -13,6 +13,26 @@ longer.
 
 ## Unreleased — 0.9.5
 
+- Overview charts what the team did, over a day and over a week. **Team
+  activity** draws three series — tokens reported, tickets completed, and new
+  requests for Arthur — each as its own small chart over one shared time axis,
+  because tokens are counted in hundreds of thousands and the other two in
+  single figures, and one axis would draw two of them flat. Each series is
+  scaled to its own peak, with its period total and that peak printed beside
+  it, and the card says in words that heights compare along a row and never
+  between rows. Buckets are cut on the server's clock, not the browser's: a day
+  is twenty-four local hours and a week is seven local days, the newest of each
+  still filling, and a daylight-saving day is carried at its real length of 23
+  or 25 hours. Nothing is inferred. Tokens are counted when the figure was
+  REPORTED rather than when the work ran — the record does not say when that
+  was — so a metered correction nets out where it landed, and a bucket may be
+  negative. A completion is counted once per ticket at the close that stands,
+  and a request once at the instant it was issued, pending ones never recounted.
+  A period before this installation was recording reads as unknown rather than
+  as a run of zeroes. Every figure is reachable by hover, by keyboard and in a
+  numbers table behind one disclosure, which also states each series' basis and
+  coverage in full.
+
 - Overview now answers "what will happen next without my intervention?" The
   new **What happens next** card names the work the team can draw on its own,
   the seat accountable for each piece, the first step that needs Arthur, and an

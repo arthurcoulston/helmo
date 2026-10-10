@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { AVATAR_MARKS } from './estate-avatars.generated.js';
-import { ActionRequest, ActorKind, CompletionCategory, Evidence, HumanRequest, Question, Ticket } from './types.js';
+import { ActionRequest, ActivityEvents, ActorKind, CompletionCategory, Evidence, HumanRequest, Question, Ticket } from './types.js';
 
 const MARKS = new Set<string>(AVATAR_MARKS);
 
@@ -353,5 +353,292 @@ export function recentResults(
         blast_radius: t.blast_radius,
       };
     }),
+  };
+}
+
+// ---------- what the team did over the day and the week (R-44 H-3090) ----------
+
+/** One bucket on the time axis, as a local clock reads it.
+ *
+ *  Both instants travel with it. The label is the server's, because a browser
+ *  relabelling these against its own clock is the same defect `as_of` exists to
+ *  prevent — and the instants are what make the label checkable. */
+export interface ActivityBucket {
+  starts_at: string;
+  ends_at: string;
+  /** The local clock's own words for this bucket: an hour, or a weekday. */
+  label: string;
+  /** How long the bucket really is. An hour is an hour, but a local DAY is 23
+   *  or 25 hours across a daylight-saving change, and the newest bucket of
+   *  either kind is cut short at `as_of`. A reader comparing two bars is
+   *  entitled to know one of them covers less time. */
+  length_ms: number;
+  /** Cut short at `as_of`: it is still filling. */
+  partial?: true;
+  /** The whole bucket precedes the first event this store holds, so its zero
+   *  is an absence of RECORDING rather than an absence of work. Drawn as a gap,
+   *  never as a bar of height zero. */
+  before_record?: true;
+  tokens: number;
+  completions: number;
+  requests: number;
+}
+
+export type ActivitySeriesKey = 'tokens' | 'completions' | 'requests';
+
+/** One series over one range: what it counts, what it is counted in, and the
+ *  two numbers that make a relatively-scaled bar readable — the period total
+ *  and the peak bucket the scale is set by. */
+export interface ActivitySeries {
+  key: ActivitySeriesKey;
+  label: string;
+  unit: string;
+  /** What instant each item is counted AT, in the operator's words. */
+  basis: string;
+  /** What the count does not include. */
+  coverage: string;
+  total: number;
+  /** The largest bucket in absolute terms — the scale's own ceiling. Zero when
+   *  nothing was counted, which the card draws as a flat line rather than
+   *  dividing by it. */
+  peak: number;
+  /** The lowest bucket, which is below zero only for tokens, and only when a
+   *  metered correction landed in it (see `basis`). */
+  floor: number;
+}
+
+export interface ActivityRange {
+  unit: 'hour' | 'day';
+  window_started_at: string;
+  buckets: ActivityBucket[];
+  series: ActivitySeries[];
+}
+
+export interface TeamActivity {
+  /** The instant both ranges were windowed on, fixed once by the server. */
+  as_of: string;
+  /** The zone whose clock the buckets are cut on, named so the reader knows
+   *  whose midnight they are looking at. */
+  time_zone: string;
+  recording_began_at: string | null;
+  day: ActivityRange;
+  week: ActivityRange;
+}
+
+/** How each series is accounted for. Frozen prose rather than a sentence the
+ *  card writes, because every one of these lines is a statement about the
+ *  record's limits and none of them is the component's to soften. */
+const SERIES: Record<ActivitySeriesKey, Omit<ActivitySeries, 'total' | 'peak' | 'floor' | 'key'>> = {
+  tokens: {
+    label: 'Tokens reported',
+    unit: 'tokens',
+    basis: 'counted when the figure was REPORTED, not when the work ran: nothing in the record says that',
+    coverage: 'reported or harness-metered events only; unmetered work is excluded, and a metered correction nets out where it was reported',
+  },
+  completions: {
+    label: 'Tickets completed',
+    unit: 'tickets',
+    basis: 'counted once per ticket, at the completion that currently stands',
+    coverage: 'cancelled work is not a completion; a reopened ticket leaves the chart until it closes again',
+  },
+  requests: {
+    label: 'New requests for you',
+    unit: 'requests',
+    basis: 'counted once when a decision, an action or a sitting was issued',
+    coverage: 'a request still pending is not recounted in later buckets, and your own answers are not counted at all',
+  },
+};
+
+const HOUR_MS = 3_600_000;
+
+interface WallClock { y: number; m: number; d: number; h: number; min: number; s: number }
+
+/** An instant's local parts, in one zone. `formatToParts` rather than a
+ *  locale-formatted string, so nothing here depends on how a locale happens to
+ *  order or punctuate a date. */
+function wallClock(ms: number, timeZone: string): WallClock {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone, hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(new Date(ms));
+  const field: Record<string, number> = {};
+  for (const part of parts) if (part.type !== 'literal') field[part.type] = Number(part.value);
+  return { y: field['year']!, m: field['month']!, d: field['day']!, h: field['hour']!, min: field['minute']!, s: field['second']! };
+}
+
+const asIfUTC = (w: WallClock): number => Date.UTC(w.y, w.m - 1, w.d, w.h, w.min, w.s);
+const offsetAt = (ms: number, timeZone: string): number => asIfUTC(wallClock(ms, timeZone)) - ms;
+const DAY_PROBE = 86_400_000;
+
+/** Every instant a local wall-clock time names, in order.
+ *
+ *  Usually exactly one. Twice a year it is two or none, and both cases are real
+ *  bucket boundaries rather than edge cases to wave at: the hour a clock
+ *  repeats names two instants, and the hour a clock skips names none. The
+ *  candidates come from the offsets in force a day either side of the target
+ *  and at the target itself; each is kept only if it really reads back as the
+ *  wall clock asked for, which is what rejects a skipped hour.
+ *
+ *  Out-of-range fields are deliberately allowed: `Date.UTC` rolls hour 24 into
+ *  the next day and day 32 into the next month, which is how the following
+ *  boundary is named without any calendar arithmetic of our own. */
+function instantsOf(w: WallClock, timeZone: string): number[] {
+  const target = asIfUTC(w);
+  const candidates = [target - DAY_PROBE, target, target + DAY_PROBE].map((probe) => target - offsetAt(probe, timeZone));
+  return [...new Set(candidates)]
+    .filter((candidate) => asIfUTC(wallClock(candidate, timeZone)) === target)
+    .sort((a, b) => a - b);
+}
+
+/** The start of the local hour or day that `ms` falls in.
+ *
+ *  The LAST instant naming that boundary which is not after `ms` — not the
+ *  first, and not a wall-clock inversion taken on trust. On the night a clock
+ *  falls back, "01:00" names two instants an hour apart: both are real hour
+ *  buckets, and an instant in the second of them belongs to the second. Taking
+ *  the earlier one would merge the two into one two-hour bucket, and taking
+ *  whichever a single-pass inversion happened to answer with made the backward
+ *  walk below stall on the transition and repeat a boundary. */
+function alignedStart(ms: number, timeZone: string, unit: 'hour' | 'day'): number {
+  const w = wallClock(ms, timeZone);
+  const boundary = unit === 'hour' ? { ...w, min: 0, s: 0 } : { ...w, h: 0, min: 0, s: 0 };
+  const options = instantsOf(boundary, timeZone).filter((instant) => instant <= ms);
+  // An instant always falls inside some local hour and some local day, so the
+  // only way this is empty is a zone whose data disagrees with itself; the
+  // offset in force at `ms` is then the best answer available.
+  return options.at(-1) ?? asIfUTC(boundary) - offsetAt(ms, timeZone);
+}
+
+/** The boundary the local clock puts after a bucket that starts at `ms`. */
+function naturalEnd(ms: number, timeZone: string, unit: 'hour' | 'day'): number {
+  const w = wallClock(ms, timeZone);
+  const next = unit === 'hour' ? { ...w, h: w.h + 1, min: 0, s: 0 } : { ...w, d: w.d + 1, h: 0, min: 0, s: 0 };
+  const options = instantsOf(next, timeZone);
+  // A boundary the clock SKIPPED names no instant: the bucket ends when the
+  // clock jumped, which is where the pre-transition offset puts it.
+  return options[0] ?? asIfUTC(next) - offsetAt(asIfUTC(next) - DAY_PROBE, timeZone);
+}
+
+function labelOf(ms: number, timeZone: string, unit: 'hour' | 'day'): string {
+  return unit === 'hour'
+    ? new Intl.DateTimeFormat('en-GB', { timeZone, hourCycle: 'h23', hour: '2-digit', minute: '2-digit' }).format(new Date(ms))
+    : new Intl.DateTimeFormat('en-GB', { timeZone, weekday: 'short', day: 'numeric' }).format(new Date(ms));
+}
+
+/** The bucket boundaries of one range, oldest first.
+ *
+ *  Each older boundary is found by aligning the millisecond BEFORE the newer
+ *  one, which is the only step that cannot drift: whatever an offset change did
+ *  in between, the local unit immediately preceding a boundary is the unit that
+ *  millisecond falls in. Stepping back by a fixed 3,600,000 ms would walk off
+ *  the local clock in any zone whose offset moves by half an hour. */
+function boundaries(asOfMs: number, timeZone: string, unit: 'hour' | 'day', count: number): number[] {
+  const starts = [alignedStart(asOfMs, timeZone, unit)];
+  while (starts.length < count) starts.push(alignedStart(starts[starts.length - 1]! - 1, timeZone, unit));
+  return starts.reverse();
+}
+
+/** The two ranges Arthur asked for: a day in hours, a week in days. Named here
+ *  because the store read has to be bounded by the same arithmetic the buckets
+ *  are cut by, and a second copy of "24" is a second thing to keep true. */
+export const ACTIVITY_RANGES = { day: { unit: 'hour', count: 24 }, week: { unit: 'day', count: 7 } } as const;
+
+/** The oldest instant either range can reach, so a caller can bound its read
+ *  of the record without guessing. Not a fixed 7×86,400,000 ms: the oldest
+ *  bucket starts at a local midnight, which is up to an hour further back than
+ *  arithmetic on the clock would suggest, and a read bounded by the arithmetic
+ *  would leave the first bucket short of the events it should hold. */
+export function activityWindowStart(asOf: string, timeZone: string): string {
+  const asOfMs = Date.parse(asOf);
+  if (Number.isNaN(asOfMs)) throw new Error(`activityWindowStart needs an instant for as_of; got "${asOf}".`);
+  const earliest = Object.values(ACTIVITY_RANGES)
+    .map((r) => boundaries(asOfMs, timeZone, r.unit, r.count)[0]!)
+    .reduce((oldest, start) => Math.min(oldest, start));
+  return new Date(earliest).toISOString();
+}
+
+/** Both ranges of the activity reading, from the raw timestamped record.
+ *
+ *  Buckets are cut on the local clock of `timeZone` — Arthur asked for a day
+ *  and a week, and a day is a thing a clock says, not 86,400,000 ms counted
+ *  back from now. The newest bucket of each range is therefore partial, and the
+ *  window starts at the start of the oldest bucket rather than exactly 24 hours
+ *  or 7 days back; `window_started_at` says where it really starts.
+ *
+ *  Each series keeps its own units and its own scale. Nothing here normalizes:
+ *  the raw counts travel with the peak and the total, and a bar's height is the
+ *  reading's own business, so no invented number can be mistaken for a measured
+ *  one. Three series that cannot share an axis must not share one. */
+export function teamActivity(events: ActivityEvents, asOf: string, timeZone: string): TeamActivity {
+  const asOfMs = Date.parse(asOf);
+  if (Number.isNaN(asOfMs)) throw new Error(`teamActivity needs an instant for as_of; got "${asOf}".`);
+  const began = events.recording_began_at ? Date.parse(events.recording_began_at) : NaN;
+
+  const range = (unit: 'hour' | 'day', count: number): ActivityRange => {
+    const starts = boundaries(asOfMs, timeZone, unit, count);
+    const buckets: ActivityBucket[] = starts.map((start, i) => {
+      const next = starts[i + 1];
+      const natural = naturalEnd(start, timeZone, unit);
+      const end = next ?? Math.min(natural, asOfMs);
+      const bucket: ActivityBucket = {
+        starts_at: new Date(start).toISOString(),
+        ends_at: new Date(end).toISOString(),
+        label: labelOf(start, timeZone, unit),
+        length_ms: end - start,
+        tokens: 0, completions: 0, requests: 0,
+      };
+      if (!next && end < natural) bucket.partial = true;
+      return bucket;
+    });
+
+    // One pass per source over the buckets it belongs in. A bucket is
+    // half-open — [starts_at, ends_at) — so an instant exactly on a boundary
+    // is counted once, in the bucket it opens, and the newest bucket's closed
+    // top is `as_of` itself, which the store's own window already included.
+    const place = (at: string): ActivityBucket | undefined => {
+      const ms = Date.parse(at);
+      if (Number.isNaN(ms)) return undefined;
+      for (let i = buckets.length - 1; i >= 0; i -= 1) {
+        const bucket = buckets[i]!;
+        if (ms >= Date.parse(bucket.starts_at) && (ms < Date.parse(bucket.ends_at) || (i === buckets.length - 1 && ms <= asOfMs))) {
+          return bucket;
+        }
+      }
+      return undefined;
+    };
+    for (const item of events.tokens) { const b = place(item.at); if (b) b.tokens += item.tokens; }
+    for (const item of events.completions) { const b = place(item.at); if (b) b.completions += 1; }
+    for (const item of events.requests) { const b = place(item.at); if (b) b.requests += 1; }
+
+    // Marked after the counting, not before, and only on a bucket that is
+    // EMPTY: a bucket ending at or before the first event this store holds
+    // cannot be speaking for anything, but the newest bucket's top is `as_of`
+    // itself — and on an installation minutes old that is the same instant as
+    // its first event, which flagged a bucket with real counts in it as
+    // unrecorded. The invariant is the readable one: a bucket drawn as unknown
+    // holds nothing.
+    for (const bucket of buckets) {
+      if (Number.isNaN(began) || bucket.tokens || bucket.completions || bucket.requests) continue;
+      if (Date.parse(bucket.ends_at) <= began) bucket.before_record = true;
+    }
+
+    const series = (Object.keys(SERIES) as ActivitySeriesKey[]).map((key) => {
+      const values = buckets.filter((b) => !b.before_record).map((b) => b[key]);
+      return {
+        key, ...SERIES[key],
+        total: values.reduce((sum, v) => sum + v, 0),
+        peak: values.reduce((most, v) => Math.max(most, Math.abs(v)), 0),
+        floor: values.reduce((least, v) => Math.min(least, v), 0),
+      };
+    });
+    return { unit, window_started_at: buckets[0]!.starts_at, buckets, series };
+  };
+
+  return {
+    as_of: asOf,
+    time_zone: timeZone,
+    recording_began_at: events.recording_began_at,
+    day: range(ACTIVITY_RANGES.day.unit, ACTIVITY_RANGES.day.count),
+    week: range(ACTIVITY_RANGES.week.unit, ACTIVITY_RANGES.week.count),
   };
 }

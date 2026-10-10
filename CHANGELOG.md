@@ -13,6 +13,12 @@ longer.
 
 ## Unreleased — 0.9.5
 
+- The hourly and daily burn ceilings now measure spend over the time a session
+  actually ran. Token-log entries carry `duration_ms`, and a rolling window
+  counts only the overlapping fraction of a long session instead of assigning
+  its whole cost to the instant it ended. Existing duration-less entries remain
+  readable under their historical point-in-time semantics.
+
 - Overview charts what the team did, over a day and over a week. **Team
   activity** draws three series — tokens reported, tickets completed, and new
   requests for Arthur — each as its own small chart over one shared time axis,

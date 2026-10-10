@@ -63,13 +63,14 @@ export async function runSession(g: GlobalConfig, l: LoopConfig, iterationPrompt
       if (!existsSync(s) || statSync(s).size === 0) return { rc: 78, cls: 'apparatus', outputTail: `skill missing or empty: ${s}` };
     }
   }
+  const startedAt = Date.now();
   switch (runtime) {
     case 'claude':
-      return runClaude(g, l, iterationPrompt, model, generation, groupFile);
+      return runClaude(g, l, iterationPrompt, model, generation, groupFile, startedAt);
     case 'codex':
-      return runCodex(g, l, iterationPrompt, model, choice, generation, groupFile);
+      return runCodex(g, l, iterationPrompt, model, choice, generation, groupFile, startedAt);
     case 'mock':
-      return runMock(l, iterationPrompt, model, generation, groupFile);
+      return runMock(l, iterationPrompt, model, generation, groupFile, startedAt);
     default:
       return { rc: 78, cls: 'apparatus', outputTail: `unsupported runtime '${runtime as string}' — add a shim branch` };
   }
@@ -180,11 +181,12 @@ export function codexMcpArg(servers: Record<string, Record<string, unknown>>): s
   return `mcp_servers=${tomlValue(withApproval)}`;
 }
 
-function logTokens(l: LoopConfig, model: string, tokens?: number, cost?: number, runtime = l.runtime): void {
+function logTokens(l: LoopConfig, model: string, tokens?: number, cost?: number, runtime = l.runtime, startedAt = Date.now()): void {
   try {
+    const duration = Math.max(1, Date.now() - startedAt);
     appendFileSync(
       tokenLogPath(),
-      `${new Date().toISOString()} loop=${l.name} runtime=${runtime} model=${model} tokens=${tokens ?? '?'} cost_usd=${cost ?? '?'}\n`,
+      `${new Date().toISOString()} loop=${l.name} runtime=${runtime} model=${model} tokens=${tokens ?? '?'} cost_usd=${cost ?? '?'} duration_ms=${duration}\n`,
     );
   } catch {
     /* metering must never affect the run */
@@ -335,7 +337,7 @@ export function sessionSpec(
   };
 }
 
-async function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string, model: string, generation?: string, groupFile?: string): Promise<SessionResult> {
+async function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string, model: string, generation: string | undefined, groupFile: string | undefined, startedAt: number): Promise<SessionResult> {
   const scratch = mkdtempSync(join(tmpdir(), 'rev-'));
   try {
     const mcpConfig = writeMcpConfig(g, l, scratch, model, generation);
@@ -395,14 +397,14 @@ async function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string, model: 
       // claude can exit 0 with is_error:true (e.g. auth failure) — never let
       // that pass as a clean iteration.
       if ((j as { is_error?: boolean }).is_error && res.status === 0) {
-        logTokens(l, model, tokens, cost, 'claude');
+        logTokens(l, model, tokens, cost, 'claude', startedAt);
         return { rc: 1, cls: 'failure', tokens, cost_usd: cost, outputTail: tail.slice(-4000), provider_session_id: providerSessionId };
       }
     } catch (e) {
-      logTokens(l, model, tokens, cost, 'claude');
+      logTokens(l, model, tokens, cost, 'claude', startedAt);
       return { rc: 78, cls: 'apparatus', outputTail: `claude returned malformed or truncated JSON: ${String(e).slice(0, 500)}\n${stdout.slice(-3500)}` };
     }
-    logTokens(l, model, tokens, cost, 'claude');
+    logTokens(l, model, tokens, cost, 'claude', startedAt);
     const rc = res.status ?? 1;
     return { rc, cls: rc === 0 ? 'ok' : 'failure', tokens, cost_usd: cost, outputTail: `${tail}\n${res.stderr ?? ''}`.slice(-4000), provider_session_id: providerSessionId };
   } finally {
@@ -498,7 +500,7 @@ export function codexFailureLine(status: number | null, run: CodexRun): string {
     (run.malformedEvents ? `, malformed/truncated events: ${run.malformedEvents}` : '') + '\n';
 }
 
-async function runCodex(g: GlobalConfig, l: LoopConfig, prompt: string, model: string, choice?: RunChoice, generation?: string, groupFile?: string): Promise<SessionResult> {
+async function runCodex(g: GlobalConfig, l: LoopConfig, prompt: string, model: string, choice: RunChoice | undefined, generation: string | undefined, groupFile: string | undefined, startedAt: number): Promise<SessionResult> {
   // Same contract as runClaude, codex's way: prompt via stdin (a constitution
   // in argv is world-readable via ps and bumps into argv limits), MCP via the
   // whole-table -c override, results from the --json event stream. Approvals
@@ -527,7 +529,7 @@ async function runCodex(g: GlobalConfig, l: LoopConfig, prompt: string, model: s
   const run = parseCodexEvents(res.stdout ?? '');
   const tokens = run.usage ? run.usage.input + run.usage.output : undefined;
   const cost = run.usage ? notionalCost(run.usage, choice?.prices?.[model]) : undefined;
-  logTokens(l, model, tokens, cost, 'codex');
+  logTokens(l, model, tokens, cost, 'codex', startedAt);
   recordCodexUsage(run.threadId); // freshest cap standing, straight off this run's rollout
 
   // Transient detection: codex reports limits as failure text, not a status
@@ -552,7 +554,7 @@ async function runCodex(g: GlobalConfig, l: LoopConfig, prompt: string, model: s
 // the harness itself is testable (and installs verifiable) without an agent CLI
 // or tokens. The command's exit code flows through the ladder unchanged, so
 // tests can exercise every failure class.
-function runMock(l: LoopConfig, prompt: string, model: string, generation?: string, groupFile?: string): SessionResult {
+function runMock(l: LoopConfig, prompt: string, model: string, generation: string | undefined, groupFile: string | undefined, startedAt: number): SessionResult {
   if (!l.mock_cmd) return { rc: 78, cls: 'apparatus', outputTail: "mock runtime requires 'mock_cmd' in the roster" };
   const res = spawnSync(...sessionArgv('bash', ['-c', l.mock_cmd], groupFile), {
     cwd: l.cwd,
@@ -569,6 +571,6 @@ function runMock(l: LoopConfig, prompt: string, model: string, generation?: stri
   const usage = /rev-mock-usage tokens=(\d+)(?: cost_usd=([\d.]+))?/.exec(res.stdout ?? '');
   const tokens = usage ? Number(usage[1]) : undefined;
   const cost = usage?.[2] ? Number(usage[2]) : undefined;
-  if (usage) logTokens(l, model, tokens, cost);
+  if (usage) logTokens(l, model, tokens, cost, l.runtime, startedAt);
   return { rc, cls, tokens, cost_usd: cost, outputTail: `${res.stdout ?? ''}${res.stderr ?? ''}`.slice(-4000) };
 }

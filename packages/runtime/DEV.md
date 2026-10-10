@@ -358,7 +358,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   day) for the breaker. A file scan, not an in-memory total, because the two
   burns it exists for both spanned process restarts; the window is floored at
   `.burn_floor` (stamped at loop start) so a resumed loop starts clean instead
-  of tripping again on money already accounted for (H-412).
+  of tripping again on money already accounted for (H-412). New token-log
+  entries carry `duration_ms`; each window counts the fraction of a session
+  whose interval overlaps it, while legacy duration-less entries retain their
+  point-in-time behavior (H-3129).
 - `team-now.ts` — the condensed roster behind Overview's Team now card (R-44
   H-3091): Rev's state words rolled up from SESSIONS to accountable AGENTS, in
   six display states. See "The condensed roster" below for the mapping, the
@@ -1568,7 +1571,10 @@ follow a module imported dynamically much later.
   arbitrary iteration count is a signal to assess, never a permission request
   sent to Arthur. Defaults (`burn_usd_per_hour` 30, `burn_usd_per_day`
   75, `continue_cap` 15, per-loop overridable) sit above every figure in the
-  token-log's history: a trip means new territory, never a busy afternoon. It
+  token-log's history: a trip means new territory, never a busy afternoon.
+  Spend is amortised uniformly across each session's recorded duration, so a
+  ninety-minute iteration cannot land ninety minutes of cost inside one hour
+  merely because that is when it ended (H-3129). It
   deliberately does NOT catch a small spin — ward's five iterations against a
   one-ticket wake cost $5.70 — because that is a question of what counts as
   production, not of spend.

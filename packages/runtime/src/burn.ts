@@ -16,7 +16,14 @@ export interface BurnWindow {
   dayUsd: number;
 }
 
-const LINE = /^(\S+) loop=(\S+).*?cost_usd=(\S+)/;
+const LINE = /^(\S+) loop=(\S+).*?cost_usd=(\S+)(?: .*?duration_ms=(\S+))?/;
+
+function overlapCost(end: number, duration: number | undefined, cutoff: number, now: number, cost: number): number {
+  if (duration === undefined) return end >= cutoff && end <= now ? cost : 0;
+  const start = end - duration;
+  const overlap = Math.max(0, Math.min(end, now) - Math.max(start, cutoff));
+  return cost * overlap / duration;
+}
 
 function floorPath(loop: string): string {
   return join(stateDir(loop), '.burn_floor');
@@ -60,9 +67,11 @@ export function burnWindow(loop: string, now = Date.now(), path = tokenLogPath()
     if (!m || m[2] !== loop) continue;
     const t = Date.parse(m[1]!);
     const cost = Number(m[3]);
+    const duration = m[4] === undefined ? undefined : Number(m[4]);
     if (!Number.isFinite(t) || !Number.isFinite(cost)) continue;
-    if (t >= dayAgo) dayUsd += cost;
-    if (t >= hourAgo) hourUsd += cost;
+    if (duration !== undefined && (!Number.isFinite(duration) || duration <= 0)) continue;
+    dayUsd += overlapCost(t, duration, dayAgo, now, cost);
+    hourUsd += overlapCost(t, duration, hourAgo, now, cost);
   }
   return { hourUsd, dayUsd };
 }

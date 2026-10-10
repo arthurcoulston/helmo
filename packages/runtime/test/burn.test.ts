@@ -7,6 +7,8 @@ import { burnWindow, markBurnFloor, meteredProviders, recentCosts } from '../src
 const NOW = Date.parse('2026-08-25T16:00:00.000Z');
 const at = (iso: string, loop: string, cost: string) =>
   `${iso} loop=${loop} runtime=claude model=claude-fable-5 tokens=1000 cost_usd=${cost}`;
+const over = (iso: string, loop: string, cost: string, durationMs: number) =>
+  `${at(iso, loop, cost)} duration_ms=${durationMs}`;
 
 let home: string;
 let log: string;
@@ -41,6 +43,25 @@ describe('burnWindow', () => {
     expect(burnWindow('ward', NOW, log).dayUsd).toBe(61);
     markBurnFloor('ward', Date.parse('2026-08-25T15:00:00.000Z'));
     expect(burnWindow('ward', NOW, log).dayUsd).toBe(1);
+  });
+
+  it('amortises a long session across the portion inside each window', () => {
+    writeFileSync(log, over('2026-08-25T16:00:00.000Z', 'ward', '90.00', 90 * 60 * 1000) + '\n');
+    expect(burnWindow('ward', NOW, log)).toEqual({ hourUsd: 60, dayUsd: 90 });
+  });
+
+  it('clips an amortised session at the burn floor', () => {
+    writeFileSync(log, over('2026-08-25T16:00:00.000Z', 'ward', '120.00', 2 * 60 * 60 * 1000) + '\n');
+    markBurnFloor('ward', Date.parse('2026-08-25T15:30:00.000Z'));
+    expect(burnWindow('ward', NOW, log)).toEqual({ hourUsd: 30, dayUsd: 30 });
+  });
+
+  it('skips malformed durations without weakening legacy log handling', () => {
+    writeFileSync(log, [
+      `${at('2026-08-25T15:30:00.000Z', 'ward', '10.00')} duration_ms=bogus`,
+      at('2026-08-25T15:45:00.000Z', 'ward', '2.00'),
+    ].join('\n') + '\n');
+    expect(burnWindow('ward', NOW, log)).toEqual({ hourUsd: 2, dayUsd: 2 });
   });
 
   it('does not stamp a burn floor for a subscription provider', () => {

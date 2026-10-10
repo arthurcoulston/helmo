@@ -40,10 +40,18 @@ describe('bounded autonomous runway', () => {
       job('external', 'ward', 1, 1, { blocked_by: ['not-admitted'] }),
     ]);
     expect(result.range).toBeNull();
+    expect(result.floor).toBeNull();
     expect(result.unknown_duration).toEqual(['unknown', 'external']);
   });
 
+  it('keeps a measured floor when only part of the work is unknown', () => {
+    const result = forecast([job('known', 'mason', 2, 3), { id: 'guess', title: 'guess', owner: 'ward', duration_hours: null }]);
+    expect(result.range).toBeNull();
+    expect(result.floor).toEqual({ low: 2, high: 3 });
+    expect(result.unknown_duration).toEqual(['guess']);
+  });
+
   it('reports no runway for no work', () => {
-    expect(forecast([])).toEqual({ range: null, outcomes: [], first_human_boundary: null, unknown_duration: [], excluded: [] });
+    expect(forecast([])).toEqual({ range: null, floor: null, outcomes: [], first_human_boundary: null, unknown_duration: [], excluded: [] });
   });
 });

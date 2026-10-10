@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { appConfig, startAppServer } from '../app-server.mjs';
 import { appRequest, shellRequest } from '../../app/server.mjs';
-import { workHealth, workListening, workRequest, workSnapshot } from '../../work/dist/view.js';
+import { runwaySnapshot, workHealth, workListening, workRequest, workSnapshot } from '../../work/dist/view.js';
 import { seatWork } from '../../work/dist/presentation.js';
 import { roadmapHealth, roadmapRequest, roadmapSnapshot } from '../../roadmap/dist/view.js';
 import { runtimeRequest, runtimeSnapshot, teamFile, teamMember, teamNowSnapshot, teamPeriod, teamSnapshot } from '../../runtime/dist/view.js';
@@ -57,6 +57,7 @@ function teamCount() {
 }
 function overviewSnapshot() {
   const work=workSnapshot(), roadmap=roadmapSnapshot(), runtime=runtimeSnapshot();
+  const team=teamNowSnapshot(seatWork(work.records));
   return { records: [
     { id:'work', title:'Work', state:`${work.records.length} records`, links:[{label:'Open Work',href:'/work'}] },
     { id:'roadmap', title:'Roadmap', state:`${roadmap.projects.length} projects`, links:[{label:'Open Roadmap',href:'/roadmap'}] },
@@ -71,7 +72,12 @@ function overviewSnapshot() {
   // runtime knows which sessions are running and the work record knows what
   // each seat has claimed, and neither may read the other (R-47 C1), so the
   // join happens here — in the process that already holds both (H-3091).
-  team: teamNowSnapshot(seatWork(work.records)) };
+  team,
+  // The forecast needs the same join in the other direction: which seats can
+  // draw work decides which backlog is runway at all. An unreadable roster is
+  // passed through as null rather than an empty seat list, because a fleet
+  // nobody could read is not a fleet with no agents (H-3089).
+  next: runwaySnapshot(team.unavailable ? null : team.agents.map((a) => ({ agent: a.agent, state: a.state }))) };
 }
 const appDocuments={overview:overviewSnapshot};
 const running = await startAppServer(appConfig(), (request, response) => {

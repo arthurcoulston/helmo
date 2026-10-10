@@ -15,7 +15,43 @@ reading. Its caller owns admission (the authoritative ready predicate, holds,
 gates, limits, available seats) and supplies recorded duration ranges; the model
 only schedules one job at a time per owner, lets owners run in parallel, and
 respects admitted dependencies. Any missing duration or external prerequisite
-makes the headline range unavailable rather than inventing hours.
+makes the headline `range` unavailable rather than inventing hours; `floor` is
+the measured lower bound over the jobs it could place, which is the number the
+card shows as "at least" when something is unknown. Without that second
+reading a live estate holding one unmeasurable ticket would have no honest
+number at all, and the widget would decay into a ready-ticket list.
+
+`src/runway.ts` is that caller, and owns the two judgments the model refuses:
+
+- **Admission.** The exclusions restate the store's own ready predicate —
+  withheld for the human (`awaiting_human`, a pending action, `needs_human`),
+  deliberately held, date-gated, unserved — plus the two the predicate has no
+  opinion about: a workstream whose finite budget is spent, and a seat whose
+  loop cannot draw work. The first matching reason is the one reported, most
+  decisive first, because a card naming two things for Arthur to lift argues
+  with itself. A recurring TEMPLATE is never runway; the instances it has
+  already spawned are ordinary tickets and are counted, which is the difference
+  between a bounded forecast and an infinite one.
+- **Duration.** `Store.recordedDurations(since)` measures elapsed wall-clock
+  time from a ticket's FIRST claim to its close — never from its filing, or a
+  record that sat in the backlog for a month would teach the estimator that the
+  work took a month. `durationBands` groups those samples by ticket type and
+  takes the p25–p75 band by nearest rank, needing five samples before a type
+  may speak and otherwise falling back to the pooled band. The interquartile
+  band rather than the full spread is deliberate: the one ticket claimed and
+  left for three weeks is true and is not how long the work took, and letting
+  it set the high end hands Arthur a LONGER runway than the team has — the
+  error that reads as "no need to check in".
+
+The one boundary it will name is a ticket's own recorded blast radius: a claim
+authorises work up to `records`, so `sent`/`published` is the step Arthur keeps.
+That is a field somebody set, not a guess about what the work will need.
+
+`runwaySnapshot(seats)` in `src/view.ts` takes the reading. The seat states come
+from the caller because the runtime record and this one may not import each
+other — the join lives in the process holding both, exactly as Team now's does.
+A `null` seat list is an unreadable roster, not an empty fleet, and the whole
+forecast is then `unavailable` with that missing basis named.
 
 `/api/v1/work` retains its original records and request projection and adds a
 server-grouped `record` with every live ticket and the newest 20 terminal rows.

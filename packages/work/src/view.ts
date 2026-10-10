@@ -15,6 +15,7 @@ import { answerRequest } from './answer.js';
 import { loaded, running } from './build.js';
 import { installationLine, requestedInstallation, requireInstallation } from './install.js';
 import { actionFingerprint, ask, CLOSED_TAIL, recentResults, recordTickets, resultDisplay } from './presentation.js';
+import { DURATION_WINDOW_DAYS, runway, SeatReading } from './runway.js';
 import { Store } from './store.js';
 import { Ticket } from './types.js';
 
@@ -199,6 +200,25 @@ function resultsDocument(complete: Ticket[]) {
   return recentResults(complete, new Date().toISOString(), (id) => {
     const acceptance = store.productAcceptance(id);
     return { state: acceptance.state, reason: acceptance.reason };
+  });
+}
+
+/** Overview's forecast: what the team will do next and for roughly how long
+ *  (H-3089). The seat readings come from the caller because the runtime record
+ *  and this one may not import each other — the join lives in the process that
+ *  already holds both, exactly as Team now's does (R-47 C1). `null` seats is an
+ *  unreadable roster, not an empty fleet, and `runway` refuses the forecast. */
+export function runwaySnapshot(seats: SeatReading[] | null) {
+  const asOf = new Date().toISOString();
+  const since = new Date(Date.parse(asOf) - DURATION_WINDOW_DAYS * 86_400_000).toISOString();
+  const tickets = store.listTickets({ limit: -1 });
+  return runway({
+    tickets,
+    blockers: store.blockersFor(tickets.filter((t) => !['done', 'cancelled'].includes(t.status)).map((t) => t.id)),
+    workstreams: store.listWorkstreamInfo(),
+    durations: store.recordedDurations(since),
+    seats,
+    as_of: asOf,
   });
 }
 

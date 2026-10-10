@@ -3958,3 +3958,53 @@ describe('an evidence item states what it is for (R-42 I5)', () => {
     ]);
   });
 });
+
+describe('recorded durations', () => {
+  const account = { category: 'feature' as const, summary: 'The importer reads CSVs from ./data and refuses files over 1GB; nothing remains open.' };
+
+  /** Claim and close one ticket at controlled instants. Faking the clock is the
+   *  only way to get a known elapsed time out of an append-only record. */
+  function closeAfter(s: Store, hours: number, over: Record<string, unknown> = {}) {
+    const t = create(s, over);
+    triage(s, t.id);
+    vi.setSystemTime(new Date('2026-10-01T00:00:00.000Z'));
+    s.updateTicket(builder, { ticket_id: t.id, status: 'in_progress', note: 'claimed' });
+    vi.setSystemTime(new Date(Date.parse('2026-10-01T00:00:00.000Z') + hours * 3_600_000));
+    s.updateTicket(builder, { ticket_id: t.id, status: 'done', note: 'closed', completion_account: account, evidence: [{ kind: 'commit', ref: 'helmo@abc123' }] });
+    vi.useRealTimers();
+    return t.id;
+  }
+
+  it('measures claim to close, not creation to close', () => {
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    const s = freshStore();
+    const id = closeAfter(s, 3);
+    expect(s.recordedDurations('2026-09-01T00:00:00.000Z')).toEqual([{ id, type: 'build', hours: 3 }]);
+  });
+
+  it('leaves out work nobody ever claimed rather than measuring it from its filing', () => {
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    const s = freshStore();
+    const t = create(s);
+    triage(s, t.id);
+    s.returnToHuman(builder, t.id, { situation: 'Two readings disagree about the window.', question: 'Which window is authoritative?', recommendation: 'Take the server reading.' });
+    s.answerTicket(orch, t.id, { answer: 'Server reading. It is the only one both machines share.', resolution: 'done' });
+    vi.useRealTimers();
+    expect(s.getTicket(t.id).status).toBe('done');
+    expect(s.recordedDurations('2026-09-01T00:00:00.000Z')).toEqual([]);
+  });
+
+  it('reads the window and leaves cancelled work out', () => {
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    const s = freshStore();
+    const inside = closeAfter(s, 2);
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    const cancelled = create(s);
+    triage(s, cancelled.id);
+    s.updateTicket(builder, { ticket_id: cancelled.id, status: 'in_progress', note: 'claimed' });
+    s.updateTicket(builder, { ticket_id: cancelled.id, status: 'cancelled', note: 'overtaken by H-1' });
+    vi.useRealTimers();
+    expect(s.recordedDurations('2026-09-01T00:00:00.000Z').map((d) => d.id)).toEqual([inside]);
+    expect(s.recordedDurations('2026-10-02T00:00:00.000Z')).toEqual([]);
+  });
+});

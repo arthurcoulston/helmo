@@ -1728,6 +1728,34 @@ export class Store {
     return byId;
   }
 
+  /** Elapsed wall-clock hours from first claim to close, for every ticket
+   *  closed since `since`. This is the only measured basis the runway forecast
+   *  has for how long work takes.
+   *
+   *  A ticket nobody ever claimed has no start instant and is left out rather
+   *  than measured from its creation: a record that sat in the backlog for a
+   *  month would otherwise teach the estimator that the work itself took a
+   *  month. The claim is read as the FIRST transition into in_progress, so a
+   *  ticket handed back and re-claimed is measured across the whole episode the
+   *  record actually describes. */
+  recordedDurations(since: string): { id: string; type: string; hours: number }[] {
+    const rows = this.db
+      .prepare(
+        `SELECT t.id AS id, t.type AS type, t.closed_at AS closed,
+                (SELECT MIN(e.ts) FROM events e
+                   WHERE e.ticket_id = t.id AND json_extract(e.payload, '$.diffs.status.to') = 'in_progress') AS started
+           FROM tickets t
+          WHERE t.status = 'done' AND t.closed_at IS NOT NULL AND t.closed_at > ?
+          ORDER BY t.closed_at ASC`,
+      )
+      .all(since) as { id: string; type: string; closed: string; started: string | null }[];
+    return rows.flatMap((r) => {
+      if (!r.started) return [];
+      const hours = (Date.parse(r.closed) - Date.parse(r.started)) / 3_600_000;
+      return Number.isFinite(hours) && hours > 0 ? [{ id: r.id, type: r.type, hours }] : [];
+    });
+  }
+
   listTickets(filter: ListFilter): Ticket[] {
     // Lazy materialization (H-22): every ticket-list read catches up recurring
     // templates first, so due instances exist by the time the queue is answered.

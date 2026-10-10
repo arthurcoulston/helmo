@@ -8,18 +8,34 @@ export interface ForecastJob {
   duration_hours: { low: number; high: number } | null;
   blocked_by?: string[];
   human_boundary?: string;
-  excluded?: 'hold' | 'date_gate' | 'finite_limit' | 'unavailable_seat' | 'missing_human_input';
+  /** Why this job is not runway. `unavailable_seat` is a seat that cannot draw
+   *  work; `unreadable_seat` is a seat whose state could not be read at all,
+   *  kept apart because a failed reading is not a known stoppage. */
+  excluded?: 'hold' | 'date_gate' | 'finite_limit' | 'unavailable_seat' | 'unreadable_seat' | 'missing_human_input';
 }
 
 export interface Forecast {
+  /** The complete reading, and null the moment any admitted job's duration or
+   *  prerequisite is unknown: a total that silently omits part of the admitted
+   *  work is not the runway anyone asked about. */
   range: { low: number; high: number } | null;
+  /** The hours the jobs this forecast COULD schedule already account for — a
+   *  measured lower bound that survives an unknown elsewhere. Without it a live
+   *  estate holding one unestimated ticket would have no honest number at all,
+   *  and the card would fall back to listing ready tickets. Read it as "at
+   *  least", never as the total. */
+  floor: { low: number; high: number } | null;
   outcomes: { id: string; title: string; owner: string; starts_after: { low: number; high: number }; finishes_after: { low: number; high: number } }[];
   first_human_boundary: { id: string; after: { low: number; high: number }; reason: string } | null;
   unknown_duration: string[];
   excluded: { id: string; reason: NonNullable<ForecastJob['excluded']> }[];
 }
 
-const sum = (a: { low: number; high: number }, b: { low: number; high: number }) => ({ low: a.low + b.low, high: a.high + b.high });
+// Hours arrive in tenths and are added along a chain, so the sums are rounded
+// back to tenths: a reader shown "0.1 to 1.4999999999999998 hours" learns
+// something true about floating point and nothing about the runway.
+const tenths = (n: number) => Math.round(n * 10) / 10;
+const sum = (a: { low: number; high: number }, b: { low: number; high: number }) => ({ low: tenths(a.low + b.low), high: tenths(a.high + b.high) });
 const max = (...xs: { low: number; high: number }[]) => ({ low: Math.max(0, ...xs.map((x) => x.low)), high: Math.max(0, ...xs.map((x) => x.high)) });
 
 /** Schedule one worker at a time per owner, while independent owners run in
@@ -53,8 +69,10 @@ export function forecast(jobs: ForecastJob[]): Forecast {
     const finish = scheduled.get(j.id);
     return finish ? [{ id: j.id, after: finish, reason: j.human_boundary }] : [];
   }).sort((a, b) => a.after.low - b.after.low || a.after.high - b.after.high);
+  const floor = outcomes.length ? max(...outcomes.map((o) => o.finishes_after)) : null;
   return {
-    range: unknown.size || !outcomes.length ? null : max(...outcomes.map((o) => o.finishes_after)),
+    range: unknown.size ? null : floor,
+    floor,
     outcomes,
     first_human_boundary: boundaries[0] ?? null,
     unknown_duration: [...unknown],

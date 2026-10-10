@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { AVATAR_MARKS } from './estate-avatars.generated.js';
-import { ActionRequest, ActorKind, Evidence, HumanRequest, Question, Ticket } from './types.js';
+import { ActionRequest, ActorKind, CompletionCategory, Evidence, HumanRequest, Question, Ticket } from './types.js';
 
 const MARKS = new Set<string>(AVATAR_MARKS);
 
@@ -179,4 +179,157 @@ export function resultDisplay(evidence: Evidence[]): ResultDisplay {
   const primary = (recorded.length ? sort(recorded) : inferred).at(-1) ?? null;
   const others = sort([...recorded, ...inferred]).filter((item) => item !== primary);
   return { primary, others, supporting: sort(supporting), review: sort(review), unstated: sort(unstated) };
+}
+
+// ---------- what got done in the past 24 hours (R-44) ----------
+
+/** The only types that supply a category for a ticket closed before the
+ *  account existed, per `crew:projects/r39/RECENT-RESULTS-CONTRACT.md`. The
+ *  map is deliberately partial: `build` is absent because a build is Feature,
+ *  Improvement or Bug fix depending on what it did, and only its author knows
+ *  which. Guessing one of the three would put words in their mouth on 2,000+
+ *  closed records at once. */
+const COMPATIBILITY_CATEGORY: Record<string, CompletionCategory> = {
+  research: 'research',
+  planning: 'planning_design',
+  writing: 'documentation_content',
+  ops: 'operations',
+  review: 'review',
+};
+
+/** How many rows the card draws. The rest are counted and linked, never
+ *  dropped silently. */
+export const RECENT_RESULTS_LIMIT = 6;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** One completed ticket as the results reading presents it. Everything a
+ *  reader needs to judge whether the work landed, and nothing invented:
+ *  a null `summary` or `category` is the record saying nobody wrote one. */
+export interface ResultRow {
+  id: string;
+  title: string;
+  workstream: string;
+  project: string | null;
+  closed_at: string;
+  /** The author's own one paragraph, or null when no account was recorded. */
+  summary: string | null;
+  category: CompletionCategory | null;
+  /** Where the category came from: `recorded` is the author's choice, `type`
+   *  is the frozen compatibility map above, and null is Uncategorised. The
+   *  display says which, so a mapped category is never read as a judgment
+   *  someone made. */
+  category_source: 'recorded' | 'type' | null;
+  author: string | null;
+  recorded_at: string | null;
+  /** Every explicitly recorded result, the primary first, then any others in
+   *  append order. Nothing is hidden: a ticket that records two results says
+   *  so and shows both.
+   *
+   *  Copies rather than the places `ResultDisplay` carries, and that is the
+   *  opposite call to the one the whole-record document makes — deliberately.
+   *  There, the client already has the row's `evidence` array and a second
+   *  copy would buy nothing. Here the rows are a separate bounded section, and
+   *  carrying each one's whole array to reach two items would put the heaviest
+   *  evidence list the real record holds (118 items) into a six-row card. The
+   *  non-result roles are absent for the same reason: this card never draws
+   *  them, and an index into an array it does not carry is a trap. */
+  results: ResultItem[];
+  acceptance: { state: string; reason: string };
+  blast_radius: string;
+}
+
+/** One recorded result, as the card draws it. `inferred` and `corrected` carry
+ *  the same meaning they do in `ResultDisplay`: the purpose was guessed by the
+ *  frozen legacy fallback, and a later append restated this ref's role. */
+export interface ResultItem {
+  kind: string;
+  ref: string;
+  note?: string;
+  inferred?: true;
+  corrected?: true;
+}
+
+export interface RecentResults {
+  /** The instant the server windowed on. The browser must not use its own
+   *  clock: two readers on different machines would otherwise disagree about
+   *  what "the past 24 hours" contained. */
+  as_of: string;
+  window_started_at: string;
+  /** Every eligible record, not just the ones drawn. */
+  total: number;
+  limit: number;
+  rows: ResultRow[];
+}
+
+/** Completed work inside the rolling 24-hour window ending at `as_of`.
+ *
+ *  Only a ticket's CURRENT state is read: a reopened ticket is absent while it
+ *  is open and returns at its later close, and a verdict or a late evidence
+ *  append changes a selected row's decorations without ever moving a record
+ *  into the window. The window is half-open at the bottom — a ticket closed
+ *  exactly 24 hours ago has already been read — and closed at the top, so the
+ *  instant the reading was taken is included.
+ *
+ *  `acceptance` is passed in rather than read here, because this file has no
+ *  store: the projection is the same answer for every caller, and who supplies
+ *  the verdict state is the caller's business. */
+export function recentResults(
+  tickets: Ticket[],
+  asOf: string,
+  acceptance: (id: string) => { state: string; reason: string },
+): RecentResults {
+  const asOfMs = new Date(asOf).getTime();
+  if (Number.isNaN(asOfMs)) throw new Error(`recentResults needs an instant for as_of; got "${asOf}".`);
+  const startedMs = asOfMs - DAY_MS;
+  // Compared as instants, not strings: `closed_at` is written by
+  // `toISOString()` today, but the column is text and an imported record can
+  // carry another spelling of the same moment, which a lexicographic compare
+  // would place in the wrong window.
+  const eligible = tickets.filter((t) => {
+    if (t.status !== 'done' || !t.closed_at) return false;
+    const closed = new Date(t.closed_at).getTime();
+    return !Number.isNaN(closed) && closed > startedMs && closed <= asOfMs;
+  });
+  const ordered = eligible.sort(
+    (a, b) => new Date(b.closed_at!).getTime() - new Date(a.closed_at!).getTime() || seq(b) - seq(a),
+  );
+  return {
+    as_of: asOf,
+    window_started_at: new Date(startedMs).toISOString(),
+    total: ordered.length,
+    limit: RECENT_RESULTS_LIMIT,
+    rows: ordered.slice(0, RECENT_RESULTS_LIMIT).map((t) => {
+      const account = t.completion_account;
+      const mapped = account ? null : COMPATIBILITY_CATEGORY[t.type] ?? null;
+      const display = resultDisplay(t.evidence);
+      return {
+        id: t.id,
+        title: t.title,
+        workstream: t.workstream,
+        project: t.project ?? null,
+        closed_at: t.closed_at!,
+        summary: account?.summary ?? null,
+        category: account?.category ?? mapped,
+        category_source: account ? ('recorded' as const) : mapped ? ('type' as const) : null,
+        author: account?.author ?? null,
+        recorded_at: account?.recorded_at ?? null,
+        results: [...(display.primary ? [display.primary] : []), ...display.others].flatMap((place) => {
+          const item = t.evidence[place.at];
+          // A place the ticket's own array cannot answer is dropped rather
+          // than drawn empty: it only happens if the projection disagrees
+          // with the array it indexes, and one item short beats a blank line.
+          if (!item) return [];
+          return [{
+            kind: item.kind, ref: item.ref,
+            ...(item.note ? { note: item.note } : {}),
+            ...(place.inferred ? { inferred: true as const } : {}),
+            ...(place.corrected ? { corrected: true as const } : {}),
+          }];
+        }),
+        acceptance: acceptance(t.id),
+        blast_radius: t.blast_radius,
+      };
+    }),
+  };
 }

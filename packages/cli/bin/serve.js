@@ -62,7 +62,10 @@ function overviewSnapshot() {
     { id:'team', title:'Team', state:`${teamCount()} configured`, links:[{label:'Open Team',href:'/team'}] },
     { id:'runtime', title:'Runtime', state:runtime.supervisor_state, links:[{label:'Open Runtime',href:'/run'}] },
     ...work.records,
-  ] };
+  // Carried through from the Work document rather than recomputed: the window
+  // is the server's to fix, and two readings taken at two instants on one page
+  // would disagree about what the past 24 hours held (R-44).
+  ], results: work.results };
 }
 const appDocuments={overview:overviewSnapshot};
 const running = await startAppServer(appConfig(), (request, response) => {

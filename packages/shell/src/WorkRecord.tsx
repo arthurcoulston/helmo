@@ -9,12 +9,12 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { expandColumn, RecordPreview, RecordTable, recordColumn, time, type RecordColumn } from "./RecordTable"
 import { acceptanceRole, StatusAlert, StatusBadge, ticketStateRole, type StatusRole } from "./Status"
 
-type Evidence = { kind: string; ref: string; note?: string; role?: string }
+export type Evidence = { kind: string; ref: string; note?: string; role?: string }
 // Index into the row's own `evidence` array, with what the projection knows
 // about that item's purpose. The server sends places, not copies of the
 // items, so the heaviest evidence list does not cost the document twice.
-type ResultRole = { at: number; inferred?: true; corrected?: true }
-type ResultDisplay = { primary: ResultRole | null; others: ResultRole[]; supporting: ResultRole[]; review: ResultRole[]; unstated: ResultRole[] }
+export type ResultRole = { at: number; inferred?: true; corrected?: true }
+export type ResultDisplay = { primary: ResultRole | null; others: ResultRole[]; supporting: ResultRole[]; review: ResultRole[]; unstated: ResultRole[] }
 type Event = { seq: number; ts: string; event_type: string; actor: { name: string; session?: string }; payload: { note?: string; question?: string; answer?: string } }
 type Detail = { ticket: { body: string; uncertainty_note?: string }; events: Event[]; deps: { outgoing: { type: string; to_id: string }[]; incoming: { type: string; from_id: string }[] } }
 type Row = {
@@ -135,8 +135,13 @@ function target(ref: string): string | "elsewhere" | null {
 
 /** One evidence item, written out. `action` draws the single prominent control
  *  the record offers; everything else is a plain link or plain text, because a
- *  second identical button is the thing that made prominence meaningless. */
-function Reference({ item, role, action }: { item?: Evidence; role: ResultRole; action?: boolean }) {
+ *  second identical button is the thing that made prominence meaningless.
+ *
+ *  Exported because the results card shows the same refs (R-44 contract §5):
+ *  reachability is a property of the device doing the looking, and a second
+ *  implementation of that rule on another surface would eventually disagree
+ *  with this one about whether a ref opens. */
+export function Reference({ item, role, action }: { item?: Evidence; role: ResultRole; action?: boolean }) {
   // A place the row's own evidence array cannot answer draws nothing. The two
   // always come from the same row of the same response, so this only fires if
   // a projection disagrees with the array it indexes — and drawing one item

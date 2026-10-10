@@ -14,7 +14,7 @@ import { actedRequest } from './acted.js';
 import { answerRequest } from './answer.js';
 import { loaded, running } from './build.js';
 import { installationLine, requestedInstallation, requireInstallation } from './install.js';
-import { actionFingerprint, ask, CLOSED_TAIL, recordTickets, resultDisplay } from './presentation.js';
+import { actionFingerprint, ask, CLOSED_TAIL, recentResults, recordTickets, resultDisplay } from './presentation.js';
 import { Store } from './store.js';
 import { Ticket } from './types.js';
 
@@ -190,6 +190,18 @@ function awaitingDocument() {
   };
 }
 
+/** What got done in the past 24 hours, windowed HERE so that every reader of
+ *  this document — the Work page, the Overview card, a script — sees the same
+ *  rolling window. `as_of` is taken once per read and travels with the rows,
+ *  so a stale document labels the window it actually describes instead of
+ *  being redrawn against the browser's clock (contract §1). */
+function resultsDocument(complete: Ticket[]) {
+  return recentResults(complete, new Date().toISOString(), (id) => {
+    const acceptance = store.productAcceptance(id);
+    return { state: acceptance.state, reason: acceptance.reason };
+  });
+}
+
 export function workSnapshot(options: { whole?: boolean; ticket?: string } = {}) {
   const complete = store.listTickets({ limit: -1 });
   const selected = recordTickets(complete, options.whole);
@@ -210,6 +222,7 @@ export function workSnapshot(options: { whole?: boolean; ticket?: string } = {})
     records: complete,
     running: running(),
     awaiting: awaitingDocument(),
+    results: resultsDocument(complete),
     record: {
       whole: Boolean(options.whole),
       closed_tail: CLOSED_TAIL,

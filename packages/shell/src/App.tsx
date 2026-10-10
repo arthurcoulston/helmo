@@ -3,6 +3,7 @@ import { RuntimeView, type RuntimeData } from "./RuntimeView"
 import * as React from "react"
 import { RoadmapView, type RoadmapData } from "./RoadmapView"
 import { CopyReference, TicketDetails, WorkRecord, type WorkRecordData } from "./WorkRecord"
+import { RecentResults, resultsOf } from "./RecentResults"
 import {
   ActivityIcon,
   ChevronRightIcon,
@@ -823,6 +824,11 @@ function AreaContent({ area, state, selected, areas, period, onPeriodChange }: {
   if (area.id === "roadmap") return <RoadmapView data={state.data as RoadmapData} selected={selected} />
 
   if (area.id === "overview") {
+    /* The results document rides along on the Overview read (R-44). A build of
+       this view against a server that does not send it draws the rest of the
+       page rather than an error: the areas and the Work link are what Overview
+       has always been, and a missing widget is not a broken page. */
+    const results = resultsOf(state.data)
     return (
       <>
         <p className="text-sm text-muted-foreground">4 areas</p>
@@ -840,6 +846,15 @@ function AreaContent({ area, state, selected, areas, period, onPeriodChange }: {
             empty
           )}
         </section>
+        {results ? <>
+          <Separator />
+          <section className="flex flex-col gap-2">
+            <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+              What got done
+            </h2>
+            <RecentResults data={results} />
+          </section>
+        </> : null}
         <Separator />
         <section className="flex flex-col gap-2">
           <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">

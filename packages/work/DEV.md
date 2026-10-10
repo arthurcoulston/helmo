@@ -1200,6 +1200,73 @@ somewhere before it was a rule:
   is why the reader-facing proof server-renders rather than driving a browser —
   `verify-ui.mjs` always looks from loopback, where case 6(b) cannot happen.
 
+## What got done, in the past 24 hours (R-44, H-2951, H-3088)
+
+Arthur's complaint was that a `done` status is not an account of anything: the
+record said a ticket ended, and he had to open the body and infer what came out
+of it. So completing ordinary work now records what it produced, in the
+author's own words, and the Overview card reads them back.
+
+`completion_account` on a ticket is `{category, summary, author, recorded_at}`.
+The caller supplies only the first two; Helmo stamps the author from the
+writing actor and `recorded_at` from the event's own instant, and **refuses** a
+caller that states either — accepting-and-overwriting would mean an agent
+believing it signed an account it did not. The ten categories are in
+`COMPLETION_CATEGORIES` (`src/types.ts`) and the summary is 1–280 Unicode code
+points, counted in code points so an account written outside the BMP is the
+length its author sees.
+
+**Ticket `type` is not rewritten and is never read as a category.** `build` has
+no mapping on purpose: whether a build was a Feature, an Improvement or a Bug
+fix is a judgment only its author holds, and guessing one would put words in
+their mouth on thousands of closed records at once. Exactly five legacy types
+supply a compatibility category (`research`, `planning`, `writing`, `ops`,
+`review`); every other value reads as Uncategorised, and the card says *from
+its type* wherever the map rather than an author chose it.
+
+Three doors, and the gate is at the store rather than the tool boundary because
+the CLI and in-process callers never pass that boundary:
+
+- **Closing ordinary work requires an account**, unless the ticket already
+  carries one (so an author may record the sentence on live work and close in a
+  second call). Cancelling requires none — abandoned work produced nothing.
+- **A human's own answer resolving a ticket as done stays valid without one**,
+  and is displayed as missing. Requiring one there would mean an agent writing
+  a sentence in Arthur's name about work he resolved himself. It is also the
+  only remaining way to produce an account-less `done` record, which is why
+  `verify-ui.mjs` seeds one: every legacy row in the live store reads that way.
+- **A correction is accepted on a terminal ticket**, alongside note and
+  evidence. It replaces the materialized account and the event log retains
+  both readings; everything else about a closed ticket still refuses.
+
+`recentResults()` in `src/presentation.ts` is the reading. The window is
+half-open at the bottom and closed at the top — `as_of - 24h < closed_at <=
+as_of` — selected on a ticket's CURRENT state, so a reopened ticket is absent
+while it is open and returns at its later close, and a verdict or a late
+evidence append changes a row's decorations without moving a record into the
+window. `closed_at` is compared as an instant, not a string: the column is text
+and an imported record can spell the same moment differently.
+
+**The server fixes the window, not the browser.** `as_of` travels with the
+rows, so two readers on two machines agree what the past 24 hours held, and a
+document held over from a failed refresh labels the window it actually
+describes instead of being redrawn against a local clock. The card draws six
+rows and links the remainder; the document carries `total`, so unknown coverage
+is never rendered as zero.
+
+There is no accomplishment total and no cross-ticket grouping. A build, its
+technical review and its security review are three truthful records with
+distinct categories, not three claims that the feature shipped three times —
+and dependency edges, shared projects and matching refs do not state an
+outcome identity strongly enough to merge them. A roll-up needs an explicit
+durable outcome id, and this widget must not invent one.
+
+The contract is `crew:projects/r39/RECENT-RESULTS-CONTRACT.md`; its §4 sample
+is `test/recent-results.test.ts` (window, rows, and the account through the
+store, MCP and CLI paths) and `packages/shell/test/recent-results.test.mjs`
+(what a reader sees). Both themes and the accessibility audit come from
+`verify-ui.mjs`, which already walks Overview at three widths.
+
 ## Reading a title (R-42 I4, H-2476)
 
 I4 asked for "plain human titles" and left one question open: does that need a

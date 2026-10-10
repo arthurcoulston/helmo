@@ -438,6 +438,21 @@ heading counts the results a ticket recorded and no longer calls that count
 "recorded" — on the legacy records every purpose in it is the frozen
 `kind === "url"` guess, and each line underneath already says so.
 
+**Overview opens with what got done.** The first of Arthur's selected widgets
+(R-44) is one wide Card of up to six completed records from a rolling 24-hour
+window, composed from the generated Card, Badge, Button and Separator in
+`packages/shell/src/RecentResults.tsx`. Category, review state and delivery are
+words first and styling second, so removing the colour loses nothing — the
+four status roles are applied through `StatusBadge` exactly as elsewhere. A
+result ref reuses the Work record's own `Reference`, so reachability and copy
+behaviour are one implementation rather than two surfaces that eventually
+disagree about whether a ref opens. Nothing is inferred: a record whose author
+never said what it produced reads *Completion account missing*, an old
+ticket's routing noun shown as a category is labelled *from its type*, and an
+empty window says so rather than drawing nothing. The window itself comes from
+the server with the rows, so a card held over from a failed refresh labels the
+window it describes instead of being redrawn against the browser's clock.
+
 **All five areas now use the same standard application.** Overview, Work,
 Roadmap, Team and Runtime share the official sidebar and components. Work,
 Roadmap and Runtime standalone entry points serve that same built document;

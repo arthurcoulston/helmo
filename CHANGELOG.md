@@ -13,6 +13,32 @@ longer.
 
 ## Unreleased — 0.9.5
 
+- Completing work now says what it produced. A `done` status was never an
+  account of anything: the record said a ticket had ended, and the only way to
+  learn what came out of it was to open the body and infer. So `update_ticket`
+  takes a `completion_account` — a work category from a closed list of ten, and
+  the outcome in one paragraph of up to 280 characters — and **closing ordinary
+  work now requires one**. Helmo stamps the author from the writing actor and
+  the time from the event, and refuses a caller that states either. Cancelling
+  needs no account, a human's own answer resolving a ticket as done stays valid
+  without one, and a truer sentence found later is accepted on a closed ticket
+  as a correction the history keeps alongside the first. The ticket's own
+  `type` is untouched and is never read as a category: `build` has no mapping,
+  because whether a build was a feature, an improvement or a bug fix is a
+  judgment only its author holds.
+
+- Overview opens with what got done in the past 24 hours. A bounded card of six
+  completed records: the author's own sentence, its category, the result it
+  produced with the same reachability and copy behaviour as the Work record,
+  and the review and delivery state in words. The window is fixed by the
+  server and travels with the rows, so two readers agree what the day held and
+  a card held over from a failed refresh labels the window it describes rather
+  than being redrawn against a local clock. Nothing is inferred: a record whose
+  author never said what it produced reads as an account that is MISSING, a
+  review link is never promoted to a deliverable, and there is no total and no
+  cross-ticket grouping — a build and its two reviews are three truthful
+  records, not three claims that the feature shipped three times.
+
 - The acceptance gate can now be asked by commit. Until now it answered one
   question — is this ticket's work accepted? — so anything holding a commit
   rather than a ticket id had to guess which tickets to ask. Crew's publication

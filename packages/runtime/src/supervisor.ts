@@ -14,7 +14,7 @@ import { spawn, ChildProcess } from 'node:child_process';
 import { ancestryBroken, ancestryStamp } from './ancestry.js';
 import { closeSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { loadRoster, stateDir } from './config.js';
+import { loadRoster, revHome, stateDir } from './config.js';
 import { respawnDecide } from './ladder.js';
 import { pollUsage } from './usage.js';
 import { rotateOpenFd } from './logretention.js';
@@ -23,8 +23,8 @@ import { endSessionGroup, sessionGroupsOf } from './shim.js';
 import { REDEPLOY_EXIT, RedeployRequest, armRedeployWatch, readRedeploy, reportRedeployLanded } from './redeploy.js';
 import { agentFalseAlarmDisposition, answeredResumeEscalation, completeAnsweredResume, createIntakeAssignment, failAnsweredResume, recordAgentResumeFailure, recordRelapse, cliError, ticketStatus } from './helm.js';
 import { GlobalConfig, LoopConfig } from './types.js';
-import { completeActivation, deploymentFile, recordRestart } from './deployment.js';
-import { readSelection, selectionFile } from './release.js';
+import { completeActivation, deploymentFile, recordRestart, refuseStart } from './deployment.js';
+import { readSelection, releasePinProblems, selectionFile } from './release.js';
 import { target } from './install.js';
 import { intakePreparationPass } from './intake-preparation.js';
 import { commandName } from './command-name.js';
@@ -108,6 +108,38 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
   const selected = selectionFile();
   if (selected) {
     const selection = readSelection(selected);
+    // Before anything is reported running: do the Helmo entry points these
+    // loops will actually use name the release that was selected? The
+    // supervisor is the one process a release change restarts, which makes it
+    // the only one placed to refuse on behalf of the ones it does not — and
+    // the loops it would otherwise start are not merely degraded, they cannot
+    // read Helmo at all (H-3103). Only the two roster globals are judged here:
+    // they are the paths this process reads itself. The wider hand-written
+    // consumer set — launchd argv, desk and seat MCP configs, the operator's
+    // shell alias — is instance data outside any release's reach, and
+    // crew:tools/estate/release-pins.mjs is what sweeps it.
+    const stranded = selection ? releasePinProblems(selection, { helmo_cli: g.helmo_cli, helmo_mcp_server: g.helmo_mcp_server }) : [];
+    if (selection && stranded.length) {
+      const detail = `roster.toml [global] disagrees with the selected release ${selection.release}: ${stranded.join('; ')}`;
+      refuseStart(deploymentFile(selected), selection, detail);
+      // The redeploy that brought this supervisor back DID land, so discharge
+      // its sentinel exactly as an ordinary startup does below. Left standing
+      // it refuses the very `release activate` this refusal tells the operator
+      // to run once the paths are repaired — a refusal that cannot be recovered
+      // from is worse than the strand it replaced. No landing note is attempted:
+      // it would go through the Helmo CLI this refusal just called unreachable.
+      if (readRedeploy()) sClear(SUP, 'REDEPLOY');
+      logEvent(SUP, 'fleet-refused', detail);
+      console.error(
+        `rev: refusing to start the fleet — ${detail}\n`
+        + '  Every loop would launch and then fail every Helmo read as an incoherent release set.\n'
+        + `  Point those paths inside ${selection.directory} in ${join(revHome(), 'roster.toml')}, then: ${commandName} service start`,
+      );
+      sClear(SUP, 'RUNNING');
+      // Exit 0 on purpose: that is the exit the service manager leaves down.
+      // A refusal the manager restarts is a crash loop that buries its reason.
+      return Promise.resolve(0);
+    }
     // Finishing an activation and coming back from an ordinary restart are
     // different records: the first completes a pending attempt, the second
     // corrects live evidence the service manager has just made stale (H-2985).

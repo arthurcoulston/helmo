@@ -52,7 +52,7 @@
 // (crew:projects/estate/specs/h2435-independent-installs.md), and an upgrade
 // that also operated a service would be operating one this command has not
 // established it owns.
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { digestOf, readStamp } from './build.js';
 import { deploymentFile, describeDeployment, recordSelection } from './deployment.js';
@@ -252,6 +252,63 @@ function migrationOf(dir: string): Migration {
     throw new ReleaseError(`${file} declares a one-way data migration and also says rollback is supported — one of those is wrong, and an operator would find out which by losing data`);
   }
   return { data_compatibility: raw.data_compatibility, rollback, ...(raw.notes ? { notes: raw.notes } : {}) };
+}
+
+// ---- what the release's consumers are pinned to --------------------------
+
+/** A path as the filesystem knows it, or as written when it is not there to
+ *  ask: one symlink above two spellings of the same directory otherwise makes
+ *  them look like two different releases (deployment.ts, `loadedFromRelease`). */
+const real = (path: string): string => { try { return realpathSync(path); } catch { return path; } };
+
+/**
+ * The release directory a path belongs to, or null when it belongs to none.
+ *
+ * Answered by walking up to the manifest rather than by inferring the layout,
+ * because the two answers differ exactly where it matters: a development
+ * installation pointing an entry point at a working tree belongs to no release
+ * and must not be read as a stale pin, while a directory beside the selected
+ * one is a release whatever it is named.
+ */
+export function releaseOf(path: string): string | null {
+  let dir = resolve(path);
+  for (;;) {
+    if (existsSync(join(dir, MANIFEST))) return real(dir);
+    const parent = dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+/**
+ * Every configured consumer path that disagrees with the selection, all of it
+ * in one list — the `releaseProblems` bargain, for the same reason.
+ *
+ * The selection decides what the NEXT process loads, so the consumers a
+ * release change strands are the ones configured by hand: an entry point still
+ * named by its full outgoing-release path goes on loading that release's
+ * bytes, and every ordinary read it attempts is then refused as an incoherent
+ * release set. That stranded four loops for sixteen hours on 2026-10-09
+ * (H-3103) while activation reported `running`, liveness was up and
+ * `/health.json` was ok — none of them asks this question.
+ *
+ * A path naming no release is left alone: it is not this check's to judge, and
+ * refusing it would refuse every development installation and every roster
+ * whose pins are placeholders because it never calls Helmo at all. What is
+ * judged is the release a path NAMES, not whether its leaf file is there —
+ * so a pin into a stale release counts even once that release's entry point
+ * has been deleted, and a missing file under no release stays somebody else's
+ * problem (crew:tools/estate/release-pins.mjs sweeps for those).
+ */
+export function releasePinProblems(selection: Selection, pins: Record<string, string>): string[] {
+  const problems: string[] = [];
+  const selected = real(resolve(selection.directory));
+  for (const [name, path] of Object.entries(pins)) {
+    const where = releaseOf(path);
+    if (where === null || where === selected) continue;
+    problems.push(`${name} names ${path}, which is release ${releaseId(where)}, not the selected ${selection.release}`);
+  }
+  return problems;
 }
 
 // ---- changing the selection ----------------------------------------------

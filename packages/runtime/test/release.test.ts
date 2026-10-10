@@ -2,10 +2,10 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { Migration, ReleaseError, describe as describeRelease, readSelection, releaseProblems, rollback, upgrade, writeSelection } from '../src/release.js';
-import { beginActivation, completeActivation, deploymentFile, failActivation, loadedFromRelease, readDeployment, recordRestart, writeDeployment } from '../src/deployment.js';
+import { Migration, ReleaseError, describe as describeRelease, readSelection, releasePinProblems, releaseProblems, rollback, upgrade, writeSelection } from '../src/release.js';
+import { beginActivation, completeActivation, deploymentFile, failActivation, loadedFromRelease, readDeployment, recordRestart, refuseStart, writeDeployment } from '../src/deployment.js';
 import { markerLines, snapshot } from '../src/build.js';
 import { runCommand } from '../src/command-name.js';
 
@@ -270,6 +270,91 @@ describe('activating a selected release (H-2571)', () => {
     upgrade(file, makeRelease(dir, 'second'));
     expect(completeActivation(deploymentFile(file), readSelection(file)!, 'fixture-a', 'cmd', 1)).toBeNull();
     expect(readDeployment(deploymentFile(file))?.phase).toBe('selected');
+  });
+});
+
+describe('refusing a start that would strand the fleet (H-3103)', () => {
+  /** The outage: two releases side by side, the selection moved to the new
+   *  one, and the hand-written entry points still naming the old one. */
+  const stranded = () => {
+    const dir = root();
+    const file = selectionAt(dir);
+    const previous = makeUnifiedRelease(dir, 'current');
+    const next = makeUnifiedRelease(dir, 'next');
+    for (const release of [previous, next]) {
+      for (const entry of ['cli.js', 'server.js']) {
+        writeFileSync(join(release, 'helmo', 'packages/work', 'dist', entry), `export const release = ${JSON.stringify(basename(release))};\n`);
+      }
+    }
+    upgrade(file, previous);
+    upgrade(file, next);
+    const pinsIn = (release: string) => ({
+      helmo_cli: join(release, 'helmo', 'packages/work', 'dist', 'cli.js'),
+      helmo_mcp_server: join(release, 'helmo', 'packages/work', 'dist', 'server.js'),
+    });
+    return { dir, file, previous, next, pinsIn };
+  };
+
+  it('names both pins left on the outgoing release, and says nothing when they move', () => {
+    const { file, previous, next, pinsIn } = stranded();
+    const selection = readSelection(file)!;
+
+    const problems = releasePinProblems(selection, pinsIn(previous));
+    expect(problems).toHaveLength(2);
+    expect(problems[0]).toContain('helmo_cli names');
+    expect(problems.join('\n')).toContain('which is release current, not the selected next');
+
+    expect(releasePinProblems(selection, pinsIn(next))).toEqual([]);
+  });
+
+  it('leaves a path that belongs to no release alone, so a development install still starts', () => {
+    const { dir, file } = stranded();
+    const worktree = join(dir, 'worktree', 'packages/work', 'dist');
+    mkdirSync(worktree, { recursive: true });
+    writeFileSync(join(worktree, 'cli.js'), 'export const dev = true;\n');
+
+    expect(releasePinProblems(readSelection(file)!, { helmo_cli: join(worktree, 'cli.js') })).toEqual([]);
+  });
+
+  it('judges the release a pin names, not whether its leaf file survived', () => {
+    const { file, previous, next, pinsIn } = stranded();
+    const stale = pinsIn(previous);
+    unlinkSync(stale.helmo_cli);
+    expect(releasePinProblems(readSelection(file)!, { helmo_cli: stale.helmo_cli }).join('\n'))
+      .toContain('which is release current, not the selected next');
+
+    // And a path under no release stays out of it even when nothing is there:
+    // a roster of placeholders belongs to an installation that never calls
+    // Helmo, and refusing it would refuse that installation its fleet.
+    expect(releasePinProblems(readSelection(file)!, { helmo_cli: '/tmp/no-such-helmo-cli.js' })).toEqual([]);
+    expect(releasePinProblems(readSelection(file)!, pinsIn(next))).toEqual([]);
+  });
+
+  it('replaces a running record rather than leaving a phase the fleet is not in', () => {
+    const { file, previous, pinsIn } = stranded();
+    const selection = readSelection(file)!;
+    const activation = deploymentFile(file);
+    beginActivation(activation, selection, 'fixture-a', 'attempt-9');
+    completeActivation(activation, selection, 'fixture-a', 'rev run', 4242);
+    expect(readDeployment(activation)).toMatchObject({ phase: 'running' });
+
+    const detail = `roster.toml [global] disagrees with the selected release next: ${releasePinProblems(selection, pinsIn(previous)).join('; ')}`;
+    const refused = refuseStart(activation, selection, detail);
+    expect(refused).toMatchObject({ phase: 'failed', detail, processes: [], required_processes: [] });
+    expect(refused?.recovery).toContain(`${runCommand} service start`);
+    expect(readDeployment(activation)?.phase).toBe('failed');
+  });
+
+  it('leaves a record describing another selection saying so', () => {
+    const { dir, file } = stranded();
+    const selection = readSelection(file)!;
+    const activation = deploymentFile(file);
+    beginActivation(activation, selection, 'fixture-a', 'attempt-10');
+    completeActivation(activation, selection, 'fixture-a', 'rev run', 4242);
+
+    const other = { ...selection, release: 'elsewhere', directory: join(dir, 'release', 'elsewhere') };
+    expect(refuseStart(activation, other, 'not this selection')).toBeNull();
+    expect(readDeployment(activation)).toMatchObject({ phase: 'running', release: 'next' });
   });
 });
 
@@ -666,10 +751,14 @@ describe('a restarted supervisor is not a failed deployment (H-2985)', () => {
 });
 
 describe('the release commands (H-2493)', () => {
-  function rev(home: string, args: string[], env: Record<string, string> = {}) {
+  /** The pins a roster carries when the test does not care: under no release,
+   *  so the H-3103 start gate has nothing to say about them. */
+  const PLACEHOLDER_PINS = { helmo_cli: '/tmp/helmo-cli.js', helmo_mcp_server: '/tmp/helmo-server.js' };
+
+  function rev(home: string, args: string[], env: Record<string, string> = {}, pins = PLACEHOLDER_PINS) {
     // usage_poll_seconds = 0: `run` would otherwise read the operator's real
     // keychain credential and hold the process on a live usage call (H-740).
-    writeFileSync(join(home, 'roster.toml'), '[global]\nhelmo_cli = "/tmp/helmo-cli.js"\nhelmo_mcp_server = "/tmp/helmo-server.js"\nusage_poll_seconds = 0\n');
+    writeFileSync(join(home, 'roster.toml'), `[global]\nhelmo_cli = "${pins.helmo_cli}"\nhelmo_mcp_server = "${pins.helmo_mcp_server}"\nusage_poll_seconds = 0\n`);
     const inherited = { ...process.env };
     // A loop's absolute selection overrides REV_HOME, even in an unpinned test.
     for (const key of ['INSTALLATION_RELEASE', 'HELMO_INSTALLATION', 'REV_LABEL', 'HELMO_HOME', 'HELMO_DB', 'HELMO_LABEL', 'ROADMAP_HOME', 'ROADMAP_DB', 'ROADMAP_LABEL']) {
@@ -708,7 +797,7 @@ describe('the release commands (H-2493)', () => {
     const env = { INSTALLATION_RELEASE: file, REV_LABEL: label };
     const markOldSupervisor = () => writeFileSync(join(supervisor, 'RUNNING'), `${process.pid}\n`);
     markOldSupervisor();
-    return { dir, home, file, env, supervisor, markOldSupervisor };
+    return { dir, home, file, env, release, supervisor, markOldSupervisor };
   }
 
   it('drives activate through the CLI, bounded drain, and replacement supervisor readback', () => {
@@ -739,6 +828,46 @@ describe('the release commands (H-2493)', () => {
   // anything. The acceptance side needs a supervisor that really loaded a
   // stamped release, which is what the disposable-installation run in
   // crew:agents/mason/workspace/h2985-live-restart.sh exercises end to end.
+  it('refuses the start instead of reporting running when the roster still points at the outgoing release (H-3103)', () => {
+    const i = activatableInstallation('refused-start');
+    const outgoing = makeRelease(i.dir, 'outgoing');
+    const stale = {
+      helmo_cli: join(outgoing, 'helmo', 'dist', 'cli.js'),
+      helmo_mcp_server: join(outgoing, 'helmo', 'dist', 'server.js'),
+    };
+
+    expect(rev(i.home, ['release', 'activate'], i.env, stale).status).toBe(0);
+    expect(readDeployment(deploymentFile(i.file))?.phase).toBe('activating');
+
+    unlinkSync(join(i.supervisor, 'RUNNING'));
+    const refused = rev(i.home, ['run'], i.env, stale);
+    // Exit 0 is the refusal: the service manager leaves a successful exit
+    // down, and a refusal it restarted would be a crash loop burying its own
+    // reason. Both outcomes exit 0, so the record and the message decide.
+    expect(refused.status, refused.stderr).toBe(0);
+    expect(refused.stderr).toContain('refusing to start the fleet');
+    expect(refused.stderr).toContain('is release outgoing, not the selected refused-start');
+    expect(refused.stderr).toContain('roster.toml');
+
+    const record = readDeployment(deploymentFile(i.file));
+    expect(record?.phase).toBe('failed');
+    expect(record?.detail).toContain('helmo_cli names');
+    expect(record?.processes).toEqual([]);
+    // Nothing claims to be running, and the supervisor left no live marker.
+    expect(existsSync(join(i.supervisor, 'RUNNING'))).toBe(false);
+    expect(describeRelease(i.file).join('\n')).not.toContain('deployment: running');
+
+    // Moving the pins into the selected release is the whole repair: the same
+    // installation then activates and reports running with no other change.
+    const good = { helmo_cli: join(i.release, 'helmo', 'dist', 'cli.js'), helmo_mcp_server: join(i.release, 'helmo', 'dist', 'server.js') };
+    i.markOldSupervisor();
+    const repaired = rev(i.home, ['release', 'activate'], i.env, good);
+    expect(repaired.status, `${repaired.stdout}${repaired.stderr}`).toBe(0);
+    unlinkSync(join(i.supervisor, 'RUNNING'));
+    expect(rev(i.home, ['run'], i.env, good).status).toBe(0);
+    expect(readDeployment(deploymentFile(i.file))?.phase).toBe('running');
+  });
+
   it('leaves a running record alone when a returning supervisor cannot certify what it loaded', () => {
     const i = activatableInstallation('activation-restart');
     expect(rev(i.home, ['release', 'activate'], i.env).status).toBe(0);

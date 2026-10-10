@@ -160,6 +160,30 @@ export function failActivation(file: string, detail: string): DeploymentRecord |
 }
 
 /**
+ * A start the installation refused, recorded from whichever phase it found.
+ *
+ * `failActivation` finishes a pending attempt that got as far as trying;
+ * this ends one that was never allowed to begin, and it has to be able to
+ * overwrite a `running` record as well, because the refusal's whole purpose is
+ * that nothing downstream reads a phase the installation is not in. It clears
+ * the process evidence for the same reason. A record describing some other
+ * selection is left saying so: a refusal here says nothing about that one.
+ */
+export function refuseStart(file: string, selection: Selection, detail: string): DeploymentRecord | null {
+  let previous: DeploymentRecord | null;
+  try { previous = readDeployment(file); } catch { return null; }
+  if (!previous || (previous.phase !== 'activating' && previous.phase !== 'running')) return null;
+  if (previous.release !== selection.release || previous.directory !== selection.directory) return null;
+  const record: DeploymentRecord = {
+    ...previous, phase: 'failed', updated_at: new Date().toISOString(), detail,
+    processes: [], required_processes: [],
+    recovery: `Nothing from this release is running: the start was refused, not crashed. Make the configuration named in detail agree with the selected release, then run ${runCommand} service start.`,
+  };
+  writeDeployment(file, record);
+  return record;
+}
+
+/**
  * Did a process load the selected release's OWN bytes? The marker says which
  * directory it loaded and the build stamped there; the selection says which
  * directory it chose and the commit it expects of each component. Loaded code

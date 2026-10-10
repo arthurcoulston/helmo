@@ -911,6 +911,31 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
     same liveness rule (`markerObservation`, shared with `sentinels.ts` so the
     recycled-pid defence of H-154 is not written twice), and prints `RESTARTED`
     rather than a false failure. Recovery prints only when something is wrong.
+  - **A release that starts cannot assume its consumers moved with it**
+    (H-3103). Activation changes one file and restarts one process, so every
+    entry point named by its full release path is still pointing at the release
+    being left. On 2026-10-09 the supervisor activated 2026.10-18 while
+    `roster.toml` still named 2026.10-17's Work CLI and MCP server: all five
+    loops launched, then failed every Helmo read as an incoherent release set,
+    four wedged, and the installation stayed that way for sixteen hours while
+    the record said `running`, liveness was up and `/health.json` was ok. None
+    of those three asks whether the consumers agree with the selection.
+    `releasePinProblems` (release.ts) does, and the supervisor refuses the
+    start before anything reports `running`: it names every disagreeing path,
+    the release each one is on, the file to edit, and exits 0 so the service
+    manager leaves it down rather than crash-looping over the reason. The
+    refusal discharges the redeploy sentinel on its way out, because a refusal
+    whose own recovery line is then rejected as "a redeploy is already pending"
+    is worse than the strand it replaced. What it judges is the release a path
+    NAMES — found by walking up to that release's `RELEASE.json`, not by
+    inferring a layout — so a working-tree path belongs to no release and is
+    left alone, and a development installation or a roster of placeholders
+    still starts. Only the two roster globals are gated here; they are the
+    paths this process reads itself. The wider hand-written consumer set (two
+    launchd argv, three desk and seat MCP configs, the operator's shell alias —
+    three file formats, three of them outside any repo) is instance data no
+    release can reach, and `crew:tools/estate/release-pins.mjs` is what sweeps
+    it both directions.
 - `remove.ts` — **the one command that deletes an installation's records**
   (H-2512). `rev install remove [--confirm]`. Every other removal rev has keeps
   the data: `rev service uninstall` takes the definition and leaves the store,

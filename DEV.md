@@ -190,6 +190,8 @@ joining their stores — with one deliberate exception.
 The four operator readings are the first Overview content: a two-column grid
 at the 1280×800 baseline and one column on narrow windows. Their own card
 titles are the only section titles; the legacy area links follow the grid.
+The reading order is present state, next work, team activity, then the taller
+results ledger, so a narrow window reaches all four readings before the ledger.
 Dense readings use document scrolling, never clipped cards or nested scroll
 regions. `verify:ui` records each card's baseline top and content height and
 refuses a reading that begins below the desktop fold (H-3092).

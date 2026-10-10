@@ -829,11 +829,14 @@ try {
   await page.locator('[aria-label="Team now"]').waitFor();
   const overviewCards = await page.evaluate(() => [...document.querySelectorAll('[aria-label="Overview readings"] > [data-slot="card"]')]
     .map((card) => ({ label: card.getAttribute('aria-label'), top: Math.round(card.getBoundingClientRect().top), height: Math.round(card.getBoundingClientRect().height), bottom: Math.round(card.getBoundingClientRect().bottom) })));
-  assert.deepEqual(overviewCards.map((card) => card.label), ['Team now', 'What happens next', 'Results · Past 24 hours', 'Team activity']);
+  assert.deepEqual(overviewCards.map((card) => card.label), ['Team now', 'What happens next', 'Team activity', 'Results · Past 24 hours']);
   assert.equal(new Set(overviewCards.map((card) => card.top)).size, 2, `Overview is not a two-row composition: ${JSON.stringify(overviewCards)}`);
   assert.ok(overviewCards.every((card) => card.top < 800), `an Overview reading starts below the 1280×800 fold: ${JSON.stringify(overviewCards)}`);
   assert.equal(await page.locator('h1').count(), 1, 'Overview must have one shared page title');
   console.log(`Overview at 1280×800: ${overviewCards.map((card) => `${card.label} ${card.height}px high, top ${card.top}px, bottom ${card.bottom}px`).join('; ')}`);
+  await page.setViewportSize({ width: 390, height: 800 });
+  const narrowOverviewCards = await page.locator('[aria-label="Overview readings"] > [data-slot="card"]').evaluateAll((cards) => cards.map((card) => card.getAttribute('aria-label')));
+  assert.deepEqual(narrowOverviewCards, ['Team now', 'What happens next', 'Team activity', 'Results · Past 24 hours'], 'the narrow Overview must reach activity before the tall results ledger');
   const teamNow = page.locator('[aria-label="Team now"]');
   await teamNow.getByText('Team now', { exact: true }).waitFor();
   /* Element by element rather than `textContent`: nothing in this card puts a

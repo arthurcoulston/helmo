@@ -840,8 +840,8 @@ function AreaContent({ area, state, selected, areas, period, onPeriodChange }: {
         <section aria-label="Overview readings" className="grid items-start gap-3 lg:grid-cols-2">
           {team ? <TeamNow data={team} /> : null}
           {next ? <Runway data={next} /> : null}
-          {results ? <RecentResults data={results} /> : null}
           {activity ? <TeamActivity data={activity} /> : null}
+          {results ? <RecentResults data={results} /> : null}
         </section>
         <Separator />
         <section className="flex flex-col gap-3">

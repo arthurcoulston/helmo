@@ -1261,6 +1261,17 @@ and dependency edges, shared projects and matching refs do not state an
 outcome identity strongly enough to merge them. A roll-up needs an explicit
 durable outcome id, and this widget must not invent one.
 
+`seatWork()` beside it answers a different question for Overview's condensed
+roster (R-44 H-3091): what each agent is holding RIGHT NOW, keyed by assignee.
+Only `in_progress` with a name on it counts. Reserved work is work handed to a
+seat and open work in its workstream is work it might take next; reading either
+as current work is how a glance view starts saying an idle agent is busy. The
+map is prototype-free, so a seat named for an inherited property cannot answer
+for one that holds nothing (H-3004). The runtime joins it to its own session
+states — it cannot read this store (R-47 C1), so `serve.js` passes this map in.
+Proof: `test/seat-work.test.ts`, driven through the store's real claim
+transition rather than hand-set fields.
+
 The contract is `crew:projects/r39/RECENT-RESULTS-CONTRACT.md`; its §4 sample
 is `test/recent-results.test.ts` (window, rows, and the account through the
 store, MCP and CLI paths) and `packages/shell/test/recent-results.test.mjs`

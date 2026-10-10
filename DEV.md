@@ -186,7 +186,13 @@ aggregate machine reading remains at
 `/health.json`. The product view entries remain executable compatibility
 surfaces; importing them never binds their old ports.
 Overview reads each product snapshot independently and summarizes them without
-joining their stores. Team projects the roster's own configuration — each
+joining their stores — with one deliberate exception. The condensed roster
+(`team` on the Overview document, R-44 H-3091) is a join: which sessions are
+running comes from the runtime and what each seat has claimed comes from the
+work record, and neither may import the other (R-47 C1), so `serve.js` composes
+`teamNowSnapshot(seatWork(work.records))` in the one process that already holds
+both. No store reads the other, and the join is named here because a reader of
+the sentence above would otherwise be entitled to assume it cannot happen. Team projects the roster's own configuration — each
 seat's identity, the files it is configured to load, what those files measure
 against their own `cap_tokens`, and what the token-log says its sessions spent.
 The composed figure counts the `--- Skill: … ---` header the shim writes before

@@ -127,6 +127,22 @@ export function loopStateRole(state: string): StatusRole | null {
   return null
 }
 
+/** An agent's rolled-up state on the condensed roster (packages/runtime
+ *  `team-now.ts`). The same severities `loopStateRole` gives the session states
+ *  behind it, which `test/status-palette.test.mjs` asserts state by state: the
+ *  roll-up may move a state's prominence by choosing which session speaks for
+ *  the agent, and it may never move what a state MEANS.
+ *
+ *  So `awaiting` and `stopped` are neutral — nothing to do and a deliberate
+ *  stop are the fleet working — and `unknown` is amber, because a state that
+ *  could not be read is a reading Arthur has to take himself. */
+export function agentStateRole(state: string): StatusRole | null {
+  if (state === "failed") return "failure"
+  if (state === "blocked" || state === "unknown") return "attention"
+  if (state === "working") return "info"
+  return null
+}
+
 /** A configured context file's standing against its own `cap_tokens`.
  *
  *  `tight` and `uncapped` are deliberately neutral. A file kept just under its

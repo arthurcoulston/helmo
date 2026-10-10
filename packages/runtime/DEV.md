@@ -359,6 +359,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   burns it exists for both spanned process restarts; the window is floored at
   `.burn_floor` (stamped at loop start) so a resumed loop starts clean instead
   of tripping again on money already accounted for (H-412).
+- `team-now.ts` — the condensed roster behind Overview's Team now card (R-44
+  H-3091): Rev's state words rolled up from SESSIONS to accountable AGENTS, in
+  six display states. See "The condensed roster" below for the mapping, the
+  roll-up order and where the reasons come from.
 - `team.ts` — the Team projection (H-3001): what each seat is CONFIGURED to
   carry into a session, and what the token-log says its sessions spent. The
   inventory measures the files the roster itself names — the constitution and
@@ -1251,6 +1255,81 @@ mutually distinguishable hues (H-713), so a mark must never stand without its
 name. Exactly one function draws one and it takes the name it prints, and
 `.actor { white-space: nowrap }` is part of the same rule — the Loop column is
 the narrowest on the page and the first to wrap on a phone.
+
+## The condensed roster (R-44 H-3091)
+
+`teamNowSnapshot()` in `view.ts` is the reading; `team-now.ts` is the judgment.
+It answers one question — which agents are working, awaiting work, blocked or
+stopped — and it rides the Overview document as `team`.
+
+**Six states, not four.** Arthur asked for Working / Awaiting work / Blocked /
+Stopped. `failed` and `unknown` exist because folding them in would lose the
+two readings that matter most: an unexpected failure is not a blockage somebody
+decided on, and a state this build could not read is not a state. The mapping
+is a table in `team-now.ts`, and a state word it does not hold reads as
+`unknown` rather than `stopped` — a future sentinel must never present itself
+as a deliberate stop.
+
+| Rev's word | Display | Why |
+| --- | --- | --- |
+| `RUNNING` | working | executing |
+| `IDLE`, `SEAT_HELD` | awaiting | up and available; nothing to draw, or the seat's holder has it |
+| `BLOCKED`, `LIMIT`, `BACKOFF` | blocked | cannot draw work, and nobody chose it |
+| `STOP`, `HOLD`, `PARKED`, `halted` | stopped | somebody's instruction, or never started |
+| `WEDGED`, `CRASHED` | failed | down and will not recover on its own |
+| `UNKNOWN`, anything else | unknown | the reading failed |
+
+`LIMIT` and `BACKOFF` as *blocked* is the one judgment here worth a second
+opinion: both carry a recorded obstacle and neither is anybody's decision, so
+neutral would be wrong, but both do recover on their own, so Blocked slightly
+overstates them. The source word travels with every row, so the overstatement
+is readable rather than hidden.
+
+**The roll-up is by severity, never by convenience.** One agent is one
+accountable seat, and a seat may be served by several sessions (`seat` in the
+roster). The chip takes the worst of them in the order failed > blocked >
+unknown > working > awaiting > stopped, and the reason shown is the deciding
+session's own — a reason belonging to a different worker would be worse than
+none. `unknown` outranks `working` deliberately: a session whose state could
+not be read may be in any state, including a failed one, so a healthy sibling
+must not cover for it. Every session is listed under the card's disclosure, so
+the roll-up can be checked rather than taken on trust.
+
+**Nothing is inferred from an absence.** A seat with no process and no marker
+is `stopped` because Rev reports `halted`, not because this code looked for a
+heartbeat and missed one. Where no reason was recorded the card says so rather
+than composing a plausible sentence: `stateReason` is the four reasons
+Runtime's own State column carries, and `stoppageReason` is the rest — a stop's
+owner and reason, a park's PACE command, a limit's provider reply, a backoff's
+attempt and retry instant, and a crash's abandoned pid. Each reads a field its
+writer in this repo actually writes.
+
+**A reading that cannot be taken is a reading, not a crash.**
+`teamNowSnapshot` catches it and answers `unavailable`; the card draws red and
+says so. Overview builds its whole document before writing a header, so
+throwing here would answer 500 for the entire page (H-3001). One honest limit:
+on the composed app an unreadable ROSTER never reaches this branch, because
+Overview counts the roster for its Team summary card first and answers 500 —
+asserted deliberately in `packages/cli/test/app-acceptance.test.mjs`. What this
+branch covers there is a failure after the roster loaded, such as a state
+directory that cannot be read.
+
+The tickets on each entry are the claims the work record holds, passed in by
+`serve.js`: `seatWork()` in `packages/work/src/presentation.ts`, keyed by
+assignee. A claim is the only thing in that record saying an agent is working
+on something — reserved work is work handed to a seat, not work it is doing.
+The runtime never imports the work record (R-47 C1), which is why this one
+argument is passed rather than read.
+
+Proof: `test/team-now.test.ts` (the mapping against every state word `state()`
+can return, the roll-up, and each reason read from a real installation
+directory), `packages/work/test/seat-work.test.ts` (claims through the real
+store), `packages/shell/test/team-now.test.mjs` (what a reader sees),
+`packages/shell/test/status-palette.test.mjs` (the roll-up's severities are
+Runtime's, state word by state word), `packages/cli/test/app-acceptance.test.mjs`
+(the document reaches Overview through the shipped binary, join included), and
+`packages/shell/scripts/verify-ui.mjs` (all six states seeded and drawn, the
+disclosure opened, both themes, three widths, axe).
 
 ## Where the Work link points (R-11 H-832, R-47 H-2801)
 

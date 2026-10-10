@@ -59,6 +59,19 @@ function closeTicket(homes, id, summary) {
   assert.equal(r.status, 0, r.stderr);
 }
 
+/** Claim a seeded ticket as a named agent, through the shipped binary. The
+ *  claim is the only thing in the record that says an agent is working on
+ *  something, so the condensed roster's join is only proved if a real one
+ *  made it. */
+function claimTicket(homes, id, agent) {
+  const actor = JSON.stringify({ name: agent, kind: 'agent', model: 'test', version: 'test' });
+  const r = spawnSync(join(BIN, 'helmo'), [
+    'work', 'update', '--ticket', id, '--note', 'claimed by the app acceptance fixture', '--status', 'in_progress',
+  ], { encoding: 'utf8', env: env({ ...homes, HELMO_ACTOR: actor }) });
+  if (r.error) throw r.error;
+  assert.equal(r.status, 0, r.stderr);
+}
+
 function seedProject(homes, title) {
   const store = new Store(join(homes.ROADMAP_HOME, 'roadmap.db'));
   try {
@@ -148,6 +161,28 @@ test('the app answers its own port directly and renders the record a recorded UR
 
   const overview = await (await fetch(`${origin}/api/v1/overview`)).json();
   assert.ok(overview.data.records.some(record => record.id === ticket), 'Overview API preserves its existing record projection');
+
+  /* The condensed roster reaches Overview too, and it is the one document on
+     this page that joins both records: the runtime says which sessions are
+     running and the work record says what each seat has claimed (H-3091).
+     Asserted through the shipped binary for the same reason as the results
+     document below — `verify:ui` is a release gate, not part of this suite,
+     and a card that draws its own empty state hides a broken join. */
+  const claimed = seedTicket(homes, 'the work the fixture seat is holding');
+  claimTicket(homes, claimed, 'example-worker');
+  const withTeam = await (await fetch(`${origin}/api/v1/overview`)).json();
+  const team = withTeam.data.team;
+  assert.ok(team, 'the Overview API carries no team document for the card to draw');
+  assert.ok(Date.parse(team.as_of), 'the team reading carries no instant it was taken at');
+  assert.equal(team.unavailable, undefined, `the fixture roster read as unreadable: ${team.unavailable}`);
+  const member = team.agents.find((agent) => agent.agent === 'example-worker');
+  assert.ok(member, `the example roster's seat is not in the reading: ${JSON.stringify(team.agents.map((a) => a.agent))}`);
+  // Nothing has started this loop, so Rev reports `halted` and the card reads
+  // it as Stopped. The state that must never appear here is an available one:
+  // no process is not the same as nothing to do.
+  assert.equal(member.source_state, 'halted');
+  assert.equal(member.state, 'stopped');
+  assert.deepEqual(member.work.map((w) => w.id), [claimed], 'the ticket the seat claimed did not reach its roster entry');
 
   /* The results widget's document reaches Overview, carried from Work rather
      than recomputed, with the window the server fixed (R-44). Asserted here

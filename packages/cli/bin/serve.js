@@ -2,8 +2,9 @@
 import { appConfig, startAppServer } from '../app-server.mjs';
 import { appRequest, shellRequest } from '../../app/server.mjs';
 import { workHealth, workListening, workRequest, workSnapshot } from '../../work/dist/view.js';
+import { seatWork } from '../../work/dist/presentation.js';
 import { roadmapHealth, roadmapRequest, roadmapSnapshot } from '../../roadmap/dist/view.js';
-import { runtimeRequest, runtimeSnapshot, teamFile, teamMember, teamPeriod, teamSnapshot } from '../../runtime/dist/view.js';
+import { runtimeRequest, runtimeSnapshot, teamFile, teamMember, teamNowSnapshot, teamPeriod, teamSnapshot } from '../../runtime/dist/view.js';
 import { loadRoster } from '../../runtime/dist/config.js';
 import { apiJson, JSON_HEADERS } from '../../core/dist/index.js';
 
@@ -65,7 +66,12 @@ function overviewSnapshot() {
   // Carried through from the Work document rather than recomputed: the window
   // is the server's to fix, and two readings taken at two instants on one page
   // would disagree about what the past 24 hours held (R-44).
-  ], results: work.results };
+  ], results: work.results,
+  // The condensed roster. This is the one place the two records meet: the
+  // runtime knows which sessions are running and the work record knows what
+  // each seat has claimed, and neither may read the other (R-47 C1), so the
+  // join happens here — in the process that already holds both (H-3091).
+  team: teamNowSnapshot(seatWork(work.records)) };
 }
 const appDocuments={overview:overviewSnapshot};
 const running = await startAppServer(appConfig(), (request, response) => {

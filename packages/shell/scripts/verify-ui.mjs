@@ -88,7 +88,54 @@ appendFileSync(join(dir, 'runtime/roster.toml'), [
   'model = "fixture-model"',
   'constitution = "constitutions/no-such-profile.md"',
   '',
+  /* Overview's condensed roster needs every state it can draw to be really
+     drawn somewhere, and the two below are the ones the existing fixture
+     cannot produce: an unexpected failure, and a seat served by more than one
+     session. Without them the card's red chip and its roll-up render nowhere
+     in this run and pass every assertion by being absent — the same trap the
+     three seats above were added for (H-3091). */
+  '[loops.wedged-worker]',
+  'workstream = "fixture"',
+  `cwd = ${JSON.stringify(seatTree)}`,
+  'runtime = "claude"',
+  'model = "fixture-model"',
+  'constitution = "constitutions/well-found.md"',
+  '',
+  '[loops.pair]',
+  'workstream = "fixture"',
+  `cwd = ${JSON.stringify(seatTree)}`,
+  'runtime = "claude"',
+  'model = "fixture-model"',
+  'constitution = "constitutions/well-found.md"',
+  '',
+  // A second session in one seat. Its own writable checkout, because the
+  // roster refuses to load two same-seat workers sharing one.
+  '[loops.pair-2]',
+  'seat = "pair"',
+  'lane = "fixture"',
+  'workstream = "fixture"',
+  `cwd = ${JSON.stringify(join(dir, 'runtime/seat-2'))}`,
+  'runtime = "claude"',
+  'model = "fixture-model"',
+  'constitution = "constitutions/well-found.md"',
+  '',
 ].join('\n'));
+/* The live states. A marker naming a pid that is really alive — this process —
+   is what Rev reads as a running session; without one every seat in the
+   fixture is `halted`, which is one of the four states and tells a reader
+   nothing about the other three. */
+mkdirSync(join(dir, 'runtime/seat-2'), { recursive: true });
+const livePid = `${process.pid}\n`;
+for (const [loop, files] of Object.entries({
+  'well-found': { RUNNING: livePid },
+  'over-its-cap': { RUNNING: livePid, IDLE: '4201\nno executable work is owned by this seat or ready in its watched scope\n' },
+  'wedged-worker': { WEDGED: 'The fixture worker cannot reach Helm.\nat=2026-10-10T17:00:00.000Z\n' },
+  pair: { RUNNING: livePid },
+  'pair-2': { RUNNING: livePid, IDLE: '4201\nno executable work is owned by this seat or ready in its watched scope\n' },
+})) {
+  mkdirSync(join(dir, 'runtime/state', loop), { recursive: true });
+  for (const [file, content] of Object.entries(files)) writeFileSync(join(dir, 'runtime/state', loop, file), content);
+}
 const actor = { name: 'fixture', kind: 'orchestrator', model: 'fixture', version: 'fixture' };
 const store = new Store(join(dir, 'work/helmo.db'));
 const create = (title, extra = {}) => store.createTicket(actor, { title, body: `Full record for ${title}`, type: 'build', workstream: 'fixture', labels: ['acct:direction'], ...extra });
@@ -140,6 +187,11 @@ store.returnToHuman(actor, decision.id, { situation: 'Fixture situation', questi
    that refused it, and a closed ticket with nothing to show for itself. */
 const moving = create('Work in motion reads as in motion');
 store.updateTicket(actor, { ticket_id: moving.id, status: 'in_progress', note: 'Claimed by the fixture worker.' });
+/* A claim by a seat the ROSTER configures, which is what puts a ticket link on
+   Overview's condensed roster. Every other claim in this fixture is the
+   orchestrator's, and a seat holding nothing draws no link at all (H-3091). */
+const seatHolds = create('The work a configured seat is holding');
+store.updateTicket({ name: 'well-found', kind: 'agent', model: 'fixture', version: 'fixture' }, { ticket_id: seatHolds.id, status: 'in_progress', note: 'Claimed by the configured seat.' });
 const reviewer = { name: 'fixture-reviewer', kind: 'agent', model: 'fixture', version: 'fixture' };
 const reviewed = (title, verdict) => {
   const t = create(title);
@@ -691,6 +743,59 @@ try {
     'a role inside a table row carries ink with no tint of its own, so a hovered or expanded row changes the surface under it',
   );
   await page.evaluate(() => document.documentElement.className = 'light');
+  /* Overview's condensed roster (H-3091). Read here rather than left to the
+     layout walk below, because an empty widget draws its own "no agents" copy,
+     audits clean, and reports 30 layouts verified: the seed is the only part
+     that makes this card's pass a statement about the product. */
+  await page.goto(`${origin}/overview`);
+  const teamNow = page.locator('[aria-label="Team now"]');
+  await teamNow.getByText('Team now', { exact: true }).waitFor();
+  /* Element by element rather than `textContent`: nothing in this card puts a
+     space between the name, the chip and the reason, so one string would read
+     as "example-workerBlockedThe fixture worker…" and a per-field assertion
+     would be matching an artifact of the markup. */
+  const roster = await teamNow.evaluate((el) => [...el.querySelectorAll('li')]
+    .map((li) => [...li.children].map((child) => child.textContent.replace(/\s+/g, ' ').trim()).join(' ')));
+  /* Every seat the roster configures, each one exactly once: a seat served by
+     two sessions is one agent, which is the whole reason this document rolls
+     up rather than listing loops. */
+  assert.deepEqual(
+    roster.map((row) => row.split(' ')[0]),
+    ['example-worker', 'well-found', 'over-its-cap', 'cannot-be-read', 'wedged-worker', 'pair'],
+    `the condensed roster is not the fixture's own seats: ${JSON.stringify(roster)}`,
+  );
+  for (const [seat, reading] of Object.entries({
+    'well-found': new RegExp(`^well-found Working ${seatHolds.id}$`),
+    'over-its-cap': /^over-its-cap Awaiting work$/,
+    // The reason is in the glance view for the two states that need Arthur,
+    // and this is the one that proves it is rendered rather than merely sent.
+    'example-worker': /^example-worker Blocked The fixture worker has downed tools/,
+    'cannot-be-read': /^cannot-be-read Stopped$/,
+    'wedged-worker': /^wedged-worker Failed The fixture worker cannot reach Helm\.$/,
+    // Two sessions, one chip, and the count that says so.
+    pair: /^pair Working 2 sessions$/,
+  })) {
+    const row = roster.find((text) => text.startsWith(`${seat} `)) ?? '';
+    assert.match(row, reading, `${seat}'s reading on the condensed roster`);
+  }
+  /* The disclosure, which no server-rendered proof can see: a closed
+     Collapsible renders none of its content. Both of the pooled seat's
+     sessions are named under it, with their own state words, so the roll-up is
+     checkable rather than taken on trust. */
+  await teamNow.getByRole('button', { name: 'Session detail', exact: true }).click();
+  await teamNow.getByText(/pair · session pair-2 · IDLE/).waitFor();
+  await teamNow.getByText(/^pair · RUNNING · fixture$/).waitFor();
+  /* And the fifteen-second refresh does not take it away again. The card is
+     redrawn from a new reading every poll, so a disclosure a reader opened to
+     understand a blockage has to survive one — closing under them is how a
+     page that updates itself becomes one nobody can read. */
+  const refreshed = await page.getByText(/^Refreshed /).innerText();
+  await page.waitForFunction(
+    (was) => [...document.querySelectorAll('p')].some((p) => p.textContent.startsWith('Refreshed ') && p.textContent !== was),
+    refreshed,
+    { timeout: 30_000 },
+  );
+  await teamNow.getByText(/pair · session pair-2 · IDLE/).waitFor({ timeout: 1_000 });
   const areas = ['overview', 'work', 'roadmap', 'team', 'run'], themes = ['light', 'dark'], widths = [390, 640, 1280];
   const audited = [];
   /* Where the horizontal fold falls on a phone. Nothing above can see this:

@@ -4,6 +4,7 @@ import * as React from "react"
 import { RoadmapView, type RoadmapData } from "./RoadmapView"
 import { CopyReference, TicketDetails, WorkRecord, type WorkRecordData } from "./WorkRecord"
 import { RecentResults, resultsOf } from "./RecentResults"
+import { TeamNow, teamNowOf } from "./TeamNow"
 import {
   ActivityIcon,
   ChevronRightIcon,
@@ -829,6 +830,7 @@ function AreaContent({ area, state, selected, areas, period, onPeriodChange }: {
        page rather than an error: the areas and the Work link are what Overview
        has always been, and a missing widget is not a broken page. */
     const results = resultsOf(state.data)
+    const team = teamNowOf(state.data)
     return (
       <>
         <p className="text-sm text-muted-foreground">4 areas</p>
@@ -846,6 +848,15 @@ function AreaContent({ area, state, selected, areas, period, onPeriodChange }: {
             empty
           )}
         </section>
+        {team ? <>
+          <Separator />
+          <section className="flex flex-col gap-2">
+            <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+              Team now
+            </h2>
+            <TeamNow data={team} />
+          </section>
+        </> : null}
         {results ? <>
           <Separator />
           <section className="flex flex-col gap-2">

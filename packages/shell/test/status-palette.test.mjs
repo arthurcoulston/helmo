@@ -190,6 +190,25 @@ test('in motion is blue and a shipped project that settled is green', () => {
   assert.equal(loopStateRole('RUNNING'), 'info');
 });
 
+test('the condensed roster cannot disagree with Runtime about severity', async () => {
+  /* Overview's Team now card chips an AGENT's rolled-up state where Runtime's
+     table chips a SESSION's own state word. Two surfaces, one meaning: the
+     roll-up may decide which session speaks for an agent, and it may never
+     decide that WEDGED is less serious when it is said about an agent.
+
+     Checked state word by state word against the real mapping, so a new
+     sentinel state can only be added in one place without this failing. */
+  const { displayState } = await import('../../runtime/src/team-now.ts');
+  const { agentStateRole } = await import('../src/Status.tsx');
+  const words = ['RUNNING', 'IDLE', 'SEAT_HELD', 'BLOCKED', 'BACKOFF', 'LIMIT', 'WEDGED', 'CRASHED', 'STOP', 'HOLD', 'PARKED', 'halted', 'UNKNOWN'];
+  for (const word of words) {
+    assert.equal(agentStateRole(displayState(word)), loopStateRole(word), `${word} reads as a different severity once it is rolled up`);
+  }
+  /* And a state neither knows is amber rather than silent: a reading this build
+     could not take is one Arthur has to take himself. */
+  assert.equal(agentStateRole(displayState('DRAINING')), 'attention');
+});
+
 test('a class helper hands back a complete literal, or nothing at all', () => {
   for (const helper of [inkRole, tintRole]) {
     assert.equal(helper(null), '');

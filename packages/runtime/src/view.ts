@@ -9,8 +9,9 @@ import { join } from 'node:path';
 import { buildReport, compare, loaded, parseMarker, snapshot } from './build.js';
 import { revHome, loadRoster, stateDir, tokenLogPath } from './config.js';
 import { target } from './install.js';
-import { processObservation, sGet, sHas, sValue } from './sentinels.js';
+import { processObservation, sGet, sHas, sOwner, sValue } from './sentinels.js';
 import { isPeriod, readBounded, seatContext, teamDocument, type Period } from './team.js';
+import { teamNow, type HeldWork, type TeamNowData } from './team-now.js';
 
 const port = Number(process.env['REV_VIEW_PORT'] ?? 4500);
 const host = process.env['REV_VIEW_HOST'] ?? '127.0.0.1';
@@ -74,6 +75,77 @@ function blockedSummary(name: string): string | undefined {
     ?? sGet(name, 'BLOCKED')?.split('\n')[0];
 }
 
+/** The reason Runtime's State column carries, for the four states that record
+ *  one where a reader of that table needs it. Extracted so the condensed roster
+ *  reads the same words for the same state rather than deriving its own. */
+function stateReason(name: string, st: string): string | undefined {
+  return st === 'IDLE'
+    ? sGet(name, 'IDLE')?.split('\n')[1]
+    : st === 'SEAT_HELD' ? sGet(name, 'SEAT_HELD')?.split('\n')[0]
+    : st === 'BLOCKED' ? blockedSummary(name)
+    : st === 'WEDGED' ? sGet(name, st)?.split('\n')[0] : undefined;
+}
+
+/** `k=v` lines in a sentinel's body. Several sentinels are written this way and
+ *  each has its own keys, so the reasons below ask for the keys they know
+ *  rather than assuming a shape. */
+function fields(content: string | null): Record<string, string> {
+  const found: Record<string, string> = Object.create(null);
+  for (const line of (content ?? '').split('\n')) {
+    const at = line.indexOf('=');
+    if (at > 0) found[line.slice(0, at)] = line.slice(at + 1);
+  }
+  return found;
+}
+
+/** Why a session is stopped, limited, backed off or gone — the states Runtime's
+ *  table reports by their word alone, and that the condensed roster has to be
+ *  able to explain, because "Stopped" without a reason is the reading Arthur
+ *  would have to go and investigate by hand.
+ *
+ *  Every branch reads something that was WRITTEN. Where nothing was recorded
+ *  this returns undefined and the roster says so, rather than composing a
+ *  plausible sentence from the sentinel's existence. */
+function stoppageReason(name: string, st: string): string | undefined {
+  if (st === 'STOP') {
+    // Two writers, two formats: `rev stop` records an owner (H-738's owned
+    // sentinel), and the team control writes its own JSON. A stop written by
+    // hand is neither, and its first line is whatever the operator typed.
+    const owner = sOwner(name, 'STOP');
+    if (owner) return `by ${owner.by}: ${owner.reason}`;
+    const raw = sGet(name, 'STOP');
+    if (!raw?.trim()) return undefined;
+    try {
+      const parsed = JSON.parse(raw) as { owner?: string };
+      if (parsed?.owner) return `stopped by ${parsed.owner}`;
+    } catch { /* not the control's JSON — read it as the operator's own line */ }
+    return raw.split('\n')[0];
+  }
+  if (st === 'HOLD') return sGet(name, 'HOLD')?.split('\n')[0]?.trim() || undefined;
+  // A park is commanded through PACE and acknowledged by PARKED, so the reason
+  // lives on the command, never on the acknowledgement (loop.ts).
+  if (st === 'PARKED') {
+    const owner = sOwner(name, 'PACE');
+    return owner ? `by ${owner.by}: ${owner.reason}` : undefined;
+  }
+  if (st === 'LIMIT') {
+    const f = fields(sGet(name, 'LIMIT'));
+    const wait = f['retry_s'] ? `retrying in ${f['retry_s']}s` : f['resume_at'] ? `resuming at ${f['resume_at']}` : undefined;
+    return [f['reason'] ?? (f['attempt'] ? `transient condition, attempt ${f['attempt']}` : undefined), wait].filter(Boolean).join(' — ') || undefined;
+  }
+  if (st === 'BACKOFF') {
+    const f = fields(sGet(name, 'BACKOFF'));
+    return [f['attempt'] ? `restart attempt ${f['attempt']}` : undefined, f['retry_at'] ? `next at ${f['retry_at']}` : undefined].filter(Boolean).join(' — ') || undefined;
+  }
+  // The marker is still there and the process it names is not. The pid is the
+  // whole diagnostic, and it is the marker's own first line.
+  if (st === 'CRASHED') {
+    const pid = sGet(name, 'RUNNING')?.split('\n')[0]?.trim();
+    return pid ? `the recorded session process (pid ${pid}) is gone` : undefined;
+  }
+  return undefined;
+}
+
 function lastEvents(name: string, n: number): string[] {
   const p = join(stateDir(name), 'events.log');
   if (!existsSync(p)) return [];
@@ -131,11 +203,7 @@ export function runtimeSnapshot() {
     running: { view: running('view'), supervisor: running('supervisor') },
     loops: Object.values(loops).map((l) => {
       const st = state(l.name);
-      const reason = st === 'IDLE'
-        ? sGet(l.name, 'IDLE')?.split('\n')[1]
-        : st === 'SEAT_HELD' ? sGet(l.name, 'SEAT_HELD')?.split('\n')[0]
-        : st === 'BLOCKED' ? blockedSummary(l.name)
-        : st === 'WEDGED' ? sGet(l.name, st)?.split('\n')[0] : undefined;
+      const reason = stateReason(l.name, st);
       return { name: l.name, state: st, workstream: l.workstream, runtime: l.runtime, model: l.model, pace: sValue(l.name, 'PACE') ?? '1', spend: spend(l.name), recent_events: lastEvents(l.name, 5), ...(reason ? { reason } : {}) };
     }),
     usage: { claude: readUsage(), codex: readCodexUsage() },
@@ -153,6 +221,44 @@ export function runtimeSnapshot() {
 export function teamSnapshot(period: Period = '7d') {
   return teamDocument(period, state);
 }
+/** The condensed roster behind Overview's Team now card (H-3091).
+ *
+ *  Same `state()` as Runtime and Team, so the three surfaces cannot disagree
+ *  about whether a session is running. What this adds is the agent-level
+ *  roll-up and the reason behind a stoppage, which `team-now.ts` documents.
+ *
+ *  `work` is the tickets each seat holds, passed in by the server that can read
+ *  the work record; the runtime does not import it (R-47 C1).
+ *
+ *  A reading this installation cannot take answers `unavailable` rather than
+ *  throwing: a state directory that cannot be read is exactly what a dashboard
+ *  exists to report, and Overview's document is built before its header is
+ *  written, so a throw here would answer 500 for the whole page (H-3001).
+ *
+ *  One honest limit. On the composed app an UNREADABLE ROSTER never reaches
+ *  this: Overview counts the roster for its Team card first and answers 500,
+ *  which `packages/cli/test/app-acceptance.test.mjs` asserts deliberately.
+ *  This branch is the reading for every other caller and for a failure after
+ *  the roster loaded. */
+export function teamNowSnapshot(work: Record<string, HeldWork[]> = {}): TeamNowData {
+  const asOf = new Date().toISOString();
+  try {
+    const { loops } = loadRoster();
+    return teamNow(Object.values(loops).map((l) => {
+      const st = state(l.name);
+      return {
+        session: l.name,
+        agent: l.seat,
+        source_state: st,
+        workstream: l.workstream,
+        detail: stateReason(l.name, st) ?? stoppageReason(l.name, st) ?? null,
+      };
+    }), work, asOf);
+  } catch (error) {
+    return { as_of: asOf, agents: [], unavailable: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 export function teamPeriod(url: string | undefined): Period {
   const asked = new URL(url ?? '/', 'http://x').searchParams.get('period') ?? undefined;
   return isPeriod(asked) ? asked : '7d';

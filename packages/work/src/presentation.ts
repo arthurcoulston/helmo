@@ -262,6 +262,28 @@ export interface RecentResults {
   rows: ResultRow[];
 }
 
+/** What each agent is holding right now, keyed by assignee.
+ *
+ *  A claim is the only thing in this record that says an agent is working on
+ *  something: `in_progress` with their name on it. Nothing else counts — a
+ *  reserved ticket is work handed to them that they have not started, and an
+ *  open one in their workstream is work they MIGHT take next. Reading either as
+ *  current work is how a condensed roster starts saying an idle agent is busy
+ *  (H-3091).
+ *
+ *  Title and id only: this is the link out of a glance view, and the Work
+ *  record is where the rest of a ticket lives. The map is prototype-free, so a
+ *  seat named `constructor` cannot answer for one that does not exist
+ *  (H-3004). */
+export function seatWork(tickets: Ticket[]): Record<string, { id: string; title: string }[]> {
+  const held: Record<string, { id: string; title: string }[]> = Object.create(null);
+  for (const t of tickets) {
+    if (t.status !== 'in_progress' || !t.assignee) continue;
+    (held[t.assignee] ??= []).push({ id: t.id, title: t.title });
+  }
+  return held;
+}
+
 /** Completed work inside the rolling 24-hour window ending at `as_of`.
  *
  *  Only a ticket's CURRENT state is read: a reopened ticket is absent while it

@@ -10,6 +10,13 @@ The old server-rendered HTML, bespoke CSS and DOM-replacement refresh are gone.
 Earlier renderer details below are historical; they describe the behavior to
 preserve, not permission to restore that implementation.
 
+`src/forecast.ts` is the pure timing model for Overview's What happens next
+reading. Its caller owns admission (the authoritative ready predicate, holds,
+gates, limits, available seats) and supplies recorded duration ranges; the model
+only schedules one job at a time per owner, lets owners run in parallel, and
+respects admitted dependencies. Any missing duration or external prerequisite
+makes the headline range unavailable rather than inventing hours.
+
 `/api/v1/work` retains its original records and request projection and adds a
 server-grouped `record` with every live ticket and the newest 20 terminal rows.
 `?whole=1` includes all rows; `?ticket=H-n` includes an older bookmarked row.

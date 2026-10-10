@@ -99,7 +99,10 @@ store.updateTicket(actor, { ticket_id: blocked.id, capacity_hold: { reason: 'Wai
 let oldest;
 for (let i = 0; i < 24; i++) {
   const t = create(`Completed outcome ${i}`);
-  store.updateTicket(actor, { ticket_id: t.id, status: 'done', note: `Finished outcome ${i}`, evidence: [{ kind: 'url', ref: 'https://example.com/result', note: 'The result' }], confidence: 'routine' });
+  /* The categories cycle so the Overview results card is measured on several
+     of its badges rather than on one repeated ten times (R-44). */
+  const category = ['feature', 'improvement', 'bug_fix', 'maintenance', 'operations'][i % 5];
+  store.updateTicket(actor, { ticket_id: t.id, status: 'done', note: `Finished outcome ${i}`, completion_account: { category, summary: `Outcome ${i} is in place: a reader can see what this fixture ticket produced without opening it.` }, evidence: [{ kind: 'url', ref: 'https://example.com/result', note: 'The result' }], confidence: 'routine' });
   oldest ??= t;
 }
 // A result that is a commit, with a file supporting it (R-42 contract §3.5):
@@ -108,7 +111,7 @@ for (let i = 0; i < 24; i++) {
 // case is here because only a real browser on the built app proves the bundle
 // carries the change at all.
 const operational = create('An operational change states its own result');
-store.updateTicket(actor, { ticket_id: operational.id, status: 'done', note: 'Changed the running system.', confidence: 'routine', evidence: [
+store.updateTicket(actor, { ticket_id: operational.id, status: 'done', note: 'Changed the running system.', completion_account: { category: 'operations', summary: 'The running system now resizes on upload; verified by reading the worker log after a real upload.' }, confidence: 'routine', evidence: [
   { kind: 'commit', ref: 'helmo@76f395d', role: 'result', note: 'What changed' },
   { kind: 'file', ref: '~/.helmo/rev.json', role: 'supporting' },
 ] });
@@ -143,7 +146,7 @@ const reviewed = (title, verdict) => {
   /* An immutable ref: the store refuses anything short of a full sha, which
      is the point of the completion record. */
   const ref = `helmo@${createHash('sha1').update(t.id).digest('hex')}`;
-  store.updateTicket(actor, { ticket_id: t.id, status: 'done', note: `Finished ${t.id}.`, confidence: 'routine', evidence: [{ kind: 'commit', ref, role: 'result' }] });
+  store.updateTicket(actor, { ticket_id: t.id, status: 'done', note: `Finished ${t.id}.`, completion_account: { category: 'feature', summary: `${t.id} delivers the reviewed change, offered for an independent reading at one exact ref.` }, confidence: 'routine', evidence: [{ kind: 'commit', ref, role: 'result' }] });
   store.recordProductCompletion(actor, { ticket_id: t.id, artifacts: [{ ref, author: 'fixture' }], note: 'Ready for an independent reading.' });
   store.recordAcceptanceVerdict(reviewer, { ticket_id: t.id, refs: [ref], verdict, note: `The review ${verdict === 'pass' ? 'confirmed' : 'refused'} this exact ref.` });
   return t;
@@ -151,7 +154,17 @@ const reviewed = (title, verdict) => {
 const accepted = reviewed('An accepted release review says so', 'pass');
 const refused = reviewed('A refused release review says so', 'fail');
 const unproved = create('A closed ticket with nothing to show');
-store.updateTicket(actor, { ticket_id: unproved.id, status: 'done', note: 'Closed without recording what it produced.', confidence: 'needs_review' });
+store.updateTicket(actor, { ticket_id: unproved.id, status: 'done', note: 'Closed without recording what it produced.', completion_account: { category: 'maintenance', summary: 'The fixture obligation is discharged; nothing was produced that can be linked.' }, confidence: 'needs_review' });
+
+/* A done record with NO completion account, reached the one way that is still
+   legitimate: the human answered the question and that resolved the work
+   (R-44 contract §2). No agent close can produce this any more, so without
+   this fixture the "Completion account missing" reading on the results card
+   is proved nowhere in the browser — and it is the reading every legacy row
+   in the live store takes. */
+const humanClosed = create('Work the human closed by answering it');
+store.returnToHuman(actor, humanClosed.id, { situation: 'The fixture needs a decision before it can go further.', question: 'Is this already covered?', recommendation: 'Close it as covered.' });
+store.answerTicket({ name: 'Fixture Operator', kind: 'human' }, humanClosed.id, { answer: 'Already covered elsewhere; nothing more to do.', resolution: 'done' });
 
 const roadmap = new RoadmapStore(join(dir, 'roadmap/roadmap.db'));
 const project = roadmap.createProject(actor, { title: 'The complete standard UI foundation', status: 'ready', body: 'Preserve the full project record while using standard components.' });

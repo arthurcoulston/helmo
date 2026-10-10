@@ -152,7 +152,7 @@ describe('The served record carries the result projection', () => {
     const seed = new Store(db);
     const close = (title: string, evidence: Evidence[]) => {
       const t = seed.createTicket(builder, { title, body: `${title}.`, workstream: 'estate-ui', type: 'build' });
-      seed.updateTicket(builder, { ticket_id: t.id, status: 'done', note: 'Closing with evidence.', evidence });
+      seed.updateTicket(builder, { ticket_id: t.id, status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, note: 'Closing with evidence.', evidence });
       return t.id;
     };
     const operational = close('An operational change states its result', [

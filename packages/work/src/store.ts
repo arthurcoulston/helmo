@@ -5,7 +5,7 @@ import { namesInstallation, type Installation } from './install.js';
 import { actionFingerprint, questionFingerprint } from './presentation.js';
 import { parseSchedule } from './schedule.js';
 import {
-  ActionReport, ActionRequest, Actor, ActorKind, ACTOR_KINDS, Answer, AnswerEvent, BlastRadius, BLAST_RADII, CapacityHold, Confidence, Dep, DepType, Evidence, EVIDENCE_ROLES,
+  ActionReport, ActionRequest, Actor, ActorKind, ACTOR_KINDS, Answer, AnswerEvent, BlastRadius, BLAST_RADII, CapacityHold, CompletionAccount, CompletionAccountInput, COMPLETION_CATEGORIES, COMPLETION_SUMMARY_MAX, Confidence, Dep, DepType, Evidence, EVIDENCE_ROLES,
   AcceptanceCoverage, CoveringCompletion, HelmoError, HelmoEvent, HumanRequest, Notice, ProductAcceptance, ProductArtifact, Question, QuestionInput, ReleaseHandoff, Status, Ticket, TicketProgress, UnresolvedCompletion, VerdictEvent, Workstream, WorkstreamInfo,
 } from './types.js';
 
@@ -91,6 +91,7 @@ export interface UpdateInput {
   sitting_with?: string; // the agent to sit with; '' clears it
   lane?: string | null; // '' clears the lane
   capacity_hold?: CapacityHold | null; // null releases the deliberate hold
+  completion_account?: CompletionAccountInput; // what the work produced; required to close ordinary work
 }
 
 export const COST_BASES = ['provider_reported_metered', 'api_equivalent_estimate', 'legacy_mixed_unknown'] as const;
@@ -168,6 +169,7 @@ CREATE TABLE IF NOT EXISTS tickets (
   sitting_with   TEXT,
   lane           TEXT,
   capacity_hold  TEXT,
+  completion_account TEXT,
   workflow_attempt_id TEXT,
   release_handoff TEXT,
   created_at     TEXT NOT NULL,
@@ -370,6 +372,43 @@ function parseSitting(
   return { needs_human: true, sitting: line, sitting_with: agent || null };
 }
 
+// What the work produced, in the author's own words (R-44). Closing work
+// without it is how a `done` status became the only account of a day's work:
+// the record said the ticket ended, and a reader had to open the body and
+// guess what came out of it. The gate is here rather than at the tool
+// boundary because the CLI and in-process callers never pass that boundary,
+// and an account only one surface requires is an account the reading cannot
+// rely on.
+//
+// `author` and `recorded_at` are refused rather than accepted-and-overwritten:
+// a caller that believes it stamped the account would otherwise never learn
+// that Helmo did.
+// Validation and stamping are separate calls because they happen at
+// different moments: a bad value must refuse before the transaction opens, and
+// `recorded_at` is the event's own timestamp, which only exists inside it.
+function normalizeCompletionAccount(input: CompletionAccountInput): CompletionAccountInput {
+  for (const field of ['author', 'recorded_at'] as const) {
+    if (Object.prototype.hasOwnProperty.call(input, field)) {
+      throw new HelmoError(`completion_account.${field} is Helmo's to record, not the caller's — it is taken from the writing actor and the event time. Send only {category, summary}.`);
+    }
+  }
+  if (!COMPLETION_CATEGORIES.includes(input.category)) {
+    throw new HelmoError(
+      `completion_account.category "${input.category}" is not a work category. One of: ${COMPLETION_CATEGORIES.join(', ')}. The ticket's own \`type\` is a routing noun and is never read as one of these.`,
+    );
+  }
+  rejectSwallowedMarkup({ summary: input.summary });
+  const summary = (input.summary ?? '').trim();
+  const length = [...summary].length;
+  if (!length) {
+    throw new HelmoError('completion_account.summary is required: say the OUTCOME in one paragraph — what someone can now do, what now works, what was decided — not the activity that produced it.');
+  }
+  if (length > COMPLETION_SUMMARY_MAX) {
+    throw new HelmoError(`completion_account.summary is ${length} characters; the ceiling is ${COMPLETION_SUMMARY_MAX}. This is the line read in a list beside nine others — the ticket body is where the detail belongs.`);
+  }
+  return { category: input.category, summary };
+}
+
 function validateActor(actor: Actor): void {
   if (!actor?.name || !actor?.kind) {
     throw new HelmoError(
@@ -540,6 +579,14 @@ export class Store {
     // caller (no --lane) selects, so nothing it can see changes.
     try {
       this.db.exec('ALTER TABLE tickets ADD COLUMN lane TEXT');
+    } catch {
+      /* column already exists */
+    }
+    // Additive migration for the concise completion account (R-44). Every
+    // ticket closed before it existed stays null, which the reading states as
+    // missing; nothing is back-filled from a title, a note or a done status.
+    try {
+      this.db.exec('ALTER TABLE tickets ADD COLUMN completion_account TEXT');
     } catch {
       /* column already exists */
     }
@@ -2960,7 +3007,10 @@ export class Store {
     }
 
     if (t.status === 'done' || t.status === 'cancelled') {
-      const forbidden = suppliedKeys.filter((key) => !['ticket_id', 'note', 'evidence'].includes(key));
+      // `completion_account` joins note and evidence as append-only (contract
+      // §2): an author who closed work and then found a truer sentence for it
+      // records the correction, and the event log keeps both readings.
+      const forbidden = suppliedKeys.filter((key) => !['ticket_id', 'note', 'evidence', 'completion_account'].includes(key));
       if (forbidden.length) {
         throw new HelmoError(
           `${t.id} is ${t.status} — terminal. Only append-only note and evidence are accepted; ${forbidden.join(', ')} would rewrite closed state. If follow-up work is needed, helmo_create_ticket a new one with a 'relates' link to ${t.id}.`,
@@ -3079,6 +3129,11 @@ export class Store {
       // assignee here returned H-952 to a pool no builder watched: the loop
       // woke on its own unfinished work, its ready query said 0, and it idled.
       // Repooling is real, so it is now said out loud — handoff_to ''.
+      if (input.status === 'done' && !input.completion_account && !t.completion_account) {
+        throw new HelmoError(
+          `Closing ${t.id} needs a completion_account: {category, summary} saying what this work produced. Categories: ${COMPLETION_CATEGORIES.join(', ')}. The summary is the OUTCOME in one paragraph (up to ${COMPLETION_SUMMARY_MAX} characters) — what someone can now do, what now works, what was decided and what remains open — not the activity. It is what the operator reads in the past-24-hours results beside nine others, and a 'done' status on its own is not an account of anything. Cancelling needs none.`,
+        );
+      }
       if (input.status === 'done') {
         const hasEvidence = t.evidence.length > 0 || (input.evidence?.length ?? 0) > 0;
         if (!hasEvidence) {
@@ -3168,8 +3223,19 @@ export class Store {
       warnings.push(`confidence '${input.confidence}' with no uncertainty_note — say WHERE the doubt is; that is what makes the review efficient.`);
     }
 
+    const account = input.completion_account ? normalizeCompletionAccount(input.completion_account) : null;
+
     return this.db.transaction(() => {
       const ts = now();
+      // Stamped here so the materialized account carries the writing actor and
+      // this event's own instant; replay reads the finished object out of the
+      // payload and never re-derives either.
+      if (account) {
+        const stamped: CompletionAccount = { ...account, author: actor.name, recorded_at: ts };
+        if (JSON.stringify(stamped) !== JSON.stringify(t.completion_account)) {
+          diffs['completion_account'] = { from: t.completion_account, to: stamped };
+        }
+      }
       if (t.workflow_attempt_id && (input.status === 'done' || input.status === 'cancelled' || input.labels !== undefined)) {
         this.refuseQuarantinedWorkflowMutation(t.id, input.status ?? 'relabel');
       }
@@ -3893,12 +3959,12 @@ export class Store {
     const params: unknown[] = [ts];
     const jsonFields = new Set(['labels', 'evidence']);
     for (const [field, d] of Object.entries(diffs)) {
-      if (!['title', 'body', 'workstream', 'project', 'type', 'labels', 'status', 'priority', 'assignee', 'evidence', 'confidence', 'uncertainty_note', 'blast_radius', 'not_before', 'needs_human', 'sitting', 'sitting_with', 'lane', 'capacity_hold'].includes(field)) continue;
+      if (!['title', 'body', 'workstream', 'project', 'type', 'labels', 'status', 'priority', 'assignee', 'evidence', 'confidence', 'uncertainty_note', 'blast_radius', 'not_before', 'needs_human', 'sitting', 'sitting_with', 'lane', 'capacity_hold', 'completion_account'].includes(field)) continue;
       sets.push(`${field} = ?`);
       params.push(
         field === 'needs_human'
           ? (d.to ? 1 : 0)
-          : jsonFields.has(field) || field === 'capacity_hold'
+          : jsonFields.has(field) || field === 'capacity_hold' || field === 'completion_account'
             ? (d.to === null ? null : JSON.stringify(d.to))
             : (d.to as never),
       );
@@ -4019,6 +4085,7 @@ function rowToTicket(row: Record<string, unknown>): Ticket {
     sitting: (row['sitting'] as string | null) ?? null,
     sitting_with: (row['sitting_with'] as string | null) ?? null,
     lane: (row['lane'] as string | null) ?? null,
+    completion_account: row['completion_account'] ? JSON.parse(row['completion_account'] as string) as CompletionAccount : null,
   };
 }
 

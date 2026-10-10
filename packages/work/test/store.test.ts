@@ -400,13 +400,13 @@ describe('atomic workflow admission (H-431)', () => {
 
       // Coordination still works, and the owner's own close is the positive control.
       s.updateTicket(genB, { ticket_id: a.id, note: 'FYI the importer schema moved' });
-      expect(s.updateTicket(genA, { ticket_id: a.id, note: 'built', status: 'done', evidence: [{ kind: 'other', ref: 'x' }] }).ticket.status).toBe('done');
+      expect(s.updateTicket(genA, { ticket_id: a.id, note: 'built', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, evidence: [{ kind: 'other', ref: 'x' }] }).ticket.status).toBe('done');
     });
 
     it('fences an ended generation from every write and refuses its historical receipt', () => {
       const s = freshStore();
       const { a, b } = twoClaims(s);
-      s.updateTicket(genA, { ticket_id: a.id, note: 'built', status: 'done', evidence: [{ kind: 'other', ref: 'x' }] });
+      s.updateTicket(genA, { ticket_id: a.id, note: 'built', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, evidence: [{ kind: 'other', ref: 'x' }] });
       expect(() => s.updateTicket(genA, { ticket_id: a.id, note: 'one more thing' })).toThrow(/stale_generation/);
       expect(() => s.updateTicket(genA, { ticket_id: b.id, note: 'helping out' })).toThrow(/stale_generation/);
       expect(() => create(s, { title: 'late child' })).not.toThrow();
@@ -424,17 +424,17 @@ describe('atomic workflow admission (H-431)', () => {
       expect(resumed).toMatchObject({ claimed: true, resumed: true, ticket_id: a.id, launch_id: 'launch-a2' });
       expect(s.getTicket(other.id).status).toBe('open');
       // The previous child, still alive after its loop, is now fenced.
-      expect(() => s.updateTicket(genA, { ticket_id: a.id, note: 'late write', status: 'done' })).toThrow(/stale_generation/);
+      expect(() => s.updateTicket(genA, { ticket_id: a.id, note: 'late write', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' } })).toThrow(/stale_generation/);
       expect(() => s.launchClaim(workerA, 'helmo-dev', builder.name, 'launch-a')).toThrow(/launch_claim_stale/);
       expect(s.launchClaim(workerA, 'helmo-dev', builder.name, 'launch-a2')).toEqual(resumed);
       const genA2 = { ...workerA, generation: 'launch-a2' };
-      expect(s.updateTicket(genA2, { ticket_id: a.id, note: 'built', status: 'done', evidence: [{ kind: 'other', ref: 'x' }] }).ticket.status).toBe('done');
+      expect(s.updateTicket(genA2, { ticket_id: a.id, note: 'built', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, evidence: [{ kind: 'other', ref: 'x' }] }).ticket.status).toBe('done');
     });
 
     it('preserves live claims and generation fences across rebuild, pruning claims for non-event tickets', () => {
       const s = freshStore();
       const { a, b } = twoClaims(s);
-      s.updateTicket(genB, { ticket_id: b.id, note: 'built', status: 'done', evidence: [{ kind: 'other', ref: 'x' }] });
+      s.updateTicket(genB, { ticket_id: b.id, note: 'built', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, evidence: [{ kind: 'other', ref: 'x' }] });
 
       const db = (s as unknown as { db: Database.Database }).db;
       db.prepare("INSERT INTO tickets (id, title, body, workstream, type, status, priority, labels, evidence, blast_radius, created_at, updated_at, tokens_total, cost_usd_total) VALUES ('H-99','orphan','','w','ops','in_progress',2,'[]','[]','none','1787863040.0','1787863040.0',0,0)").run();
@@ -480,7 +480,7 @@ describe('atomic workflow admission (H-431)', () => {
         expect(s.wakeCheck(idleSeq, 'helmo-dev', builder.name).newly_ready_ids).toEqual([]);
         const other = create(s); triage(s, other.id);
         expect(s.launchClaim(workerA, 'helmo-dev', builder.name, 'launch-a4')).toMatchObject({ claimed: true, ticket_id: other.id });
-        s.updateTicket({ ...workerA, generation: 'launch-a4' }, { ticket_id: other.id, note: 'built', status: 'done', evidence: [{ kind: 'other', ref: 'x' }] });
+        s.updateTicket({ ...workerA, generation: 'launch-a4' }, { ticket_id: other.id, note: 'built', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, evidence: [{ kind: 'other', ref: 'x' }] });
         expect(s.getTicket(a.id).status).toBe('open');
 
         // The gate opening is the wake, and the ordinary claim takes it once.
@@ -512,7 +512,7 @@ describe('atomic workflow admission (H-431)', () => {
       const s = freshStore();
       const t = create(s); triage(s, t.id);
       s.updateTicket(builder, { ticket_id: t.id, note: 'on it', status: 'in_progress' });
-      expect(s.updateTicket(builder, { ticket_id: t.id, note: 'done', status: 'done', evidence: [{ kind: 'other', ref: 'x' }] }).ticket.status).toBe('done');
+      expect(s.updateTicket(builder, { ticket_id: t.id, note: 'done', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, evidence: [{ kind: 'other', ref: 'x' }] }).ticket.status).toBe('done');
     });
   });
 
@@ -730,7 +730,7 @@ describe('workflow invalidation and quarantine (H-432)', () => {
     s.updateTicket(builder, { ticket_id: ticket.id, note: 'start', status: 'in_progress' });
     s.addWorkflowManifest({ id: 'new', attempt_id: 'attempt-1', kind: 'output', subjects: ['repo@new'], creators: [builder], supersedes_manifest_id: 'old' });
 
-    expect(() => s.updateTicket(builder, { ticket_id: ticket.id, note: 'finish stale output', status: 'done', evidence: [{ kind: 'commit', ref: 'helmo@stale' }] })).toThrow(/invalidation/);
+    expect(() => s.updateTicket(builder, { ticket_id: ticket.id, note: 'finish stale output', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, evidence: [{ kind: 'commit', ref: 'helmo@stale' }] })).toThrow(/invalidation/);
     expect(() => s.updateTicket(builder, { ticket_id: ticket.id, note: 'cancel stale output', status: 'cancelled' })).toThrow(/invalidation/);
     expect(() => s.updateTicket(builder, { ticket_id: ticket.id, note: 'rename stale output', labels: ['accepted'] })).toThrow(/invalidation/);
     expect(() => s.linkTickets(builder, ticket.id, parent.id, 'parent', 'remove')).toThrow(/invalidation/);
@@ -775,7 +775,7 @@ describe('workflow invalidation and quarantine (H-432)', () => {
     s.updateTicket(builder, { ticket_id: ticket.id, note: 'start', status: 'in_progress' });
 
     s.recordWorkflowDecision({ id: 'later-fail', requirement_id: 'check', manifest_id: 'output', verdict: 'fail', source: 'review:correction' });
-    expect(() => s.updateTicket(builder, { ticket_id: ticket.id, note: 'finish despite corrected verdict', status: 'done', evidence: [{ kind: 'commit', ref: 'helmo@candidate' }] })).toThrow(/invalidation/);
+    expect(() => s.updateTicket(builder, { ticket_id: ticket.id, note: 'finish despite corrected verdict', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, evidence: [{ kind: 'commit', ref: 'helmo@candidate' }] })).toThrow(/invalidation/);
   });
 });
 
@@ -805,13 +805,13 @@ describe('workflow outcomes and retry recovery (H-433)', () => {
     it(`quarantines an already-running descendant when consumed exit authority is ${name}`, () => {
       const { s, publish } = exitAuthoritySubject();
       invalidate(s);
-      expect(() => s.updateTicket(builder, { ticket_id: publish.id, note: 'stale finish', status: 'done', evidence: [{ kind: 'commit', ref: 'helmo@stale' }] })).toThrow(/invalidation/);
+      expect(() => s.updateTicket(builder, { ticket_id: publish.id, note: 'stale finish', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, evidence: [{ kind: 'commit', ref: 'helmo@stale' }] })).toThrow(/invalidation/);
     });
   }
 
   it('keeps descendants executable while consumed exit authority is unchanged', () => {
     const { s, publish } = exitAuthoritySubject();
-    expect(s.updateTicket(builder, { ticket_id: publish.id, note: 'valid finish', status: 'done', evidence: [{ kind: 'commit', ref: 'helmo@valid' }] }).ticket.status).toBe('done');
+    expect(s.updateTicket(builder, { ticket_id: publish.id, note: 'valid finish', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, evidence: [{ kind: 'commit', ref: 'helmo@valid' }] }).ticket.status).toBe('done');
   });
 
   function subject() {
@@ -933,7 +933,7 @@ describe('mangled tool-call writes rejected at the door (H-71)', () => {
     const t = create(s);
     triage(s, t.id);
     const before = s.getEvents(t.id).length;
-    expect(() => s.updateTicket(builder, { ticket_id: t.id, note: mangled, status: 'done' })).toThrow(/mis-serialized/);
+    expect(() => s.updateTicket(builder, { ticket_id: t.id, note: mangled, status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' } })).toThrow(/mis-serialized/);
     expect(s.getEvents(t.id).length).toBe(before);
     expect(s.getTicket(t.id).status).toBe('open');
   });
@@ -1707,7 +1707,7 @@ describe('ready queue and blocking', () => {
     });
     const claimed = s.updateTicket(builder, { ticket_id: selected.id, note: 'starting inside the release window', status: 'in_progress' }).ticket;
     expect(claimed.capacity_hold?.release?.batch_id).toBe('batch-a');
-    expect(s.updateTicket(builder, { ticket_id: selected.id, note: 'finished safely', status: 'done', evidence: [{ kind: 'other', ref: 'fixture' }] }).ticket.status).toBe('done');
+    expect(s.updateTicket(builder, { ticket_id: selected.id, note: 'finished safely', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, evidence: [{ kind: 'other', ref: 'fixture' }] }).ticket.status).toBe('done');
   });
 
   it('blocked tickets are not ready; unblock on done or cancelled', () => {
@@ -1716,7 +1716,7 @@ describe('ready queue and blocking', () => {
     const b = create(s, { title: 'Prereq' });
     s.linkTickets(builder, a.id, b.id, 'blocks', 'add');
     expect(s.listTickets({ ready: true }).map((x) => x.id)).not.toContain(a.id);
-    s.updateTicket(builder, { ticket_id: b.id, note: 'done', status: 'done', evidence: [{ kind: 'file', ref: '/tmp/x' }] });
+    s.updateTicket(builder, { ticket_id: b.id, note: 'done', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, evidence: [{ kind: 'file', ref: '/tmp/x' }] });
     expect(s.listTickets({ ready: true }).map((x) => x.id)).toContain(a.id);
   });
   it('rejects blocks cycles with a teaching error', () => {
@@ -1740,7 +1740,7 @@ describe('live work sorts before history (H-669)', () => {
     const s = freshStore();
     for (let i = 0; i < 25; i++) {
       const t = create(s, { assignee: 'builder-loop', priority: 1 });
-      s.updateTicket(builder, { ticket_id: t.id, note: 'shipped', status: 'done', evidence: [{ kind: 'file', ref: '/tmp/x' }] });
+      s.updateTicket(builder, { ticket_id: t.id, note: 'shipped', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, evidence: [{ kind: 'file', ref: '/tmp/x' }] });
     }
     // Filed last and at a lower priority than every closed one — under the old
     // priority-then-age sort it landed on page two and went unread.
@@ -1764,7 +1764,7 @@ describe('live work sorts before history (H-669)', () => {
     const s = freshStore();
     const a = create(s, { priority: 0 });
     const b = create(s, { priority: 1 });
-    for (const t of [b, a]) s.updateTicket(builder, { ticket_id: t.id, note: 'shipped', status: 'done', evidence: [{ kind: 'file', ref: '/tmp/x' }] });
+    for (const t of [b, a]) s.updateTicket(builder, { ticket_id: t.id, note: 'shipped', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, evidence: [{ kind: 'file', ref: '/tmp/x' }] });
     expect(s.listTickets({ status: 'done' }).map((t) => t.id)).toEqual([a.id, b.id]);
   });
 });
@@ -1779,14 +1779,14 @@ describe('guardrails', () => {
   it('done without evidence warns but records', () => {
     const s = freshStore();
     const t = create(s);
-    const { warnings } = s.updateTicket(builder, { ticket_id: t.id, note: 'decided after research', status: 'done' });
+    const { warnings } = s.updateTicket(builder, { ticket_id: t.id, note: 'decided after research', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' } });
     expect(warnings.join(' ')).toMatch(/done_without_evidence/);
     expect(s.getTicket(t.id).status).toBe('done');
   });
   it('terminal tickets reject rework and point to follow-up pattern', () => {
     const s = freshStore();
     const t = create(s);
-    s.updateTicket(builder, { ticket_id: t.id, note: 'done', status: 'done' });
+    s.updateTicket(builder, { ticket_id: t.id, note: 'done', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' } });
     expect(() => s.updateTicket(builder, { ticket_id: t.id, note: 'more', status: 'in_progress' })).toThrow(/relates/);
   });
   it('appends and patches body text without replacing untouched content', () => {
@@ -1817,7 +1817,7 @@ describe('guardrails', () => {
   it('accepts only append-only notes and evidence after closure', () => {
     const s = freshStore();
     const t = create(s);
-    s.updateTicket(builder, { ticket_id: t.id, note: 'done', status: 'done' });
+    s.updateTicket(builder, { ticket_id: t.id, note: 'done', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' } });
     const withNote = s.updateTicket(reviewer, { ticket_id: t.id, note: 'Cross-reference: H-99 records the independent check.' }).ticket;
     expect(withNote.status).toBe('done');
     const withEvidence = s.updateTicket(reviewer, {
@@ -1847,7 +1847,7 @@ describe('recordSpend (harness metering)', () => {
   it('accumulates onto a terminal ticket without touching status or updated_at', () => {
     const s = freshStore();
     const t = create(s);
-    s.updateTicket(builder, { ticket_id: t.id, note: 'done', status: 'done', evidence: [{ kind: 'file', ref: '/tmp/x' }] });
+    s.updateTicket(builder, { ticket_id: t.id, note: 'done', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, evidence: [{ kind: 'file', ref: '/tmp/x' }] });
     const closed = s.getTicket(t.id);
     const after = s.recordSpend(builder, t.id, { tokens: 90000, cost_usd: 3.1, note: 'metered session, whole session charged here' });
     expect(after.tokens_total).toBe(90000);
@@ -1938,7 +1938,7 @@ describe('renameWorkstream', () => {
     const b = create(s, { workstream: 'old-name' });
     triage(s, a.id);
     s.updateTicket(builder, { ticket_id: a.id, note: 'claimed', status: 'in_progress' });
-    s.updateTicket(builder, { ticket_id: a.id, note: 'done', status: 'done', evidence: [{ kind: 'file', ref: '/tmp/x' }] });
+    s.updateTicket(builder, { ticket_id: a.id, note: 'done', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, evidence: [{ kind: 'file', ref: '/tmp/x' }] });
     s.setWorkstream(orch, { name: 'old-name', budget_usd: 10, seat: 'builder-loop' });
     const res = s.renameWorkstream(orch, { from: 'old-name', to: 'new-name', note: 'product renamed' });
     expect(res.moved).toBe(2);
@@ -2003,8 +2003,8 @@ describe('harness queries (wake cursor)', () => {
     s.updateTicket(orch, { ticket_id: routed.id, note: 'handed to reviewer', handoff_to: reviewer.name });
     s.updateTicket(orch, { ticket_id: repooled.id, note: 'returned to the alpha pool', handoff_to: '' });
     s.answerTicket(orch, returned.id, { answer: 'Resume.', resolution: 'resume' });
-    s.updateTicket(builder, { ticket_id: blocker.id, note: 'prerequisite done', status: 'done', evidence: [{ kind: 'other', ref: 'fixture' }] });
-    s.updateTicket(builder, { ticket_id: noise.id, note: 'unrelated close-out', status: 'done', evidence: [{ kind: 'other', ref: 'fixture' }] });
+    s.updateTicket(builder, { ticket_id: blocker.id, note: 'prerequisite done', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, evidence: [{ kind: 'other', ref: 'fixture' }] });
+    s.updateTicket(builder, { ticket_id: noise.id, note: 'unrelated close-out', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, evidence: [{ kind: 'other', ref: 'fixture' }] });
     const created = create(s, { workstream: 'alpha' });
 
     expect(s.newlyReadySince(seq, 'alpha', reviewer.name)).toEqual([
@@ -2063,7 +2063,7 @@ describe('harness queries (wake cursor)', () => {
     });
     const seq = s.maxSeq();
 
-    s.updateTicket(reviewer, { ticket_id: blocker.id, note: 'prerequisite complete', status: 'done', evidence: [{ kind: 'other', ref: 'fixture' }] });
+    s.updateTicket(reviewer, { ticket_id: blocker.id, note: 'prerequisite complete', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, evidence: [{ kind: 'other', ref: 'fixture' }] });
     const released = s.wakeCheck(seq, 'alpha', builder.name);
     expect(released.ready_ids).toEqual([]);
     expect(released.held_count).toBe(1);
@@ -2183,7 +2183,7 @@ describe('harness queries (wake cursor)', () => {
     s.updateTicket(builder, { ticket_id: t.id, note: 'claimed', status: 'in_progress' });
     expect(s.heldCount('builder-loop')).toBe(1);
     expect(s.heldCount('reviewer-loop')).toBe(0);
-    s.updateTicket(builder, { ticket_id: t.id, note: 'done', status: 'done', evidence: [{ kind: 'other', ref: 'x' }] });
+    s.updateTicket(builder, { ticket_id: t.id, note: 'done', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, evidence: [{ kind: 'other', ref: 'x' }] });
     expect(s.heldCount('builder-loop')).toBe(0);
   });
   it('seatHolds names who claimed each in_progress ticket in a name (H-558)', () => {
@@ -2205,7 +2205,7 @@ describe('harness queries (wake cursor)', () => {
     expect(byId[a.id]!.claimed_at).toBeTruthy();
     expect(byId[b.id]!.claim_actor?.session).toBe('rev:ward-loop');
     // Terminal work drops out of the holds.
-    s.updateTicket(desk, { ticket_id: a.id, note: 'done', status: 'done', evidence: [{ kind: 'other', ref: 'x' }] });
+    s.updateTicket(desk, { ticket_id: a.id, note: 'done', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, evidence: [{ kind: 'other', ref: 'x' }] });
     expect(s.seatHolds('ward-loop').map((h) => h.ticket_id)).toEqual([b.id]);
   });
   it('--advancing separates work that moved something from a note (H-412)', () => {
@@ -2228,7 +2228,7 @@ describe('harness queries (wake cursor)', () => {
 
     // A status change that moves the work is advancement, note or not.
     s.updateTicket(builder, { ticket_id: t.id, note: 'claimed again', status: 'in_progress' });
-    s.updateTicket(builder, { ticket_id: t.id, note: 'shipped', status: 'done', evidence: [{ kind: 'other', ref: 'fixture' }] });
+    s.updateTicket(builder, { ticket_id: t.id, note: 'shipped', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, evidence: [{ kind: 'other', ref: 'fixture' }] });
     expect(s.actorActivitySince('builder-loop', seq, true)).toBe(1);
 
     // So is filing a new ticket.
@@ -2273,7 +2273,7 @@ describe('harness queries (wake cursor)', () => {
     // Delivery counts.
     seq = s.maxSeq();
     s.updateTicket(reviewer, { ticket_id: prerequisite.id, note: 'claimed', status: 'in_progress' });
-    s.updateTicket(reviewer, { ticket_id: prerequisite.id, note: 'delivered', status: 'done', evidence: [{ kind: 'other', ref: 'fixture' }] });
+    s.updateTicket(reviewer, { ticket_id: prerequisite.id, note: 'delivered', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, evidence: [{ kind: 'other', ref: 'fixture' }] });
     expect(s.actorActivitySince('reviewer-loop', seq, true)).toBe(1);
   });
 });
@@ -2295,7 +2295,7 @@ describe('recurring templates (lazy materialization)', () => {
       `${t.id} is a recurring template; templates retire only by cancelling`,
     );
     const [instance] = s.materializeDue(new Date(Date.now() + 31 * 60_000));
-    expect(() => s.updateTicket(builder, { ticket_id: t.id, note: 'finished', status: 'done' })).toThrow(
+    expect(() => s.updateTicket(builder, { ticket_id: t.id, note: 'finished', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' } })).toThrow(
       `${t.id} is a recurring template — work its instance ${instance}; templates retire only by cancelling`,
     );
     expect(s.updateTicket(builder, { ticket_id: t.id, note: 'retiring', status: 'cancelled' }).ticket.status).toBe('cancelled');
@@ -2324,7 +2324,7 @@ describe('recurring templates (lazy materialization)', () => {
     const [first] = s.materializeDue(later(31));
     s.updateTicket(reviewer, { ticket_id: first!, note: 'on it', status: 'in_progress' });
     expect(s.materializeDue(later(65)).length).toBe(0); // slot due, but first is in motion
-    s.updateTicket(reviewer, { ticket_id: first!, note: 'done', status: 'done' });
+    s.updateTicket(reviewer, { ticket_id: first!, note: 'done', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' } });
     expect(s.materializeDue(later(65)).length).toBe(1);
   });
   it('a stale unclaimed instance is superseded when the next slot comes due (H-618)', () => {
@@ -2366,7 +2366,7 @@ describe('recurring templates (lazy materialization)', () => {
     const t = template(s);
     const spawned = s.materializeDue(new Date(Date.now() + 6 * 60 * 60_000)); // ~12 slots missed
     expect(spawned.length).toBe(1);
-    s.updateTicket(builder, { ticket_id: spawned[0]!, note: 'done', status: 'done' });
+    s.updateTicket(builder, { ticket_id: spawned[0]!, note: 'done', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' } });
     s.updateTicket(builder, { ticket_id: t.id, note: 'retiring the standing work', status: 'cancelled' });
     expect(s.materializeDue(new Date(Date.now() + 24 * 60 * 60_000)).length).toBe(0);
   });
@@ -2593,10 +2593,10 @@ describe('hygiene checks (deterministic, read-only)', () => {
   it('done without evidence and phantom blocks', () => {
     const s = freshStore();
     const noEv = create(s);
-    s.updateTicket(builder, { ticket_id: noEv.id, note: 'done, trust me', status: 'done' });
+    s.updateTicket(builder, { ticket_id: noEv.id, note: 'done, trust me', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' } });
     const target = create(s);
     const waiter = create(s, { deps: [{ to: target.id, type: 'blocks' as const }] });
-    s.updateTicket(builder, { ticket_id: target.id, note: 'done', status: 'done', evidence: [{ kind: 'file', ref: '/tmp/x' }] });
+    s.updateTicket(builder, { ticket_id: target.id, note: 'done', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, evidence: [{ kind: 'file', ref: '/tmp/x' }] });
     const f = s.hygiene();
     expect(f).toContainEqual(expect.objectContaining({ check: 'done_without_evidence', ticket_id: noEv.id }));
     expect(f).toContainEqual(expect.objectContaining({ check: 'phantom_block', ticket_id: waiter.id }));
@@ -2656,7 +2656,7 @@ describe('hygiene checks (deterministic, read-only)', () => {
     s.updateTicket(builder, {
       ticket_id: blocker.id,
       note: 'prerequisite landed',
-      status: 'done',
+      status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' },
       evidence: [{ kind: 'file', ref: '/tmp/prerequisite' }],
     });
     expect(s.hygiene()).toContainEqual(expect.objectContaining({ check: 'silent_assignee', ticket_id: held.id }));
@@ -2673,7 +2673,7 @@ describe('hygiene checks (deterministic, read-only)', () => {
     expect(s.hygiene().filter((x) => x.check === 'done_without_evidence')).toEqual([]);
     // an agent-closed done with no evidence still flags
     const bare = create(s);
-    s.updateTicket(builder, { ticket_id: bare.id, note: 'done, trust me', status: 'done' });
+    s.updateTicket(builder, { ticket_id: bare.id, note: 'done, trust me', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' } });
     expect(s.hygiene().filter((x) => x.check === 'done_without_evidence').map((x) => x.ticket_id)).toEqual([bare.id]);
   });
 });
@@ -2681,7 +2681,7 @@ describe('hygiene checks (deterministic, read-only)', () => {
 describe('hygiene dispositions (H-81)', () => {
   function doneWithoutEvidence(s: Store) {
     const t = create(s);
-    s.updateTicket(builder, { ticket_id: t.id, note: 'done, trust me', status: 'done' });
+    s.updateTicket(builder, { ticket_id: t.id, note: 'done, trust me', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' } });
     return t;
   }
   it('a disposed finding stops re-reporting; others on the same ticket are untouched', () => {
@@ -2781,7 +2781,7 @@ describe('THE INVARIANT: tickets are a materialized view of events', () => {
     s.answerTicket(orch, b.id, { answer: 'Pay.', chosen_option: 'pay', resolution: 'resume' });
     s.updateTicket(reviewer, { ticket_id: b.id, note: 'paid, receipt attached', status: 'in_progress' });
     s.updateTicket(reviewer, {
-      ticket_id: b.id, note: 'confirmed', status: 'done',
+      ticket_id: b.id, note: 'confirmed', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' },
       // One roled item and one unstated one: `role` rides inside the evidence
       // JSON with no event-schema change, so the replay has to reproduce both
       // shapes — the field present and the field absent (R-42 §2.4).
@@ -3323,7 +3323,7 @@ describe('answered sitting migration (H-392)', () => {
       const t = create(before, { needs_human: 'Ten minutes with the operator to decide the retention window.' });
       before.returnToHuman(builder, t.id, q);
       before.answerTicket(orch, t.id, { answer: 'Keep thirty days.', resolution: 'resume' });
-      before.updateTicket(builder, { ticket_id: t.id, note: 'done', status: 'done', evidence: [{ kind: 'file', ref: '/tmp/x' }] });
+      before.updateTicket(builder, { ticket_id: t.id, note: 'done', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, evidence: [{ kind: 'file', ref: '/tmp/x' }] });
       const db = (before as unknown as { db: Database.Database }).db;
       db.prepare('UPDATE tickets SET needs_human = 1 WHERE id = ?').run(t.id);
       db.prepare("UPDATE events SET payload = json_remove(payload, '$.clear_sitting') WHERE event_type = 'answered'").run();
@@ -3867,7 +3867,7 @@ describe('blocking disclosed to list callers (H-621)', () => {
     const blocker = create(s);
     const waiting = create(s, { deps: [{ to: blocker.id, type: 'blocks' as const }] });
     expect(s.blockersFor([waiting.id]).get(waiting.id)).toEqual([blocker.id]);
-    s.updateTicket(builder, { ticket_id: blocker.id, status: 'done', note: 'landed', evidence: [{ kind: 'commit', ref: 'helmo@abc1234' }] });
+    s.updateTicket(builder, { ticket_id: blocker.id, status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, note: 'landed', evidence: [{ kind: 'commit', ref: 'helmo@abc1234' }] });
     expect(s.blockersFor([waiting.id]).has(waiting.id)).toBe(false);
     expect(s.isBlocked(waiting.id)).toBe(false);
   });
@@ -3893,7 +3893,7 @@ describe('an evidence item states what it is for (R-42 I5)', () => {
     const t = create(s);
     triage(s, t.id);
     s.updateTicket(builder, {
-      ticket_id: t.id, note: 'built it', status: 'done',
+      ticket_id: t.id, note: 'built it', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' },
       evidence: [
         { kind: 'commit', ref: 'helmo@' + 'a'.repeat(40), role: 'result' },
         { kind: 'url', ref: 'https://example.test/run/1', role: 'supporting' },
@@ -3931,7 +3931,7 @@ describe('an evidence item states what it is for (R-42 I5)', () => {
     const s = freshStore();
     const t = create(s);
     triage(s, t.id);
-    s.updateTicket(builder, { ticket_id: t.id, note: 'closing', status: 'done', evidence: [{ kind: 'other', ref: 'x' }] });
+    s.updateTicket(builder, { ticket_id: t.id, note: 'closing', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, evidence: [{ kind: 'other', ref: 'x' }] });
     // Evidence is the one append-only field a terminal ticket still takes, so
     // the guard has to hold on that path too.
     expect(() =>

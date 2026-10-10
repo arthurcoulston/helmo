@@ -48,7 +48,7 @@ const COMMAND_FLAGS: Record<string, readonly string[]> = {
   'acceptance-coverage': ['refs'],
   'release-handoff': ['ticket', 'record'],
   create: ['title', 'body', 'workstream', 'type', 'priority', 'status', 'assignee', 'dep', 'dep-type', 'schedule', 'not-before', 'needs-human', 'sitting-with', 'lane', 'workflow-attempt'],
-  update: ['ticket', 'note', 'status', 'evidence-kind', 'evidence-ref', 'evidence-role', 'confidence', 'uncertainty-note', 'blast-radius', 'tokens', 'cost-usd', 'handoff-to', 'not-before', 'lane', 'needs-human', 'sitting-with', 'no-needs-human', 'takeover', 'body-append', 'body-old', 'body-new'],
+  update: ['ticket', 'note', 'status', 'evidence-kind', 'evidence-ref', 'evidence-role', 'confidence', 'uncertainty-note', 'blast-radius', 'tokens', 'cost-usd', 'handoff-to', 'not-before', 'lane', 'needs-human', 'sitting-with', 'no-needs-human', 'takeover', 'body-append', 'body-old', 'body-new', 'completion-category', 'completion-summary'],
   return: ['ticket', 'situation', 'question', 'options', 'recommendation', 'if-unanswered'],
   action: ['ticket', 'situation', 'action', 'why-human', 'if-unanswered'],
   'action-report': ['ticket', 'did'],
@@ -437,6 +437,14 @@ try {
       if ((bodyOld === undefined) !== (bodyNew === undefined)) {
         throw new HelmoError('--body-old and --body-new must be passed together.');
       }
+      // Paired at the door, like the body anchors: a value this CLI reads from
+      // the next argv slot is indistinguishable from an absent flag, and half
+      // an account would otherwise be dropped silently (H-1782).
+      const category = flag('completion-category');
+      const summary = flag('completion-summary');
+      if ((category === undefined) !== (summary === undefined)) {
+        throw new HelmoError('--completion-category and --completion-summary must be passed together: a category with no summary says nothing about what the work produced.');
+      }
       const { ticket, warnings } = store.updateTicket(actor(), {
         ticket_id: ticketRef('ticket'),
         note: req('note'),
@@ -457,6 +465,7 @@ try {
         takeover: has('takeover') ? true : undefined,
         body_append: flag('body-append'),
         body_patch: bodyOld === undefined ? undefined : { old: bodyOld, new: bodyNew! },
+        completion_account: category === undefined ? undefined : { category: category as never, summary: summary! },
       });
       out({ id: ticket.id, status: ticket.status, warnings });
       break;
@@ -521,7 +530,8 @@ try {
   rename-workstream --from X --to Y --note N   (relabel every ticket incl. closed; one evented rename)
   workstream-set --name W [--budget-usd X] [--seat A | --seat '']   (operator steering; actor kind human/orchestrator only; seat = agent unassigned filings are reserved to)
   create         --title T --body B --workstream W --type TY [--priority P] [--status S] [--assignee A] [--workflow-attempt ID] [--dep H-n --dep-type TY] [--schedule 'every 30m' | '0 0 * * *'] [--not-before 2026-09-10] [--lane L]
-  update         --ticket H-n --note N [--status S] [--evidence-kind K --evidence-ref R [--evidence-role result|supporting|review]] [--body-append T | --body-old OLD --body-new NEW] [--confidence C] [--blast-radius B] [--tokens N] [--cost-usd X] [--handoff-to A] [--not-before 2026-09-10 | ''] [--lane L | ''] [--takeover]
+  update         --ticket H-n --note N [--status S] [--completion-category C --completion-summary S] [--evidence-kind K --evidence-ref R [--evidence-role result|supporting|review]] [--body-append T | --body-old OLD --body-new NEW] [--confidence C] [--blast-radius B] [--tokens N] [--cost-usd X] [--handoff-to A] [--not-before 2026-09-10 | ''] [--lane L | ''] [--takeover]
+                 --status done needs --completion-category and --completion-summary: what the work produced, in your own words
   return         --ticket H-n --situation S --question Q --recommendation R [--options '[{"label":..,"consequence":..}]' (2-3, only for a real choice)] [--if-unanswered U]
 Writes read identity from HELMO_ACTOR env or --actor JSON. Installation from HELMO_HOME (default ~/.helmo) or HELMO_DB naming the store
 directly; set both only if they agree. Its name is REV_LABEL when Rev started this process, or HELMO_LABEL, else derived from the home.

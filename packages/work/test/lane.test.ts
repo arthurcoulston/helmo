@@ -49,7 +49,7 @@ describe('claiming by lane', () => {
     expect(Date.now() - filed).toBeLessThan(1000);
     // A same-lane child needs only its own lane, no inheritance and no edit.
     const child = file(s, { lane: 'frontend', deps: [{ to: t.id, type: 'parent' }] });
-    s.updateTicket({ ...product, generation: 'p-2' }, { ticket_id: t.id, note: 'built', status: 'done', evidence: [{ kind: 'other', ref: 'x' }] });
+    s.updateTicket({ ...product, generation: 'p-2' }, { ticket_id: t.id, note: 'built', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, evidence: [{ kind: 'other', ref: 'x' }] });
     expect(claim(s, product, 'p-3', 'frontend')).toMatchObject({ claimed: true, ticket_id: child.id });
   });
 
@@ -201,7 +201,7 @@ describe('resuming a held claim across a scope change (migration)', () => {
     expect(claim(s, builder, 'g-1')).toEqual({ admitted: false, launch_id: 'g-1' });
     expect(claim(s, product, 'p-2', 'frontend')).toMatchObject({ ticket_id: listed.id });
     const fresh = file(s, { lane: 'frontend' });
-    s.updateTicket({ ...product, generation: 'p-2' }, { ticket_id: listed.id, note: 'done', status: 'done', evidence: [{ kind: 'other', ref: 'x' }] });
+    s.updateTicket({ ...product, generation: 'p-2' }, { ticket_id: listed.id, note: 'done', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, evidence: [{ kind: 'other', ref: 'x' }] });
     s.updateTicket(orch, { ticket_id: other.id, note: 'not needed', status: 'cancelled' });
     expect(claim(s, product, 'p-3', 'frontend')).toMatchObject({ claimed: true, ticket_id: fresh.id });
   });

@@ -19,7 +19,7 @@ describe('ordinary attended work', () => {
     s.updateTicket(desk, { ticket_id: t.id, status: 'in_progress', note: 'The operator directed this change; carrying it out.' });
     expect(s.seatHolds(desk.name)[0]?.claim_actor).toEqual(desk);
     expect(s.getTicket(t.id).needs_human).toBe(false);
-    s.updateTicket(desk, { ticket_id: t.id, status: 'done', note: 'Saved and verified.', evidence: [{ kind: 'other', ref: 'Reload and sign-in check passed.' }] });
+    s.updateTicket(desk, { ticket_id: t.id, status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, note: 'Saved and verified.', evidence: [{ kind: 'other', ref: 'Reload and sign-in check passed.' }] });
     s.rebuild();
     expect(s.getTicket(t.id).status).toBe('done');
     expect(s.getEvents(t.id).filter(e => e.event_type === 'updated').map(e => e.actor)).toEqual([desk, desk]);

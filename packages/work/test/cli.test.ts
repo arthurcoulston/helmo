@@ -489,7 +489,7 @@ describe('attended CLI work', () => {
     const s = new Store(dbPath);
     expect(s.seatHolds(writer.name)[0]?.claim_actor).toEqual(writer);
     s.close();
-    expect(cli('update', '--ticket', ticket, '--note', 'Verified.', '--status', 'done', '--evidence-ref', 'Fixture verification').status).toBe(0);
+    expect(cli('update', '--ticket', ticket, '--note', 'Verified.', '--status', 'done', '--completion-category', 'maintenance', '--completion-summary', 'Closed by a test fixture.', '--evidence-ref', 'Fixture verification').status).toBe(0);
   });
 });
 

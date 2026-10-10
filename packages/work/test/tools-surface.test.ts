@@ -237,7 +237,7 @@ describe('truth-preserving record edits (R-39 Q3/Q4)', () => {
   it('appends evidence through MCP after done but refuses state changes', async () => {
     const store = new Store(':memory:');
     const t = store.createTicket(orch, { title: 'Ship it', body: 'Current body.', workstream: 'helmo-dev', type: 'build' });
-    store.updateTicket(orch, { ticket_id: t.id, note: 'done', status: 'done' });
+    store.updateTicket(orch, { ticket_id: t.id, note: 'done', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' } });
     const evidence = await call(store, { ticket_id: t.id, note: 'late proof', evidence: [{ kind: 'url', ref: 'https://example.test/proof' }] });
     expect(evidence.isError).toBe(false);
     expect(store.getTicket(t.id).evidence).toHaveLength(1);
@@ -497,7 +497,7 @@ describe('a blocked row on the first queue read every loop makes (H-621)', () =>
     const { blocker, waiting } = seed(store);
     const before = (await rows(store, { assignee: 'cyber', actor: cyber })).tickets.find((t) => t['id'] === waiting.id)!;
     expect(before['blocked_by']).toEqual([blocker.id]);
-    store.updateTicket(orch, { ticket_id: blocker.id, status: 'done', note: 'landed', evidence: [{ kind: 'commit', ref: 'helmo@abc1234' }] });
+    store.updateTicket(orch, { ticket_id: blocker.id, status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, note: 'landed', evidence: [{ kind: 'commit', ref: 'helmo@abc1234' }] });
     const after = (await rows(store, { assignee: 'cyber', actor: cyber })).tickets.find((t) => t['id'] === waiting.id)!;
     expect(after).not.toHaveProperty('blocked_by');
     store.close();

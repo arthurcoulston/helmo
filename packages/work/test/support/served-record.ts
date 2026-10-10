@@ -141,7 +141,7 @@ export function seedCapacityRecord(db: string): { rows: number; storedTextBytes:
     // record 170 of 207 rows do and each item is markup the page has to draw.
     const evidence = i < 20 ? [] : evidenceOf(evidenceCount(i), i);
     storedTextBytes += JSON.stringify(evidence).length;
-    if (i % 2 === 1) seed.updateTicket(agent, { ticket_id: t.id, status: 'done', note: 'shipped', evidence });
+    if (i % 2 === 1) seed.updateTicket(agent, { ticket_id: t.id, status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, note: 'shipped', evidence });
     else if (evidence.length) seed.updateTicket(agent, { ticket_id: t.id, note: 'where this stands', evidence });
   }
   const prereq = make('The unfinished prerequisite');

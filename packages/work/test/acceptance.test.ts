@@ -223,7 +223,7 @@ describe('explicit product acceptance', () => {
     const t = ticket(s, 'review');
     s.updateTicket(builder, {
       ticket_id: t.id,
-      status: 'done',
+      status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' },
       note: 'The documentation review is complete.',
       evidence: [{ kind: 'file', ref: '/tmp/review.txt' }],
     });
@@ -261,7 +261,7 @@ describe('acceptance holds asked by commit', () => {
   it('finds the pending hold on a done ticket, which is the case no enumeration reached', () => {
     const s = new Store(':memory:');
     const id = offer(s, [sha('a')]);
-    s.updateTicket(builder, { ticket_id: id, status: 'done', note: 'Landed; awaiting the security read.', evidence: [{ kind: 'commit', ref: sha('a') }] });
+    s.updateTicket(builder, { ticket_id: id, status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, note: 'Landed; awaiting the security read.', evidence: [{ kind: 'commit', ref: sha('a') }] });
 
     expect(s.unresolvedCompletions({ repo: 'helmo' })).toEqual([
       { ticket_id: id, state: 'pending', reason: 'missing_verdict', refs: [sha('a')], completion_seq: expect.any(Number) },

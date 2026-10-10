@@ -808,7 +808,7 @@ mock_cmd = "sleep 1"
     });
     try {
       await waitUntil(() => existsSync(eventsPath) && /run-start.*iter=1/.test(readFileSync(eventsPath, 'utf8')), 'first run');
-      store.updateTicket(actor, { ticket_id: blocker.id, note: 'prerequisite complete', status: 'done', evidence: [{ kind: 'other', ref: 'fixture' }] });
+      store.updateTicket(actor, { ticket_id: blocker.id, note: 'prerequisite complete', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, evidence: [{ kind: 'other', ref: 'fixture' }] });
       await waitUntil(() => /run-start.*iter=2/.test(readFileSync(eventsPath, 'utf8')), 'second run');
     } finally {
       await stop(child);
@@ -1981,7 +1981,7 @@ mock_cmd = 'node ${HELM_CLI} hygiene > ${report}'
     const terminal = filing('Terminal');
     store.updateTicket(judge, { ticket_id: terminal.id, note: 'independently released before close' });
     store.updateTicket(builder, { ticket_id: terminal.id, note: 'claim', status: 'in_progress' });
-    store.updateTicket(builder, { ticket_id: terminal.id, note: 'done', status: 'done', evidence: [{ kind: 'other', ref: 'fixture' }] });
+    store.updateTicket(builder, { ticket_id: terminal.id, note: 'done', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, evidence: [{ kind: 'other', ref: 'fixture' }] });
     const blocker = store.createTicket(judge, { title: 'Prerequisite', body: 'still open', workstream: 'delivery', type: 'build' });
     const blocked = filing('Dependency blocked', { deps: [{ to: blocker.id, type: 'blocks' }] });
     const gated = filing('Date gated', { not_before: '2099-01-01T00:00:00Z' });

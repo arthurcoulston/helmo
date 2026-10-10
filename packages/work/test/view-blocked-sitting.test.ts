@@ -69,7 +69,7 @@ describe('a current impediment outranks a later sitting', () => {
         { to: prereq.id, type: 'blocks' as const },
       ],
     });
-    seed.updateTicket(builder, { ticket_id: done.id, status: 'done', note: 'shipped', evidence: [{ kind: 'commit', ref: 'helmo@abc1234' }] });
+    seed.updateTicket(builder, { ticket_id: done.id, status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, note: 'shipped', evidence: [{ kind: 'commit', ref: 'helmo@abc1234' }] });
 
     // The blocker has cleared, so the retained human step is actionable again.
     const cleared = make(seed, 'The prerequisite that finished');
@@ -77,7 +77,7 @@ describe('a current impediment outranks a later sitting', () => {
       needs_human: 'Five minutes now that the build is up.',
       deps: [{ to: cleared.id, type: 'blocks' as const }],
     });
-    seed.updateTicket(builder, { ticket_id: cleared.id, status: 'done', note: 'shipped', evidence: [{ kind: 'commit', ref: 'helmo@def5678' }] });
+    seed.updateTicket(builder, { ticket_id: cleared.id, status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, note: 'shipped', evidence: [{ kind: 'commit', ref: 'helmo@def5678' }] });
 
     // A date gate and a capacity hold are impediments of their own, and each
     // keeps its actual reason rather than reading as a request to him.
@@ -107,7 +107,7 @@ describe('a current impediment outranks a later sitting', () => {
     closed = make(seed, 'Finished work that once wanted a sitting', {
       needs_human: 'Two minutes to confirm the redirect.',
     });
-    seed.updateTicket(builder, { ticket_id: closed.id, status: 'done', note: 'done and confirmed', evidence: [{ kind: 'url', ref: 'https://example.test/' }] });
+    seed.updateTicket(builder, { ticket_id: closed.id, status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, note: 'done and confirmed', evidence: [{ kind: 'url', ref: 'https://example.test/' }] });
     seed.close();
 
     view = spawn(process.execPath, ['--import', 'tsx', 'src/view.ts'], {

@@ -60,7 +60,7 @@ describe('dashboard presentation', () => {
     const live = create(s);
     const closed = Array.from({ length: CLOSED_TAIL + 3 }, () => {
       const t = create(s);
-      s.updateTicket(builder, { ticket_id: t.id, note: 'done', status: 'done' });
+      s.updateTicket(builder, { ticket_id: t.id, note: 'done', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' } });
       return t.id;
     });
     const all = s.listTickets({ limit: 1000 });

@@ -99,7 +99,7 @@ describe('hygiene through the MCP surface (H-758)', () => {
     const ticket = store.createTicket(orch, {
       title: 'Conversational deliverable', body: 'The answer was given live.', workstream: 'helmo-dev', type: 'writing',
     });
-    store.updateTicket(orch, { ticket_id: ticket.id, note: 'finished in the meeting', status: 'done' });
+    store.updateTicket(orch, { ticket_id: ticket.id, note: 'finished in the meeting', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' } });
 
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
     const server = buildServer(store, seat);
@@ -154,9 +154,9 @@ describe('a supervised worker cannot shed or borrow its binding (H-574)', () => 
     const before = store.getEvents(id).length;
     const attempts: [string, Record<string, unknown>][] = [
       ['helmo_update_ticket', { ticket_id: id, note: 'closing', status: 'done' }],
-      ['helmo_update_ticket', { ticket_id: id, note: 'closing', status: 'done', actor: stated }],
-      ['helmo_update_ticket', { ticket_id: id, note: 'closing', status: 'done', actor: { ...stated, session: 'rev:builder-a' } }],
-      ['helmo_update_ticket', { ticket_id: id, note: 'closing', status: 'done', actor: { ...stated, session: 'rev:builder-a', generation: 'launch-a' } }],
+      ['helmo_update_ticket', { ticket_id: id, note: 'closing', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, actor: stated }],
+      ['helmo_update_ticket', { ticket_id: id, note: 'closing', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, actor: { ...stated, session: 'rev:builder-a' } }],
+      ['helmo_update_ticket', { ticket_id: id, note: 'closing', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, actor: { ...stated, session: 'rev:builder-a', generation: 'launch-a' } }],
       ['helmo_update_ticket', { ticket_id: id, note: 'passing it on', handoff_to: 'reviewer-loop' }],
       ['helmo_record_product_completion', { ticket_id: id, note: 'ready', artifacts: [{ ref: `helmo@${'a'.repeat(40)}`, author: 'builder-loop' }] }],
     ];
@@ -169,7 +169,7 @@ describe('a supervised worker cannot shed or borrow its binding (H-574)', () => 
     expect(store.getTicket(id).status).toBe('in_progress');
 
     const a = await connect(boundA);
-    const done = await a.callTool({ name: 'helmo_update_ticket', arguments: { ticket_id: id, note: 'built', status: 'done', evidence: [{ kind: 'other', ref: 'x' }], actor: stated } });
+    const done = await a.callTool({ name: 'helmo_update_ticket', arguments: { ticket_id: id, note: 'built', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, evidence: [{ kind: 'other', ref: 'x' }], actor: stated } });
     expect(done.isError).toBeFalsy();
     expect(store.getEvents(id).at(-1)?.actor).toEqual({ ...boundA, model: stated.model, version: stated.version });
     const late = await a.callTool({ name: 'helmo_update_ticket', arguments: { ticket_id: id, note: 'one more thing' } });
@@ -224,7 +224,7 @@ describe('a supervised worker cannot shed or borrow its binding (H-574)', () => 
     expect(JSON.stringify(old)).toMatch(/stale_generation/);
     const resumed: Actor = { ...boundA, generation: 'launch-a2' };
     expect(() => store.updateTicket(resumed, { ticket_id: open, note: 'taking it', status: 'in_progress' })).toThrow(/launch_assignment_conflict/);
-    expect(store.updateTicket(resumed, { ticket_id: own, note: 'built', status: 'done', evidence: [{ kind: 'other', ref: 'x' }] }).ticket.status).toBe('done');
+    expect(store.updateTicket(resumed, { ticket_id: own, note: 'built', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, evidence: [{ kind: 'other', ref: 'x' }] }).ticket.status).toBe('done');
     await a.close();
     store.close();
   });
@@ -238,7 +238,7 @@ describe('a supervised worker cannot shed or borrow its binding (H-574)', () => 
     store.close();
     const cli = (env: Actor, ...extra: string[]) => spawnSync(
       process.execPath,
-      ['--import', 'tsx', 'src/cli.ts', 'update', '--ticket', id, '--note', 'closing', '--status', 'done', ...extra],
+      ['--import', 'tsx', 'src/cli.ts', 'update', '--ticket', id, '--note', 'closing', '--status', 'done', '--completion-category', 'maintenance', '--completion-summary', 'Closed by a test fixture.', ...extra],
       { cwd: new URL('..', import.meta.url).pathname, env: { ...process.env, HELMO_DB: dbPath, HELMO_ACTOR: JSON.stringify(env) }, encoding: 'utf8' },
     );
     const spoof = cli(boundB, '--actor', JSON.stringify({ ...stated, session: 'rev:builder-a', generation: 'launch-a' }));

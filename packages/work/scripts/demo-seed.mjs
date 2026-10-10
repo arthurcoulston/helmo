@@ -32,6 +32,7 @@ const thumbs = create(
 );
 store.updateTicket(forge, {
   ticket_id: thumbs, status: 'done',
+  completion_account: { category: 'improvement', summary: 'Thumbnails are resized once on upload instead of on every request, so the CDN bill no longer scales with traffic; 3,118 existing originals were backfilled.' },
   note: 'Resizes now happen in the upload worker; backfill script processed 3,118 originals with zero failures.',
   evidence: [{ kind: 'commit', ref: '9f41c2a' }],
   confidence: 'routine', blast_radius: 'records',
@@ -48,6 +49,7 @@ const backfill = create(
 );
 store.updateTicket(scout, {
   ticket_id: backfill, status: 'done',
+  completion_account: { category: 'operations', summary: '2025 order history is queryable in the warehouse: all 12 monthly exports loaded and row counts reconciled against source.' },
   note: 'All 12 monthly exports loaded; row counts match source. One March file had a duplicated header row, handled.',
   evidence: [{ kind: 'file', ref: 'warehouse/orders_2025' }],
   confidence: 'spot_check', blast_radius: 'records',

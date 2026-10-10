@@ -17,6 +17,37 @@ export type Confidence = (typeof CONFIDENCES)[number];
 export const EVIDENCE_ROLES = ['result', 'supporting', 'review'] as const;
 export type EvidenceRole = (typeof EVIDENCE_ROLES)[number];
 
+/** The work category an author chooses for a completed ticket
+ *  (`crew:projects/r39/RECENT-RESULTS-CONTRACT.md`). Ticket `type` is an open
+ *  routing noun and stays one: `build` is never read as Feature, Improvement
+ *  or Bug fix, because which of the three a build was is a judgment only its
+ *  author holds. */
+export const COMPLETION_CATEGORIES = [
+  'feature', 'improvement', 'bug_fix', 'maintenance', 'research',
+  'planning_design', 'documentation_content', 'operations', 'review', 'incident',
+] as const;
+export type CompletionCategory = (typeof COMPLETION_CATEGORIES)[number];
+
+/** One paragraph. The ceiling is in Unicode code points rather than UTF-16
+ *  units, so an account written with emoji or outside the BMP is measured the
+ *  same length its author sees. */
+export const COMPLETION_SUMMARY_MAX = 280;
+
+/** What the author says the work produced, materialized on the ticket.
+ *  `author` and `recorded_at` are Helmo's to fill: an account is only worth
+ *  reading if the name on it is the name that wrote it. */
+export interface CompletionAccount {
+  category: CompletionCategory;
+  summary: string;
+  author: string;
+  recorded_at: string;
+}
+
+/** What a caller supplies. The other two fields are refused rather than
+ *  ignored — a caller that thinks it set the author would otherwise never
+ *  learn that Helmo overwrote it. */
+export type CompletionAccountInput = Pick<CompletionAccount, 'category' | 'summary'>;
+
 export const ACTOR_KINDS = ['agent', 'orchestrator', 'human'] as const;
 export type ActorKind = (typeof ACTOR_KINDS)[number];
 
@@ -347,6 +378,11 @@ export interface Ticket {
   release_handoff: ReleaseHandoff | null; // explicit release invitation; stale records return to agents
   lane: string | null; // the stream of work, and workspace, a pool worker serves; null is the general pool
   capacity_hold: CapacityHold | null; // deliberate spending hold; visible, never ready or directly claimable
+  /** What the author says this work produced, or null when nobody has said
+   *  (every ticket closed before the field existed, and every human answer
+   *  that resolved one as done). Null is displayed as missing; no summary is
+   *  ever derived from a title, a note or a done status. */
+  completion_account: CompletionAccount | null;
   workflow_attempt_id: string | null; // immutable workflow obligation; null preserves ordinary ticket semantics
   created_at: string;
   updated_at: string;

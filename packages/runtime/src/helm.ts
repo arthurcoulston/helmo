@@ -613,6 +613,14 @@ export function completeAnsweredResume(g: GlobalConfig, ticketId: string, runnin
       ? 'Rev applied the peer investigator disposition; the supervisor restarted the loop and confirmed it stayed running.'
       : 'Rev applied the human resume answer; the supervisor restarted the loop and confirmed it stayed running.',
     '--status', 'done', '--confidence', 'routine',
+    // Closing ordinary work states what it produced (R-44). Rev's own words,
+    // not a template: what this close actually achieved is that a loop which
+    // had downed tools is turning again, and that is what the operator reads
+    // in the day's results.
+    '--completion-category', 'operations',
+    '--completion-summary', agent
+      ? 'The blocked loop is running again: Rev applied the peer investigator disposition, restarted the worker, and confirmed it stayed up past the minimum uptime.'
+      : 'The blocked loop is running again: Rev applied the resume answer, restarted the worker, and confirmed it stayed up past the minimum uptime.',
     '--evidence-kind', 'file', '--evidence-ref', runningPath,
   ], revActor());
   return true;

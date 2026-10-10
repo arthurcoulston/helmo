@@ -67,7 +67,7 @@ describe('the landing note on the ticket that asked for the redeploy', () => {
   it('records a closed ticket as a skip, not a failure — the record staying permanent is not a fault', () => {
     const id = seed();
     helm(['update', '--ticket', id, '--note', 'claimed', '--status', 'in_progress'], 'shipper');
-    helm(['update', '--ticket', id, '--note', 'the fix is committed and tested', '--status', 'done'], 'shipper');
+    helm(['update', '--ticket', id, '--note', 'the fix is committed and tested', '--status', 'done', '--completion-category', 'maintenance', '--completion-summary', 'Closed by a test fixture.'], 'shipper');
     const before = sizeOfEvents();
 
     reportRedeployLanded(g, { ...request, ticket: id }, 4243);

@@ -516,9 +516,9 @@ if [ -n "$ID" ]; then
   if [ -n "$SIDE" ]; then
     HELMO_ACTOR='{"name":"test-loop","kind":"agent","model":"mock","version":"0.1","session":"desk"}' node ${HELM_CLI} update --ticket $SIDE --note "desk claim" --status in_progress
     HELMO_ACTOR='{"name":"test-loop","kind":"agent","model":"mock","version":"0.1","session":"desk"}' node ${HELM_CLI} update --ticket $SIDE --note "desk progress"
-    HELMO_ACTOR='{"name":"test-loop","kind":"agent","model":"mock","version":"0.1","session":"desk"}' node ${HELM_CLI} update --ticket $SIDE --note "desk done" --status done --evidence-kind other --evidence-ref desk
+    HELMO_ACTOR='{"name":"test-loop","kind":"agent","model":"mock","version":"0.1","session":"desk"}' node ${HELM_CLI} update --ticket $SIDE --note "desk done" --status done --completion-category maintenance --completion-summary "Closed by a test fixture." --evidence-kind other --evidence-ref desk
   fi
-  node ${HELM_CLI} update --ticket $ID --note "completed by mock" --status done --evidence-kind file --evidence-ref /tmp/out
+  node ${HELM_CLI} update --ticket $ID --note "completed by mock" --status done --completion-category maintenance --completion-summary "Closed by a test fixture." --evidence-kind file --evidence-ref /tmp/out
   echo "rev-mock-usage tokens=1200 cost_usd=0.25"
 fi
 '''
@@ -615,7 +615,7 @@ mock_cmd = "true"
       expect(events()).not.toMatch(/run-start/); // no session spent over the foreign hold
       expect(readFileSync(join(dir, 'SEAT_HELD'), 'utf8')).toMatch(/another live session \('desk'\)/);
       // The desk session finishes its work; the seat clears and the loop runs.
-      helm(e, ['update', '--ticket', id, '--note', 'done at the desk', '--status', 'done', '--evidence-kind', 'other', '--evidence-ref', 'x'], desk);
+      helm(e, ['update', '--ticket', id, '--note', 'done at the desk', '--status', 'done', '--completion-category', 'maintenance', '--completion-summary', 'Closed by a test fixture.', '--evidence-kind', 'other', '--evidence-ref', 'x'], desk);
       await until(/run-start/);
       expect(existsSync(join(dir, 'SEAT_HELD'))).toBe(false);
       expect(events()).toMatch(/seat-clear/);
@@ -936,7 +936,7 @@ sleep 2
 ID=$(node ${HELM_CLI} list --ready --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
 if [ -n "$ID" ]; then
   node ${HELM_CLI} update --ticket $ID --note "claimed by mock" --status in_progress
-  node ${HELM_CLI} update --ticket $ID --note "completed by mock" --status done --evidence-kind other --evidence-ref mock
+  node ${HELM_CLI} update --ticket $ID --note "completed by mock" --status done --completion-category maintenance --completion-summary "Closed by a test fixture." --evidence-kind other --evidence-ref mock
 fi
 '''
 `);
@@ -993,7 +993,7 @@ echo "MODEL:$REV_MODEL"
 ID=$(node ${HELM_CLI} list --ready --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
 if [ -n "$ID" ]; then
   node ${HELM_CLI} update --ticket $ID --note "claimed by mock" --status in_progress
-  node ${HELM_CLI} update --ticket $ID --note "completed by mock" --status done --evidence-kind file --evidence-ref /tmp/out
+  node ${HELM_CLI} update --ticket $ID --note "completed by mock" --status done --completion-category maintenance --completion-summary "Closed by a test fixture." --evidence-kind file --evidence-ref /tmp/out
 fi
 echo "rev-mock-usage tokens=100 cost_usd=0.01"
 '''
@@ -1039,7 +1039,7 @@ echo "MODEL:$REV_MODEL"
 ID=$(node ${HELM_CLI} list --ready --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
 if [ -n "$ID" ]; then
   node ${HELM_CLI} update --ticket $ID --note "claimed by mock" --status in_progress
-  node ${HELM_CLI} update --ticket $ID --note "completed by mock" --status done --evidence-kind file --evidence-ref /tmp/out
+  node ${HELM_CLI} update --ticket $ID --note "completed by mock" --status done --completion-category maintenance --completion-summary "Closed by a test fixture." --evidence-kind file --evidence-ref /tmp/out
 fi
 echo "rev-mock-usage tokens=10 cost_usd=0.01"
 '''
@@ -1194,7 +1194,7 @@ mock_cmd = '''
 set -e
 ID=$(node ${HELM_CLI} list --ready --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
 node ${HELM_CLI} update --ticket $ID --note "claimed by mock" --status in_progress
-node ${HELM_CLI} update --ticket $ID --note "completed by mock" --status done --evidence-kind file --evidence-ref /tmp/out
+node ${HELM_CLI} update --ticket $ID --note "completed by mock" --status done --completion-category maintenance --completion-summary "Closed by a test fixture." --evidence-kind file --evidence-ref /tmp/out
 echo "rev-mock-usage tokens=1000 cost_usd=7.00"
 '''
 
@@ -1241,7 +1241,7 @@ mock_cmd = '''
 set -e
 ID=$(node ${HELM_CLI} list --ready --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
 node ${HELM_CLI} update --ticket $ID --note "claimed by mock" --status in_progress
-node ${HELM_CLI} update --ticket $ID --note "completed by mock" --status done --evidence-kind file --evidence-ref /tmp/out
+node ${HELM_CLI} update --ticket $ID --note "completed by mock" --status done --completion-category maintenance --completion-summary "Closed by a test fixture." --evidence-kind file --evidence-ref /tmp/out
 echo "rev-mock-usage tokens=1000 cost_usd=7.00"
 '''
 
@@ -1289,7 +1289,7 @@ mock_cmd = '''
 set -e
 ID=$(node ${HELM_CLI} list --ready --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
 node ${HELM_CLI} update --ticket $ID --note "claimed by mock" --status in_progress
-node ${HELM_CLI} update --ticket $ID --note "completed by mock" --status done --evidence-kind file --evidence-ref /tmp/out
+node ${HELM_CLI} update --ticket $ID --note "completed by mock" --status done --completion-category maintenance --completion-summary "Closed by a test fixture." --evidence-kind file --evidence-ref /tmp/out
 echo "rev-mock-usage tokens=1000 cost_usd=7.00"
 '''
 `);
@@ -1328,7 +1328,7 @@ set -e
 ID=$(node ${HELM_CLI} list --ready --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
 if [ -n "$ID" ]; then
   node ${HELM_CLI} update --ticket $ID --note "claimed by mock" --status in_progress
-  node ${HELM_CLI} update --ticket $ID --note "guessing my spend" --tokens 5000 --cost-usd 5 --status done --evidence-kind file --evidence-ref /tmp/out
+  node ${HELM_CLI} update --ticket $ID --note "guessing my spend" --tokens 5000 --cost-usd 5 --status done --completion-category maintenance --completion-summary "Closed by a test fixture." --evidence-kind file --evidence-ref /tmp/out
   echo "rev-mock-usage tokens=1200 cost_usd=0.25"
 fi
 '''
@@ -1356,7 +1356,7 @@ A=$(echo $IDS | cut -d' ' -f1); B=$(echo $IDS | cut -d' ' -f2)
 if [ -n "$A" ]; then
   node ${HELM_CLI} update --ticket $A --note "claimed by mock" --status in_progress
   node ${HELM_CLI} update --ticket $B --note "guessing my spend on the side ticket" --tokens 80000
-  node ${HELM_CLI} update --ticket $A --note "completed by mock" --status done --evidence-kind file --evidence-ref /tmp/out
+  node ${HELM_CLI} update --ticket $A --note "completed by mock" --status done --completion-category maintenance --completion-summary "Closed by a test fixture." --evidence-kind file --evidence-ref /tmp/out
   echo "rev-mock-usage tokens=17696 cost_usd=3.23"
 fi
 '''
@@ -1836,7 +1836,7 @@ ${CAPTURE_PROMPT}
 ID=$(node ${HELM_CLI} list --ready --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
 if [ -n "$ID" ]; then
   node ${HELM_CLI} update --ticket $ID --note "judged by mock" --status in_progress
-  node ${HELM_CLI} update --ticket $ID --note "disposed by mock" --status done --evidence-kind file --evidence-ref /tmp/out
+  node ${HELM_CLI} update --ticket $ID --note "disposed by mock" --status done --completion-category maintenance --completion-summary "Closed by a test fixture." --evidence-kind file --evidence-ref /tmp/out
 fi
 '''
 `);
@@ -1910,7 +1910,7 @@ set -e
 ID=$(node ${HELM_CLI} list --ready --assignee builder --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
 if [ -n "$ID" ]; then
   node ${HELM_CLI} update --ticket $ID --note "owner claimed after triage" --status in_progress
-  node ${HELM_CLI} update --ticket $ID --note "owner completed after wake" --status done --evidence-kind other --evidence-ref fixture
+  node ${HELM_CLI} update --ticket $ID --note "owner completed after wake" --status done --completion-category maintenance --completion-summary "Closed by a test fixture." --evidence-kind other --evidence-ref fixture
 fi
 '''
 `);

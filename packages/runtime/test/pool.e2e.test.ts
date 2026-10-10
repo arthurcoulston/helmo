@@ -21,7 +21,7 @@ interface Env { home: string; db: string; env: NodeJS.ProcessEnv }
 // The bound ticket is read back out of the prompt, which is the only place a
 // real model session learns it.
 const BOUND = `T=$(printf '%s' "$REV_PROMPT" | grep -oE '(claimed|resumed) ticket H-[0-9]+' | grep -oE 'H-[0-9]+'); echo "$REV_LOOP $T" >> $REV_HOME/bound`;
-const FINISH = `node ${HELM_CLI} update --ticket $T --note "done by $REV_LOOP" --status done --evidence-kind other --evidence-ref pool`;
+const FINISH = `node ${HELM_CLI} update --ticket $T --note "done by $REV_LOOP" --status done --completion-category maintenance --completion-summary "Closed by a test fixture." --evidence-kind other --evidence-ref pool`;
 
 function worker(name: string, home: string, mock: string, extra = ''): string {
   return `[loops.${name}]

@@ -46,6 +46,19 @@ function seedTicket(homes, title) {
   return JSON.parse(r.stdout).id;
 }
 
+/** Close a seeded ticket through the shipped binary, with the account that
+ *  closing ordinary work now requires (R-44). Through `helmo work` rather than
+ *  the Store, because what this file proves is the app a reader actually runs. */
+function closeTicket(homes, id, summary) {
+  const r = spawnSync(join(BIN, 'helmo'), [
+    'work', 'update', '--ticket', id, '--note', 'closed by the app acceptance fixture',
+    '--status', 'done', '--completion-category', 'improvement', '--completion-summary', summary,
+    '--evidence-kind', 'commit', '--evidence-ref', 'helmo@0123456', '--evidence-role', 'result',
+  ], { encoding: 'utf8', env: env({ ...homes, HELMO_ACTOR: FILER }) });
+  if (r.error) throw r.error;
+  assert.equal(r.status, 0, r.stderr);
+}
+
 function seedProject(homes, title) {
   const store = new Store(join(homes.ROADMAP_HOME, 'roadmap.db'));
   try {
@@ -135,6 +148,23 @@ test('the app answers its own port directly and renders the record a recorded UR
 
   const overview = await (await fetch(`${origin}/api/v1/overview`)).json();
   assert.ok(overview.data.records.some(record => record.id === ticket), 'Overview API preserves its existing record projection');
+
+  /* The results widget's document reaches Overview, carried from Work rather
+     than recomputed, with the window the server fixed (R-44). Asserted here
+     because `verify:ui` is a release gate rather than part of this suite: a
+     regression in the wiring would otherwise be invisible until then, and the
+     card draws its own empty state rather than failing. */
+  const SUMMARY = 'The app acceptance fixture can read what got done from the Overview document.';
+  closeTicket(homes, ticket, SUMMARY);
+  const withResult = await (await fetch(`${origin}/api/v1/overview`)).json();
+  const results = withResult.data.results;
+  assert.ok(results, 'the Overview API carries no results document for the card to draw');
+  assert.ok(Date.parse(results.as_of) - Date.parse(results.window_started_at) === 86_400_000, 'the results window is not the 24 hours it names');
+  const row = results.rows.find((r) => r.id === ticket);
+  assert.ok(row, `the record just closed is not in the past-24-hours results: ${JSON.stringify(results.rows.map((r) => r.id))}`);
+  assert.equal(row.summary, SUMMARY, 'the account recorded through the shipped binary did not survive to the reading');
+  assert.equal(row.category, 'improvement');
+  assert.deepEqual(row.results.map((item) => item.ref), ['helmo@0123456'], 'the recorded result did not reach the card');
 
   // Work is drawn by the application now, so the record a reader sees on
   // /work comes from this document rather than from the HTML (H-2936). The

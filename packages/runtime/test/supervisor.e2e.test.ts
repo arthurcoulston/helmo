@@ -128,7 +128,7 @@ set -e
 ID=$(node ${HELM_CLI} list --ready --workstream ${ws} --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
 if [ -n "$ID" ]; then
   node ${HELM_CLI} update --ticket $ID --note "claimed by mock" --status in_progress
-  node ${HELM_CLI} update --ticket $ID --note "completed by mock" --status done --evidence-kind file --evidence-ref /tmp/out
+  node ${HELM_CLI} update --ticket $ID --note "completed by mock" --status done --completion-category maintenance --completion-summary "Closed by a test fixture." --evidence-kind file --evidence-ref /tmp/out
 fi
 '''`;
 
@@ -394,7 +394,7 @@ exit 1
 
       // A sweeping agent reads the answer and closes the escalation inside
       // the min-uptime window, before the supervisor gets to.
-      helm(e, ['update', '--ticket', escalation.id, '--note', 'closed by a sweep', '--status', 'done', '--evidence-kind', 'other', '--evidence-ref', 'x'],
+      helm(e, ['update', '--ticket', escalation.id, '--note', 'closed by a sweep', '--status', 'done', '--completion-category', 'maintenance', '--completion-summary', 'Closed by a test fixture.', '--evidence-kind', 'other', '--evidence-ref', 'x'],
         '{"name":"sweeper","kind":"agent","model":"t","version":"0"}');
 
       await waitFor(() => /resume-complete.*already closed/.test(events()), 'completion stands down');

@@ -829,36 +829,18 @@ function AreaContent({ area, state, selected, areas, period, onPeriodChange }: {
   if (area.id === "overview") {
     /* The results document rides along on the Overview read (R-44). A build of
        this view against a server that does not send it draws the rest of the
-       page rather than an error: the areas and the Work link are what Overview
-       has always been, and a missing widget is not a broken page. */
+       readings rather than an error: a missing widget is not a broken page. */
     const results = resultsOf(state.data)
     const team = teamNowOf(state.data)
     const next = runwayOf(state.data)
     const activity = activityOf(state.data)
     return (
-      <>
-        <section aria-label="Overview readings" className="grid items-start gap-3 lg:grid-cols-2">
-          {team ? <TeamNow data={team} /> : null}
-          {next ? <Runway data={next} /> : null}
-          {activity ? <TeamActivity data={activity} /> : null}
-          {results ? <RecentResults data={results} /> : null}
-        </section>
-        <Separator />
-        <section className="flex flex-col gap-3">
-          <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-            Areas
-          </h2>
-          {rows.length ? (
-            <CardGrid>
-              {rows.slice(0, 4).map((record, index) => (
-                <RecordCard key={record.id ?? index} record={record} />
-              ))}
-            </CardGrid>
-          ) : (
-            empty
-          )}
-        </section>
-      </>
+      <section aria-label="Overview readings" className="grid items-start gap-3 lg:grid-cols-2">
+        {team ? <TeamNow data={team} /> : null}
+        {next ? <Runway data={next} /> : null}
+        {activity ? <TeamActivity data={activity} /> : null}
+        {results ? <RecentResults data={results} /> : null}
+      </section>
     )
   }
 

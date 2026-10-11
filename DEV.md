@@ -189,7 +189,8 @@ Overview reads each product snapshot independently and summarizes them without
 joining their stores — with one deliberate exception.
 The four operator readings are the first Overview content: a two-column grid
 at the 1280×800 baseline and one column on narrow windows. Their own card
-titles are the only section titles; the legacy area links follow the grid.
+titles are the only section titles; Overview carries no duplicate area-card
+navigation below them, while the sidebar remains the route to each product.
 The reading order is present state, next work, team activity, then the taller
 results ledger, so a narrow window reaches all four readings before the ledger.
 Dense readings use document scrolling, never clipped cards or nested scroll

@@ -182,8 +182,10 @@ serves Work, preserving historical `/#H-n` bookmarks and query views.
 controls, disclosures, refresh behavior and answer protections; their versioned
 JSON APIs remain available. A backend consolidation must not replace these
 product behaviors with generic record cards. The
-aggregate machine reading remains at
-`/health.json`. The product view entries remain executable compatibility
+aggregate machine reading remains at `/health.json`. A readable product
+snapshot is not automatically healthy: Runtime's explicit `ok` makes stale
+supervisor bytes or WEDGED workers fail the aggregate while deliberate STOP,
+IDLE and SEAT_HELD controls remain healthy. The product view entries remain executable compatibility
 surfaces; importing them never binds their old ports.
 Overview reads each product snapshot independently and summarizes them without
 joining their stores — with one deliberate exception.

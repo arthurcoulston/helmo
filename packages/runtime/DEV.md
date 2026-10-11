@@ -21,6 +21,11 @@ sets remain readable, while C1 locates Rev at `helmo/packages/runtime`.
 New selections contain one `helmo` component. Runtime validates Work, Roadmap
 and Runtime artifacts under that component against the same clean commit;
 partial or extended manifests refuse rather than falling through to legacy.
+After `release upgrade` or `release rollback`, `release activate` is the only
+supported completion command: it records the attempt, requests the bounded
+drain, and verifies the replacement. The aggregate app health check consumes
+Runtime's explicit `ok`: stale supervisor bytes or a WEDGED loop fail it,
+while deliberate STOP, IDLE and SEAT_HELD states remain healthy controls.
 Renamed from Capstan 2026-08-05 (H-53); Helm event history before then carries
 the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
 
@@ -884,8 +889,8 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
     the module gate stopped it first, which is exactly how `install remove`
     shipped unreachable (H-2522).
   - It changes one file and restarts nothing: a running process keeps the code
-    it loaded and takes the release when it next starts. Operating a service
-    here would be operating one the command has not established it owns.
+    it loaded. The command sends the operator to `release activate`, never to
+    the outgoing CLI's ordinary redeploy or service-start paths.
 - `deployment.ts` — **the durable activation record** (H-2572), stored as
   `activation.json` beside the release selection. Built, published, selected,
   activating, running, failed, and rolled-back are distinct; every record

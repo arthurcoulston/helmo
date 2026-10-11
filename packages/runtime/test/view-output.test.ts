@@ -128,6 +128,17 @@ describe('view idle reasons (H-954)', () => {
     ]);
   });
 
+  it('does not turn deliberate STOP, IDLE, or SEAT_HELD controls into health failures', async () => {
+    writeFileSync(join(home, 'state', 'empty', 'STOP'), 'deliberate test stop\n');
+    try {
+      const body = await (await request('/health.json')).json() as { ok: boolean; problems: string[] };
+      expect(body.ok).toBe(true);
+      expect(body.problems).toEqual([]);
+    } finally {
+      rmSync(join(home, 'state', 'empty', 'STOP'), { force: true });
+    }
+  });
+
   it('serves the same snapshot in the versioned application API envelope', async () => {
     const response = await request('/api/v1/runtime');
     const body = await response.json() as { api: string; area: string; data: { loops: unknown[] } };

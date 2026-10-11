@@ -195,17 +195,28 @@ function provenanceSeverity(): string {
 export function runtimeSnapshot() {
   const { loops } = loadRoster();
   const supervisor = processObservation('supervisor');
+  const runningSupervisor = running('supervisor');
+  const loopRows = Object.values(loops).map((l) => {
+    const st = state(l.name);
+    const reason = stateReason(l.name, st);
+    return { name: l.name, state: st, workstream: l.workstream, runtime: l.runtime, model: l.model, pace: sValue(l.name, 'PACE') ?? '1', spend: spend(l.name), recent_events: lastEvents(l.name, 5), ...(reason ? { reason } : {}) };
+  });
+  // This is deliberately the bounded partial-activation alarm, not a second
+  // fleet-state taxonomy. STOP, IDLE and SEAT_HELD are valid controls; stale
+  // supervisor bytes and a worker that cannot reach Work are not.
+  const problems = [
+    ...(runningSupervisor?.state === 'stale' ? ['supervisor is running stale code'] : []),
+    ...loopRows.filter((l) => l.state === 'WEDGED').map((l) => `loop ${l.name} is WEDGED`),
+  ];
   return {
+    ok: problems.length === 0,
+    problems,
     supervisor: supervisor.pid,
     supervisor_state: supervisor.state,
     installation: INSTALL,
     build: buildReport(snapshot()),
-    running: { view: running('view'), supervisor: running('supervisor') },
-    loops: Object.values(loops).map((l) => {
-      const st = state(l.name);
-      const reason = stateReason(l.name, st);
-      return { name: l.name, state: st, workstream: l.workstream, runtime: l.runtime, model: l.model, pace: sValue(l.name, 'PACE') ?? '1', spend: spend(l.name), recent_events: lastEvents(l.name, 5), ...(reason ? { reason } : {}) };
-    }),
+    running: { view: running('view'), supervisor: runningSupervisor },
+    loops: loopRows,
     usage: { claude: readUsage(), codex: readCodexUsage() },
     reading: { provenance: provenanceLine(), severity: provenanceSeverity(), usage: [
       { name: 'Claude', line: usageLine(readUsage(), 'Claude'), severity: worstSeverity(readUsage()) },

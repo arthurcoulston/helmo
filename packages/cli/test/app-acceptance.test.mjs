@@ -13,7 +13,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Store } from '../../roadmap/dist/store.js';
 import { Store as WorkStore } from '../../work/dist/store.js';
@@ -431,6 +431,28 @@ test('health is a reading of this installation, and does not speak for the remot
   assert.deepEqual(body.checks.map((item) => item.name), ['app', 'work', 'roadmap', 'runtime']);
   assert.equal(body.checks.find((item) => item.name === 'app').detail.origin, origin);
   assert.equal(body.checks.find((item) => item.name === 'work').detail.store, join(homes.HELMO_HOME, 'helmo.db'));
+});
+
+test('health fails the partial-activation state instead of calling a stale, wedged fleet healthy', async (t) => {
+  const homes = installation(t);
+  const supervisor = join(homes.REV_HOME, 'state', 'supervisor');
+  const worker = join(homes.REV_HOME, 'state', 'example-worker');
+  mkdirSync(supervisor, { recursive: true });
+  mkdirSync(worker, { recursive: true });
+  writeFileSync(join(supervisor, 'RUNNING'), `${process.pid}\nloaded outgoing-build /outgoing/runtime/dist\n`);
+  writeFileSync(join(worker, 'RUNNING'), `${process.pid}\n`);
+  writeFileSync(join(worker, 'WEDGED'), 'cannot reach Work after release selection\n');
+
+  const { origin } = await startApp(t, homes);
+  const response = await fetch(`${origin}/health.json`);
+  const body = await response.json();
+  const runtime = body.checks.find((item) => item.name === 'runtime');
+  assert.equal(response.status, 503);
+  assert.equal(body.ok, false);
+  assert.equal(runtime.ok, false);
+  assert.equal(runtime.detail.running.supervisor.state, 'stale');
+  assert.equal(runtime.detail.loops.find((loop) => loop.name === 'example-worker').state, 'WEDGED');
+  assert.deepEqual(runtime.detail.problems, ['supervisor is running stale code', 'loop example-worker is WEDGED']);
 });
 
 test('two installations each serve their own records, and one shutting down leaves the other serving', async (t) => {

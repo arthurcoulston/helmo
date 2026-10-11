@@ -628,13 +628,13 @@ switch (cmd) {
       if (change.discarded) console.log(`The selection this replaced could not be read (${change.discarded}), so nothing is retained to roll back to.`);
       console.log(`data compatibility: ${migrationLine(change.migration)}`);
       console.log(
-        'Nothing was restarted: a running process keeps the code it loaded, and takes this release when it next starts '
-        + `(${runCommand} redeploy, or ${runCommand} service start). Check with: ${runCommand} status`,
+        'Nothing was restarted: a running process keeps the code it loaded. Complete this selection with '
+        + `'${runCommand} release activate'; it records and verifies the bounded restart. Check with: ${runCommand} release status`,
       );
-      // ...which is only true if the service definition resolves the selection
-      // at start. One installed before H-2511 names a cli.js frozen inside the
-      // release just left, so its next start would refuse. Say so here, where
-      // the promise is made, rather than leaving it for launchd.log.
+      // Activation still depends on the stable launcher. One installed before
+      // H-2511 names a cli.js frozen inside the release just left, so even the
+      // supported path would return through the outgoing build. Say so here,
+      // where the operator can repair it before asking for activation.
       const stale = stalePinnedService();
       if (stale) {
         console.log(

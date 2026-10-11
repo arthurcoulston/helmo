@@ -16,7 +16,10 @@ function at(request, prefix) {
 }
 
 function check(name, read) {
-  try { return { name, ok: true, detail: read() }; }
+  try {
+    const detail = read();
+    return { name, ok: detail?.ok !== false, detail };
+  }
   catch (error) { return { name, ok: false, error: error instanceof Error ? error.message : String(error) }; }
 }
 

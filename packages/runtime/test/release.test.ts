@@ -923,6 +923,9 @@ describe('the release commands (H-2493)', () => {
     expect(up.stdout).toContain('release: current -> next');
     expect(up.stdout).toContain('rollback supported');
     expect(up.stdout).toContain('Nothing was restarted');
+    expect(up.stdout).toContain('rev release activate');
+    expect(up.stdout).not.toContain('rev redeploy');
+    expect(up.stdout).not.toContain('rev service start');
     expect(readSelection(file)!.release).toBe('next');
 
     const back = rev(home, ['release', 'rollback'], { INSTALLATION_RELEASE: file });

@@ -496,10 +496,11 @@ rev release upgrade /srv/releases/2026.09-2
   beside, because one rename must move both or neither.
 - Running it twice is not an error: an upgrade to the release already selected
   writes nothing and says so.
-- **It restarts nothing.** A running process keeps the code it loaded and takes
-  the new release when it next starts. Restart the service, or `rev stop` and
-  start again, when you want the change to take effect now. Operating a service
-  here would mean operating one the command has not established it owns.
+- **It restarts nothing.** A running process keeps the code it loaded. Complete
+  the selection with `rev release activate`: that is the recovery-capable path
+  that records the attempt, requests the bounded drain and verifies the
+  replacement. An ordinary `rev redeploy` or `rev service start` from the
+  outgoing release is not an activation procedure.
 
 **If your service definition predates the launcher.** A service definition is
 written once and nothing rewrites it, so the program path it carries is frozen

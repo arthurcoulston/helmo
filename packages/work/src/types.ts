@@ -18,6 +18,7 @@ export interface Actor {
   kind: ActorKind;
   model?: string;
   version?: string;
+  /** Launcher/server-bound claim owner; callers may only echo this stamp. */
   session?: string;
   /** The one supervised launch this write belongs to (H-574). Only a trusted
    *  server environment sets it; see writingActor. */
@@ -25,27 +26,25 @@ export interface Actor {
 }
 
 /** Who to record as the writer, given what the caller passed and what the
- *  server environment holds. Identity — name, kind, model, version — is the
- *  caller's to state. The `session` stamp is not: it says WHICH live process
- *  is writing, rev injects it into a loop server's HELMO_ACTOR as the seat id
- *  ("rev:mason"), and an agent inside that loop has no way to know its own.
- *  So an explicit actor, which the tool guidance asks interactive sessions to
- *  send on every write, must not silently strip it. One that did left a
- *  stampless claim, and rev's same-seat guard (H-558) then read the loop's own
- *  finished work as another live session and stood the seat down for 24 hours
- *  (H-687). A caller that states its own session keeps it. */
+ *  server environment holds. Outside a pooled launch, name/kind and truthful
+ *  model/version remain the caller's to state. Session ownership (H-1382)
+ *  comes only from the launcher/server's HELMO_ACTOR, including its absence
+ *  for an unstamped attended or remote server. Omission inherits the stamp
+ *  (H-687); an explicit conflict refuses, so a caller cannot borrow another
+ *  claim's stamp or shed its own. MCP and CLI share this resolution. */
 export function writingActor(override: Actor | undefined, env: Actor | null): Actor {
   if (env?.generation) return boundActor(override, env);
   if (override?.generation) throw new HelmoError('generation is bound by a supervised server environment; a caller cannot state one.');
   if (!override) return env ?? ({} as Actor);
-  if (override.session || !env?.session) return override;
-  return { ...override, session: env.session };
+  if (override.session !== undefined && override.session !== env?.session) {
+    throw new HelmoError(`session_identity_conflict: this server is bound to session ${JSON.stringify(env?.session ?? null)}; the caller stated ${JSON.stringify(override.session)}. Omit session to use the server-bound identity.`);
+  }
+  return { ...override, session: env?.session };
 }
 
 /** A supervised parallel worker's environment binds role, worker and launch
  *  generation (H-574). Sibling workers share the role name, so a caller able
- *  to restate its session or generation could write as its sibling; the stamp
- *  that H-687 lets a desk caller restate is here the authority itself.
+ *  to restate its session or generation could write as its sibling.
  *  Conflicting fields refuse rather than being silently corrected, so a
  *  spoof is visible; omitted ones inherit, so ownership cannot be shed by
  *  leaving them out. Model and version stay the caller's to state. */

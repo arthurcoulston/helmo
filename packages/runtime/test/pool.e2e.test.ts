@@ -146,6 +146,34 @@ describe('pool workers on one seat (H-574)', { timeout: 60000 }, () => {
     }
   });
 
+  it('workers keep drawing ready work while an attended sitting holds a ticket in the seat\'s name', async () => {
+    // The worker also tries to close the sitting's ticket, as a session that
+    // read it from the seat's list might; Helmo's answer is recorded.
+    const mock = `${BOUND}; node ${HELM_CLI} update --ticket "$SITTING" --note "closing" --status done --completion-category maintenance --completion-summary "Closed by a test fixture." --evidence-kind other --evidence-ref pool 2>> $REV_HOME/sitting-refusals; ${FINISH}`;
+    const e = setup((h) => worker('w1', h, mock) + worker('w2', h, mock));
+    const sitting = (helm(e, ['create', '--title', 'The sitting', '--body', 'attended', '--workstream', 'rev-test', '--type', 'ops', '--assignee', 'builder']) as { id: string }).id;
+    execFileSync('node', [HELM_CLI, 'update', '--ticket', sitting, '--note', 'claimed at the desk', '--status', 'in_progress'], {
+      env: { ...e.env, HELMO_ACTOR: '{"name":"builder","kind":"agent","model":"claude-fable-5","version":"claude-code-2.1.221"}' }, encoding: 'utf8',
+    });
+    const a = seed(e, 'Ready work A');
+    const b = seed(e, 'Ready work B');
+    e.env = { ...e.env, SITTING: sitting };
+
+    const kids = [runAsync(e, 'w1'), runAsync(e, 'w2')];
+    await Promise.all(kids.map(exited));
+
+    const bound = readFileSync(join(e.home, 'bound'), 'utf8').trim().split('\n').map((l) => l.split(' ')[1]).sort();
+    expect(bound).toEqual([a, b].sort());
+    expect(ticket(e, a).status).toBe('done');
+    expect(ticket(e, b).status).toBe('done');
+    expect(ticket(e, sitting)).toEqual(expect.objectContaining({ status: 'in_progress', assignee: 'builder' }));
+    expect(readFileSync(join(e.home, 'sitting-refusals'), 'utf8')).toMatch(/launch_assignment_conflict|session_claim_held/);
+    for (const w of ['w1', 'w2']) {
+      expect(events(e, w)).toMatch(new RegExp(`seat-shared\\s+${sitting} held in this name by an attended session`));
+      expect(events(e, w)).not.toMatch(/seat-held/);
+    }
+  });
+
   it('a worker that finds the only ticket taken idles without spending a session', async () => {
     const slow = `${BOUND}; sleep 1; ${FINISH}`;
     const e = setup((h) => worker('w1', h, slow) + worker('w2', h, slow));

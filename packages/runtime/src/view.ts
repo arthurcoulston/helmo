@@ -199,7 +199,9 @@ export function runtimeSnapshot() {
   const loopRows = Object.values(loops).map((l) => {
     const st = state(l.name);
     const reason = stateReason(l.name, st);
-    return { name: l.name, state: st, workstream: l.workstream, runtime: l.runtime, model: l.model, pace: sValue(l.name, 'PACE') ?? '1', spend: spend(l.name), recent_events: lastEvents(l.name, 5), ...(reason ? { reason } : {}) };
+    // Not a state: the loop works on, and only these tickets are out of its reach.
+    const shared = (st === 'RUNNING' || st === 'IDLE') ? sGet(l.name, 'SEAT_SHARED')?.split('\n')[0] : undefined;
+    return { name: l.name, state: st, workstream: l.workstream, runtime: l.runtime, model: l.model, pace: sValue(l.name, 'PACE') ?? '1', spend: spend(l.name), recent_events: lastEvents(l.name, 5), ...(reason ? { reason } : {}), ...(shared ? { shared_with: shared } : {}) };
   });
   // This is deliberately the bounded partial-activation alarm, not a second
   // fleet-state taxonomy. STOP, IDLE and SEAT_HELD are valid controls; stale

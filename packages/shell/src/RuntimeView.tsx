@@ -10,7 +10,7 @@ export type RuntimeData = {
   supervisor: number | null
   supervisor_state: string
   installation: { label: string; home: string; release: string | null; detail: string | null }
-  loops: { name: string; state: string; workstream: string; runtime: string; model: string; pace: string; reason?: string; spend: { tokens: number; cost: number }; recent_events: string[] }[]
+  loops: { name: string; state: string; workstream: string; runtime: string; model: string; pace: string; reason?: string; shared_with?: string; spend: { tokens: number; cost: number }; recent_events: string[] }[]
   reading: { provenance: string; severity: string; usage: { name: string; line: string; severity: string }[] }
   work_link: { local: string; remote: string }
 }
@@ -164,6 +164,7 @@ export function RuntimeView({ data, workAvailable }: { data: RuntimeData; workAv
               {/* No `max-w-64`: the column declares the geometry now, and a
                   second bound here would read as the one that mattered. */}
               {loop.reason ? <p className="mt-2 whitespace-normal text-xs [overflow-wrap:anywhere]">{loop.reason}</p> : null}
+              {loop.shared_with ? <p className="mt-2 whitespace-normal text-xs [overflow-wrap:anywhere]">works on beside {loop.shared_with}</p> : null}
             </TableCell>
             <TableCell data-column="workstream" className={`align-top ${cell.workstream}`}>{loop.workstream}</TableCell>
             <TableCell data-column="model" className={`align-top ${cell.model}`}>{loop.runtime} / {loop.model}</TableCell>

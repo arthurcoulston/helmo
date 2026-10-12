@@ -83,6 +83,8 @@ model = "mock"
   mkdirSync(seatHeld, { recursive: true });
   writeFileSync(join(seatHeld, 'RUNNING'), `${process.pid}\n`);
   writeFileSync(join(seatHeld, 'SEAT_HELD'), "another live session ('desk') holds H-891\n");
+  // A live loop working on beside a sitting in its name.
+  writeFileSync(join(home, 'state', 'held', 'SEAT_SHARED'), 'H-42 held in this name by an attended session — claimed 4m ago\n');
 
   const port = await freePort();
   origin = `http://127.0.0.1:${port}`;
@@ -156,5 +158,14 @@ describe('view idle reasons (H-954)', () => {
     });
     expect(output).toMatch(/seat-held\s+SEAT_HELD/);
     expect(output).toContain('SEAT_HELD=standing down for another live session in this seat');
+    expect(output).toContain('SHARED SEAT: held works on beside H-42 held in this name by an attended session — claimed 4m ago');
+  });
+
+  it('names the tickets a working loop leaves to another session in its name', async () => {
+    const data = (await (await request('/api/v1/runtime')).json()).data as { loops: Array<{ name: string; shared_with?: string }> };
+    expect(data.loops.find((l) => l.name === 'held')?.shared_with).toContain('H-42 held in this name by an attended session');
+    const body = await (await request('/health.json')).json() as { loops: Array<{ name: string; state: string; shared_with?: string }> };
+    expect(body.loops.find((l) => l.name === 'held')).toMatchObject({ state: 'IDLE', shared_with: 'H-42 held in this name by an attended session — claimed 4m ago' });
+    expect(body.loops.filter((l) => l.shared_with)).toHaveLength(1);
   });
 });

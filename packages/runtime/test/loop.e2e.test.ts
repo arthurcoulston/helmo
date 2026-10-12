@@ -592,37 +592,47 @@ fi
     expect(readTicketLaunches(['traced-loop'], side).launches).toEqual([]);
   });
 
-  it('stands down while a desk session holds work in its name, resumes when the seat clears (H-558)', async () => {
+  it('works on beside an attended sitting in its name, leaving only the sitting\'s ticket alone (H-558)', async () => {
+    // The mock "agent" is the single worker drawing its own work: it claims
+    // and completes the first ready ticket, then tries to close the sitting's
+    // and records Helmo's answer.
     const e = setup(`[loops.seat-loop]
 workstream = "rev-test"
 cwd = "/tmp"
 runtime = "mock"
-mock_cmd = "true"
+mock_cmd = '''
+printf '%s' "$REV_PROMPT" > ${'$'}{REV_HOME}/prompt
+ID=$(node ${HELM_CLI} list --ready --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
+if [ -n "$ID" ]; then
+  node ${HELM_CLI} update --ticket $ID --note "claimed by the loop" --status in_progress
+  node ${HELM_CLI} update --ticket $ID --note "completed by the loop" --status done --completion-category maintenance --completion-summary "Closed by a test fixture." --evidence-kind other --evidence-ref loop
+fi
+node ${HELM_CLI} update --ticket "$SITTING" --note "closing the sitting" --status done --completion-category maintenance --completion-summary "Closed by a test fixture." --evidence-kind other --evidence-ref loop 2> ${'$'}{REV_HOME}/sitting-refusal && echo written > ${'$'}{REV_HOME}/sitting-written
+'''
 `);
-    // A desk session sharing the crew name claims a ticket reserved for it —
-    // the exact H-542/H-560 shape. Same actor name, no rev seat stamp.
-    const id = (helm(e, ['create', '--title', 'Seat collision', '--body', 'held by a desk session sharing the name', '--workstream', 'rev-test', '--type', 'ops', '--assignee', 'seat-loop']) as { id: string }).id;
-    const desk = '{"name":"seat-loop","kind":"agent","model":"claude-fable-5","version":"claude-code-2.1.221","session":"desk"}';
-    helm(e, ['update', '--ticket', id, '--note', 'claimed at the desk', '--status', 'in_progress'], desk);
+    // An attended sitting claims through the ordinary path: the true name, no
+    // worker session — the shape that idled every worker of a role.
+    const sitting = (helm(e, ['create', '--title', 'The sitting', '--body', 'held by an attended session sharing the name', '--workstream', 'rev-test', '--type', 'ops', '--assignee', 'seat-loop']) as { id: string }).id;
+    const desk = '{"name":"seat-loop","kind":"agent","model":"claude-fable-5","version":"claude-code-2.1.221"}';
+    helm(e, ['update', '--ticket', sitting, '--note', 'claimed at the desk', '--status', 'in_progress'], desk);
+    const work = seedTicket(e, 'Independent ready work');
+
+    const out = rev({ ...e, env: { ...e.env, SITTING: sitting } }, ['run', 'seat-loop', '--count', '1']);
+    expect(out).toContain('run 1 started');
+    expect((helm(e, ['get', work]) as { status: string }).status).toBe('done');
+    expect(helm(e, ['get', sitting])).toMatchObject({ status: 'in_progress', assignee: 'seat-loop' });
+    expect(readFileSync(join(e.home, 'sitting-refusal'), 'utf8')).toMatch(/session_claim_held/);
+    expect(existsSync(join(e.home, 'sitting-written'))).toBe(false);
+    expect(readFileSync(join(e.home, 'prompt'), 'utf8')).toContain(`Another live session in your name — an attended sitting or a subagent — holds ${sitting}.`);
 
     const dir = join(e.home, 'state', 'seat-loop');
-    const events = () => (existsSync(join(dir, 'events.log')) ? readFileSync(join(dir, 'events.log'), 'utf8') : '');
-    const until = (re: RegExp) => waitUntil(() => re.test(events()), String(re));
-    const child = spawn(process.execPath, ['--import', 'tsx', REV_CLI, 'run', 'seat-loop'], { env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore' });
-    try {
-      await until(/seat-held/);
-      expect(events()).toMatch(/seat-held.*another live session \('desk'\)/);
-      expect(events()).not.toMatch(/run-start/); // no session spent over the foreign hold
-      expect(readFileSync(join(dir, 'SEAT_HELD'), 'utf8')).toMatch(/another live session \('desk'\)/);
-      // The desk session finishes its work; the seat clears and the loop runs.
-      helm(e, ['update', '--ticket', id, '--note', 'done at the desk', '--status', 'done', '--completion-category', 'maintenance', '--completion-summary', 'Closed by a test fixture.', '--evidence-kind', 'other', '--evidence-ref', 'x'], desk);
-      await until(/run-start/);
-      expect(existsSync(join(dir, 'SEAT_HELD'))).toBe(false);
-      expect(events()).toMatch(/seat-clear/);
-      expect(events()).toMatch(/run-start/);
-    } finally {
-      await stop(child);
-    }
+    const events = readFileSync(join(dir, 'events.log'), 'utf8');
+    expect(events).toMatch(new RegExp(`seat-shared\\s+${sitting} held in this name by an attended session`));
+    expect(events).not.toMatch(/seat-held/);
+    expect(existsSync(join(dir, 'SEAT_HELD'))).toBe(false);
+    expect(readFileSync(join(dir, 'SEAT_SHARED'), 'utf8')).toContain(sitting);
+    // The loop has exited, so it shares nothing now: status reports live loops only.
+    expect(rev(e, ['status'])).not.toContain('SHARED SEAT');
   });
 
   it('a note-only session is not production — the loop idles instead of running on (H-412)', async () => {

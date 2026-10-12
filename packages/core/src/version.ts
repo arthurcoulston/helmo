@@ -1,1 +1,1 @@
-export const HELMO_VERSION = '0.6.1';
+export const HELMO_VERSION = '0.10.0';

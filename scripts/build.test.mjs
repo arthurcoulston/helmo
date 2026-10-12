@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { HELMO_VERSION } from '../packages/core/dist/version.js';
 import {
   assertBuildRoot, assertBuilt, BUILD_ARTIFACTS, MARKER, MARKER_TEXT,
 } from './build.mjs';
@@ -85,6 +86,7 @@ test('every workspace package carries the product version', () => {
       assert.equal(pkg.devDependencies['@helmo/core'], product, `${name} core dev dependency`);
     }
   }
+  assert.equal(HELMO_VERSION, product, 'shipped protocol version');
 });
 
 // The front command is the one package that depends on nothing. It resolves its

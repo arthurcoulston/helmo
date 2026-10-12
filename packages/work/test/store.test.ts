@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { actionFingerprint, questionFingerprint } from '../src/presentation.js';
-import { Store } from '../src/store.js';
+import { LAST_DUE_SQL, SILENT_ASSIGNEE_SQL, Store } from '../src/store.js';
 import { Actor, ActorKind, HelmoError } from '../src/types.js';
 
 const builder: Actor = { name: 'builder-loop', kind: 'agent', model: 'claude-sonnet-5', version: '1.0', session: 'rev:builder-loop' };
@@ -2813,6 +2813,78 @@ function heldLock(holder: ChildProcess): Promise<number> {
     });
   });
 }
+
+/** The event-index pair (H-1386) as SQLite reports it, for one store file. */
+function eventIndexes(dbPath: string): { names: string[]; plans: string[] } {
+  const db = new Database(dbPath, { readonly: true });
+  const names = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'events' AND sql IS NOT NULL ORDER BY name").all() as { name: string }[]).map((r) => r.name);
+  const plan = (sql: string, ...args: unknown[]) =>
+    (db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...args) as { detail: string }[]).map((r) => r.detail).join('\n');
+  const plans = [plan(SILENT_ASSIGNEE_SQL, '2026-01-01', '2026-01-01'), plan(LAST_DUE_SQL, 'H-1')];
+  db.close();
+  return { names, plans };
+}
+
+describe('event indexes under concurrent polling (H-1386)', () => {
+  it('serves both event lookups from an index on a new store', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'helmo-event-index-'));
+    const dbPath = join(dir, 'helmo.db');
+    new Store(dbPath).close();
+    const { names, plans } = eventIndexes(dbPath);
+    expect(names).toEqual(['idx_events_actor_name_ts', 'idx_events_spawned_due', 'idx_events_ticket']);
+    expect(plans[0]).toMatch(/SEARCH events USING (COVERING )?INDEX idx_events_actor_name_ts/);
+    expect(plans[1]).toMatch(/SEARCH events USING INDEX idx_events_spawned_due/);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('migrates a store without them while eight pollers race, replacing the hand-applied pair', async () => {
+    // The H-1384 store: built before the indexes, with Good Plumb's
+    // hand-applied gp_h1384_* pair, polled by a fleet that restarts at once.
+    // Every poller opens the store (and so migrates) and then materializes
+    // schedule instances under the write lock. All of them must finish
+    // without SQLITE_BUSY, and the store must end with one copy of each index.
+    const dir = mkdtempSync(join(tmpdir(), 'helmo-event-index-race-'));
+    const dbPath = join(dir, 'helmo.db');
+    const s = new Store(dbPath);
+    for (let i = 0; i < 8; i++) s.createTicket(builder, { title: `Sweep ${i}`, body: 'standing', workstream: 'helmo-dev', type: 'ops', schedule: 'every 1h' });
+    for (let i = 0; i < 8; i++) {
+      const t = create(s, { title: `Reserved ${i}` });
+      s.updateTicket(orch, { ticket_id: t.id, note: 'routed', handoff_to: `seat-${i}` });
+    }
+    s.close();
+    const raw = new Database(dbPath);
+    raw.exec(`DROP INDEX IF EXISTS idx_events_actor_name_ts; DROP INDEX IF EXISTS idx_events_spawned_due;
+      CREATE INDEX gp_h1384_events_actor_ts ON events(json_extract(actor, '$.name'), ts);
+      CREATE INDEX gp_h1384_events_spawn_due ON events(json_extract(payload, '$.spawned_from'), json_extract(payload, '$.due')) WHERE event_type = 'created';`);
+    const old = new Date(Date.now() - 3 * 3600_000).toISOString();
+    raw.prepare("UPDATE tickets SET created_at = ? WHERE schedule IS NOT NULL").run(old); // every template is due
+    const add = raw.prepare('INSERT INTO events (ts, ticket_id, event_type, actor, payload) VALUES (?, ?, ?, ?, ?)');
+    raw.transaction(() => {
+      for (let i = 0; i < 5000; i++) add.run(old, 'H-1', 'updated', JSON.stringify({ name: `agent-${i % 40}`, kind: 'agent' }), JSON.stringify({ note: 'x'.repeat(200) }));
+    })();
+    raw.close();
+
+    const cwd = new URL('..', import.meta.url).pathname;
+    const polls = await Promise.all(Array.from({ length: 8 }, (_, i) => new Promise<{ code: number | null; stderr: string }>((resolve) => {
+      const child = spawn(process.execPath, ['--import', 'tsx', 'src/cli.ts', 'wake-check', '--workstream', 'helmo-dev', '--assignee', `seat-${i}`, '--since-seq', '0'], {
+        cwd, env: { ...process.env, HELMO_DB: dbPath },
+      });
+      let stderr = '';
+      child.stderr.on('data', (d) => { stderr += d; });
+      child.on('close', (code) => resolve({ code, stderr }));
+    })));
+
+    expect(polls.filter((p) => p.code !== 0 || /locked|BUSY/i.test(p.stderr))).toEqual([]);
+    const { names, plans } = eventIndexes(dbPath);
+    expect(names).toEqual(['idx_events_actor_name_ts', 'idx_events_spawned_due', 'idx_events_ticket']);
+    expect(plans[0]).toMatch(/INDEX idx_events_actor_name_ts/);
+    expect(plans[1]).toMatch(/INDEX idx_events_spawned_due/);
+    const after = new Store(dbPath);
+    expect(after.listTickets({ workstream: 'helmo-dev', limit: 100 }).filter((t) => t.title.startsWith('Sweep') && t.schedule === null)).toHaveLength(8);
+    after.close();
+    rmSync(dir, { recursive: true, force: true });
+  }, 60_000);
+});
 
 describe('write contention', () => {
   it('waits for a racing revocation and denies the claim in the same transaction', async () => {

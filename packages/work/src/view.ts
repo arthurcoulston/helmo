@@ -14,7 +14,8 @@ import { actedRequest } from './acted.js';
 import { answerRequest } from './answer.js';
 import { loaded, running } from './build.js';
 import { installationLine, requestedInstallation, requireInstallation } from './install.js';
-import { actionFingerprint, activityWindowStart, ask, CLOSED_TAIL, recentResults, recordTickets, resultDisplay, teamActivity } from './presentation.js';
+import { actionFingerprint, activityWindowStart, ask, checkInBound, CLOSED_TAIL, recentResults, recordTickets, resultDisplay, teamActivity } from './presentation.js';
+import { ContinuationGap, quietAccount } from './quiet.js';
 import { DURATION_WINDOW_DAYS, runway, SeatReading } from './runway.js';
 import { Store } from './store.js';
 import { Ticket } from './types.js';
@@ -254,6 +255,86 @@ export function runwaySnapshot(seats: SeatReading[] | null) {
     seats,
     as_of: asOf,
   });
+}
+
+export interface CheckInInput {
+  /** Current Runtime seat reading, composed by the unified server. */
+  seats: SeatReading[] | null;
+  /** Current ship-next projects with no open Work continuation. */
+  continuations: ContinuationGap[];
+}
+
+/** The reader-chosen check-in projection.
+ *
+ * Roadmap and Runtime inputs arrive from the unified server, the existing
+ * composition root. Work owns every retained read and fixes one `as_of` for
+ * all of them, so a hold onset, a completion and an activity event are judged
+ * against the same interval. */
+export function checkInSnapshot(since: string, input: CheckInInput) {
+  const asOf = new Date().toISOString();
+  const bound = checkInBound(asOf, since);
+  if (!bound.ok) throw new Error(bound.refusal);
+
+  const tickets = store.listTickets({ limit: -1 });
+  const active = tickets.filter((ticket) => !['done', 'cancelled'].includes(ticket.status) && !ticket.schedule);
+  const runwayDocument = runway({
+    tickets,
+    blockers: store.blockersFor(active.map((ticket) => ticket.id)),
+    workstreams: store.listWorkstreamInfo(),
+    durations: [],
+    seats: input.seats,
+    as_of: asOf,
+  });
+  const activity = store.activityEvents(bound.since, asOf);
+  const results = recentResults(tickets, asOf, (id) => {
+    const acceptance = store.productAcceptance(id);
+    return { state: acceptance.state, reason: acceptance.reason };
+  }, { since: bound.since });
+  const quiet = quietAccount({
+    tickets,
+    exclusions: runwayDocument.excluded,
+    activity,
+    continuations: input.continuations,
+    onsets: store.causeOnsets(runwayDocument.excluded.map((row) => row.id)),
+    since: bound.since,
+    as_of: asOf,
+  });
+
+  return {
+    as_of: asOf,
+    since: bound.since,
+    source_revision: running().commit,
+    results,
+    quiet,
+    coverage: {
+      chosen_instant: {
+        state: 'available',
+        source: 'reader:request',
+        limitation: 'A supplied instant is not a retained record that the reader visited.',
+      },
+      results: {
+        state: 'available',
+        source: 'work:current-ticket-state',
+        limitation: 'Reopened work is absent until it closes again; later evidence and verdicts do not move a result into this window.',
+      },
+      activity: {
+        state: activity.recording_began_at ? 'available' : 'missing',
+        source: 'work:event-log',
+        recording_began_at: activity.recording_began_at,
+        limitation: 'Only recorded tokens, completions and operator-request paths are included.',
+      },
+      quiet: {
+        state: runwayDocument.unavailable ? 'missing' : 'available',
+        source: 'work:event-log+current-runway+roadmap-continuation',
+        limitation: runwayDocument.unavailable ?? 'Seat state and finite limits are current-only; no retained seat history can establish lost work.',
+      },
+      issues_incidents: {
+        state: 'missing',
+        source: 'work:projection-only',
+        reason: 'No production caller writes issue observations, issue dispositions or incident lifecycle events.',
+      },
+    },
+  };
 }
 
 export function workSnapshot(options: { whole?: boolean; ticket?: string } = {}) {

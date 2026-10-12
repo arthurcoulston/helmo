@@ -485,12 +485,16 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   wrong rather than the plan.
   `anomalyDecide` measures a rate against the loop's own rolling mean, never a
   cumulative total. After a subscription run the loop compares its notional
-  cost with the preceding five parseable iterations and refreshes the same plan
-  window to measure percentage-point movement. The cost-rate backstop applies
+  cost with the preceding five parseable iterations of the same loop on the
+  same runtime and refreshes the same plan window to measure percentage-point
+  movement. The cost-rate backstop applies
   only at $5 or more: this clears the three confirmed $1.71-$2.55 transitions
   from cheap queue passes to real builds while retaining the historical $5.17
-  blowout; the measured plan-point ceiling remains absolute. A trip writes both the halt
-  sentinel and `BLOCKED.json` with the observed values, baseline, time and
+  blowout; the measured plan-point ceiling remains absolute. Runtime filtering
+  precedes the five-entry limit, so cheap Codex probes do not dilute a Claude
+  baseline. Untagged history cannot establish a same-runtime baseline;
+  known zero costs still count, and unknown costs are skipped. A trip writes
+  both the halt sentinel and `BLOCKED.json` with the observed values, baseline, time and
   escalation ticket, which `/health.json` and the dashboard surface. An
   anomaly, terminal-capacity or burn trip is assigned at priority 0 to the first
   live, unblocked roster peer outside the stopped seat. If none is live, the

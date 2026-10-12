@@ -1206,8 +1206,10 @@ mock_cmd = "true"
 `);
     mkdirSync(join(e.home, 'state', 'reviewer'), { recursive: true });
     writeFileSync(join(e.home, 'state', 'reviewer', 'RUNNING'), `${process.pid}\n`);
+    // Another runtime's expensive history must not mask a genuine mock spike.
     writeFileSync(join(e.home, 'token-log'), Array.from({ length: 5 }, (_, i) =>
-      `2026-09-29T0${i}:00:00.000Z loop=anomaly-loop runtime=mock model=mock-mid tokens=100 cost_usd=1\n`,
+      `2026-09-29T0${i}:00:00.000Z loop=anomaly-loop runtime=mock model=mock-mid tokens=100 cost_usd=1\n` +
+      `2026-09-29T0${i}:30:00.000Z loop=anomaly-loop runtime=codex model=test tokens=100 cost_usd=100\n`,
     ).join(''));
     seedTicket(e, 'Work whose cost shape runs away');
     const out = rev(e, ['run', 'anomaly-loop', '--count', '1']);
@@ -1224,6 +1226,35 @@ mock_cmd = "true"
     expect(detail.investigation_ticket).toMatch(/^H-/);
     expect(helm(e, ['get', detail.investigation_ticket])).toMatchObject({ status: 'open', assignee: 'reviewer', priority: 0 });
     expect(readFileSync(join(e.home, 'state', 'anomaly-loop', 'events.log'), 'utf8')).toMatch(/anomaly.*observed=\$7\.00 mean=\$1\.00/);
+  });
+
+  it.each([true, false])('ignores cheap foreign-runtime history with a same-runtime baseline present=%s', (hasBaseline) => {
+    const e = setup(`[providers.flat]
+runtime = "mock"
+billing = "subscription"
+[providers.flat.models]
+mid = "mock-mid"
+[loops.anomaly-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+provider = "flat"
+tier = "mid"
+mock_cmd = 'echo "rev-mock-usage tokens=1000 cost_usd=13.00"'
+`);
+    const priorWork = hasBaseline
+      ? '2026-09-29T00:00:00.000Z loop=anomaly-loop runtime=mock model=mock-mid tokens=100 cost_usd=5\n'
+      : '';
+    writeFileSync(join(e.home, 'token-log'), priorWork + Array.from({ length: 5 }, (_, i) =>
+      `2026-09-29T0${i}:30:00.000Z loop=anomaly-loop runtime=codex model=test tokens=100 cost_usd=0.002\n`,
+    ).join(''));
+    seedTicket(e, 'Ordinary work after cheap probes');
+    rev(e, ['run', 'anomaly-loop', '--count', '1']);
+
+    const dir = join(e.home, 'state', 'anomaly-loop');
+    expect(readFileSync(join(e.home, 'token-log'), 'utf8')).toContain('cost_usd=13');
+    expect(readFileSync(join(dir, 'events.log'), 'utf8')).toMatch(/run-end.*class=ok/);
+    expect(existsSync(join(dir, 'BLOCKED'))).toBe(false);
+    expect(existsSync(join(dir, 'BLOCKED.json'))).toBe(false);
   });
 
   it('hands an anomaly to the seat of a pool worker that can draw it, never a worker name (H-676)', () => {

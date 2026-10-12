@@ -106,6 +106,19 @@ export function workHealth() {
   return { installation: store.installationIdentity(), store: dbPath };
 }
 
+export function issuesSnapshot() {
+  return { ...store.issuesSnapshot(), source_revision: running().commit };
+}
+
+export function incidentsSnapshot() {
+  return { ...store.incidentsSnapshot(), source_revision: running().commit };
+}
+
+export function incidentSnapshot(ticketId: string) {
+  const record = store.incident(ticketId);
+  return record ? { as_of: new Date().toISOString(), source_revision: running().commit, coverage: { state: 'available', source: 'work:event-log' }, record } : null;
+}
+
 /** The awaiting-you family as JSON, for the application that draws these
  *  cards (H-2936).
  *

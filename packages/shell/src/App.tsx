@@ -7,11 +7,15 @@ import { RecentResults, resultsOf } from "./RecentResults"
 import { TeamActivity, activityOf } from "./TeamActivity"
 import { Runway, runwayOf } from "./Runway"
 import { TeamNow, teamNowOf } from "./TeamNow"
+import { IssuesCard, IssuesView, type IssuesData } from "./IssuesView"
+import { IncidentsView, type IncidentsData } from "./IncidentsView"
 import {
   ActivityIcon,
   ChevronRightIcon,
   ClipboardListIcon,
   LayoutDashboardIcon,
+  CircleAlertIcon,
+  SirenIcon,
   MapIcon,
   MoonIcon,
   SquareArrowOutUpRightIcon,
@@ -103,6 +107,8 @@ const DESTINATIONS: Destination[] = [
     icon: ClipboardListIcon,
     rendered: true,
   },
+  { id: "issues", label: "Issues", href: "/issues", icon: CircleAlertIcon, rendered: true },
+  { id: "incidents", label: "Incidents", href: "/incidents", icon: SirenIcon, rendered: true },
   {
     id: "roadmap",
     label: "Roadmap",
@@ -122,6 +128,7 @@ const DESTINATIONS: Destination[] = [
 
 function activeArea(defaultArea: string) {
   const path = window.location.pathname.replace(/\/$/, "") || DESTINATIONS.find((d) => d.id === defaultArea)!.href
+  if (/^\/incidents\/H-\d+$/.test(path)) return DESTINATIONS.find((d) => d.id === "incidents")!
   return DESTINATIONS.find((d) => d.rendered && d.href === path) ?? DESTINATIONS[0]
 }
 
@@ -174,7 +181,8 @@ function useArea(area: string, selected: string, extra: Record<string, string> =
           if (/^H-\d+$/.test(selected)) query.set("ticket", selected)
         }
         for (const [key, value] of Object.entries(extra)) query.set(key, value)
-        const response = await fetch(`/api/v1/${area}${query.size ? `?${query}` : ""}`, { headers: { accept: "application/json" }, signal: controller.signal })
+        const detail = area === "incidents" ? /^\/incidents\/(H-\d+)$/.exec(location.pathname)?.[1] : undefined
+        const response = await fetch(`/api/v1/${area}${detail ? `/${detail}` : query.size ? `?${query}` : ""}`, { headers: { accept: "application/json" }, signal: controller.signal })
         if (!response.ok) throw new Error(`${response.status} ${response.statusText}`)
         const document_ = await response.json()
         if (document_.api !== "helmo/v1" || document_.area !== area) throw new Error("Unexpected API document")
@@ -826,6 +834,10 @@ function AreaContent({ area, state, selected, areas, period, onPeriodChange }: {
 
   if (area.id === "roadmap") return <RoadmapView data={state.data as RoadmapData} selected={selected} />
 
+  if (area.id === "issues") return <IssuesView data={state.data as IssuesData} />
+
+  if (area.id === "incidents") return <IncidentsView data={state.data as IncidentsData} />
+
   if (area.id === "overview") {
     /* The results document rides along on the Overview read (R-44). A build of
        this view against a server that does not send it draws the rest of the
@@ -840,6 +852,7 @@ function AreaContent({ area, state, selected, areas, period, onPeriodChange }: {
         {next ? <Runway data={next} /> : null}
         {activity ? <TeamActivity data={activity} /> : null}
         {results ? <RecentResults data={results} /> : null}
+        {(state.data as { issues?: IssuesData }).issues ? <IssuesCard data={(state.data as { issues: IssuesData }).issues} /> : null}
       </section>
     )
   }

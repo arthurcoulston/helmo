@@ -71,7 +71,9 @@
       "src/RecentResults.tsx",
       "src/Runway.tsx",
       "src/TeamNow.tsx",
-      "src/TeamActivity.tsx"
+      "src/TeamActivity.tsx",
+      "src/IssuesView.tsx",
+      "src/IncidentsView.tsx"
     ],
     "manifest": {
       "components.json": "aadc5e216b8c950c431eed626d98fa5334e379f88c100942b40f2370f41202f6",

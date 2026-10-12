@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { appConfig, startAppServer } from '../app-server.mjs';
 import { appRequest, shellRequest } from '../../app/server.mjs';
-import { activitySnapshot, runwaySnapshot, workHealth, workListening, workRequest, workSnapshot } from '../../work/dist/view.js';
+import { activitySnapshot, incidentSnapshot, incidentsSnapshot, issuesSnapshot, runwaySnapshot, workHealth, workListening, workRequest, workSnapshot } from '../../work/dist/view.js';
 import { seatWork } from '../../work/dist/presentation.js';
 import { roadmapHealth, roadmapRequest, roadmapSnapshot } from '../../roadmap/dist/view.js';
 import { runtimeRequest, runtimeSnapshot, teamFile, teamMember, teamNowSnapshot, teamPeriod, teamSnapshot } from '../../runtime/dist/view.js';
@@ -85,7 +85,7 @@ function overviewSnapshot() {
   // because it counts timestamped events rather than the current record, and
   // its own `as_of` and zone for the same reason the others fix theirs (R-44
   // H-3090).
-  activity: activitySnapshot() };
+  activity: activitySnapshot(), issues: issuesSnapshot() };
 }
 const appDocuments={overview:overviewSnapshot};
 const running = await startAppServer(appConfig(), (request, response) => {
@@ -99,6 +99,18 @@ const running = await startAppServer(appConfig(), (request, response) => {
       return;
     }
     if (/^\/api\/v1\/work(?:[/?]|$)/.test(request.url ?? '')) return workRequest(request, response);
+    if (request.url === '/api/v1/issues') {
+      response.writeHead(200, JSON_HEADERS); response.end(apiJson('issues', issuesSnapshot())); return;
+    }
+    if (request.url === '/api/v1/incidents') {
+      response.writeHead(200, JSON_HEADERS); response.end(apiJson('incidents', incidentsSnapshot())); return;
+    }
+    const incident = /^\/api\/v1\/incidents\/(H-\d+)$/.exec(request.url ?? '');
+    if (incident) {
+      const document_ = incidentSnapshot(incident[1]);
+      response.writeHead(document_ ? 200 : 404, JSON_HEADERS);
+      response.end(document_ ? apiJson('incidents', document_) : JSON.stringify({ error: 'Incident not found' })); return;
+    }
     if (/^\/api\/v1\/roadmap(?:[/?]|$)/.test(request.url ?? '')) return roadmapRequest(request, response);
     if (request.url === '/api/v1/runtime') return runtimeRequest(request, response);
     const file = /^\/api\/v1\/team\/members\/([^/?]+)\/files\/([^/?]+)$/.exec(request.url ?? '');

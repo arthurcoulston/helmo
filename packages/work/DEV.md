@@ -18,6 +18,10 @@ allowed, with containment at mitigation and cause, fix, recovery evidence and
 owned remaining work at resolution. Both retain each field's own provenance
 envelope; store snapshot reads are side-effect free and accept an explicit
 `as_of` for deterministic replay.
+`src/view.ts` exposes those projections to the unified listener. Every document
+fixes its own `as_of`, names the running commit as `source_revision`, and leaves
+the field-level source envelopes intact; incident detail is a projection read,
+not a ticket-status interpretation.
 
 `src/forecast.ts` is the pure timing model for Overview's What happens next
 reading. Its caller owns admission (the authoritative ready predicate, holds,

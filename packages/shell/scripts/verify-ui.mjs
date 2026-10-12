@@ -139,10 +139,25 @@ for (const [loop, files] of Object.entries({
 const actor = { name: 'fixture', kind: 'orchestrator', model: 'fixture', version: 'fixture' };
 const store = new Store(join(dir, 'work/helmo.db'));
 const create = (title, extra = {}) => store.createTicket(actor, { title, body: `Full record for ${title}`, type: 'build', workstream: 'fixture', labels: ['acct:direction'], ...extra });
+const recordedAt = '2026-10-12T16:00:00.000Z';
+const known = (value, source_ref, at = recordedAt) => ({ state: 'known', value, source_ref, recorded_at: at });
 const ready = create('Ready work with a complete title');
 const blocked = create('Held work must never read ready', { capacity_hold: { reason: 'Waiting for the chosen spending window', provenance: 'Fixture operator', reconsider_when: 'Next fixture cycle' } });
 // createTicket takes no capacity hold; set it through the same update path.
 store.updateTicket(actor, { ticket_id: blocked.id, capacity_hold: { reason: 'Waiting for the chosen spending window', provenance: 'Fixture operator', reconsider_when: 'Next fixture cycle' }, note: 'Held by the fixture operator.' });
+const incident = create('A sourced incident', { type: 'incident' });
+store.recordIncidentEvent(actor, incident.id, {
+  stage: known('investigating', incident.id), owner: known('fixture', incident.id),
+  detection: known({ by: 'human', happened_at: recordedAt }, incident.id), affected: known('Fixture app', incident.id),
+  happening_now: known(true, incident.id), cause: { state: 'unknown', reason: 'not_recorded' },
+  containment: { state: 'unknown', reason: 'not_recorded' }, fix: { state: 'unknown', reason: 'not_recorded' },
+  recovery_evidence: [], recurrence_evidence: [], human_report_acknowledgement: { state: 'unknown', reason: 'not_recorded' }, remaining_work: [],
+}, recordedAt);
+store.recordIssueObservation(actor, {
+  check: 'fixture_failure', subject_kind: 'runtime', subject_ref: 'fixture-worker',
+  detail: known('The fixture worker is unavailable.', 'runtime:fixture-worker'),
+  owner: known('fixture', incident.id), next_action: known('Inspect the worker.', 'check:fixture_failure'), incident_id: incident.id,
+}, recordedAt);
 let oldest;
 const overTime = [];
 for (let i = 0; i < 24; i++) {
@@ -473,12 +488,11 @@ try {
   // Work is a compact reading: the groups are tables, a collapsed row carries
   // no record body, and a sentence-length reason is in the record not the row.
   await page.goto(`${origin}/work`);
-  // Five since the forecast fixture reserved four tickets to roster seats, one
-  // of which is held and groups as blocked (H-3089).
-  await page.getByRole('heading', { name: 'Ready · 5', exact: true }).waitFor();
+  // Six: the five forecast fixtures plus the incident this run exercises.
+  await page.getByRole('heading', { name: 'Ready · 6', exact: true }).waitFor();
   assert.equal(await page.getByRole('heading', { name: 'Work', exact: true }).count(), 1, 'the header is the page title; content must not repeat it');
   assert.equal(await page.getByText(/Current record ·/).count(), 0, 'the retired current-record line must stay absent');
-  await page.getByText('5 ready', { exact: true }).waitFor();
+  await page.getByText('6 ready', { exact: true }).waitFor();
   assert.equal(await page.getByRole('link', { name: 'Archived', exact: true }).getAttribute('href'), '?whole=1');
   assert.equal(await page.getByRole('link', { name: 'See all completed tickets.', exact: true }).getAttribute('href'), '?whole=1');
   const sidebar = page.locator('[data-slot="sidebar"]');
@@ -829,14 +843,13 @@ try {
   await page.locator('[aria-label="Team now"]').waitFor();
   const overviewCards = await page.evaluate(() => [...document.querySelectorAll('[aria-label="Overview readings"] > [data-slot="card"]')]
     .map((card) => ({ label: card.getAttribute('aria-label'), top: Math.round(card.getBoundingClientRect().top), height: Math.round(card.getBoundingClientRect().height), bottom: Math.round(card.getBoundingClientRect().bottom) })));
-  assert.deepEqual(overviewCards.map((card) => card.label), ['Team now', 'What happens next', 'Team activity', 'Results · Past 24 hours']);
-  assert.equal(new Set(overviewCards.map((card) => card.top)).size, 2, `Overview is not a two-row composition: ${JSON.stringify(overviewCards)}`);
-  assert.ok(overviewCards.every((card) => card.top < 800), `an Overview reading starts below the 1280×800 fold: ${JSON.stringify(overviewCards)}`);
+  assert.deepEqual(overviewCards.map((card) => card.label), ['Team now', 'What happens next', 'Team activity', 'Results · Past 24 hours', 'Issues detected']);
+  assert.ok(overviewCards.slice(0, 4).every((card) => card.top < 800), `one of the established Overview readings starts below the 1280×800 fold: ${JSON.stringify(overviewCards)}`);
   assert.equal(await page.locator('h1').count(), 1, 'Overview must have one shared page title');
   console.log(`Overview at 1280×800: ${overviewCards.map((card) => `${card.label} ${card.height}px high, top ${card.top}px, bottom ${card.bottom}px`).join('; ')}`);
   await page.setViewportSize({ width: 390, height: 800 });
   const narrowOverviewCards = await page.locator('[aria-label="Overview readings"] > [data-slot="card"]').evaluateAll((cards) => cards.map((card) => card.getAttribute('aria-label')));
-  assert.deepEqual(narrowOverviewCards, ['Team now', 'What happens next', 'Team activity', 'Results · Past 24 hours'], 'the narrow Overview must reach activity before the tall results ledger');
+  assert.deepEqual(narrowOverviewCards, ['Team now', 'What happens next', 'Team activity', 'Results · Past 24 hours', 'Issues detected'], 'the narrow Overview must preserve the four established readings before issues');
   const teamNow = page.locator('[aria-label="Team now"]');
   await teamNow.getByText('Team now', { exact: true }).waitFor();
   /* Element by element rather than `textContent`: nothing in this card puts a
@@ -1057,7 +1070,7 @@ try {
   await activity.getByText(/the past 7 days, in days/).waitFor({ timeout: 1_000 });
   assert.equal((await table()).length, 7, 'the refresh closed the numbers or put the reader back on the day');
 
-  const areas = ['overview', 'work', 'roadmap', 'team', 'run'], themes = ['light', 'dark'], widths = [390, 640, 1280];
+  const areas = ['overview', 'issues', 'incidents', `incidents/${incident.id}`, 'work', 'roadmap', 'team', 'run'], themes = ['light', 'dark'], widths = [390, 640, 1280];
   const audited = [];
   /* Where the horizontal fold falls on a phone. Nothing above can see this:
      the page itself never overflows — the table scrolls inside its own
@@ -1317,7 +1330,7 @@ try {
     `the WCAG audit ran on ${audited.length} layouts, not all ${areas.length * themes.length * widths.length}: ${audited.join(', ')}`,
   );
   assert.deepEqual(errors, []);
-  console.log(`All five areas, Work's and Roadmap's compact tables, bounded summaries and full records, held state, copy, focused refresh, embedded answer, runtime trace, Team's composed/discovered/available context with its bounded file reads, Inter, the four status roles measured at rest and on hovered and expanded rows in both themes, all ${audited.length} layouts verified and audited against WCAG 2 A/AA with axe-core ${axeVersion}, ${shapes.size} multi-group views aligned column for column, and nothing wider than the column holding it. Red outranks amber by at least ${LOUDER_BY} on every ground both were found on: ${redVsAmber.join('; ')}. At 390 the tightest of ${folds.length} declared above-fold columns, ${tightest.column} ("${tightest.text}") in ${tightest.table}, cleared the fold by ${-tightest.over}px, and all ${previews.length} expanded previews read inside the window, the tightest with ${-Math.max(...previews.map((p) => p.over))}px to spare. Evidence: ${dir}`);
+  console.log(`All seven areas plus incident detail, Work's and Roadmap's compact tables, bounded summaries and full records, held state, copy, focused refresh, embedded answer, runtime trace, Team's composed/discovered/available context with its bounded file reads, Inter, the four status roles measured at rest and on hovered and expanded rows in both themes, all ${audited.length} layouts verified and audited against WCAG 2 A/AA with axe-core ${axeVersion}, ${shapes.size} multi-group views aligned column for column, and nothing wider than the column holding it. Red outranks amber by at least ${LOUDER_BY} on every ground both were found on: ${redVsAmber.join('; ')}. At 390 the tightest of ${folds.length} declared above-fold columns, ${tightest.column} ("${tightest.text}") in ${tightest.table}, cleared the fold by ${-tightest.over}px, and all ${previews.length} expanded previews read inside the window, the tightest with ${-Math.max(...previews.map((p) => p.over))}px to spare. Evidence: ${dir}`);
   writeFileSync(join(dir, 'result.json'), JSON.stringify({ origin, artifacts: dir, errors, verified: new Date().toISOString() }, null, 2));
 } finally {
   await browser?.close();

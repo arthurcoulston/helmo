@@ -5,7 +5,7 @@ export const JSON_HEADERS = Object.freeze({
 
 export interface ApiDocument<T> {
   api: 'helmo/v1';
-  area: 'overview' | 'work' | 'roadmap' | 'team' | 'runtime';
+  area: 'overview' | 'work' | 'roadmap' | 'team' | 'runtime' | 'issues' | 'incidents';
   data: T;
 }
 

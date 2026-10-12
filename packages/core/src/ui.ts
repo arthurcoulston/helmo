@@ -6,7 +6,7 @@ const TYPES: Record<string, string> = {
   html: 'text/html; charset=utf-8', js: 'text/javascript; charset=utf-8',
   css: 'text/css; charset=utf-8', woff2: 'font/woff2', woff: 'font/woff', svg: 'image/svg+xml',
 };
-const ROUTES: Record<string, string> = { '/overview': 'overview', '/work': 'work', '/roadmap': 'roadmap', '/team': 'team', '/run': 'runtime' };
+const ROUTES: Record<string, string> = { '/overview': 'overview', '/issues': 'issues', '/incidents': 'incidents', '/work': 'work', '/roadmap': 'roadmap', '/team': 'team', '/run': 'runtime' };
 
 /** Every entry point serves the same untouched Vite document and assets. A
  * standalone entry advertises only the area its backend can actually serve. */
@@ -20,7 +20,8 @@ export function uiRequest(req: IncomingMessage, res: ServerResponse, config: { a
   }
   const asset = /^\/assets\/([\w.-]+)$/.exec(url.pathname);
   const path = url.pathname.replace(/\/$/, '') || '/';
-  const area = path === '/' ? config.defaultArea : ROUTES[path];
+  const incidentDetail = /^\/incidents\/H-\d+$/.test(path);
+  const area = path === '/' ? config.defaultArea : incidentDetail ? 'incidents' : ROUTES[path];
   if (!asset && (!area || !config.areas.includes(area))) return false;
   const section = url.searchParams.get('section');
   if (!asset && section && (area !== 'work' || section !== 'awaiting')) {

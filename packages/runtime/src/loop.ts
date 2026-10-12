@@ -737,7 +737,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     if (l.workstream !== '*') {
       try { readyBefore = readyTicketIds(g, l); } catch (e) { logEvent(l.name, 'decline-check-failed', `before ${String(e).slice(0, 160)}`); }
     }
-    const costBaseline = recentCosts(l.name);
+    const costBaseline = recentCosts(l.name, 5, undefined, run.runtime);
     const usageBefore = (run.billing ?? 'metered') === 'subscription'
       ? usageForModel(providerUsage()[run.runtime], model)
       : null;

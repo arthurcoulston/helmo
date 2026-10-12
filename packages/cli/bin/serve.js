@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { appConfig, startAppServer } from '../app-server.mjs';
 import { appRequest, shellRequest } from '../../app/server.mjs';
-import { activitySnapshot, incidentSnapshot, incidentsSnapshot, issuesSnapshot, runwaySnapshot, workHealth, workListening, workRequest, workSnapshot } from '../../work/dist/view.js';
+import { activitySnapshot, checkInSnapshot, incidentSnapshot, incidentsSnapshot, issuesSnapshot, runwaySnapshot, workHealth, workListening, workRequest, workSnapshot } from '../../work/dist/view.js';
 import { seatWork } from '../../work/dist/presentation.js';
 import { roadmapHealth, roadmapRequest, roadmapSnapshot } from '../../roadmap/dist/view.js';
 import { runtimeRequest, runtimeSnapshot, teamFile, teamMember, teamNowSnapshot, teamPeriod, teamSnapshot } from '../../runtime/dist/view.js';
@@ -58,7 +58,30 @@ let origin = null;
 function teamCount() {
   return Object.keys(loadRoster().loops).length;
 }
-function overviewSnapshot() {
+function checkInInput(work, roadmap, team) {
+  const continuing = new Set(work.records
+    .filter((ticket) => !['done', 'cancelled'].includes(ticket.status))
+    .map((ticket) => ticket.project)
+    .filter(Boolean));
+  // This composition belongs here because serve.js already holds Work,
+  // Roadmap and Runtime's views. It is existing practice, not an import rule:
+  // Work remains independently testable, while the unified document can say
+  // which selected initiatives have no open ticket carrying their project id.
+  const continuations = roadmap.projects
+    .filter((project) => project.status === 'ship_next' && !continuing.has(project.id))
+    .map((project) => ({
+      id: project.id,
+      title: project.title,
+      updated_at: project.updated_at,
+      last_progress_note: project.progress?.note ?? null,
+    }));
+  return {
+    seats: team.unavailable ? null : team.agents.map((agent) => ({ agent: agent.agent, state: agent.state })),
+    continuations,
+  };
+}
+
+function overviewSnapshot(since) {
   const work=workSnapshot(), roadmap=roadmapSnapshot(), runtime=runtimeSnapshot();
   const team=teamNowSnapshot(seatWork(work.records));
   return { records: [
@@ -85,7 +108,8 @@ function overviewSnapshot() {
   // because it counts timestamped events rather than the current record, and
   // its own `as_of` and zone for the same reason the others fix theirs (R-44
   // H-3090).
-  activity: activitySnapshot(), issues: issuesSnapshot() };
+  activity: activitySnapshot(), issues: issuesSnapshot(),
+  ...(since !== undefined ? { check_in: checkInSnapshot(since, checkInInput(work, roadmap, team)) } : {}) };
 }
 const appDocuments={overview:overviewSnapshot};
 const running = await startAppServer(appConfig(), (request, response) => {
@@ -98,7 +122,19 @@ const running = await startAppServer(appConfig(), (request, response) => {
       response.end(JSON.stringify({ ok, checks }));
       return;
     }
-    if (/^\/api\/v1\/work(?:[/?]|$)/.test(request.url ?? '')) return workRequest(request, response);
+    if (/^\/api\/v1\/work(?:[/?]|$)/.test(request.url ?? '')) {
+      const url = new URL(request.url ?? '/', 'http://localhost');
+      if (url.pathname === '/api/v1/work' && url.searchParams.has('since')) {
+        const since = url.searchParams.get('since');
+        if (!since) throw new Error('since="" is not an instant this reading can parse; supply an ISO instant.');
+        const work = workSnapshot({ whole: url.searchParams.get('whole') === '1', ticket: url.searchParams.get('ticket') ?? undefined });
+        const roadmap = roadmapSnapshot();
+        const team = teamNowSnapshot(seatWork(work.records));
+        const document_ = apiJson('work', { ...work, check_in: checkInSnapshot(since, checkInInput(work, roadmap, team)) });
+        response.writeHead(200, JSON_HEADERS); response.end(document_); return;
+      }
+      return workRequest(request, response);
+    }
     if (request.url === '/api/v1/issues') {
       response.writeHead(200, JSON_HEADERS); response.end(apiJson('issues', issuesSnapshot())); return;
     }
@@ -120,13 +156,16 @@ const running = await startAppServer(appConfig(), (request, response) => {
     if (/^\/api\/v1\/team(?:\?|$)/.test(request.url ?? '')) {
       return answer(response, 'team', () => teamSnapshot(teamPeriod(request.url)));
     }
-    if (request.url === '/api/v1/overview') {
+    if (/^\/api\/v1\/overview(?:\?|$)/.test(request.url ?? '')) {
       // Built before the header is written. Overview now counts the roster, and
       // a broken one threw after a 200 was already on the wire: the catch below
       // cannot answer 500 once headers are sent, so the socket closed
       // mid-response and the page showed a network error instead of the Alert
       // the view draws from the status (H-3001).
-      const document_ = apiJson('overview', appDocuments.overview());
+      const url = new URL(request.url ?? '/', 'http://localhost');
+      const since = url.searchParams.has('since') ? url.searchParams.get('since') : undefined;
+      if (since === '') throw new Error('since="" is not an instant this reading can parse; supply an ISO instant.');
+      const document_ = apiJson('overview', appDocuments.overview(since));
       response.writeHead(200, JSON_HEADERS);
       response.end(document_);
       return;
@@ -141,7 +180,8 @@ const running = await startAppServer(appConfig(), (request, response) => {
     response.end('Unknown Helmo app route.\n');
   } catch (error) {
     if (!response.headersSent) {
-      response.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
+      const badBound = error instanceof Error && error.message.startsWith('since=');
+      response.writeHead(badBound ? 400 : 500, { 'content-type': 'text/plain; charset=utf-8' });
       response.end(`${error instanceof Error ? error.message : String(error)}\n`);
     } else {
       response.destroy(error instanceof Error ? error : undefined);

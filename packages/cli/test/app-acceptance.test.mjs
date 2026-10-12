@@ -81,6 +81,22 @@ function seedProject(homes, title) {
   }
 }
 
+function seedShipNextProject(homes, title) {
+  const store = new Store(join(homes.ROADMAP_HOME, 'roadmap.db'));
+  try {
+    const project = store.createProject(SEED, { title, status: 'shaping' });
+    store.updateProject({ ...SEED, name: 'readiness-reviewer' }, {
+      project_id: project.id,
+      note: 'Ready for the check-in continuation fixture.',
+      status: 'ready',
+    });
+    store.setShipNext(SEED, { project_id: project.id, decided_by: 'arthur', reason: 'Exercise the selected-project reading.' });
+    return project.id;
+  } finally {
+    store.close();
+  }
+}
+
 /** Start the real `helmo serve` process and wait for the origin it announces.
  *  Returns the child so a test can signal it; `legacy` is the configured
  *  retired set, already rebased onto live ports. */
@@ -161,6 +177,7 @@ test('the app answers its own port directly and renders the record a recorded UR
 
   const overview = await (await fetch(`${origin}/api/v1/overview`)).json();
   assert.ok(overview.data.records.some(record => record.id === ticket), 'Overview API preserves its existing record projection');
+  assert.equal(overview.data.check_in, undefined, 'Overview invented a check-in without a reader-supplied instant');
 
   /* The condensed roster reaches Overview too, and it is the one document on
      this page that joins both records: the runtime says which sessions are
@@ -264,6 +281,31 @@ test('the app answers its own port directly and renders the record a recorded UR
   assert.match(html, /<div id="root"><\/div>/);
   const pinned = (await (await fetch(`${origin}/api/v1/work?ticket=${ticket}`)).json()).data;
   assert.ok(pinned.record.rows.some((row) => row.id === ticket));
+});
+
+test('a chosen check-in reaches Work and Overview, joins continuation, and refuses a bad bound', async (t) => {
+  const homes = installation(t);
+  const project = seedShipNextProject(homes, 'The selected initiative with nothing queued');
+  const { origin } = await startApp(t, homes);
+  const since = '2026-01-01T00:00:00.000Z';
+
+  for (const path of ['/api/v1/work', '/api/v1/overview']) {
+    const response = await fetch(`${origin}${path}?since=${encodeURIComponent(since)}`);
+    assert.equal(response.status, 200, path);
+    const checkIn = (await response.json()).data.check_in;
+    assert.equal(checkIn.since, since, `${path} did not echo the reader's bound`);
+    assert.equal(checkIn.quiet.class, 'no_continuation', path);
+    assert.deepEqual(checkIn.quiet.continuations.map((row) => row.id), [project], path);
+    assert.match(checkIn.quiet.continuations[0].last_progress_note, /Ready for the check-in/);
+  }
+
+  for (const bad of ['not-an-instant', '', '2999-01-01T00:00:00.000Z']) {
+    for (const path of ['/api/v1/work', '/api/v1/overview']) {
+      const response = await fetch(`${origin}${path}?since=${encodeURIComponent(bad)}`);
+      assert.equal(response.status, 400, `${path} accepted ${JSON.stringify(bad)}`);
+      assert.match(await response.text(), /^since=/);
+    }
+  }
 });
 
 test('a missing or invalid runtime roster returns 500 without killing the app', async (t) => {

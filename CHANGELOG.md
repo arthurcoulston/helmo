@@ -11,6 +11,13 @@ consolidation imported still carried that release's notes under "Unreleased";
 this is the published wording, which is two entries and one commit reference
 longer.
 
+## Unreleased — 0.10.0
+
+- Wake the owner when a withdrawn ask or a reported action reopens its ticket.
+  Both move a ticket from `awaiting_human` back to open, but only a resume
+  answer counted as a readiness edge, so an idle owner slept until its
+  periodic resync. `return_withdrawn` and `acted` now wake it on the next poll.
+
 ## v0.10.0 — 2026-10-12
 
 - The hourly and daily burn ceilings now measure spend over the time a session

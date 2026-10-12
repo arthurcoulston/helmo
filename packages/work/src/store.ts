@@ -47,6 +47,19 @@ const RELEASE_AUTHORITY_EXCEPTION = /^(first_publication|visibility_change|histo
 // false provenance.
 const SCHEDULER_ACTOR: Actor = { name: 'helmo-scheduler', kind: 'orchestrator' };
 
+/** The two event lookups the expression indexes in the constructor serve.
+ *  Exported so a test can read their query plans: an index whose
+ *  expression drifts from the query's by one character is silently unused. */
+export const SILENT_ASSIGNEE_SQL = `SELECT t.id, t.assignee,
+                (SELECT MAX(ts) FROM events WHERE json_extract(actor, '$.name') = t.assignee) AS last
+         FROM tickets t
+         WHERE t.status = 'open' AND t.assignee IS NOT NULL AND t.schedule IS NULL AND NOT ${HUMAN_WITHHOLD}
+           AND EXISTS (SELECT 1 FROM events e WHERE e.ts >= ?
+                       AND json_extract(e.actor, '$.name') NOT IN (t.assignee, 'helmo-scheduler'))
+         GROUP BY t.id HAVING last IS NULL OR last < ?`;
+export const LAST_DUE_SQL =
+  "SELECT MAX(json_extract(payload, '$.due')) AS due FROM events WHERE event_type = 'created' AND json_extract(payload, '$.spawned_from') = ?";
+
 export interface CreateInput {
   title: string;
   body: string;
@@ -611,6 +624,17 @@ export class Store {
     }
     this.db.exec('CREATE INDEX IF NOT EXISTS idx_tickets_lane ON tickets(lane) WHERE lane IS NOT NULL');
     this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_tickets_workflow_attempt ON tickets(workflow_attempt_id) WHERE workflow_attempt_id IS NOT NULL');
+    // Two event lookups read JSON on every row without these: hygiene's
+    // silent-assignee MAX(ts) per open reservation, and materializeDue's
+    // last-due per template, which runs inside an IMMEDIATE transaction and so
+    // holds the write lock for the whole scan. On a 23k-event store eight
+    // concurrent pollers exhausted the 5s busy_timeout; indexed, none did. The
+    // expressions must stay character-identical to the queries' or SQLite will
+    // not use them.
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_events_actor_name_ts ON events(json_extract(actor, '$.name'), ts)");
+    this.db.exec(
+      "CREATE INDEX IF NOT EXISTS idx_events_spawned_due ON events(json_extract(payload, '$.spawned_from'), json_extract(payload, '$.due')) WHERE event_type = 'created'",
+    );
 
     // H-392 migration: older answers reopened the ticket but left the legacy
     // needs_human / sitting markers materialized. Clear each one only when the
@@ -2217,15 +2241,7 @@ export class Store {
     // store-wide quiet week from lighting up every reservation; in_progress
     // holders are stale_claim's territory at 24h.
     for (const r of this.db
-      .prepare(
-        `SELECT t.id, t.assignee,
-                (SELECT MAX(ts) FROM events WHERE json_extract(actor, '$.name') = t.assignee) AS last
-         FROM tickets t
-         WHERE t.status = 'open' AND t.assignee IS NOT NULL AND t.schedule IS NULL AND NOT ${HUMAN_WITHHOLD}
-           AND EXISTS (SELECT 1 FROM events e WHERE e.ts >= ?
-                       AND json_extract(e.actor, '$.name') NOT IN (t.assignee, 'helmo-scheduler'))
-         GROUP BY t.id HAVING last IS NULL OR last < ?`,
-      )
+      .prepare(SILENT_ASSIGNEE_SQL)
       .all(hoursAgo(SILENT_ASSIGNEE_HOURS), hoursAgo(SILENT_ASSIGNEE_HOURS)) as { id: string; assignee: string; last: string | null }[]) {
       // A live blocker already explains why the reservation has not moved.
       // Once it closes, isBlocked() clears by itself and the untouched
@@ -2418,7 +2434,7 @@ export class Store {
         if (live.some((i) => i.status !== 'open' || i.answered)) return null;
         const lastDue = (
           this.db
-            .prepare("SELECT MAX(json_extract(payload, '$.due')) AS due FROM events WHERE event_type = 'created' AND json_extract(payload, '$.spawned_from') = ?")
+            .prepare(LAST_DUE_SQL)
             .get(t.id) as { due: string | null }
         ).due;
         const sched = parseSchedule(t.schedule!);

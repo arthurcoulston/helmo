@@ -1107,7 +1107,7 @@ try {
     await page.waitForTimeout(250);
     const measure = await page.evaluate(() => ({ font: getComputedStyle(document.body).fontFamily, overflow: document.documentElement.scrollWidth - innerWidth }));
     assert.match(measure.font, /Inter/);
-    assert.ok(measure.overflow <= 1, `${theme} ${width}: ${measure.overflow}px overflow`);
+    assert.ok(measure.overflow <= 1, `${area} ${theme} ${width}: ${measure.overflow}px overflow`);
     await measurePalette(`${area} ${width}`, theme);
     await page.addScriptTag({ path: axeSource });
     const audit = await page.evaluate(async () => (await window.axe.run(document, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21aa'] } })).violations.map((v) => ({ id: v.id, nodes: v.nodes.map((n) => ({ target: n.target, failureSummary: n.failureSummary })) })));
@@ -1315,7 +1315,7 @@ try {
      regardless. */
   assert.deepEqual(
     [...new Set(folds.map((fold) => fold.column))].sort(),
-    ['context', 'loop', 'member', 'project', 'state', 'work'],
+    ['context', 'incident', 'issue', 'loop', 'member', 'project', 'stage', 'state', 'work'],
     'every above-fold column every view declares must be measured at 390',
   );
   assert.ok(folds.length >= 24, `only ${folds.length} above-fold columns were measured at 390, so the fold was not really read`);

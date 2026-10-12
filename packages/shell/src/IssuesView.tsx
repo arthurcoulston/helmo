@@ -15,20 +15,20 @@ function value<T>({ value: known, label }: { value: Recorded<T>; label: (v: T) =
 function IssuesTable({ rows, label }: { rows: Issue[]; label: string }) {
   if (!rows.length) return <p className="rounded-md border p-4 text-sm text-muted-foreground">No rows.</p>
   return <div className="min-w-0 max-w-full overflow-x-auto rounded-md border" role="region" aria-label={label}>
-    <Table><TableHeader><TableRow><TableHead>Issue</TableHead><TableHead>Owner</TableHead><TableHead>Observed</TableHead><TableHead>Next action</TableHead><TableHead>Disposition</TableHead></TableRow></TableHeader>
+    <Table tabIndex={0} aria-label={label} data-above-fold="issue" className="table-fixed min-w-[56rem]"><TableHeader><TableRow><TableHead data-column="issue" className="w-44">Issue</TableHead><TableHead data-column="owner" className="w-40">Owner</TableHead><TableHead data-column="observed" className="w-52">Observed</TableHead><TableHead data-column="next-action" className="w-56">Next action</TableHead><TableHead data-column="disposition" className="w-32">Disposition</TableHead></TableRow></TableHeader>
       <TableBody>{rows.map((row) => <TableRow key={row.key}>
-        <TableCell className="min-w-64"><a className="font-medium underline-offset-2 hover:underline" href={row.incident_id ? `/incidents/${row.incident_id}` : row.subject_kind === "ticket" ? `/work#${row.subject_ref}` : "/work"}>{row.check} · {row.subject_ref}</a>{value({ value: row.detail, label: String })}</TableCell>
-        <TableCell>{value({ value: row.disposition.owner, label: (v) => v ?? "Unassigned" })}</TableCell>
-        <TableCell className="whitespace-nowrap">{new Date(row.first_observed_at).toLocaleString()}<span className="block text-xs text-muted-foreground">latest {new Date(row.latest_observed_at).toLocaleString()} · {row.observation_count} observation{row.observation_count === 1 ? "" : "s"}</span></TableCell>
-        <TableCell>{row.disposition.next_action ? value({ value: row.disposition.next_action, label: String }) : "—"}</TableCell>
-        <TableCell><Badge variant="secondary">{row.disposition.state}</Badge>{row.recurrence_count ? <span className="block text-xs text-muted-foreground">{row.recurrence_count} recurrence</span> : null}</TableCell>
+        <TableCell data-column="issue" className="whitespace-normal break-words [overflow-wrap:anywhere]"><a className="font-medium underline-offset-2 hover:underline" href={row.incident_id ? `/incidents/${row.incident_id}` : row.subject_kind === "ticket" ? `/work#${row.subject_ref}` : "/work"}>{row.check} · {row.subject_ref}</a>{value({ value: row.detail, label: String })}</TableCell>
+        <TableCell data-column="owner">{value({ value: row.disposition.owner, label: (v) => v ?? "Unassigned" })}</TableCell>
+        <TableCell data-column="observed" className="whitespace-nowrap">{new Date(row.first_observed_at).toLocaleString()}<span className="block text-xs text-muted-foreground">latest {new Date(row.latest_observed_at).toLocaleString()} · {row.observation_count} observation{row.observation_count === 1 ? "" : "s"}</span></TableCell>
+        <TableCell data-column="next-action">{row.disposition.next_action ? value({ value: row.disposition.next_action, label: String }) : "—"}</TableCell>
+        <TableCell data-column="disposition"><Badge variant="secondary">{row.disposition.state}</Badge>{row.recurrence_count ? <span className="block text-xs text-muted-foreground">{row.recurrence_count} recurrence</span> : null}</TableCell>
       </TableRow>)}</TableBody>
     </Table>
   </div>
 }
 
 export function IssuesView({ data }: { data: IssuesData }) {
-  return <div className="flex flex-col gap-4"><p className="text-sm text-muted-foreground">Checks at {new Date(data.as_of).toLocaleString()} · coverage {data.coverage.state} from {data.coverage.source}</p><section aria-labelledby="active-issues"><h2 id="active-issues" className="mb-2 text-lg font-semibold">Active</h2><IssuesTable rows={data.active} label="Active issues" /></section><section aria-labelledby="issue-history"><h2 id="issue-history" className="mb-2 text-lg font-semibold">History</h2><IssuesTable rows={data.history} label="Issue history" /></section></div>
+  return <div className="flex min-w-0 flex-col gap-4"><p className="text-sm text-muted-foreground">Checks at {new Date(data.as_of).toLocaleString()} · coverage {data.coverage.state} from {data.coverage.source}</p><section className="min-w-0" aria-labelledby="active-issues"><h2 id="active-issues" className="mb-2 text-lg font-semibold">Active</h2><IssuesTable rows={data.active} label="Active issues" /></section><section className="min-w-0" aria-labelledby="issue-history"><h2 id="issue-history" className="mb-2 text-lg font-semibold">History</h2><IssuesTable rows={data.history} label="Issue history" /></section></div>
 }
 
 export function IssuesCard({ data }: { data: IssuesData }) {

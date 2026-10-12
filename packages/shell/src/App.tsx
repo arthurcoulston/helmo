@@ -1013,7 +1013,7 @@ export function App() {
             </SidebarGroup>
           </SidebarContent>
         </Sidebar>
-        <SidebarInset>
+        <SidebarInset className="min-w-0 w-0">
           {/* One row: the trigger, this view's title, and the pop-out. The
               menu never gets a row of its own. */}
           <header className="flex h-12 shrink-0 items-center gap-2 border-b">

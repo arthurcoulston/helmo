@@ -458,6 +458,29 @@ export interface ActivityEvents {
   recording_began_at: string | null;
 }
 
+/** A runway exclusion reason whose BEGINNING the event log can date (R-44
+ *  H-3206 §3). The other three cannot be: `finite_limit` would need cumulative
+ *  spend replayed against the budget's own change history, and the two seat
+ *  reasons are live state that is never written down at all.
+ *
+ *  Why this exists: an exclusion says why work cannot run *now*. Classifying a
+ *  past interval from it would explain the week out of this minute's snapshot —
+ *  a hold recorded one minute ago is a true answer to the present question and
+ *  no evidence about the interval. The onset is what separates the two. */
+export type DatableCause = 'hold' | 'date_gate' | 'missing_human_input';
+
+/** When a ticket's CURRENT cause began, and which entry says so.
+ *
+ *  `at` is the start of the cause's unbroken run, not merely the last write
+ *  touching it: a hold amended mid-run has been in force since the original,
+ *  and reading the amendment would understate how far back the cause reaches. */
+export interface CauseOnset {
+  id: string;
+  cause: DatableCause;
+  at: string;
+  source: EventType;
+}
+
 export interface HelmoEvent {
   seq: number;
   ts: string;

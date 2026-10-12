@@ -58,6 +58,12 @@ describe('immutable release handoffs', () => {
     expect(event.event_type).toBe('release_handoff_recorded');
     expect(event.payload).not.toHaveProperty('current');
     expect(s.withHumanPending('mason')).toContain(technical.ticket.id);
+    // The sitting this sets carries no `needs_human` diff of its own, so the
+    // check-in reading's onset read has to date it off this event or every
+    // release sitting reads as an undatable cause (R-44 H-3206 §3).
+    expect(s.causeOnsets([technical.ticket.id])).toEqual([
+      { id: technical.ticket.id, cause: 'missing_human_input', at: event.ts, source: 'release_handoff_recorded' },
+    ]);
     expect(s.listTickets({ ready: true, caller: 'mason', workstream: 'estate-ui', limit: 20 })).not.toContainEqual(
       expect.objectContaining({ id: technical.ticket.id }),
     );

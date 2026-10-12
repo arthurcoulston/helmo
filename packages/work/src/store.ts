@@ -8,7 +8,7 @@ import { issueKey, replayIssues, type IssueDisposition, type IssueEvent, type Is
 import { assertIncident, replayIncidents, type IncidentEvent, type IncidentPatch, type IncidentRecord } from './incidents.js';
 import {
   ActionReport, ActionRequest, Actor, ActorKind, ACTOR_KINDS, Answer, AnswerEvent, BlastRadius, BLAST_RADII, CapacityHold, CompletionAccount, CompletionAccountInput, COMPLETION_CATEGORIES, COMPLETION_SUMMARY_MAX, Confidence, Dep, DepType, Evidence, EVIDENCE_ROLES,
-  AcceptanceCoverage, ActivityEvents, CoveringCompletion, HelmoError, HelmoEvent, HumanRequest, Notice, ProductAcceptance, ProductArtifact, Question, QuestionInput, ReleaseHandoff, Status, Ticket, TicketProgress, UnresolvedCompletion, VerdictEvent, Workstream, WorkstreamInfo,
+  AcceptanceCoverage, ActivityEvents, CauseOnset, CoveringCompletion, EventType, HelmoError, HelmoEvent, HumanRequest, Notice, ProductAcceptance, ProductArtifact, Question, QuestionInput, ReleaseHandoff, Status, Ticket, TicketProgress, UnresolvedCompletion, VerdictEvent, Workstream, WorkstreamInfo,
 } from './types.js';
 
 const STALE_CLAIM_HOURS = 24;
@@ -1881,6 +1881,133 @@ export class Store {
 
     const earliest = this.db.prepare('SELECT MIN(ts) AS first FROM events').get() as { first: string | null };
     return { tokens, completions, requests, recording_began_at: earliest.first ?? null };
+  }
+
+  /** When each ticket's current runway exclusion cause began (R-44 H-3206 §3).
+   *
+   *  `runway`'s exclusions are computed from current state and answer "why can
+   *  this not run now". The check-in reading asks about an interval, and a
+   *  cause recorded one minute ago explains none of it — so the class it
+   *  headlines may only speak for the interval once every contributing cause is
+   *  known to predate the reader's check-in. That is this read's whole purpose:
+   *  the exclusion is live, but its ONSET is retained, and the two are different
+   *  questions with different answers.
+   *
+   *  Writes nothing. The event log already holds every one of these instants;
+   *  nothing here is a new collector.
+   *
+   *  Three things it is deliberate about:
+   *
+   *  - **The ticket's materialized state decides whether a cause is on; the log
+   *    only says when.** A run the walk below still thinks open is dropped
+   *    unless the ticket itself carries the cause. The sitting marker needs
+   *    this: `answered` lifts it through its own `clear_sitting` bit, writing no
+   *    `needs_human` diff for the walk to see. For the other three causes every
+   *    clearing path does write a diff, so there the check is belt-and-braces
+   *    and no test can redden it — kept because the asymmetry is worth the three
+   *    conditions. Missing a clearing path costs an onset: the cause reads
+   *    undatable and the interval falls to `unknown`. Inventing one would let
+   *    the reading explain an interval out of a cause already over.
+   *  - **The run's start, not the last write.** A hold amended mid-run, or a
+   *    gate moved, has been in force since the original; reading the amendment
+   *    would understate the cause's reach and demote an interval the records can
+   *    actually speak for. Measured on the personal record at 2026-10-12: none
+   *    of the six held open tickets had a prior clear, so this is semantics the
+   *    unit tests exercise rather than something the live store shows today.
+   *  - **A field set at FILING has no diff.** 6 of the 22 tickets carrying
+   *    `not_before` were created with it, so a read of `updated` diffs alone
+   *    would call a quarter of all gated work undatable for no reason. The
+   *    `created` payload is the fallback. `capacity_hold` needs none: no create
+   *    path accepts one.
+   *
+   *  `missing_human_input` is a disjunction, and it is tracked as exactly two
+   *  runs rather than three. A returned question and a requested action are
+   *  separate things on the dashboard but one condition here: `requestAction`
+   *  leaves the ticket `awaiting_human` too, so neither the ticket state nor
+   *  this cause can tell them apart, and a third run for `action` was dead code
+   *  a mutation caught. The sitting marker IS separate, because it is cleared
+   *  independently — it arrives as a `created` payload, an `updated` diff, or
+   *  straight off `release_handoff_recorded` with no diff at all, the same four
+   *  issuance paths `activityEvents` counts above and for the same reason.
+   *
+   *  Each run has been continuously true since it began, so the disjunction's
+   *  onset is the EARLIEST of those still standing. */
+  causeOnsets(ids: string[]): CauseOnset[] {
+    if (!ids.length) return [];
+    const placeholders = ids.map(() => '?').join(', ');
+    const rows = this.db
+      .prepare(
+        `SELECT seq, ts, ticket_id, event_type, payload FROM events
+          WHERE ticket_id IN (${placeholders}) AND event_type IN
+            ('created', 'updated', 'returned', 'answered', 'return_withdrawn', 'acted', 'release_handoff_recorded')
+          ORDER BY seq ASC`,
+      )
+      .all(...ids) as { seq: number; ts: string; ticket_id: string; event_type: EventType; payload: string }[];
+
+    /** Each tracked condition's run: the instant it last turned on, with the
+     *  event that turned it on, or null while it is off. */
+    type Run = { at: string; source: EventType } | null;
+    const runs = new Map<string, { hold: Run; gate: Run; returned: Run; sitting: Run }>();
+    for (const id of ids) runs.set(id, { hold: null, gate: null, returned: null, sitting: null });
+
+    for (const row of rows) {
+      const r = runs.get(row.ticket_id)!;
+      const payload = JSON.parse(row.payload) as Record<string, unknown>;
+      const diffs = payload['diffs'] as Record<string, { to?: unknown }> | undefined;
+      const began: Run = { at: row.ts, source: row.event_type };
+      // An ongoing run is left alone: a second write while the cause is already
+      // on is an amendment, and the cause began at the start of the run.
+      const turnOn = (cur: Run): Run => cur ?? began;
+      switch (row.event_type) {
+        case 'created':
+          if (payload['not_before']) r.gate = began;
+          if (payload['needs_human']) r.sitting = began;
+          break;
+        case 'updated': {
+          if (diffs && 'capacity_hold' in diffs) r.hold = diffs['capacity_hold']!.to ? turnOn(r.hold) : null;
+          if (diffs && 'not_before' in diffs) r.gate = diffs['not_before']!.to ? turnOn(r.gate) : null;
+          // The marker's two values are a JSON boolean; `0`/false is how
+          // clearing is written, and clearing is not a cause beginning.
+          if (diffs && 'needs_human' in diffs) r.sitting = diffs['needs_human']!.to ? turnOn(r.sitting) : null;
+          break;
+        }
+        // Both operator request paths write `returned` and neither writes a
+        // status diff, so a read of diffs alone would see no onset for either.
+        case 'returned':
+          r.returned = turnOn(r.returned);
+          break;
+        case 'answered':
+        case 'acted':
+        case 'return_withdrawn':
+          r.returned = null;
+          break;
+        case 'release_handoff_recorded':
+          r.sitting = turnOn(r.sitting);
+          break;
+        default:
+          break;
+      }
+    }
+
+    const onsets: CauseOnset[] = [];
+    for (const id of ids) {
+      const r = runs.get(id)!;
+      // The materialized ticket is the authority on which causes are in force.
+      let t: Ticket;
+      try { t = this.getTicket(id); } catch { continue; }
+      if (t.capacity_hold && r.hold) onsets.push({ id, cause: 'hold', at: r.hold.at, source: r.hold.source });
+      if (t.not_before && r.gate) onsets.push({ id, cause: 'date_gate', at: r.gate.at, source: r.gate.source });
+      const human: Run[] = [
+        t.status === 'awaiting_human' || t.action ? r.returned : null,
+        t.needs_human ? r.sitting : null,
+      ];
+      const standing = human.filter((x): x is NonNullable<Run> => x !== null);
+      if (standing.length) {
+        const first = standing.reduce((a, b) => (a.at <= b.at ? a : b));
+        onsets.push({ id, cause: 'missing_human_input', at: first.at, source: first.source });
+      }
+    }
+    return onsets;
   }
 
   listTickets(filter: ListFilter): Ticket[] {

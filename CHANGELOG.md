@@ -11,7 +11,7 @@ consolidation imported still carried that release's notes under "Unreleased";
 this is the published wording, which is two entries and one commit reference
 longer.
 
-## Unreleased — 0.9.5
+## v0.10.0 — 2026-10-12
 
 - The hourly and daily burn ceilings now measure spend over the time a session
   actually ran. Token-log entries carry `duration_ms`, and a rolling window
@@ -305,6 +305,24 @@ longer.
   the claimed work. When the iteration holds a claim, fresh or resumed, that
   ticket now carries the session and the note names the others; free-roaming
   loops keep the most-touched rule.
+
+#### Commit coverage
+
+Every commit in this release is represented above. This manifest makes that
+claim auditable without relying on ticket-title conventions:
+
++- `28d73a5`, `c42fdd4`, `e9cd7eb`, `bb73b89`, `4bfe208`, `319e215`, `7932421`, `7bc6122`, `d1fd7ee`, `f6e2a5b`
+- `bcddad4`, `80e2d9c`, `9c02ac2`, `932f712`, `c2b6eb8`, `08120ab`, `cb46ad3`, `a4cb21d`, `7b46d5a`, `3019cb0`
+- `ab474e1`, `ba4d798`, `1592f84`, `cca94a5`, `690410d`, `0175167`, `7afb98d`, `435bb1e`, `3c0107f`, `731dde3`
+- `09f3736`, `e01e6f8`, `0e979ac`, `350b732`, `026721b`, `cbf7f0b`, `c853fcc`, `6d856fe`, `b15747f`, `d4c7e94`
+- `09ad0b1`, `ca1688e`, `93e15a9`, `09b509e`, `218e5fc`, `76f395d`, `1b49fd0`, `b77f172`, `29fbff1`, `4166b19`
+- `9177e4b`, `128f50b`, `c9a708c`, `9c750a2`, `f020374`, `3593092`, `049fb56`, `aa82d10`, `ec9aca6`, `054d36f`
+- `f5c9356`, `6af31aa`, `c24df7f`, `293a786`, `5ca3127`, `cdfea09`, `81dee1c`, `8d2c413`, `63ca25d`, `a6cdbdb`
+- `1864d5b`, `85c39c0`, `f59e8b1`, `127d917`, `1c0bede`, `cf98dc6`, `7310337`, `90b11a7`, `b899fc5`, `143228d`
+- `fd032d5`, `2382f45`, `3ae0976`, `c804345`, `a9c1bcd`, `788d828`, `49543ea`, `b513170`, `e08cf83`, `f1b4d95`
+- `b1cabfe`, `004f892`, `1044879`, `781b36e`, `cd7da81`, `c951ddf`, `c3af0e7`, `0f042fd`, `467ad55`, `bcefad8`
+- `1f97da2`, `60d1444`, `9c54578`, `5d644e6`, `2325712`, `cc02d06`, `f00e72c`, `75fe26b`, `71462ef`, `ba51ce7`
+- `a4d3859`, `6bb379c`, `72994e7`
 
 ## v0.9.4 — 2026-10-05
 

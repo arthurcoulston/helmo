@@ -10,6 +10,15 @@ The old server-rendered HTML, bespoke CSS and DOM-replacement refresh are gone.
 Earlier renderer details below are historical; they describe the behavior to
 preserve, not permission to restore that implementation.
 
+`src/issues.ts` and `src/incidents.ts` are the append-only R-44 lifecycle
+projections. Issue identity is `check + subject kind + subject ref`; absence
+never resolves one, and recurrence reopens that same key. Incident stage is
+independent of ticket status: only investigating → mitigated → resolved is
+allowed, with containment at mitigation and cause, fix, recovery evidence and
+owned remaining work at resolution. Both retain each field's own provenance
+envelope; store snapshot reads are side-effect free and accept an explicit
+`as_of` for deterministic replay.
+
 `src/forecast.ts` is the pure timing model for Overview's What happens next
 reading. Its caller owns admission (the authoritative ready predicate, holds,
 gates, limits, available seats) and supplies recorded duration ranges; the model

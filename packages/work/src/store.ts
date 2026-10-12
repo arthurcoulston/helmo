@@ -4,6 +4,8 @@ import { projectAcceptance, standingVerdicts } from './acceptance.js';
 import { namesInstallation, type Installation } from './install.js';
 import { actionFingerprint, questionFingerprint } from './presentation.js';
 import { parseSchedule } from './schedule.js';
+import { issueKey, replayIssues, type IssueDisposition, type IssueEvent, type IssueSubjectKind, type IssuesSnapshot, type RecordedValue } from './issues.js';
+import { assertIncident, replayIncidents, type IncidentEvent, type IncidentPatch, type IncidentRecord } from './incidents.js';
 import {
   ActionReport, ActionRequest, Actor, ActorKind, ACTOR_KINDS, Answer, AnswerEvent, BlastRadius, BLAST_RADII, CapacityHold, CompletionAccount, CompletionAccountInput, COMPLETION_CATEGORIES, COMPLETION_SUMMARY_MAX, Confidence, Dep, DepType, Evidence, EVIDENCE_ROLES,
   AcceptanceCoverage, ActivityEvents, CoveringCompletion, HelmoError, HelmoEvent, HumanRequest, Notice, ProductAcceptance, ProductArtifact, Question, QuestionInput, ReleaseHandoff, Status, Ticket, TicketProgress, UnresolvedCompletion, VerdictEvent, Workstream, WorkstreamInfo,
@@ -132,6 +134,16 @@ export interface HygieneFinding {
   ticket_id?: string; // absent on workstream-level findings
   workstream?: string;
   detail: string;
+}
+
+export interface IssueObservationInput {
+  check: string;
+  subject_kind: IssueSubjectKind;
+  subject_ref: string;
+  detail: RecordedValue<string>;
+  owner: RecordedValue<string | null>;
+  next_action: RecordedValue<string>;
+  incident_id?: string;
 }
 
 const SCHEMA = `
@@ -2322,6 +2334,57 @@ export class Store {
       if (at == null) return false; // terminal-ticket disposition: stands
       return (costs.get(f.ticket_id) ?? 0) > at * SPEND_ACK_REGROWTH;
     });
+  }
+
+  recordIssueObservation(actor: Actor, input: IssueObservationInput, observedAt = now()): string {
+    validateActor(actor);
+    const key = issueKey(input.check, input.subject_kind, input.subject_ref);
+    this.append(observedAt, `issue:${key}`, 'issue_observed', actor, { key, ...input });
+    return key;
+  }
+
+  recordIssueDisposition(actor: Actor, key: string, disposition: IssueDisposition, recordedAt = now()): void {
+    validateActor(actor);
+    const exists = this.db.prepare("SELECT 1 FROM events WHERE event_type = 'issue_observed' AND json_extract(payload, '$.key') = ? LIMIT 1").get(key);
+    if (!exists) throw new HelmoError(`Issue ${key} has no observation.`);
+    if (disposition.state === 'resolved' && !disposition.evidence.some((item) => item.state === 'known')) {
+      throw new HelmoError('Resolving an issue requires at least one known evidence item.');
+    }
+    this.append(recordedAt, `issue:${key}`, 'issue_disposed', actor, { key, disposition });
+  }
+
+  issuesSnapshot(asOf = now()): IssuesSnapshot {
+    const rows = this.db.prepare("SELECT seq, ts, event_type AS type, payload FROM events WHERE event_type IN ('issue_observed','issue_disposed') AND ts <= ? ORDER BY seq").all(asOf) as { seq: number; ts: string; type: IssueEvent['type']; payload: string }[];
+    return replayIssues(rows.map((row) => ({ ...row, payload: JSON.parse(row.payload) })) as IssueEvent[], asOf);
+  }
+
+  recordIncidentEvent(actor: Actor, ticketId: string, patch: IncidentPatch, recordedAt = now()): IncidentRecord {
+    validateActor(actor);
+    const ticket = this.getTicket(ticketId);
+    if (!ticket || ticket.type !== 'incident') throw new HelmoError(`Incident ${ticketId} must name a Work ticket with type incident.`);
+    const current = this.incident(ticketId, recordedAt);
+    if (!current && (!patch.stage || patch.stage.state !== 'known' || patch.stage.value !== 'investigating')) {
+      throw new HelmoError('A new incident must begin at investigating.');
+    }
+    if (current?.stage.state === 'known' && patch.stage?.state === 'known') {
+      const allowed = current.stage.value === patch.stage.value ||
+        (current.stage.value === 'investigating' && patch.stage.value === 'mitigated') ||
+        (current.stage.value === 'mitigated' && patch.stage.value === 'resolved');
+      if (!allowed) throw new HelmoError(`Incident transition ${current.stage.value} → ${patch.stage.value} is not allowed.`);
+    }
+    const candidate = { ...(current ?? { ticket_id: ticketId }), ...patch } as IncidentRecord;
+    try { assertIncident(candidate); } catch (error) { throw new HelmoError(error instanceof Error ? error.message : String(error)); }
+    this.append(recordedAt, ticketId, 'incident_recorded', actor, { patch });
+    return candidate;
+  }
+
+  incidentsSnapshot(asOf = now()): { as_of: string; coverage: { state: 'available'; source: string }; records: IncidentRecord[] } {
+    const rows = this.db.prepare("SELECT seq, ts, ticket_id, payload FROM events WHERE event_type = 'incident_recorded' AND ts <= ? ORDER BY seq").all(asOf) as { seq: number; ts: string; ticket_id: string; payload: string }[];
+    return { as_of: asOf, coverage: { state: 'available', source: 'work:event-log' }, records: replayIncidents(rows.map((row) => ({ ...row, payload: JSON.parse(row.payload) })) as IncidentEvent[], asOf) };
+  }
+
+  incident(ticketId: string, asOf = now()): IncidentRecord | null {
+    return this.incidentsSnapshot(asOf).records.find((row) => row.ticket_id === ticketId) ?? null;
   }
 
   /** Catch up recurring templates: spawn an instance for each template whose

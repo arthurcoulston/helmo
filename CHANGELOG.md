@@ -11,19 +11,31 @@ consolidation imported still carried that release's notes under "Unreleased";
 this is the published wording, which is two entries and one commit reference
 longer.
 
-## Unreleased — 0.10.0
+## v0.11.0 — 2026-10-12
+
+- Work now projects sourced issues and incidents from ticket events without
+  inventing severity or status. The unified app exposes versioned issue and
+  incident APIs, adds Issues and Incidents navigation and list views, and
+  opens each incident as a source-linked detail reading. Overview carries the
+  same issues snapshot as its fifth card. Existing stores are unchanged; the
+  projections are read-only and derived from already-recorded events.
 
 - Wake the owner when a withdrawn ask or a reported action reopens its ticket.
   Both move a ticket from `awaiting_human` back to open, but only a resume
   answer counted as a readiness edge, so an idle owner slept until its
   periodic resync. `return_withdrawn` and `acted` now wake it on the next poll.
 
-## v0.10.0 — 2026-10-12
-
 - The spend-rate anomaly breaker compares a run's cost only with the last five
   iterations of the same loop on the same runtime. Cheap idle probes on another
   runtime no longer drag the baseline down and trip an ordinary session on a
   costlier one. Thresholds are unchanged.
+
+- Compatibility and rollback: this is a backward-compatible addition. No MCP
+  argument, CLI command, configuration key, service identity, default port or
+  store schema changed. The immediately preceding consolidated release remains
+  supported, and rollback to it requires no data migration.
+
+## v0.10.0 — 2026-10-12
 
 - The hourly and daily burn ceilings now measure spend over the time a session
   actually ran. Token-log entries carry `duration_ms`, and a rolling window

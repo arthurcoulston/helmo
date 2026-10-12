@@ -361,6 +361,7 @@ switch (cmd) {
             loop: l.name, seat: l.seat ?? l.name, pool: (l.peer_sessions?.length ?? 0) > 1,
             state: state(l.name), pid: pidAlive(l.name), pace: pending ? `pending:${pending}` : (sValue(l.name, 'PACE') ?? '1'),
             workstream: l.workstream, project: l.project ?? null, tickets: l.tickets ?? null, lane: l.lane ?? null,
+            shared_with: pidAlive(l.name) && sHas(l.name, 'SEAT_SHARED') ? (sGet(l.name, 'SEAT_SHARED') ?? '').trim() : null,
           };
         }),
         unserved_lanes: laneGaps(),
@@ -391,6 +392,10 @@ switch (cmd) {
       ...(lanes.length ? [`LANES: ${lanes.map((l) => `${l.lane}=${l.name}`).join('  ')}`] : []),
       ...Object.keys(loops).filter((name) => sHas(name, 'OUT_OF_SCOPE'))
         .map((name) => `HELD OUT OF SCOPE: ${name} ${(sGet(name, 'OUT_OF_SCOPE') ?? '').trim()}`),
+      // Another live session holds tickets in the seat's name (H-1382): the
+      // loop works on, and only those tickets are out of its reach.
+      ...Object.keys(loops).filter((name) => pidAlive(name) && sHas(name, 'SEAT_SHARED'))
+        .map((name) => `SHARED SEAT: ${name} works on beside ${(sGet(name, 'SEAT_SHARED') ?? '').trim()}`),
       ...(gaps === null ? ['UNSERVED LANE WORK: unreadable — Helmo did not answer']
         : gaps.map((gap) => `UNSERVED LANE WORK: ${gap.ticket} (${gap.seat}, lane ${gap.lane}) — ${gap.reason}`)),
     ];

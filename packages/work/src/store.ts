@@ -1077,13 +1077,49 @@ export class Store {
    *  another agent may leave a coordination note but not move, edit, hand off
    *  or complete the work. Humans and orchestrators keep authorized routing;
    *  their change ends the claim like any other. */
-  private refuseForeignExecution(actor: Actor, ticketId: string, what: string): void {
+  private refuseForeignExecution(actor: Actor, ticketId: string, what: string, takeover = false): void {
     this.refuseRetiredGeneration(actor);
     const claim = this.executionClaim(ticketId);
     if (claim && actor.kind === 'agent' && (actor.session !== claim.session || actor.generation !== claim.generation)) {
       throw new HelmoError(`execution_claim_held ${JSON.stringify({ ticket_id: ticketId, session: claim.session, generation: claim.generation })}: ${what} belongs to the worker attempt holding this claim. Leave a note-only update to coordinate; nothing was written.`);
     }
+    if (!claim) this.refuseForeignSession(actor, ticketId, what, takeover);
     this.refuseOutsideLaunch(actor, ticketId, what);
+  }
+
+  /** A claim with no execution generation — an attended session's, or a
+   *  single loop worker's — still belongs to the session that took it
+   *  (H-1382). One crew name can run an attended sitting and its Rev loop at
+   *  once, and the loop no longer stands down for the sitting, so the name
+   *  alone cannot say whose work an in_progress ticket is. The claiming
+   *  event's session stamp can: an attended claim carries none, a loop's
+   *  carries its seat. Another session of the same name may note but not
+   *  move, edit or complete the work until the claim is past the takeover
+   *  age and it takes over explicitly. Other names keep the reservation
+   *  rules they had; humans and orchestrators keep routing. */
+  private refuseForeignSession(actor: Actor, ticketId: string, what: string, takeover: boolean): void {
+    if (actor.kind !== 'agent') return;
+    const t = this.db.prepare('SELECT status, assignee, updated_at FROM tickets WHERE id = ?').get(ticketId) as
+      { status: string; assignee: string | null; updated_at: string } | undefined;
+    if (!t || t.status !== 'in_progress' || t.assignee !== actor.name) return;
+    if (takeover && hoursSince(t.updated_at) >= STALE_CLAIM_HOURS) return;
+    const holder = this.claimActor(ticketId);
+    if (!holder || (holder.session ?? null) === (actor.session ?? null)) return;
+    throw new HelmoError(`session_claim_held ${JSON.stringify({ ticket_id: ticketId, session: holder.session ?? null })}: ${what} belongs to the ${holder.session ? `session '${holder.session}'` : 'attended session'} that claimed it in the name "${actor.name}". Leave a note-only update to coordinate; if that session has ended and the claim is over ${STALE_CLAIM_HOURS}h stale, retry with takeover: true. Nothing was written.`);
+  }
+
+  /** The actor whose event last put a ticket in_progress, or null when no
+   *  such event can be found. */
+  private claimActor(ticketId: string): Actor | null {
+    const ev = this.db
+      .prepare(
+        `SELECT actor FROM events WHERE ticket_id = ?
+           AND ((event_type = 'updated' AND json_extract(payload, '$.diffs.status.to') = 'in_progress')
+             OR (event_type = 'created' AND json_extract(payload, '$.status') = 'in_progress'))
+         ORDER BY seq DESC LIMIT 1`,
+      )
+      .get(ticketId) as { actor: string } | undefined;
+    return ev ? (JSON.parse(ev.actor) as Actor) : null;
   }
 
   /** A supervised launch is bound to the one ticket it claimed (H-667). The
@@ -2709,7 +2745,7 @@ export class Store {
       .filter(([, value]) => value !== undefined)
       .map(([key]) => key);
     this.refuseRetiredGeneration(actor);
-    if (suppliedKeys.some((key) => key !== 'ticket_id' && key !== 'note')) this.refuseForeignExecution(actor, t.id, 'This change');
+    if (suppliedKeys.some((key) => key !== 'ticket_id' && key !== 'note')) this.refuseForeignExecution(actor, t.id, 'This change', input.takeover === true);
 
     const bodyModes = [input.body, input.body_append, input.body_patch].filter((v) => v !== undefined).length;
     if (bodyModes > 1) {

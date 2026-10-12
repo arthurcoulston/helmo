@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { breakerDecide, choiceDecide, classifyExit, declineDecide, idleCursorDecide, limitDecide, ladderDecide, probeDecide, respawnDecide, rollingMean, routedDeclines, seatDecide, velocityToPause, wakeDecide } from '../src/ladder.js';
+import { breakerDecide, choiceDecide, classifyExit, declineDecide, idleCursorDecide, limitDecide, ladderDecide, probeDecide, respawnDecide, foreignHolds, foreignHoldsReason, rollingMean, routedDeclines, velocityToPause, wakeDecide } from '../src/ladder.js';
+import { withoutHolds } from '../src/helm.js';
 
 const base = { produced: true, failStreak: 0, limitStreak: 0, failCap: 2, limitCap: 20, limitWait: 900 };
 
@@ -360,32 +361,43 @@ describe('choiceDecide (H-479)', () => {
   });
 });
 
-describe('seatDecide (H-558)', () => {
+describe('foreignHolds (H-558, H-1382)', () => {
   const sessions = ['rev:ward'];
   const stale = 86400;
-  it('an empty seat and its own mid-flight work both mean work', () => {
-    expect(seatDecide({ holds: [], sessions, staleSeconds: stale }).act).toBe('work');
-    expect(seatDecide({ holds: [{ ticketId: 'H-1', claimSession: 'rev:ward', ageSeconds: 60 }], sessions, staleSeconds: stale }).act).toBe('work');
+  it('an empty seat and its own mid-flight work name nothing', () => {
+    expect(foreignHolds({ holds: [], sessions, staleSeconds: stale })).toEqual([]);
+    expect(foreignHolds({ holds: [{ ticketId: 'H-1', claimSession: 'rev:ward', ageSeconds: 60 }], sessions, staleSeconds: stale })).toEqual([]);
   });
-  it('a fresh foreign hold stands the loop down, naming the ticket and holder', () => {
-    const r = seatDecide({ holds: [{ ticketId: 'H-2', claimSession: null, ageSeconds: 300 }], sessions, staleSeconds: stale });
-    expect(r.act).toBe('stand_down');
-    if (r.act === 'stand_down') expect(r.reason).toContain('H-2');
-  });
-  it('a stale or undatable foreign hold does not block — takeover territory, not a live session', () => {
-    expect(seatDecide({ holds: [{ ticketId: 'H-3', claimSession: 'desk', ageSeconds: stale + 1 }], sessions, staleSeconds: stale }).act).toBe('work');
-    expect(seatDecide({ holds: [{ ticketId: 'H-4', claimSession: null, ageSeconds: null }], sessions, staleSeconds: stale }).act).toBe('work');
-  });
-  it('one fresh foreign hold among own work is enough to stand down; 0 disables the guard', () => {
+  it('names a fresh foreign hold and its holder, and only that ticket', () => {
     const holds = [
       { ticketId: 'H-5', claimSession: 'rev:ward', ageSeconds: 60 },
+      { ticketId: 'H-2', claimSession: null, ageSeconds: 300 },
       { ticketId: 'H-6', claimSession: 'rev:other', ageSeconds: 60 },
     ];
-    expect(seatDecide({ holds, sessions, staleSeconds: stale }).act).toBe('stand_down');
-    expect(seatDecide({ holds, sessions, staleSeconds: 0 }).act).toBe('work');
+    const r = foreignHolds({ holds, sessions, staleSeconds: stale });
+    expect(r.map((h) => h.ticketId)).toEqual(['H-2', 'H-6']);
+    expect(foreignHoldsReason(r)).toBe("H-2 held in this name by an attended session — claimed 5m ago; H-6 held in this name by session 'rev:other' — claimed 1m ago");
   });
-  it('allows another supervised worker in the same accountable seat', () => {
+  it('a stale or undatable foreign hold is not named — takeover territory, not a live session', () => {
+    expect(foreignHolds({ holds: [{ ticketId: 'H-3', claimSession: 'desk', ageSeconds: stale + 1 }], sessions, staleSeconds: stale })).toEqual([]);
+    expect(foreignHolds({ holds: [{ ticketId: 'H-4', claimSession: null, ageSeconds: null }], sessions, staleSeconds: stale })).toEqual([]);
+  });
+  it('0 disables the read', () => {
+    expect(foreignHolds({ holds: [{ ticketId: 'H-6', claimSession: 'rev:other', ageSeconds: 60 }], sessions, staleSeconds: 0 })).toEqual([]);
+  });
+  it('another supervised worker in the same accountable seat is not foreign', () => {
     const holds = [{ ticketId: 'H-7', claimSession: 'rev:ward-2', ageSeconds: 10 }];
-    expect(seatDecide({ holds, sessions: ['rev:ward', 'rev:ward-2'], staleSeconds: stale }).act).toBe('work');
+    expect(foreignHolds({ holds, sessions: ['rev:ward', 'rev:ward-2'], staleSeconds: stale })).toEqual([]);
+  });
+});
+
+describe('withoutHolds (H-1382)', () => {
+  const w = { max_seq: 9, ready_count: 1, changed_since: true, held_count: 3, newly_touched_held_ids: ['H-1', 'H-2'], newly_unblocked_held_ids: ['H-2'] };
+  it('takes another session\'s tickets out of the seat\'s held work', () => {
+    expect(withoutHolds(w, ['H-2'])).toEqual({ ...w, held_count: 2, newly_touched_held_ids: ['H-1'], newly_unblocked_held_ids: [] });
+  });
+  it('leaves a wake-check without such tickets, or from an older store, as it was', () => {
+    expect(withoutHolds(w, [])).toBe(w);
+    expect(withoutHolds({ max_seq: 1, ready_count: 0, changed_since: false }, ['H-2'])).toEqual({ max_seq: 1, ready_count: 0, changed_since: false });
   });
 });

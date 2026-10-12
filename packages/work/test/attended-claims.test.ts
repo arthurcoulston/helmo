@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { Store } from '../src/store.js';
@@ -60,5 +60,98 @@ describe('ordinary attended work', () => {
       await server.close();
       store.close();
     }
+  });
+});
+
+// One crew name, two live sessions (H-1382): an attended sitting holds its
+// ticket while the same role's Rev loop keeps working. The name cannot say
+// whose a ticket is; the claiming session can.
+describe('a sitting and its loop share a name', () => {
+  const single: Actor = { ...desk, session: 'rev:builder' };
+  const pooled = (launch: string): Actor => ({ ...desk, session: 'rev:builder-a', generation: launch });
+  const ticket = (s: Store, title: string) => s.createTicket(planner, { ...task, title });
+  const claim = (s: Store, who: Actor, id: string) => s.updateTicket(who, { ticket_id: id, status: 'in_progress', note: 'Working it.' });
+  const evidence = [{ kind: 'other' as const, ref: 'output' }];
+
+  it('lets a single loop worker take other work but not the sitting\'s ticket', () => {
+    const s = new Store(':memory:');
+    const x = ticket(s, 'The sitting');
+    const y = ticket(s, 'Independent work');
+    claim(s, desk, x.id);
+    expect(s.listTickets({ ready: true, workstream: task.workstream, caller: desk.name }).map((t) => t.id)).toEqual([y.id]);
+    claim(s, single, y.id);
+    s.updateTicket(single, { ticket_id: y.id, status: 'done', note: 'Shipped.', evidence });
+
+    const before = s.getEvents(x.id).length;
+    const attempts: (() => unknown)[] = [
+      () => s.updateTicket(single, { ticket_id: x.id, status: 'done', note: 'Closing.', evidence }),
+      () => s.updateTicket(single, { ticket_id: x.id, status: 'in_progress', note: 'Resuming.' }),
+      () => s.updateTicket(single, { ticket_id: x.id, status: 'open', note: 'Putting it down.' }),
+      () => s.updateTicket(single, { ticket_id: x.id, body_append: '\nLoop edit.', note: 'Editing.' }),
+      () => s.updateTicket(single, { ticket_id: x.id, handoff_to: 'reviewer', note: 'Passing it on.' }),
+      () => s.recordProductCompletion(single, { ticket_id: x.id, note: 'Ready.', artifacts: [{ ref: `helmo@${'a'.repeat(40)}`, author: 'builder' }] }),
+      () => s.returnToHuman(single, x.id, { situation: 'Midway.', question: 'Which?', recommendation: 'This one.' }),
+    ];
+    for (const attempt of attempts) expect(attempt).toThrow(/session_claim_held.*attended session/);
+    expect(s.getEvents(x.id)).toHaveLength(before);
+    s.updateTicket(single, { ticket_id: x.id, note: 'Coordination note from the loop.' });
+    expect(s.getTicket(x.id)).toMatchObject({ status: 'in_progress', assignee: desk.name });
+    s.updateTicket(desk, { ticket_id: x.id, status: 'done', note: 'Sitting finished.', evidence });
+    s.close();
+  });
+
+  it('keeps the loop\'s claim from the sitting, single and pooled', () => {
+    const s = new Store(':memory:');
+    const y = ticket(s, 'Loop work');
+    claim(s, single, y.id);
+    expect(() => s.updateTicket(desk, { ticket_id: y.id, status: 'done', note: 'Closing.', evidence })).toThrow(/session_claim_held.*'rev:builder'/);
+    s.updateTicket(desk, { ticket_id: y.id, note: 'A note from the sitting.' });
+    const z = ticket(s, 'Pooled loop work');
+    expect(s.launchClaim({ ...desk, session: 'rev:builder-a' }, task.workstream, desk.name, 'launch-a')).toMatchObject({ claimed: true, ticket_id: z.id });
+    expect(() => s.updateTicket(desk, { ticket_id: z.id, status: 'open', note: 'Taking it.' })).toThrow(/execution_claim_held/);
+    s.close();
+  });
+
+  it('gives a pooled worker the next ready ticket while the sitting holds its own', () => {
+    const s = new Store(':memory:');
+    const x = ticket(s, 'The sitting');
+    const y = ticket(s, 'Independent work');
+    claim(s, desk, x.id);
+    expect(s.launchClaim({ ...desk, session: 'rev:builder-a' }, task.workstream, desk.name, 'launch-a')).toMatchObject({ claimed: true, ticket_id: y.id });
+    expect(() => s.updateTicket(pooled('launch-a'), { ticket_id: x.id, status: 'done', note: 'Closing.', evidence })).toThrow(/session_claim_held|launch_assignment_conflict/);
+    // Nothing else ready: the next launch idles rather than resuming the sitting.
+    expect(s.launchClaim({ ...desk, session: 'rev:builder-b' }, task.workstream, desk.name, 'launch-b')).toEqual({ admitted: false, launch_id: 'launch-b' });
+    expect(s.getTicket(x.id)).toMatchObject({ status: 'in_progress', assignee: desk.name });
+    s.close();
+  });
+
+  it('lets an ended sitting\'s claim be taken over only when stale and explicit', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2030-01-01T09:00:00.000Z'));
+      const s = new Store(':memory:');
+      const x = ticket(s, 'An abandoned sitting');
+      claim(s, desk, x.id);
+      vi.setSystemTime(new Date('2030-01-01T20:00:00.000Z'));
+      expect(() => s.updateTicket(single, { ticket_id: x.id, status: 'in_progress', takeover: true, note: 'Taking over.' })).toThrow(/session_claim_held/);
+      vi.setSystemTime(new Date('2030-01-02T10:00:00.000Z'));
+      expect(() => s.updateTicket(single, { ticket_id: x.id, status: 'in_progress', note: 'Taking over.' })).toThrow(/session_claim_held/);
+      s.updateTicket(single, { ticket_id: x.id, status: 'in_progress', takeover: true, note: 'The sitting ended a day ago; taking over.' });
+      expect(s.seatHolds(desk.name)[0]?.claim_actor).toEqual(single);
+      expect(() => s.updateTicket(desk, { ticket_id: x.id, status: 'done', note: 'Closing.', evidence })).toThrow(/session_claim_held/);
+      s.updateTicket(single, { ticket_id: x.id, status: 'done', note: 'Finished.', evidence });
+      s.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('leaves orchestrator steering of the held ticket as it was', () => {
+    const s = new Store(':memory:');
+    const x = ticket(s, 'The sitting');
+    claim(s, desk, x.id);
+    s.updateTicket(planner, { ticket_id: x.id, priority: 0, note: 'Raising it for the sitting.' });
+    expect(s.getTicket(x.id)).toMatchObject({ status: 'in_progress', assignee: desk.name, priority: 0 });
+    s.close();
   });
 });

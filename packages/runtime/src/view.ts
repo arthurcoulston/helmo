@@ -196,7 +196,8 @@ export function runtimeSnapshot() {
         : st === 'SEAT_HELD' ? sGet(l.name, 'SEAT_HELD')?.split('\n')[0]
         : st === 'BLOCKED' ? blockedSummary(l.name)
         : st === 'WEDGED' ? sGet(l.name, st)?.split('\n')[0] : undefined;
-      return { name: l.name, state: st, workstream: l.workstream, ...(reason ? { reason } : {}) };
+      const shared = (st === 'RUNNING' || st === 'IDLE') ? sGet(l.name, 'SEAT_SHARED')?.split('\n')[0] : undefined;
+      return { name: l.name, state: st, workstream: l.workstream, ...(reason ? { reason } : {}), ...(shared ? { shared_with: shared } : {}) };
     }),
     usage: { claude: readUsage(), codex: readCodexUsage() },
   };
@@ -223,12 +224,14 @@ export function runtimeRequest(req: IncomingMessage, res: ServerResponse) {
       const wedged = st === 'WEDGED' ? `<div class="blockreason">${esc(sGet(l.name, 'WEDGED')?.split('\n')[0])}</div>` : '';
       const idle = st === 'IDLE' ? `<div class="idlereason">${esc(sGet(l.name, 'IDLE')?.split('\n')[1] ?? 'waiting on the wake cursor')}</div>` : '';
       const seatHeld = st === 'SEAT_HELD' ? `<div class="idlereason">${esc(sGet(l.name, 'SEAT_HELD')?.split('\n')[0] ?? 'another live session holds this seat')}</div>` : '';
+      // Not a state: the loop works on, and only these tickets are out of its reach (H-1382).
+      const shared = (st === 'RUNNING' || st === 'IDLE') && sHas(l.name, 'SEAT_SHARED') ? `<div class="idlereason">works on beside ${esc(sGet(l.name, 'SEAT_SHARED')?.split('\n')[0])}</div>` : '';
       const events = lastEvents(l.name, 5)
         .map((e) => `<div class="ev">${esc(e)}</div>`)
         .join('');
       return `<tr>
         <td class="name">${actor(l.name)}</td>
-        <td class="st st-${st}">${st}${blocked}${wedged}${idle}${seatHeld}</td>
+        <td class="st st-${st}">${st}${blocked}${wedged}${idle}${seatHeld}${shared}</td>
         <td>${esc(l.workstream)}</td>
         <td>${esc(l.runtime)}/${esc(l.model)}</td>
         <td>${esc(sValue(l.name, 'PACE') ?? '1')}</td>

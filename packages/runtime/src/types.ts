@@ -18,7 +18,7 @@ export interface GlobalConfig {
   limit_block_horizon_seconds: number;  // a cap resetting further out than this blocks for a human rather than waiting (H-402)
   limit_exhausted_percent: number;      // a usage bar at or above this counts as the cap that stopped us
   wedge_cap: number;                    // consecutive wake-check failures before a loop is declared wedged; 0 disables (H-448)
-  seat_stale_seconds: number;           // a foreign in_progress hold older than this no longer stands the loop down (H-558); 0 disables the guard
+  seat_stale_seconds: number;           // a foreign in_progress hold older than this is no longer named as another live session's (H-558, H-1382); 0 disables the read
   drain_grace_seconds: number;          // supervisor: seconds a drain waits before SIGKILLing stragglers; 0 waits forever (H-281)
   redeploy_deadline_seconds: number;    // seconds a redeploy's watch waits for the new supervisor before alarming; 0 disables the watch (H-1046)
   // Capacity and runaway detection (H-179/H-185). Every default reproduces
@@ -118,5 +118,5 @@ export interface SessionResult {
   outputTail: string; // last lines of session output, for traces and escalations
 }
 
-export const SENTINELS = ['STOP', 'HOLD', 'BLOCKED', 'LIMIT', 'IDLE', 'IDLE_AT', 'RUNNING', 'PACE', 'PARKED', 'SEAT_HELD', 'BACKOFF', 'WEDGED', 'REDEPLOY', 'OUT_OF_SCOPE', 'RELOAD'] as const;
+export const SENTINELS = ['STOP', 'HOLD', 'BLOCKED', 'LIMIT', 'IDLE', 'IDLE_AT', 'RUNNING', 'PACE', 'PARKED', 'SEAT_HELD', 'SEAT_SHARED', 'BACKOFF', 'WEDGED', 'REDEPLOY', 'OUT_OF_SCOPE', 'RELOAD'] as const;
 export type Sentinel = (typeof SENTINELS)[number];

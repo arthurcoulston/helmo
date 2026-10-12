@@ -115,10 +115,12 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   on its second (H-954): either no executable work exists in the seat's scope,
   held work is non-executable, or a session left executable work untouched.
   The view and `/health.json` expose that reason; it stays local so observing a
-  wait cannot create Helmo motion and wake the same seat again. A SEAT_HELD
-  sentinel makes the same-seat guard visible while the loop stands down for
-  another live session; the view, health feed, and CLI show the hold instead
-  of calling it a running iteration, and the marker clears with the hold.
+  wait cannot create Helmo motion and wake the same seat again. A SEAT_SHARED
+  sentinel names the tickets another live session holds in the seat's name
+  while the loop works on beside it (H-1382); the view, health feed
+  (`shared_with`) and CLI (`SHARED SEAT:`) show it on a live loop, and it
+  clears with the holds. SEAT_HELD is only ever left by a process from before
+  H-1382, which stood down instead; a current loop clears it.
   Multiple roster loops may explicitly share an accountable `seat`: each
   keeps its own state directory and `rev:<loop>` session identity, while
   Helmo sees the role name for assignment, authorship and self-review. The
@@ -1400,18 +1402,27 @@ follow a module imported dynamically much later.
   are recycled across a reboot: a stale marker whose number had been reused by
   an unrelated process made the supervisor abort as "already running" through
   57 launchd retries, with the whole fleet down and unable to converge (H-154).
-- **One seat, one worker** (H-558). Before spending an iteration the loop asks
-  Helmo who holds in_progress work in its name (`seat-check`) and stands down —
-  polls, spawns nothing — while a FRESH hold its own iterations did not claim
-  exists: a desk session or subagent sharing the crew name is live in the
-  seat, and working over it is how H-542 and H-560 were both trampled. Loop
-  sessions stamp `session: "rev:<loop>"` into their Helmo actor (`loopActor`),
-  which is how the seat's own mid-flight work is recognized across
-  iterations. Stale holds (past `seat_stale_seconds`, default 24h — Helmo's
-  own takeover convention) and unattributable claims never block: the guard
-  yields to live work, it does not wedge a seat on an abandoned one.
-  Best-effort — a seat-check failure logs and proceeds. The race window
-  (a desk claim landing mid-iteration) is accepted per Arthur's H-558 answer.
+- **A sitting owns its ticket, not the seat** (H-558, H-1382). Before
+  spending an iteration the loop asks Helmo who holds in_progress work in its
+  name (`seat-check`). A FRESH hold its own seat's workers did not claim is
+  another live session sharing the crew name — an attended sitting or a
+  subagent — and working over it is how H-542 and H-560 were both trampled.
+  H-558 stood the whole loop down for it; that idled every worker of a role
+  for as long as Arthur sat with one of them (H-1381), so the loop now works
+  on and leaves exactly those tickets alone. Helmo is the fence: a claim
+  without an execution generation belongs to the session stamped on the event
+  that claimed it (an attended claim carries none), and another session of the
+  same name may only note it — any other write is refused `session_claim_held`
+  until the claim is over 24h stale and taken over explicitly. Pool workers
+  were already fenced by their execution claim and launch binding, and draw
+  only ready (open) tickets. Rev keeps those tickets out of the seat's held
+  work for wakes and the probe tier (`withoutHolds`), names them in a
+  self-drawing worker's prompt, and records them as SEAT_SHARED. Loop sessions
+  stamp `session: "rev:<loop>"` into their Helmo actor (`loopActor`), which is
+  how the seat's own mid-flight work is recognized across iterations. Stale
+  holds (past `seat_stale_seconds`, default 24h — Helmo's own takeover
+  convention) and unattributable claims are not named. Best-effort — a
+  seat-check failure logs and proceeds, and Helmo's fence still holds.
 - Wake is MOTION for store-wide loops and READINESS for scoped ones (H-426
   and H-92, rewritten by H-1072). A scoped loop wakes when Helmo's wake-check
   reports `newly_ready_count > 0` — currently-ready tickets carrying a

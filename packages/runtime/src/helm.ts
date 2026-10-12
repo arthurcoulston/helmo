@@ -29,6 +29,20 @@ export interface WakeCheck {
   ready_ids?: string[];
 }
 
+/** A wake-check with the tickets another live session holds in this seat's
+ *  name taken out of its held work (H-1382). A verdict or answer on a
+ *  sitting's ticket is that sitting's news, and the loop may not act on it. */
+export function withoutHolds(w: WakeCheck, ids: string[]): WakeCheck {
+  if (!ids.length) return w;
+  const keep = (list?: string[]) => list?.filter((id) => !ids.includes(id));
+  return {
+    ...w,
+    ...(w.held_count === undefined ? {} : { held_count: Math.max(0, w.held_count - ids.length) }),
+    ...(w.newly_unblocked_held_ids ? { newly_unblocked_held_ids: keep(w.newly_unblocked_held_ids) } : {}),
+    ...(w.newly_touched_held_ids ? { newly_touched_held_ids: keep(w.newly_touched_held_ids) } : {}),
+  };
+}
+
 export function readyTicketIds(g: GlobalConfig, l: LoopConfig): string[] {
   if (l.workstream === '*') return [];
   const list = (args: string[]) => (run(g, ['list', '--ready', ...args, '--limit', '100'], loopActor(l)) as { tickets: { id: string; lane?: string | null }[] }).tickets;

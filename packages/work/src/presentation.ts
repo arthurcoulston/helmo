@@ -284,7 +284,47 @@ export function seatWork(tickets: Ticket[]): Record<string, { id: string; title:
   return held;
 }
 
-/** Completed work inside the rolling 24-hour window ending at `as_of`.
+/** A reader-chosen check-in instant, resolved against the reading's own
+ *  `as_of`. The rule lives HERE, beside the projection that applies it, so a
+ *  route answering a reader and the window selecting rows cannot disagree: a
+ *  bound the route accepted and the projection would have rejected becomes a
+ *  silent fallback to the day window, which answers a different question than
+ *  the one asked (H-3206 §7.8).
+ *
+ *  A refusal carries the sentence the route repeats, because the reader has to
+ *  learn WHICH bound was refused and what it was compared against. An
+ *  unparseable `as_of` is not a refusal but a throw: that instant is the
+ *  server's own, so a caller who cannot supply one has a fault rather than bad
+ *  input. */
+export type CheckInBound =
+  | { ok: true; since: string; since_ms: number; chosen: boolean }
+  | { ok: false; refusal: string };
+
+export function checkInBound(asOf: string, since?: string | null): CheckInBound {
+  const asOfMs = new Date(asOf).getTime();
+  if (Number.isNaN(asOfMs)) throw new Error(`checkInBound needs an instant for as_of; got "${asOf}".`);
+  const defaulted = asOfMs - DAY_MS;
+  // No bound supplied is not a refusal: the day window is what every caller
+  // before the check-in reading asked for, and it stays the default so the
+  // existing call site reads exactly as it did.
+  if (since === undefined || since === null || since === '') {
+    return { ok: true, since: new Date(defaulted).toISOString(), since_ms: defaulted, chosen: false };
+  }
+  const sinceMs = new Date(since).getTime();
+  if (Number.isNaN(sinceMs)) {
+    return { ok: false, refusal: `since="${since}" is not an instant this reading can parse; supply an ISO instant, as in since=${new Date(defaulted).toISOString()}.` };
+  }
+  if (sinceMs > asOfMs) {
+    return { ok: false, refusal: `since="${since}" is later than the as_of of the records being read (${asOf}); a check-in cannot be in their future.` };
+  }
+  // Echoed exactly as supplied. A reader's instant is their own note of when
+  // they last looked, and no record here says a visit happened.
+  return { ok: true, since, since_ms: sinceMs, chosen: true };
+}
+
+/** Completed work closed after a check-in instant and up to `as_of`,
+ *  defaulting to the rolling 24 hours that every caller before the check-in
+ *  reading asked for.
  *
  *  Only a ticket's CURRENT state is read: a reopened ticket is absent while it
  *  is open and returns at its later close, and a verdict or a late evidence
@@ -300,10 +340,16 @@ export function recentResults(
   tickets: Ticket[],
   asOf: string,
   acceptance: (id: string) => { state: string; reason: string },
+  options: { since?: string | null } = {},
 ): RecentResults {
   const asOfMs = new Date(asOf).getTime();
   if (Number.isNaN(asOfMs)) throw new Error(`recentResults needs an instant for as_of; got "${asOf}".`);
-  const startedMs = asOfMs - DAY_MS;
+  const bound = checkInBound(asOf, options.since);
+  // A caller reaching here with a refused bound skipped the validation it was
+  // given: the route's job is to turn this into a 400 the reader can act on,
+  // and swallowing it would select rows against a window nobody asked for.
+  if (!bound.ok) throw new Error(`recentResults was handed a bound its own validation refuses: ${bound.refusal}`);
+  const startedMs = bound.since_ms;
   // Compared as instants, not strings: `closed_at` is written by
   // `toISOString()` today, but the column is text and an imported record can
   // carry another spelling of the same moment, which a lexicographic compare

@@ -16,7 +16,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { afterAll, describe, expect, it } from 'vitest';
-import { recentResults, RECENT_RESULTS_LIMIT } from '../src/presentation.js';
+import { checkInBound, recentResults, RECENT_RESULTS_LIMIT } from '../src/presentation.js';
 import { Store } from '../src/store.js';
 import { buildServer } from '../src/tools.js';
 import { Actor, CompletionAccount, Evidence, Ticket } from '../src/types.js';
@@ -121,6 +121,71 @@ describe('the past-24-hours window (§1)', () => {
   it('breaks a tie on closed_at by numeric id, descending', () => {
     const tied = ['H-2', 'H-11', 'H-3'].map((id) => fixture({ id, closed_at: hoursBefore(2) }));
     expect(ids(tied)).toEqual(['H-11', 'H-3', 'H-2']);
+  });
+});
+
+describe('a check-in instant the reader chooses (H-3206 §2 C1-C2, §7.8)', () => {
+  const since = (value: string | null | undefined, tickets: Ticket[] = SIX) =>
+    recentResults(tickets, AS_OF, noAcceptance, { since: value }).rows.map((r) => r.id);
+
+  it('reads the day window when no bound is supplied, however the absence is spelled', () => {
+    for (const absent of [undefined, null, '']) {
+      const bound = checkInBound(AS_OF, absent);
+      expect(bound).toEqual({ ok: true, since: hoursBefore(24), since_ms: new Date(hoursBefore(24)).getTime(), chosen: false });
+      expect(since(absent)).toEqual(['H-1', 'H-2', 'H-3', 'H-4', 'H-5']);
+    }
+  });
+
+  it('narrows the set to the records closed after the chosen instant', () => {
+    expect(since(hoursBefore(3))).toEqual(['H-1', 'H-2']);
+    expect(since(hoursBefore(1))).toEqual([]);
+  });
+
+  it('reaches further back than a day, returning what the fixed window could not', () => {
+    expect(since(hoursBefore(48))).toEqual(['H-1', 'H-2', 'H-3', 'H-4', 'H-5', 'H-6']);
+  });
+
+  it('keeps the bottom half-open at the chosen instant, as the fixed window was', () => {
+    const onBound = fixture({ id: 'H-7', closed_at: hoursBefore(3) });
+    expect(since(hoursBefore(3), [onBound])).toEqual([]);
+    const justInside = fixture({ id: 'H-8', closed_at: new Date(new Date(hoursBefore(3)).getTime() + 1).toISOString() });
+    expect(since(hoursBefore(3), [justInside])).toEqual(['H-8']);
+  });
+
+  it('selects a record whose closed_at spells the same moment with an offset', () => {
+    // 18:31:48.371+01:00 is 17:31:48.371Z, four hours before as_of. Compared
+    // as a string against an instant spelled with Z it would sort outside.
+    const offset = fixture({ id: 'H-9', closed_at: '2026-10-09T18:31:48.371+01:00' });
+    expect(since(hoursBefore(6), [offset])).toEqual(['H-9']);
+  });
+
+  it('echoes the reader’s own spelling rather than a normalised one', () => {
+    const bound = checkInBound(AS_OF, '2026-10-09T18:31:48.371+01:00');
+    expect(bound).toMatchObject({ ok: true, since: '2026-10-09T18:31:48.371+01:00', chosen: true });
+  });
+
+  it('states the window it selected against, even when the reader chose it', () => {
+    const results = recentResults(SIX, AS_OF, noAcceptance, { since: hoursBefore(3) });
+    expect(results.window_started_at).toBe(hoursBefore(3));
+    expect(results.as_of).toBe(AS_OF);
+    expect(results.total).toBe(2);
+  });
+
+  it('refuses an unparseable bound and one later than the records it would read', () => {
+    const unparseable = checkInBound(AS_OF, 'last Tuesday');
+    expect(unparseable.ok).toBe(false);
+    expect(unparseable).toMatchObject({ refusal: expect.stringContaining('last Tuesday') });
+    const future = new Date(new Date(AS_OF).getTime() + 1).toISOString();
+    expect(checkInBound(AS_OF, future)).toMatchObject({ ok: false, refusal: expect.stringContaining(AS_OF) });
+  });
+
+  it('accepts a check-in at exactly as_of, which is an empty interval and not an error', () => {
+    expect(checkInBound(AS_OF, AS_OF)).toMatchObject({ ok: true, chosen: true });
+    expect(since(AS_OF)).toEqual([]);
+  });
+
+  it('refuses to select rows against a bound it would have rejected, rather than falling back to the day', () => {
+    expect(() => recentResults(SIX, AS_OF, noAcceptance, { since: 'last Tuesday' })).toThrow(/refuses/);
   });
 });
 

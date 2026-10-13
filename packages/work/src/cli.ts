@@ -23,6 +23,7 @@ const COMMAND_FLAGS: Record<string, readonly string[]> = {
   'wake-check': ['since-seq', 'workstream', 'assignee', 'lane', 'no-lane'],
   'seat-check': ['assignee'],
   'launch-admit': ['workstream', 'assignee', 'launch-id'],
+  'ended-claim-reconcile': ['ticket', 'record'],
   'launch-claim': ['workstream', 'assignee', 'launch-id', 'project', 'tickets', 'exclude-tickets', 'lane'],
   'launch-receipt': ['admission-id', 'launch-id'],
   'launch-revalidate': ['admission-id', 'launch-id'],
@@ -345,6 +346,11 @@ try {
     }
     case 'launch-admit': {
       out(store.launchAdmission(req('workstream'), req('assignee'), req('launch-id')));
+      break;
+    }
+    case 'ended-claim-reconcile': {
+      const record = JSON.parse(req('record'));
+      out(store.reconcileEndedClaim(actor(), { ...record, ticket_id: ticketRef('ticket') }));
       break;
     }
     case 'launch-claim': {

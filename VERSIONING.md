@@ -38,6 +38,12 @@ two-release compatibility window. Compatibility does not authorize a store
 migration or a service-name, port, configuration-key, or entry-point change;
 those require their own reviewed migration and recovery contract.
 
+Version 0.10 adds hold-only ended-claim reconciliation CLI commands in Work
+and Runtime. It adds no schema, configuration or MCP change; all existing
+launch/claim semantics stay compatible. Runtime evidence and Work's atomic
+claim comparison are both required. Rolling back software does not resurrect
+a retired generation or clear a deliberate ticket hold.
+
 ## Accepted legacy spellings
 
 An installation-qualified reference is written `<id>@<installation>`, and a

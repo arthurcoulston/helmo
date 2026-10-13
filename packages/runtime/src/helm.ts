@@ -561,6 +561,41 @@ export function unservedLaneWork(g: GlobalConfig, loops: LoopConfig[], live: (na
   return out;
 }
 
+/** Ready work reserved to a roster seat that none of that seat's workers can
+ * draw now. This is observation only: STOP/HOLD/capacity remain authority,
+ * and a failed Work read is reported by the caller as unknown rather than an
+ * empty healthy backlog. */
+export function unavailableSeatWork(g: GlobalConfig, loops: LoopConfig[], live: (name: string) => string | null):
+  { ticket: string; seat: string; reason: string; action: string }[] {
+  const out: { ticket: string; seat: string; reason: string; action: string }[] = [];
+  for (const seat of [...new Set(loops.map(seatName))]) {
+    const workers = loops.filter((l) => seatName(l) === seat);
+    const rows = (run(g, ['list', '--ready', '--assignee', seat, '--limit', '200'], loopActor(workers[0]!)) as
+      { tickets: { id: string; workstream: string; project?: string | null; lane?: string | null }[] }).tickets;
+    for (const ticket of rows) {
+      const eligible = workers.filter((l) => drawsScope(l, ticket.workstream, ticket.project ?? null, ticket.id, ticket.lane ?? null));
+      const states = eligible.map((l) => ({ loop: l.name, state: live(l.name) }));
+      if (states.some(({ state }) => state === null)) continue;
+      if (states.length && states.every(({ state }) => ['STOP', 'HOLD', 'PARKED', 'SEAT_HELD'].includes(state!))) continue;
+      const observed = eligible.length
+        ? states.map(({ loop, state }) => `${loop} is ${state}`).join(', ')
+        : `no ${seat} worker is configured for its scope`;
+      const unknown = states.some(({ state }) => state === 'UNKNOWN');
+      out.push({
+        ticket: ticket.id,
+        seat,
+        reason: observed,
+        action: unknown
+          ? `coordinator must verify the ${seat} worker state before any recovery`
+          : eligible.length
+            ? `coordinator must restore an eligible ${seat} worker or reroute the ticket`
+            : `coordinator must repair the ${seat} routing or reroute the ticket`,
+      });
+    }
+  }
+  return out;
+}
+
 export function investigatorFor(g: GlobalConfig, stopped: LoopConfig): LoopConfig | null {
   for (const loop of Object.values(loadRoster().loops)) {
     if (seatName(loop) === seatName(stopped) || processObservation(loop.name).state !== 'alive') continue;

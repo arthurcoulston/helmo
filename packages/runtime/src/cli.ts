@@ -9,7 +9,7 @@ import { sessionSpec } from './shim.js';
 import { LoopConfig } from './types.js';
 import { pollUsage, readCodexUsage, readUsage, refreshCodexUsage, usageLine, usagePath } from './usage.js';
 import { selectRun } from './routing.js';
-import { unservedLaneWork } from './helm.js';
+import { unavailableSeatWork, unservedLaneWork } from './helm.js';
 import { runLoop } from './loop.js';
 import { serviceFile, serviceInstall, serviceStart, serviceStatusLine, serviceUninstall, stalePinnedService } from './service.js';
 import { assertInstallation, requireTarget, target, targetLine } from './install.js';
@@ -239,6 +239,17 @@ function laneGaps(): ReturnType<typeof unservedLaneWork> | null {
   }
 }
 
+function unavailableSeats(): ReturnType<typeof unavailableSeatWork> | null {
+  try {
+    return unavailableSeatWork(g, Object.values(loops), (name) => {
+      const s = state(name);
+      return s === 'RUNNING' || s === 'IDLE' ? null : s;
+    });
+  } catch {
+    return null;
+  }
+}
+
 function state(name: string): string {
   const observation = processObservation(name);
   const pid = observation.pid;
@@ -398,6 +409,7 @@ switch (cmd) {
           };
         }),
         unserved_lanes: laneGaps(),
+        unavailable_seats: unavailableSeats(),
       }, null, 2));
       break;
     }
@@ -421,12 +433,15 @@ switch (cmd) {
     // Below the table, never in it: estate tools parse the table exactly.
     const lanes = Object.values(loops).filter((l) => l.lane);
     const gaps = Object.values(loops).some((l) => (l.peer_sessions?.length ?? 0) > 1) ? laneGaps() : [];
+    const unavailable = unavailableSeats();
     const laneLines = [
       ...(lanes.length ? [`LANES: ${lanes.map((l) => `${l.lane}=${l.name}`).join('  ')}`] : []),
       ...Object.keys(loops).filter((name) => sHas(name, 'OUT_OF_SCOPE'))
         .map((name) => `HELD OUT OF SCOPE: ${name} ${(sGet(name, 'OUT_OF_SCOPE') ?? '').trim()}`),
       ...(gaps === null ? ['UNSERVED LANE WORK: unreadable — Helmo did not answer']
         : gaps.map((gap) => `UNSERVED LANE WORK: ${gap.ticket} (${gap.seat}, lane ${gap.lane}) — ${gap.reason}`)),
+      ...(unavailable === null ? ['UNAVAILABLE SEAT WORK: unreadable — Helmo did not answer']
+        : unavailable.map((gap) => `UNAVAILABLE SEAT WORK: ${gap.ticket} (${gap.seat}) — ${gap.reason}; ${gap.action}`)),
     ];
     if (laneLines.length) console.log(`\n${laneLines.join('\n')}`);
     console.log('\nSTATE: RUNNING=iteration in flight  IDLE=waiting on wake cursor  PARKED=held via PACE');

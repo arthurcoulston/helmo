@@ -696,6 +696,28 @@ describe('lane workers on one seat', { timeout: 90000 }, () => {
     expect(human).toContain(`UNSERVED LANE WORK: ${orphan} (builder, lane mobile) — no builder worker serves lane 'mobile'`);
   });
 
+  it('reports ready reserved work when every eligible worker is unavailable', () => {
+    const e = setup((h) => worker('w1', h, 'true', 'lane = "frontend"\n') + worker('w2', h, 'true'));
+    const id = seedLane(e, 'Reserved frontend work', 'frontend');
+    execFileSync('node', [HELM_CLI, 'update', '--ticket', id, '--handoff-to', 'builder', '--note', 'route to builder'], {
+      env: { ...e.env, HELMO_ACTOR: JSON.stringify({ name: 'router', kind: 'agent', model: 't', version: '0' }) }, encoding: 'utf8',
+    });
+
+    const status = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    expect(status.unavailable_seats).toEqual([{
+      ticket: id,
+      seat: 'builder',
+      reason: 'w1 is halted',
+      action: 'coordinator must restore an eligible builder worker or reroute the ticket',
+    }]);
+    const human = execFileSync('npx', ['tsx', REV_CLI, 'status'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') });
+    expect(human).toContain(`UNAVAILABLE SEAT WORK: ${id} (builder) — w1 is halted; coordinator must restore an eligible builder worker or reroute the ticket`);
+
+    writeFileSync(join(e.home, 'state', 'w1', 'HOLD'), 'deliberate\n');
+    const held = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    expect(held.unavailable_seats).toEqual([]);
+  });
+
   it('a worker swapped to a lane while it holds work launches nothing and releases nothing; restoring its allowlist resumes it', () => {
     const keep = `${BOUND}; [ -f $REV_HOME/second ] || { node ${HELM_CLI} update --ticket $T --note "partial progress"; exit 1; }; ${FINISH}`;
     const e = setup((h) => worker('w1', h, keep, 'tickets = ["H-1"]\n') + worker('w2', h, 'true'));

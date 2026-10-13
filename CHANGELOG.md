@@ -11,6 +11,39 @@ consolidation imported still carried that release's notes under "Unreleased";
 this is the published wording, which is two entries and one commit reference
 longer.
 
+## v0.12.1 — 2026-10-13
+
+- Attended work now belongs to its ticket rather than parking the whole seat.
+  Work binds execution claims to the server-established session and generation,
+  so another session using the same agent name cannot mutate that ticket.
+
+- Work's event lookups are indexed on new, migrated, rebuilt and restored
+  stores. Concurrent wake polling is covered against SQLite lock failures.
+
+- Runtime delivers a staged intake result even when its source ticket closes
+  first, with bounded refusal reporting and durable retry or abandonment
+  provenance.
+
+- Fleet drain now remains authoritative through session close-out, including
+  count and blocked exits, idle and parked transitions, and grace-kill paths.
+
+- Opted-in intake refinement can commit a drafted revision on its own branch
+  without force or working-tree mutation. The path refuses mismatched objects,
+  unsafe paths and invalid history, and bounds retries.
+
+- The workspace root now owns the only supported dependency lock. The shipped
+  graph resolves `@modelcontextprotocol/sdk` 1.31.0, `proxy-addr` 2.0.8,
+  `source-map-js` 1.2.2 and `smol-toml` 1.9.0; stale package-level locks that
+  described unsupported standalone installs are removed.
+
+- Compatibility and rollback: this is a compatible patch to v0.12.0. No MCP
+  tool, CLI flag, configuration key, service identity, default port or store
+  schema is removed or narrowed. Rollback requires no data migration; intake
+  revisions committed after the upgrade remain ordinary git history.
+
+Commit coverage: `102e88c`, `78f88c6`, `996f4fc`, `8f3d46e`, `ad52e3e`,
+`94016a7`, `763fdc8`, `adb66b3`, `4952cbf`, `03eb0b2`, `eeca0ad`, `ee4f678`.
+
 ## v0.12.0 — 2026-10-13
 
 - An incident is a ticket, and its lifecycle now has a supported input.

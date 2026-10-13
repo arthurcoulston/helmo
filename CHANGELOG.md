@@ -11,6 +11,14 @@ consolidation imported still carried that release's notes under "Unreleased";
 this is the published wording, which is two entries and one commit reference
 longer.
 
+## Unreleased — 0.10.0
+
+- Add Runtime's stopped-owner reconciliation command and Work's atomic
+  hold-only release. Require completed launch, clean STOP exit and confirmed
+  process absence; refuse changed claims or ticket events, ambiguous owners
+  and workflow-bound recovery. Preserve reservation and recorded pause.
+- Keep shipped protocol version aligned with the workspace version.
+
 ## v0.9.2 — 2026-10-03
 
 - Route repeated passes with no progress to team coordination. Claiming and

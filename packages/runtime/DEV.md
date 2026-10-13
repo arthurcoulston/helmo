@@ -697,11 +697,34 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   failure is reconciled first on restart; a lost result response cannot repeat
   publication. Five 422 result refusals stop automatic retry. Network ambiguity
   retains state, with Builder named in the content-free last-run record.
-  These are local protocol guarantees tested with injected callbacks, **not**
-  actual provider or isolated Git/prompt-pipeline proof. The supported isolated
-  pull/build/scoped-commit/publish callbacks and real provider readback remain
-  to be implemented before poll wiring, upstream adoption or deployment. There
-  is no new roster setting, listener, scheduler or live authority scope.
+  `refinement-artifact.ts` supplies concrete callbacks, still **not wired**.
+  The operator pins an accepted product commit, a registered source repository,
+  private work root, origin and the existing company's scanner/sync tools.
+  Each immutable meeting gets a registered isolated worktree and deterministic
+  proposal branch; no shared working files are edited. Product export must
+  return the resolved tenant/project and exact current meeting evidence.
+  The product's own readers validate content/feedback hashes before artifacts
+  are written; its prompt builder/configuration determine the actual sent hash.
+  Only the prompt and meeting snapshot enter one commit on that pinned base.
+  Candidate scan precedes commit; signed checkpoint precedes scanner-backed
+  private sync; exact clean remote tip is verified. Lost push responses reuse
+  the retained exact commit. Foreign edits, links in artifact paths, conflicting
+  branch/base/content and scanner findings require Builder inspection.
+  Source/artifact worktrees remain private evidence; no automatic cleanup.
+  A separate product child invokes the supported callable publisher, using IPC
+  to checkpoint immediately before provider/binding effects. Permanent product
+  refusals map to protocol refusals, network ambiguity to owned recovery.
+  No child stdout, credentials, provider body or client words enter status.
+  The verify callback independently reads actual provider configuration.
+  Local integration runs the actual product builder/publisher and company
+  scanner/sync against disposable Git plus intercepted API/provider/keychain
+  access. Run `REFINEMENT_TEST_PRODUCT=<exact-product-checkout>` and
+  `REFINEMENT_TEST_PUBLISHING=<company-tools/publishing>` with runtime tests
+  `test/refinement-artifact.test.ts`; these integration cases are explicitly
+  skipped without both inputs. This proves local composition and recovery,
+  **not** live provider, deployed Durable Object, or publication authority.
+  Poll wiring, independent reviews/upstream merge and pinned runtime adoption
+  remain. No new roster setting, scheduler or live authority scope is enabled.
 - A human answer reopens a Helmo ticket with `resolution: resume` regardless
   of whether its operational choice was resume, hold, or investigate. The
   supervisor clears `BLOCKED` only when `last_answer.chosen_option` is the

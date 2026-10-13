@@ -1,5 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import type { IncidentPatch } from './incidents.js';
+import type { RecordedValue } from './issues.js';
 import { localRecordRef, qualifiedRecordRef } from './reference.js';
 import { Store } from './store.js';
 import { Actor, ACTOR_KINDS, BLAST_RADII, COMPLETION_CATEGORIES, COMPLETION_SUMMARY_MAX, CONFIDENCES, DEP_TYPES, EVIDENCE_ROLES, HelmoError, STATUSES, Ticket, writingActor } from './types.js';
@@ -309,6 +311,107 @@ export function buildServer(store: Store, envActor: Actor | null, server = new M
     async () => {
       try {
         return ok({ findings: store.hygiene() });
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    'helmo_record_check_observations',
+    {
+      description:
+        `Record every finding the deterministic checks report RIGHT NOW as an observation in the issue log, so the operator's Issues view shows what this installation has actually been like rather than what one sweep happened to see. helmo_hygiene answers "what is wrong now" and forgets; this answers "since when, how often, who owns it, and what was done".
+
+Safe to call on any sweep: an issue's identity is its check plus its subject, so a repeat observation moves one row's latest time and count instead of adding a second row. The first observation is honestly the first RECORDED one, never a claim about when the condition began.
+
+It records; it never judges. A finding that stops appearing leaves its issue ACTIVE — only helmo_dispose_issue resolves one, and resolution needs evidence. Note the two different doors: helmo_dispose_hygiene_finding stops a check re-reporting, helmo_dispose_issue says what happened about the issue.`,
+      inputSchema: strict({ actor: actorSchema }),
+    },
+    async ({ actor }) => {
+      try {
+        return ok({ recorded: store.recordCheckObservations(resolveActor(actor as Actor | undefined)) });
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    'helmo_dispose_issue',
+    {
+      description:
+        `Say what happened about one recorded issue, by the 'key' helmo_record_check_observations or the Issues view gives you. This is the issue's own lifecycle, not hygiene suppression.
+
+'active' keeps it open and replaces its next action — use it when the issue is yours now and the standing next step is wrong. 'accepted' says the condition stands on purpose and needs a reason another agent can audit. 'resolved' says it is actually fixed and requires at least one evidence ref; a resolution with nothing behind it is refused.
+
+Resolved and accepted rows move to the History tab after 30 days and stay searchable. They are never deleted, and a later observation of the same key reopens it as a recurrence while keeping the earlier resolution on the record. Active issues never age out.`,
+      inputSchema: strict({
+        key: z.string().describe('The issue key: check + subject, exactly as the issue record gives it'),
+        state: z.enum(['active', 'accepted', 'resolved']),
+        next_action: z.string().optional().describe("Required for 'active': what happens about this issue now"),
+        reason: z.string().optional().describe("Required for 'accepted': why this condition stands"),
+        evidence: z.array(z.object({ ref: z.string(), note: z.string().optional() })).optional().describe("Required for 'resolved': what proves it is fixed"),
+        actor: actorSchema,
+      }),
+    },
+    async ({ actor, key, ...input }) => {
+      try {
+        store.disposeIssue(resolveActor(actor as Actor | undefined), key, input);
+        return ok({ disposed: `${input.state} on ${key}` });
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    'helmo_record_incident',
+    {
+      description:
+        `Record one lifecycle event on an incident — a consequential failure or disruption with one accountable response record. The incident is a Work ticket with type 'incident'; this tool carries everything the operator needs to read about it, which generic ticket status cannot say.
+
+Every field you leave out is left as it stands. A new incident opens at 'investigating' with every unnamed field an explicit Unknown, which is the honest reading: at identification only the stage is established. Fill fields in as you learn them rather than guessing — Unknown renders as Unknown, and nothing here is inferred from prose.
+
+The stages run investigating → mitigated → resolved and no further transition is allowed. 'mitigated' needs a containment account: the operation is contained, which is NOT a claim that it is fixed. 'resolved' needs a recorded cause (its confidence may itself be 'unknown'), a known fix, at least one recovery-evidence item, and an owner on every remaining-work item. Recurrence evidence is separate and never substitutes for recovery proof. A restart alone does not resolve anything, and closing the ticket 'done' is not a resolution.
+
+A human-reported incident stays visibly unacknowledged until you record 'acknowledge' against it.`,
+      inputSchema: strict({
+        ticket_id: z.string().describe("The Work ticket for this incident; its type must be 'incident'"),
+        stage: z.enum(['investigating', 'mitigated', 'resolved']).optional(),
+        owner: z.string().optional().describe('Who is accountable for the response'),
+        detection: z.object({ by: z.enum(['agent', 'automated_check', 'human']), happened_at: z.string().optional() }).optional(),
+        affected: z.string().optional().describe('What was affected, in the operator\'s terms'),
+        happening_now: z.boolean().optional(),
+        cause: z.object({ account: z.string(), confidence: z.enum(['known', 'suspected', 'unknown']) }).optional(),
+        containment: z.string().optional().describe('What stopped it continuing — required before mitigated'),
+        fix: z.string().optional().describe('What makes it not happen again — required before resolved'),
+        recovery_evidence: z.array(z.object({ ref: z.string(), note: z.string().optional() })).optional().describe('What proves recovery; required before resolved'),
+        recurrence_evidence: z.array(z.object({ ref: z.string(), note: z.string().optional() })).optional().describe('What would catch it coming back; never a substitute for recovery proof'),
+        acknowledge: z.boolean().optional().describe('Record that a human-reported incident has been acknowledged'),
+        remaining_work: z.array(z.object({ account: z.string(), owner: z.string() })).optional().describe('What is still outstanding; every item needs an owner before resolved'),
+        actor: actorSchema,
+      }),
+    },
+    async ({ actor, ticket_id, ...input }) => {
+      try {
+        const at = new Date().toISOString();
+        const known = <T>(value: T): RecordedValue<T> => ({ state: 'known', value, source_ref: 'helmo_record_incident', recorded_at: at });
+        const patch: IncidentPatch = {
+          ...(input.stage === undefined ? {} : { stage: known(input.stage) }),
+          ...(input.owner === undefined ? {} : { owner: known<string | null>(input.owner) }),
+          ...(input.detection === undefined ? {} : { detection: known({ by: input.detection.by, happened_at: input.detection.happened_at ?? at }) }),
+          ...(input.affected === undefined ? {} : { affected: known(input.affected) }),
+          ...(input.happening_now === undefined ? {} : { happening_now: known(input.happening_now) }),
+          ...(input.cause === undefined ? {} : { cause: known(input.cause) }),
+          ...(input.containment === undefined ? {} : { containment: known(input.containment) }),
+          ...(input.fix === undefined ? {} : { fix: known(input.fix) }),
+          ...(input.recovery_evidence === undefined ? {} : { recovery_evidence: input.recovery_evidence.map(known) }),
+          ...(input.recurrence_evidence === undefined ? {} : { recurrence_evidence: input.recurrence_evidence.map(known) }),
+          ...(input.acknowledge ? { human_report_acknowledgement: known({ acknowledged_at: at }) } : {}),
+          ...(input.remaining_work === undefined ? {} : { remaining_work: input.remaining_work.map(known) }),
+        };
+        return ok({ incident: store.recordIncidentEvent(resolveActor(actor as Actor | undefined), local(ticket_id), patch, at) });
       } catch (e) {
         return fail(e);
       }

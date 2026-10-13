@@ -607,3 +607,66 @@ describe('acceptance-coverage says who has judged a commit (H-3031)', () => {
     expect(empty.stderr).toContain('Say which commits');
   });
 });
+
+// H-3216. The store could record issues and incidents from the day the
+// projections landed; nothing could reach those methods from outside a test,
+// so the shipped Issues and Incidents views had only fixtures to show. These
+// walk the commands a real sweep and a real responder use.
+describe('the issue and incident recording commands', () => {
+  it('records what the checks find now, then takes the judgment that resolves it', () => {
+    const swept = cli('issues-record');
+    expect(swept.status).toBe(0);
+    const recorded = JSON.parse(swept.stdout).recorded as { key: string; check: string; subject_ref: string }[];
+    // The fixture ticket is unaccounted work in a seatless stream, so the
+    // sweep has something real to say rather than an empty list.
+    expect(recorded.length).toBeGreaterThan(0);
+    const mine = recorded.find((r) => r.subject_ref === ticket || r.subject_ref === 'helmo-dev')!;
+    expect(mine.check).toBeTruthy();
+
+    // Resolving needs evidence, and says so rather than recording an empty
+    // judgment.
+    const bare = cli('issue-dispose', '--key', mine.key, '--state', 'resolved');
+    expect(bare.status).toBe(1);
+    expect(bare.stderr).toContain('evidence');
+
+    expect(cli('issue-dispose', '--key', mine.key, '--state', 'accepted', '--reason', 'Deliberate for now; the stream is parked.').status).toBe(0);
+    const s = new Store(dbPath);
+    const row = s.issuesSnapshot().active.find((r) => r.key === mine.key)!;
+    s.close();
+    expect(row.disposition.state).toBe('accepted');
+  });
+
+  it('refuses a bad state by name instead of absorbing it', () => {
+    const r = cli('issue-dispose', '--key', 'whatever', '--state', 'closed');
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('active, accepted, resolved');
+  });
+
+  it('walks one incident from identification to verified resolution, refusing each shortcut', { timeout: 60_000 }, () => {
+    const incident = JSON.parse(cli('create', '--title', 'The loop stopped claiming work', '--body', 'Goal: restore claims. Current state: investigating.', '--workstream', 'helmo-dev', '--type', 'incident').stdout).id as string;
+
+    expect(cli('incident-record', '--ticket', incident, '--stage', 'resolved').stderr).toContain('must begin at investigating');
+    expect(cli('incident-record', '--ticket', incident, '--stage', 'investigating', '--detected-by', 'human', '--affected', 'the estate-ui queue', '--happening-now', 'true', '--owner', 'mason').status).toBe(0);
+
+    // Opened on one flag, every other field is an explicit Unknown — not an
+    // absent key the view would read as nothing at all.
+    const opened = JSON.parse(cli('incident-record', '--ticket', incident, '--owner', 'mason').stdout).incident;
+    expect(opened.cause).toEqual({ state: 'unknown', reason: 'not_recorded' });
+
+    // Mitigation is not resolution, and neither is reachable by skipping.
+    expect(cli('incident-record', '--ticket', incident, '--stage', 'mitigated').stderr).toContain('containment');
+    expect(cli('incident-record', '--ticket', incident, '--stage', 'mitigated', '--containment', 'Loop stopped; queue drained by hand', '--happening-now', 'false').status).toBe(0);
+    expect(cli('incident-record', '--ticket', incident, '--stage', 'resolved', '--fix', 'Claim guard corrected').stderr).toContain('cause');
+    expect(cli('incident-record', '--ticket', incident, '--stage', 'resolved', '--cause', 'The claim guard read the wrong seat', '--cause-confidence', 'known', '--fix', 'Guard corrected', '--recurrence-ref', 'check:seat-claim').stderr).toContain('recovery evidence');
+
+    const resolved = cli('incident-record', '--ticket', incident, '--stage', 'resolved', '--cause', 'The claim guard read the wrong seat', '--cause-confidence', 'known', '--fix', 'Guard corrected', '--recovery-ref', 'run:suite-green', '--recurrence-ref', 'check:seat-claim', '--acknowledge');
+    expect(resolved.status).toBe(0);
+    const record = JSON.parse(resolved.stdout).incident;
+    expect(record.stage).toMatchObject({ state: 'known', value: 'resolved' });
+    expect(record.recovery_evidence).toHaveLength(1);
+    // The human report is acknowledged, and recurrence proof stays its own
+    // set rather than standing in for recovery.
+    expect(record.human_report_acknowledgement.state).toBe('known');
+    expect(record.recurrence_evidence).toHaveLength(1);
+  });
+});

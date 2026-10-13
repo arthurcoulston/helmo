@@ -29,7 +29,13 @@ export type IssueEvent =
 
 export interface IssuesSnapshot {
   as_of: string;
-  coverage: { state: 'available' | 'missing'; source: string };
+  /** `last_recorded_at` is when a sweep last wrote into this log, which is the
+   *  only thing that can stand behind "the checks found nothing" (H-3216).
+   *  `as_of` is just when the page was read: an empty log read at noon does
+   *  not mean the checks ran at noon and were happy. Null — coverage
+   *  `missing` — says no sweep has recorded here at all, which is a different
+   *  statement from a clean bill of health. */
+  coverage: { state: 'available' | 'missing'; source: string; last_recorded_at: string | null };
   active: IssueRow[];
   history: IssueRow[];
 }
@@ -41,9 +47,11 @@ export function issueKey(check: string, subjectKind: IssueSubjectKind, subjectRe
 export function replayIssues(events: IssueEvent[], asOf: string, historyDays = 30): IssuesSnapshot {
   const rows = new Map<string, IssueRow>();
   const resolvedAt = new Map<string, string>();
+  let lastObservedAt: string | null = null;
   for (const event of [...events].sort((a, b) => a.seq - b.seq)) {
     if (event.ts > asOf) continue;
     if (event.type === 'issue_observed') {
+      if (!lastObservedAt || event.ts > lastObservedAt) lastObservedAt = event.ts;
       const p = event.payload;
       const old = rows.get(p.key);
       rows.set(p.key, {
@@ -70,5 +78,9 @@ export function replayIssues(events: IssueEvent[], asOf: string, historyDays = 3
     else history.push(row);
   }
   const newest = (a: IssueRow, b: IssueRow) => b.latest_observed_at.localeCompare(a.latest_observed_at);
-  return { as_of: asOf, coverage: { state: 'available', source: 'work:event-log' }, active: active.sort(newest), history: history.sort(newest) };
+  return {
+    as_of: asOf,
+    coverage: { state: lastObservedAt ? 'available' : 'missing', source: 'work:event-log', last_recorded_at: lastObservedAt },
+    active: active.sort(newest), history: history.sort(newest),
+  };
 }

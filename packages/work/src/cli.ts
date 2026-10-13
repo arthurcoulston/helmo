@@ -5,6 +5,8 @@
 // The binary is `helmo-cli`, matching its siblings `helmo-mcp` and `helmo-view`.
 import { installationRef, requireInstallation } from './install.js';
 import { localRecordRef } from './reference.js';
+import type { IncidentPatch } from './incidents.js';
+import type { RecordedValue } from './issues.js';
 import { Store, type ReleaseHandoffInput } from './store.js';
 import { Actor, DepType, HelmoError, writingActor } from './types.js';
 
@@ -35,6 +37,9 @@ const COMMAND_FLAGS: Record<string, readonly string[]> = {
   verdicts: ['since-seq', 'workstream'],
   hygiene: [],
   'hygiene-dispose': ['check', 'ticket', 'reason'],
+  'issues-record': [],
+  'issue-dispose': ['key', 'state', 'reason', 'next-action', 'evidence-ref'],
+  'incident-record': ['ticket', 'stage', 'owner', 'detected-by', 'detected-at', 'affected', 'happening-now', 'cause', 'cause-confidence', 'containment', 'fix', 'recovery-ref', 'recurrence-ref', 'acknowledge', 'remaining'],
   workstream: ['name'],
   'workstream-set': ['name', 'budget-usd', 'seat'],
   'rename-workstream': ['from', 'to', 'note'],
@@ -246,6 +251,37 @@ try {
       const disposedOn = ticketRef('ticket');
       store.disposeHygieneFinding(actor(), { check: req('check'), ticket_id: disposedOn, reason: req('reason') });
       out({ disposed: `${flag('check')} on ${disposedOn}` });
+      break;
+    }
+    case 'issues-record': {
+      // The sweep hygiene never had: turn every finding standing right now
+      // into an observation on its stable key, so the issue views read this
+      // installation instead of a fixture (H-3216). Idempotent in effect —
+      // a repeat observation moves one row's latest/count.
+      out({ recorded: store.recordCheckObservations(actor()) });
+      break;
+    }
+    case 'issue-dispose': {
+      // Judgment on a recorded issue, which is NOT hygiene-dispose: that one
+      // stops a check re-reporting, this one says what happened about the
+      // issue. An issue nobody disposes stays active however quiet the check
+      // goes.
+      const state = oneOf('state', ['active', 'accepted', 'resolved'] as const);
+      if (!state) throw new HelmoError("--state is required for 'issue-dispose'");
+      const ref = flag('evidence-ref');
+      store.disposeIssue(actor(), req('key'), {
+        state, reason: flag('reason'), next_action: flag('next-action'),
+        ...(ref ? { evidence: [{ ref }] } : {}),
+      });
+      out({ disposed: `${state} on ${flag('key')}` });
+      break;
+    }
+    case 'incident-record': {
+      // One incident lifecycle event. Every flag omitted leaves that field as
+      // it stands; on a new incident it opens as an explicit Unknown. The
+      // store holds the transition order and the mitigation/resolution gates.
+      const on = ticketRef('ticket');
+      out({ incident: store.recordIncidentEvent(actor(), on, incidentPatch()) });
       break;
     }
     case 'workstream': {
@@ -526,6 +562,10 @@ try {
   verdicts       --since-seq N [--actor A] [--workstream W]     (acceptance verdicts recorded since a cursor, + max_seq; the sweep's forged-PASS replay)
   hygiene                                                      (deterministic record checks, read-only)
   hygiene-dispose --check C --ticket H-n --reason R  (stop re-reporting a finding: any check on a TERMINAL ticket, or spend_anomaly on live work, where it holds until the cost grows by half again)
+  issues-record                                     (record every current hygiene finding as an issue observation on its stable key; repeats update one row's latest/count)
+  issue-dispose  --key K --state active|accepted|resolved [--next-action A (active)] [--reason R (accepted)] [--evidence-ref REF (resolved; required)]   (judgment on a recorded issue — NOT hygiene-dispose, which only stops a check re-reporting)
+  incident-record --ticket H-n [--stage investigating|mitigated|resolved] [--owner A] [--detected-by agent|automated_check|human [--detected-at ISO]] [--affected S] [--happening-now true|false] [--cause C [--cause-confidence known|suspected|unknown]] [--containment S] [--fix S] [--recovery-ref REF] [--recurrence-ref REF] [--acknowledge] [--remaining '{"account":..,"owner":..}']
+                 (one lifecycle event on a type:incident ticket. Opens at investigating with every unnamed field Unknown; mitigated needs containment; resolved needs cause, fix, recovery proof and an owner on every remaining item)
   workstream     --name W                                      (budget, seat, spend-to-date; read-only)
   rename-workstream --from X --to Y --note N   (relabel every ticket incl. closed; one evented rename)
   workstream-set --name W [--budget-usd X] [--seat A | --seat '']   (operator steering; actor kind human/orchestrator only; seat = agent unassigned filings are reserved to)
@@ -571,6 +611,55 @@ function ticketRef(name: string): string {
 function ticketRefOpt(value: string | undefined): string | undefined {
   return value === undefined ? undefined : localRecordRef(value, install);
 }
+/** Build one incident patch from the flags actually given. A flag left off is
+ *  a field left alone, which is why nothing here defaults to a value: writing
+ *  `happening_now: false` because `--happening-now` was absent would be the
+ *  renderer manufacturing prose, one layer down. */
+function incidentPatch(): IncidentPatch {
+  const at = new Date().toISOString();
+  const known = <T>(value: T): RecordedValue<T> => ({ state: 'known', value, source_ref: 'helmo-cli:incident-record', recorded_at: at });
+  const set = <K extends keyof IncidentPatch>(key: K, value: IncidentPatch[K] | undefined) => (value === undefined ? {} : { [key]: value }) as Pick<IncidentPatch, K>;
+  const stage = oneOf('stage', ['investigating', 'mitigated', 'resolved'] as const);
+  const happening = oneOf('happening-now', ['true', 'false'] as const);
+  const by = oneOf('detected-by', ['agent', 'automated_check', 'human'] as const);
+  const confidence = oneOf('cause-confidence', ['known', 'suspected', 'unknown'] as const) ?? 'unknown';
+  const cause = flag('cause');
+  const owner = flag('owner');
+  const recovery = flag('recovery-ref');
+  const recurrence = flag('recurrence-ref');
+  const remaining = flag('remaining');
+  return {
+    ...set('stage', stage === undefined ? undefined : known(stage)),
+    ...set('owner', owner === undefined ? undefined : known(owner)),
+    ...set('detection', by === undefined ? undefined : known({ by, happened_at: flag('detected-at') ?? at })),
+    ...set('affected', flagKnown('affected', known)),
+    ...set('happening_now', happening === undefined ? undefined : known(happening === 'true')),
+    ...set('cause', cause === undefined ? undefined : known({ account: cause, confidence })),
+    ...set('containment', flagKnown('containment', known)),
+    ...set('fix', flagKnown('fix', known)),
+    ...set('recovery_evidence', recovery === undefined ? undefined : [known({ ref: recovery })]),
+    ...set('recurrence_evidence', recurrence === undefined ? undefined : [known({ ref: recurrence })]),
+    // Acknowledging a human report is its own act, recorded against the same
+    // incident: until it happens the view says the report is unacknowledged.
+    ...set('human_report_acknowledgement', has('acknowledge') ? known({ acknowledged_at: at }) : undefined),
+    ...set('remaining_work', remaining === undefined ? undefined : [known(JSON.parse(remaining) as { account: string; owner: string })]),
+  };
+}
+
+/** A flag whose value has to be one of a fixed set, refused by name rather
+ *  than absorbed as some other string the store would then reject further in. */
+function oneOf<const T extends readonly string[]>(name: string, allowed: T): T[number] | undefined {
+  const value = flag(name);
+  if (value === undefined) return undefined;
+  if (!allowed.includes(value)) throw new HelmoError(`--${name} must be ${allowed.join(', ')}; got '${value}'.`);
+  return value as T[number];
+}
+
+function flagKnown(name: string, known: <T>(value: T) => RecordedValue<T>): RecordedValue<string> | undefined {
+  const value = flag(name);
+  return value === undefined ? undefined : known(value);
+}
+
 function actorSafe(): Actor | undefined {
   try {
     return actor();

@@ -21,13 +21,25 @@ export interface IncidentRecord {
 export type IncidentPatch = Partial<Omit<IncidentRecord, 'ticket_id'>>;
 export interface IncidentEvent { seq: number; ts: string; ticket_id: string; payload: { patch: IncidentPatch } }
 
+/** Every field explicitly not yet recorded. An incident is opened onto this,
+ *  so no field is ever absent: Unknown is a statement the view can render and
+ *  the guards can read, while a missing key is neither. */
+export function blankIncident(ticketId: string): IncidentRecord {
+  const unknown = { state: 'unknown', reason: 'not_recorded' } as const;
+  return {
+    ticket_id: ticketId, stage: unknown, owner: unknown, detection: unknown, affected: unknown,
+    happening_now: unknown, cause: unknown, containment: unknown, fix: unknown,
+    recovery_evidence: [], recurrence_evidence: [], human_report_acknowledgement: unknown, remaining_work: [],
+  };
+}
+
 export function replayIncidents(events: IncidentEvent[], asOf: string): IncidentRecord[] {
   const incidents = new Map<string, IncidentRecord>();
   for (const event of [...events].sort((a, b) => a.seq - b.seq)) {
     if (event.ts > asOf) continue;
     const old = incidents.get(event.ticket_id);
     if (!old && !event.payload.patch.stage) throw new Error(`Incident ${event.ticket_id} has no opening stage.`);
-    incidents.set(event.ticket_id, { ...(old ?? { ticket_id: event.ticket_id }), ...event.payload.patch } as IncidentRecord);
+    incidents.set(event.ticket_id, { ...(old ?? blankIncident(event.ticket_id)), ...event.payload.patch });
   }
   return [...incidents.values()].sort((a, b) => {
     const rank = (row: IncidentRecord) => row.stage.state === 'known' && row.stage.value === 'resolved' ? 1 : 0;

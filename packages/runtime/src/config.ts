@@ -178,6 +178,7 @@ export function loadRoster(): Roster {
     if (!g[key]) throw new Error(`roster.toml [global] is missing '${key}' — the path to Helm's ${key === 'helmo_cli' ? 'dist/cli.js' : 'dist/server.js'}.`);
   }
   const global = { ...GLOBAL_DEFAULTS, ...g } as unknown as GlobalConfig;
+  validateRefinementPreparationConfig(global);
   const providers = parseProviders(raw);
   // Global probe pin (H-625): '[global] probe = "codex:small"' routes every
   // probe pass there while its cap stands. The ref must name its tier —
@@ -414,4 +415,24 @@ function expand(p: string): string {
 function resolveHome(p: string): string {
   const e = expand(p);
   return isAbsolute(e) ? e : join(revHome(), e);
+}
+
+/** No source/path defaults: enabling provider preparation is a deliberate act.
+ * Acceptance and publication scope remain independent operator-owned records. */
+export function validateRefinementPreparationConfig(g: GlobalConfig): void {
+  const refuse = () => { throw new Error('Invalid refinement preparation configuration; Builder must inspect the opt-in.'); };
+  if (g.refinement_preparation_enabled !== undefined && typeof g.refinement_preparation_enabled !== 'boolean') refuse();
+  if (g.refinement_preparation_enabled !== true) return;
+  if (!g.intake_preparation_origin || !g.intake_preparation_checkout) refuse();
+  try {
+    const u = new URL(g.intake_preparation_origin!);
+    if (u.username || u.password || u.search || u.hash || u.pathname !== '/' ||
+      (u.protocol !== 'https:' && !(u.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(u.hostname)))) refuse();
+  } catch { refuse(); }
+  const paths = [g.refinement_preparation_source, g.refinement_preparation_work_root,
+    g.refinement_preparation_sync_script, g.refinement_preparation_scan_script];
+  if (!paths.every(p => typeof p === 'string' && isAbsolute(p) && !/[\r\n\0]/.test(p))) refuse();
+  if (typeof g.refinement_preparation_base_ref !== 'string' || !/^[0-9a-f]{40}$/.test(g.refinement_preparation_base_ref)) refuse();
+  const source = resolve(g.refinement_preparation_source!), work = resolve(g.refinement_preparation_work_root!);
+  if (work === source || work.startsWith(source + sep)) refuse();
 }

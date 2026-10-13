@@ -556,7 +556,7 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   network errors as retryable. Each non-idle pass is a `refinement-commit`
   event.
 - `refinement-preparation.ts` is the H-1523 preparation protocol adapter,
-  currently **not wired to the supervisor**. It consumes the separate signed
+  disabled by default in the supervisor. It consumes the separate signed
   `/api/refinement-preparation/*` contract. A claim carries one meeting's
   organization/project, directive version/content hash, submitted-feedback
   hash, lease token and provider-publication decision reference. The Worker
@@ -573,7 +573,27 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   failure is reconciled first on restart; a lost result response cannot repeat
   publication. Five 422 result refusals stop automatic retry. Network ambiguity
   retains state, with Builder named in the content-free last-run record.
-  `refinement-artifact.ts` supplies concrete callbacks, still **not wired**.
+  `refinement-artifact.ts` supplies the concrete callbacks. The EXISTING intake
+  poll invokes them only with `refinement_preparation_enabled = true`, the
+  existing intake origin/checkout, and all five explicit fields:
+  `refinement_preparation_source`, `refinement_preparation_base_ref` (40 lowercase
+  hex characters), `refinement_preparation_work_root`,
+  `refinement_preparation_sync_script`, `refinement_preparation_scan_script`.
+  Paths are absolute; the work root must be outside the source (including
+  real-path validation before artifacts). Incomplete enabled configuration
+  refuses startup with a closed diagnostic. No defaults select a source or
+  infer independent acceptance. Do not enable an unaccepted/unadopted snapshot;
+  the signed Worker's original provider-publication scope must also be configured.
+  One retained attempt belongs to `state/supervisor/refinement-preparation.json`.
+  Repeated polls do not overlap; stopped roster workers stay stopped. The
+  content-free `refinement-preparation-last.json` records time/result/claim status
+  and Builder ownership; errors log a closed inspection instruction. A drain
+  stops new polls, fences future effects at checkpoints and waits for the current
+  pass to settle. Signed requests have a 30-second timeout; artifact commands and
+  provider children retain their 120-second ceilings. Retained state reconciles
+  on restart, including verified result delivery without republishing. Empty
+  rosters start no adapter/timer. Runtime adoption and live verification remain
+  separate from this source wiring.
   The operator pins an accepted product commit, a registered source repository,
   private work root, origin and the existing company's scanner/sync tools.
   Each immutable meeting gets a registered isolated worktree and deterministic

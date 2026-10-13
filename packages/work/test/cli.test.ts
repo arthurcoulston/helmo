@@ -611,6 +611,19 @@ describe('acceptance-coverage says who has judged a commit (H-3031)', () => {
 // H-3216. The incident projection existed before a real responder could reach
 // it; this walks the command that now carries the supported lifecycle.
 describe('the incident recording command', () => {
+  it('refuses malformed detection times and remaining-work records before they enter history', () => {
+    const incident = JSON.parse(cli('create', '--title', 'Bad incident input', '--body', 'Input boundary probe.', '--workstream', 'helmo-dev', '--type', 'incident').stdout).id as string;
+
+    for (const remaining of ['null', '42', '{}', '{"account":"","owner":"mason"}', '{"account":"follow up","owner":null}']) {
+      const result = cli('incident-record', '--ticket', incident, '--stage', 'investigating', '--remaining', remaining);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('--remaining must be JSON');
+    }
+    const badTime = cli('incident-record', '--ticket', incident, '--stage', 'investigating', '--detected-by', 'human', '--detected-at', 'yesterday');
+    expect(badTime.status).toBe(1);
+    expect(badTime.stderr).toContain('--detected-at must be an ISO timestamp');
+  });
+
   it('walks one incident from identification to verified resolution, refusing each shortcut', { timeout: 60_000 }, () => {
     const incident = JSON.parse(cli('create', '--title', 'The loop stopped claiming work', '--body', 'Goal: restore claims. Current state: investigating.', '--workstream', 'helmo-dev', '--type', 'incident').stdout).id as string;
 

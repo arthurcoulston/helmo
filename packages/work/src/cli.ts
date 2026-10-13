@@ -614,10 +614,14 @@ function incidentPatch(): IncidentPatch {
   const recovery = flag('recovery-ref');
   const recurrence = flag('recurrence-ref');
   const remaining = flag('remaining');
+  const detectedAt = flag('detected-at');
+  if (detectedAt !== undefined && !Number.isFinite(Date.parse(detectedAt))) {
+    throw new HelmoError(`--detected-at must be an ISO timestamp; got '${detectedAt}'.`);
+  }
   return {
     ...set('stage', stage === undefined ? undefined : known(stage)),
     ...set('owner', owner === undefined ? undefined : known(owner)),
-    ...set('detection', by === undefined ? undefined : known({ by, happened_at: flag('detected-at') ?? at })),
+    ...set('detection', by === undefined ? undefined : known({ by, happened_at: detectedAt ?? at })),
     ...set('affected', flagKnown('affected', known)),
     ...set('happening_now', happening === undefined ? undefined : known(happening === 'true')),
     ...set('cause', cause === undefined ? undefined : known({ account: cause, confidence })),
@@ -628,8 +632,25 @@ function incidentPatch(): IncidentPatch {
     // Acknowledging a human report is its own act, recorded against the same
     // incident: until it happens the view says the report is unacknowledged.
     ...set('human_report_acknowledgement', has('acknowledge') ? known({ acknowledged_at: at }) : undefined),
-    ...set('remaining_work', remaining === undefined ? undefined : [known(JSON.parse(remaining) as { account: string; owner: string })]),
+    ...set('remaining_work', remaining === undefined ? undefined : [known(remainingWork(remaining))]),
   };
+}
+
+function remainingWork(input: string): { account: string; owner: string } {
+  let value: unknown;
+  try {
+    value = JSON.parse(input);
+  } catch {
+    throw new HelmoError('--remaining must be JSON with non-empty string account and owner fields.');
+  }
+  if (value === null || Array.isArray(value) || typeof value !== 'object') {
+    throw new HelmoError('--remaining must be JSON with non-empty string account and owner fields.');
+  }
+  const item = value as Record<string, unknown>;
+  if (typeof item.account !== 'string' || !item.account.trim() || typeof item.owner !== 'string' || !item.owner.trim()) {
+    throw new HelmoError('--remaining must be JSON with non-empty string account and owner fields.');
+  }
+  return { account: item.account, owner: item.owner };
 }
 
 /** A flag whose value has to be one of a fixed set, refused by name rather

@@ -824,6 +824,68 @@ describe('lane workers on one seat', { timeout: 90000 }, () => {
     for (const worker of ['w1', 'w2']) expect(existsSync(join(e.home, 'state', worker, 'launches'))).toBe(false);
   });
 
+  it('leaves a current release handoff with the human and detects it when the handoff becomes stale', () => {
+    const e = setup((h) => worker('w1', h, 'true'));
+    const store = new Store(e.db);
+    const writer = { name: 'builder', kind: 'agent' as const, model: 't', version: '0' };
+    const proof = { name: 'proof', kind: 'agent' as const, model: 't', version: '0' };
+    const ward = { name: 'ward', kind: 'agent' as const, model: 't', version: '0' };
+    const ref = `helmo@${'a'.repeat(40)}`;
+    try {
+      const technical = store.createTicket({ name: 'router', kind: 'agent', model: 't', version: '0' }, {
+        title: 'Release candidate', body: 'accepted release', workstream: 'rev-test', type: 'build', assignee: 'builder',
+      });
+      const clearance = store.createTicket(writer, {
+        title: 'Clear release', body: 'independent clearance', workstream: 'security', type: 'review', assignee: 'ward',
+      });
+      const technicalCompletion = store.recordProductCompletion(writer, {
+        ticket_id: technical.id, artifacts: [{ ref, author: 'builder' }], note: 'candidate',
+      }).completion!;
+      const technicalVerdict = store.recordAcceptanceVerdict(proof, {
+        ticket_id: technical.id, refs: [ref], verdict: 'pass', note: 'passes',
+      }).verdict!;
+      const clearanceCompletion = store.recordProductCompletion(writer, {
+        ticket_id: clearance.id, artifacts: [{ ref, author: 'builder' }], note: 'candidate',
+      }).completion!;
+      const clearanceVerdict = store.recordAcceptanceVerdict(ward, {
+        ticket_id: clearance.id, refs: [ref], verdict: 'pass', note: 'clear',
+      }).verdict!;
+      store.updateTicket(ward, {
+        ticket_id: clearance.id, note: 'clearance complete', status: 'done',
+        completion_account: { category: 'review', summary: 'The fixture release passed independent clearance.' },
+        evidence: [{ kind: 'other', ref: 'fixture', role: 'review' }],
+      });
+      store.recordReleaseHandoff(writer, {
+        ticket_id: technical.id,
+        manifest_sha256: 'b'.repeat(64), manifest: { refs: [ref] },
+        technical_ticket: technical.id, technical_completion_seq: technicalCompletion.seq,
+        technical_verdict_seq: technicalVerdict.seq, technical_reviewer: 'proof',
+        clearance_ticket: clearance.id, clearance_completion_seq: clearanceCompletion.seq,
+        clearance_verdict_seq: clearanceVerdict.seq, clearance_reviewer: 'ward',
+        gate_receipt: { path: '/tmp/gate.json', sha256: 'c'.repeat(64) },
+        publisher_receipt: { path: '/tmp/publish.json', sha256: 'd'.repeat(64) },
+        decision: 'Ten minutes deciding whether to accept the named material release risk.',
+        why_human: 'material_risk_exception: A material risk exception is reserved to Arthur.',
+        sitting_with: 'builder',
+      });
+      mkdirSync(join(e.home, 'state', 'w1'), { recursive: true });
+      writeFileSync(join(e.home, 'state', 'w1', 'RUNNING'), `${process.pid}\n`);
+
+      const current = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+      expect(current.ready_without_progress).toEqual([]);
+      expect(current.unavailable_seats).toEqual([]);
+      expect(existsSync(join(e.home, 'state', 'w1', 'launches'))).toBe(false);
+
+      store.recordProductCompletion(writer, {
+        ticket_id: technical.id, artifacts: [{ ref: `helmo@${'e'.repeat(40)}`, author: 'builder' }], note: 'candidate moved',
+      });
+      const stale = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+      expect(stale.ready_without_progress).toEqual([expect.objectContaining({ ticket: technical.id, seat: 'builder' })]);
+      expect(stale.stalled_work).toEqual([expect.objectContaining({ id: `ready_without_progress:${technical.id}`, checks: 1 })]);
+      expect(store.getTicket(technical.id)).toMatchObject({ needs_human: false, release_handoff: { current: false } });
+    } finally { store.close?.(); }
+  });
+
   it('a worker swapped to a lane while it holds work launches nothing and releases nothing; restoring its allowlist resumes it', () => {
     const keep = `${BOUND}; [ -f $REV_HOME/second ] || { node ${HELM_CLI} update --ticket $T --note "partial progress"; exit 1; }; ${FINISH}`;
     const e = setup((h) => worker('w1', h, keep, 'tickets = ["H-1"]\n') + worker('w2', h, 'true'));

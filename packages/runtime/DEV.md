@@ -227,6 +227,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   holds work, so that restore is asked for at once rather than at the next
   motion. `status` lists ready lane work no live worker serves
   (`unserved_lanes` in `--json`), below the table.
+  A current release handoff remains an intentional human sitting and is absent
+  from the ready observer. If its acceptance snapshot moves, Work atomically
+  makes the handoff stale and clears the sitting; the complete ready-backlog
+  comparison then records the ticket without inventing a release mutation.
   **A role is addressed as a role** (H-676). The first worker usually keeps
   the role's name, so `stop`/`resume`/`pace`/`team` resolve through
   `controlTargets` (config.ts): a seat with more than one loop, or a seat no

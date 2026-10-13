@@ -34,9 +34,12 @@ describe('writingActor', () => {
   it('takes identity from the caller and the session stamp from the environment', () => {
     expect(writingActor(stated, seat)).toEqual({ ...stated, session: 'rev:builder-loop' });
   });
-  it('leaves a caller that states its own session alone', () => {
+  it('refuses a caller session that conflicts with the environment', () => {
     const own = { ...stated, session: 'desk-summon' };
-    expect(writingActor(own, seat).session).toBe('desk-summon');
+    expect(() => writingActor(own, seat)).toThrow(/session_identity_conflict/);
+    expect(() => writingActor(own, stated)).toThrow(/session_identity_conflict/);
+    expect(() => writingActor(own, null)).toThrow(/session_identity_conflict/);
+    expect(writingActor({ ...stated, session: seat.session }, seat)).toEqual({ ...stated, session: seat.session });
   });
   it('adds nothing when the environment carries no stamp', () => {
     expect(writingActor(stated, { name: 'placeholder', kind: 'agent' })).toEqual(stated);
@@ -122,8 +125,8 @@ describe('hygiene through the MCP surface (H-758)', () => {
 });
 
 // A supervised parallel worker's environment binds role, worker and launch
-// generation (H-574). Its siblings share the role name, so the H-687 rule that
-// lets a desk caller restate its session would let B write as A.
+// generation (H-574). Its siblings share the role name, so a caller must not
+// be able to restate its session or generation to write as a sibling.
 describe('a supervised worker cannot shed or borrow its binding (H-574)', () => {
   const boundA: Actor = { ...seat, session: 'rev:builder-a', generation: 'launch-a' };
   const boundB: Actor = { ...seat, session: 'rev:builder-b', generation: 'launch-b' };

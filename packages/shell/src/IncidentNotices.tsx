@@ -140,14 +140,20 @@ export function IncidentNoticeTable({ data }: { data: IncidentNoticesData }) {
       </p>
       {data.rows.length ? (
         <div className="overflow-x-auto rounded-md border" role="region" aria-label="Incident notice record">
-          <Table tabIndex={0} aria-label="Incident notice record" data-above-fold="incident moment">
+          {/* Fixed layout with a declared width per column, as Work's and
+              Roadmap's records are: left to the content, a 390 window gave
+              Stage 55px and broke "investigating" across two lines mid-word.
+              The columns the fold declares — the incident and its moment —
+              fit inside 390 together; the rest is what the region offers to
+              scroll for. */}
+          <Table tabIndex={0} aria-label="Incident notice record" data-above-fold="incident moment" className="table-fixed min-w-[42rem]">
             <TableHeader>
               <TableRow>
-                <TableHead data-column="incident">Incident</TableHead>
-                <TableHead data-column="moment">Moment</TableHead>
-                <TableHead data-column="changed">What changed</TableHead>
-                <TableHead data-column="stage">Stage</TableHead>
-                <TableHead data-column="recorded">Recorded</TableHead>
+                <TableHead data-column="incident" className="w-[5rem]">Incident</TableHead>
+                <TableHead data-column="moment" className="w-[7rem]">Moment</TableHead>
+                <TableHead data-column="changed" className="w-[14rem]">What changed</TableHead>
+                <TableHead data-column="stage" className="w-[7rem]">Stage</TableHead>
+                <TableHead data-column="recorded" className="w-[9rem]">Recorded</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

@@ -619,8 +619,11 @@ describe('the incident recording command', () => {
 
     // Opened on one flag, every other field is an explicit Unknown — not an
     // absent key the view would read as nothing at all.
-    const opened = JSON.parse(cli('incident-record', '--ticket', incident, '--owner', 'mason').stdout).incident;
-    expect(opened.cause).toEqual({ state: 'unknown', reason: 'not_recorded' });
+    const second = JSON.parse(cli('incident-record', '--ticket', incident, '--owner', 'mason').stdout);
+    expect(second.incident.cause).toEqual({ state: 'unknown', reason: 'not_recorded' });
+    // Re-recording the owner it already had notifies nobody: a notice for a
+    // change that did not happen teaches the reader to ignore the next one.
+    expect(second.notified).toBe(null);
 
     // Mitigation is not resolution, and neither is reachable by skipping.
     expect(cli('incident-record', '--ticket', incident, '--stage', 'mitigated').stderr).toContain('containment');
@@ -630,8 +633,12 @@ describe('the incident recording command', () => {
 
     const resolved = cli('incident-record', '--ticket', incident, '--stage', 'resolved', '--cause', 'The claim guard read the wrong seat', '--cause-confidence', 'known', '--fix', 'Guard corrected', '--recovery-ref', 'run:suite-green', '--recurrence-ref', 'check:seat-claim', '--acknowledge');
     expect(resolved.status).toBe(0);
-    const record = JSON.parse(resolved.stdout).incident;
+    const printed = JSON.parse(resolved.stdout);
+    const record = printed.incident;
     expect(record.stage).toMatchObject({ state: 'known', value: 'resolved' });
+    // The operator's half: the verified resolution is what this recording told
+    // him, printed beside the record it came from.
+    expect(printed.notified).toMatchObject({ ticket_id: incident, moment: 'resolved' });
     expect(record.recovery_evidence).toHaveLength(1);
     // The human report is acknowledged, and recurrence proof stays its own
     // set rather than standing in for recovery.

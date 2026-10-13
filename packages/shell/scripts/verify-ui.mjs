@@ -845,6 +845,26 @@ try {
     .map((card) => ({ label: card.getAttribute('aria-label'), top: Math.round(card.getBoundingClientRect().top), height: Math.round(card.getBoundingClientRect().height), bottom: Math.round(card.getBoundingClientRect().bottom) })));
   assert.deepEqual(overviewCards.map((card) => card.label), ['Team now', 'What happens next', 'Team activity', 'Results · Past 24 hours']);
   assert.ok(overviewCards.slice(0, 4).every((card) => card.top < 800), `one of the established Overview readings starts below the 1280×800 fold: ${JSON.stringify(overviewCards)}`);
+  /* The incident band (H-3216). The fixture's incident is unresolved and was
+     recorded as still happening, so the band is drawn here — and the four
+     readings above were measured WITH it in place, which is the whole reason
+     it is a band and not a card: an incident may push Arthur's readings down,
+     an ordinary day may not, and on an ordinary day this draws nothing. */
+  const band = page.locator('[aria-label="Incident notices"]');
+  await band.waitFor();
+  const bandReading = await band.evaluate((el) => ({
+    text: el.textContent.replace(/\s+/g, ' ').trim(),
+    role: el.dataset.statusRole,
+    top: Math.round(el.getBoundingClientRect().top),
+    opens: [...el.querySelectorAll('a')].map((a) => a.getAttribute('href')),
+  }));
+  assert.match(bandReading.text, /1 unresolved incident/, `the band does not say what is live: ${bandReading.text}`);
+  assert.match(bandReading.text, /· still happening/, `the band does not say the incident is ongoing: ${bandReading.text}`);
+  assert.match(bandReading.text, /Nothing here is waiting on you/);
+  assert.equal(bandReading.role, 'failure', 'an incident recorded as still happening must be the loudest thing on the page');
+  assert.ok(bandReading.opens.includes(`/incidents/${incident.id}`), `the band does not open the incident it names: ${bandReading.opens.join(', ')}`);
+  assert.ok(bandReading.top < overviewCards[0].top, 'the notice is drawn below the readings it is supposed to interrupt');
+  console.log(`Overview incident band: ${bandReading.text}`);
   assert.equal(await page.locator('h1').count(), 1, 'Overview must have one shared page title');
   console.log(`Overview at 1280×800: ${overviewCards.map((card) => `${card.label} ${card.height}px high, top ${card.top}px, bottom ${card.bottom}px`).join('; ')}`);
   await page.setViewportSize({ width: 390, height: 800 });
@@ -1069,6 +1089,21 @@ try {
   );
   await activity.getByText(/the past 7 days, in days/).waitFor({ timeout: 1_000 });
   assert.equal((await table()).length, 7, 'the refresh closed the numbers or put the reader back on the day');
+
+  /* And the board behind the band: what Arthur has been told about this
+     incident, on the page that holds the incident records (H-3216). Read here
+     rather than left to the layout walk below, because an unwired board and a
+     quiet record draw exactly alike. */
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto(`${origin}/incidents`);
+  const board = page.locator('[aria-label="Incident notice record"]');
+  await board.waitFor();
+  const told = await board.evaluate((el) => [...el.querySelectorAll('tbody tr')].map((row) =>
+    [...row.querySelectorAll('[data-column]')].map((cell) => cell.textContent.replace(/\s+/g, ' ').trim())));
+  assert.equal(told.length, 1, `the notice board drew ${told.length} rows for one recorded incident: ${JSON.stringify(told)}`);
+  assert.deepEqual(told[0].slice(0, 3), [incident.id, 'Identified', 'Opened on the record'], JSON.stringify(told[0]));
+  await page.getByText(/at identification, at every material change and at verified resolution/).waitFor();
+  console.log(`Incidents notice board: ${told.map((row) => row.join(' · ')).join('; ')}`);
 
   const areas = ['overview', 'incidents', `incidents/${incident.id}`, 'work', 'roadmap', 'team', 'run'], themes = ['light', 'dark'], widths = [390, 640, 1280];
   const audited = [];
@@ -1315,7 +1350,7 @@ try {
      regardless. */
   assert.deepEqual(
     [...new Set(folds.map((fold) => fold.column))].sort(),
-    ['context', 'incident', 'issue', 'loop', 'member', 'project', 'stage', 'state', 'work'],
+    ['context', 'incident', 'issue', 'loop', 'member', 'moment', 'project', 'stage', 'state', 'work'],
     'every above-fold column every view declares must be measured at 390',
   );
   assert.ok(folds.length >= 24, `only ${folds.length} above-fold columns were measured at 390, so the fold was not really read`);

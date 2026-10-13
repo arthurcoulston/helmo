@@ -620,4 +620,27 @@ describe('the incident tool agents record through', () => {
     await client.close();
     store.close();
   });
+
+  // The notice is the operator's half of this tool (H-3216): recording is what
+  // tells him, so the writer is handed what he was told, and no ticket is
+  // withheld from the agents to say it.
+  it('hands back the notice each recording raised, and never parks the incident to raise one', async () => {
+    const store = new Store(':memory:');
+    const incident = store.createTicket(orch, { title: 'The dashboard stopped serving', body: 'Goal: restore it. Current state: investigating.', workstream: 'helmo-dev', type: 'incident' }).id;
+    const client = await connect(store);
+
+    const opened = await call(client, 'helmo_record_incident', { ticket_id: incident, stage: 'investigating', detection: { by: 'human' }, affected: 'the dashboard', happening_now: true });
+    expect(opened.result!['notified']).toMatchObject({ ticket_id: incident, moment: 'identified', happening_now: true });
+
+    const contained = await call(client, 'helmo_record_incident', { ticket_id: incident, stage: 'mitigated', containment: 'serving from the last good build', happening_now: false });
+    expect(contained.result!['notified']).toMatchObject({ moment: 'material_change', changed: ['stage', 'happening_now', 'containment'] });
+
+    const board = store.incidentNotices();
+    expect(board.unresolved).toEqual([incident]);
+    expect(store.getTicket(incident).needs_human).toBe(false);
+    expect(store.listTickets({ ready: true }).some((row) => row.id === incident)).toBe(true);
+
+    await client.close();
+    store.close();
+  });
 });

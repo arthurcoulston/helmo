@@ -72,6 +72,27 @@ function claimTicket(homes, id, agent) {
   assert.equal(r.status, 0, r.stderr);
 }
 
+/** Open an incident through the shipped binary and hand back what the
+ *  recording said it told the operator. The notice on Overview is derived from
+ *  this event, so a fixture that wrote the event any other way would be
+ *  proving its own writer rather than the path an agent has (H-3216). */
+function seedIncident(homes, title) {
+  const ticket = spawnSync(join(BIN, 'helmo'), [
+    'work', 'create', '--title', title, '--body', 'seeded by the app acceptance fixture',
+    '--workstream', 'estate-ui', '--type', 'incident',
+  ], { encoding: 'utf8', env: env({ ...homes, HELMO_ACTOR: FILER }) });
+  if (ticket.error) throw ticket.error;
+  assert.equal(ticket.status, 0, ticket.stderr);
+  const id = JSON.parse(ticket.stdout).id;
+  const opened = spawnSync(join(BIN, 'helmo'), [
+    'work', 'incident-record', '--ticket', id, '--stage', 'investigating', '--detected-by', 'human',
+    '--affected', 'the operator dashboard', '--happening-now', 'true', '--owner', 'mason',
+  ], { encoding: 'utf8', env: env({ ...homes, HELMO_ACTOR: FILER }) });
+  if (opened.error) throw opened.error;
+  assert.equal(opened.status, 0, opened.stderr);
+  return { id, notified: JSON.parse(opened.stdout).notified };
+}
+
 function seedProject(homes, title) {
   const store = new Store(join(homes.ROADMAP_HOME, 'roadmap.db'));
   try {
@@ -263,6 +284,25 @@ test('the app answers its own port directly and renders the record a recorded UR
   assert.equal(activity.week.buckets.at(-1).completions, 1, 'the close just recorded is not in the newest day');
   assert.equal(activity.day.series.find((series) => series.key === 'completions').total, 1);
   assert.match(activity.day.series.find((series) => series.key === 'tokens').coverage, /unmetered work is excluded/);
+
+  /* And the incident notices, which are how an incident reaches Arthur at all
+     (H-3216). Recording IS the notification, so this asserts the derivation
+     end to end: the binary records, and the Overview document the card draws
+     carries the moment — without the incident ticket being withheld from the
+     agents to say so. */
+  const incident = seedIncident(homes, 'The dashboard stopped serving');
+  assert.equal(incident.notified.moment, 'identified', 'the recording did not report what it told the operator');
+  const notices = (await (await fetch(`${origin}/api/v1/overview`)).json()).data.incident_notices;
+  assert.ok(notices, 'the Overview API carries no incident notices for the card to draw');
+  assert.ok(Date.parse(notices.as_of), 'the notice board carries no instant it was read at');
+  assert.deepEqual(notices.unresolved, [incident.id], 'the live incident is not counted unresolved');
+  const identified = notices.rows.find((row) => row.ticket_id === incident.id);
+  assert.ok(identified, `the recorded incident raised no notice: ${JSON.stringify(notices.rows)}`);
+  assert.equal(identified.moment, 'identified');
+  assert.equal(identified.happening_now, true);
+  const open = (await (await fetch(`${origin}/api/v1/work`)).json()).data.record.rows.find((row) => row.id === incident.id);
+  assert.equal(open.needs_human, false, 'notifying the operator parked the incident out of the agent queues');
+  assert.equal(open.display.group, 'ready', 'the live incident is not work an agent can still pick up');
 
   // Work is drawn by the application now, so the record a reader sees on
   // /work comes from this document rather than from the HTML (H-2936). The

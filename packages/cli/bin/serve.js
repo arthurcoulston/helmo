@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { appConfig, startAppServer } from '../app-server.mjs';
 import { appRequest, shellRequest } from '../../app/server.mjs';
-import { activitySnapshot, checkInSnapshot, incidentSnapshot, incidentsSnapshot, issuesSnapshot, runwaySnapshot, workHealth, workListening, workRequest, workSnapshot } from '../../work/dist/view.js';
+import { activitySnapshot, checkInSnapshot, incidentNoticesSnapshot, incidentSnapshot, incidentsSnapshot, issuesSnapshot, runwaySnapshot, workHealth, workListening, workRequest, workSnapshot } from '../../work/dist/view.js';
 import { seatWork } from '../../work/dist/presentation.js';
 import { roadmapHealth, roadmapRequest, roadmapSnapshot } from '../../roadmap/dist/view.js';
 import { runtimeRequest, runtimeSnapshot, teamFile, teamMember, teamNowSnapshot, teamPeriod, teamSnapshot } from '../../runtime/dist/view.js';
@@ -109,6 +109,12 @@ function overviewSnapshot(since) {
   // its own `as_of` and zone for the same reason the others fix theirs (R-44
   // H-3090).
   activity: activitySnapshot(), issues: issuesSnapshot(),
+  // What Arthur has been told about every incident (H-3216). Served with the
+  // Overview readings because this is where he looks first, and derived from
+  // the incident record so that recording an incident IS notifying him — no
+  // separate act an agent could skip, and no ticket parked out of the agents'
+  // queues to get his attention.
+  incident_notices: incidentNoticesSnapshot(),
   ...(since !== undefined ? { check_in: checkInSnapshot(since, checkInInput(work, roadmap, team)) } : {}) };
 }
 const appDocuments={overview:overviewSnapshot};

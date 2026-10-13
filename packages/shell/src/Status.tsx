@@ -144,6 +144,30 @@ export function agentStateRole(state: string): StatusRole | null {
   return null
 }
 
+/** A moment on an incident's record, as Overview's notices draw it (H-3216).
+ *
+ *  Red is reserved for the incident that is still happening: that is the one
+ *  where somebody is being hurt by this right now. An unresolved incident not
+ *  recorded as ongoing is amber — it is his to know about, and the team is on
+ *  it — and a verified resolution is green, because the one thing a resolution
+ *  notice should not do is look like another alarm.
+ *
+ *  The colour describes the incident as it stands NOW, which is why
+ *  `unresolved` is here: the identification of an incident since resolved said
+ *  "still happening" when it was recorded and would otherwise keep painting
+ *  red under its own green resolution. An earlier notice on a closed incident
+ *  is a record, so it takes no colour at all.
+ *
+ *  `happening_now` unknown is deliberately not red. "Nobody has recorded
+ *  whether this is ongoing" is a gap in the record, and painting a gap as an
+ *  emergency is how every notice becomes one. */
+export function incidentNoticeRole(moment: string, happeningNow: boolean | null, unresolved: boolean): StatusRole | null {
+  if (moment === "resolved") return "success"
+  if (!unresolved) return null
+  if (happeningNow === true) return "failure"
+  return "attention"
+}
+
 /** A configured context file's standing against its own `cap_tokens`.
  *
  *  `tight` and `uncapped` are deliberately neutral. A file kept just under its

@@ -112,7 +112,25 @@ export function issuesSnapshot() {
 }
 
 export function incidentsSnapshot() {
-  return { ...store.incidentsSnapshot(), source_revision: running().commit };
+  // One instant for the whole document: the records and the notices derived
+  // from the same events must not be read a microsecond apart and then
+  // disagree about whether the latest one exists.
+  const asOf = new Date().toISOString();
+  return { ...store.incidentsSnapshot(asOf), notices: store.incidentNotices(asOf), source_revision: running().commit };
+}
+
+/** Overview's incident notices: identification, every material change and
+ *  verified resolution, for the incidents that are still open plus the past
+ *  day's (H-3216).
+ *
+ *  This is the human-attention surface for an incident. It reaches the
+ *  dashboard without touching the ticket: marking a live incident
+ *  `needs_human` would withhold it from every agent ready queue, which is the
+ *  opposite of what a running incident needs. Nothing here is awaiting him —
+ *  when a response IS needed, the incident's owner files a request and it
+ *  appears under Awaiting you like any other. */
+export function incidentNoticesSnapshot() {
+  return { ...store.incidentNotices(), source_revision: running().commit };
 }
 
 export function incidentSnapshot(ticketId: string) {
@@ -329,9 +347,9 @@ export function checkInSnapshot(since: string, input: CheckInInput) {
         limitation: runwayDocument.unavailable ?? 'Seat state and finite limits are current-only; no retained seat history can establish lost work.',
       },
       issues_incidents: {
-        state: 'missing',
-        source: 'work:projection-only',
-        reason: 'No production caller writes issue observations, issue dispositions or incident lifecycle events.',
+        state: 'partial',
+        source: 'work:event-log',
+        reason: 'Incident lifecycle events have a supported writer (helmo_record_incident); the separate issue-recording workflow was withdrawn (H-3218), so issue rows are whatever earlier sweeps left behind.',
       },
     },
   };

@@ -256,7 +256,12 @@ try {
       // it stands; on a new incident it opens as an explicit Unknown. The
       // store holds the transition order and the mitigation/resolution gates.
       const on = ticketRef('ticket');
-      out({ incident: store.recordIncidentEvent(actor(), on, incidentPatch()) });
+      const at = new Date().toISOString();
+      const incident = store.recordIncidentEvent(actor(), on, incidentPatch(), at);
+      // What the operator was told by this recording, printed with it: the
+      // dashboard notice is derived from this event, so the writer can see
+      // the notification it raised rather than take it on trust (H-3216).
+      out({ incident, notified: store.incidentNotices(at).rows.find((row) => row.ticket_id === on && row.at === at) ?? null });
       break;
     }
     case 'workstream': {

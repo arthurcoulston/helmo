@@ -327,7 +327,9 @@ Every field you leave out is left as it stands. A new incident opens at 'investi
 
 The stages run investigating → mitigated → resolved and no further transition is allowed. 'mitigated' needs a containment account: the operation is contained, which is NOT a claim that it is fixed. 'resolved' needs a recorded cause (its confidence may itself be 'unknown'), a known fix, at least one recovery-evidence item, and an owner on every remaining-work item. Recurrence evidence is separate and never substitutes for recovery proof. A restart alone does not resolve anything, and closing the ticket 'done' is not a resolution.
 
-A human-reported incident stays visibly unacknowledged until you record 'acknowledge' against it.`,
+A human-reported incident stays visibly unacknowledged until you record 'acknowledge' against it.
+
+Recording IS notifying the operator: identification, every material change and verified resolution appear on his dashboard, derived from this record, and the result tells you which notice this call raised. So do not mark an incident 'needs_human' to get his attention — that withholds the ticket from every agent ready queue, which is the opposite of what a live incident needs. Ask for a response only when you need one, through helmo_return_to_human or helmo_request_action.`,
       inputSchema: strict({
         ticket_id: z.string().describe("The Work ticket for this incident; its type must be 'incident'"),
         stage: z.enum(['investigating', 'mitigated', 'resolved']).optional(),
@@ -363,7 +365,13 @@ A human-reported incident stays visibly unacknowledged until you record 'acknowl
           ...(input.acknowledge ? { human_report_acknowledgement: known({ acknowledged_at: at }) } : {}),
           ...(input.remaining_work === undefined ? {} : { remaining_work: input.remaining_work.map(known) }),
         };
-        return ok({ incident: store.recordIncidentEvent(resolveActor(actor as Actor | undefined), local(ticket_id), patch, at) });
+        const id = local(ticket_id);
+        const incident = store.recordIncidentEvent(resolveActor(actor as Actor | undefined), id, patch, at);
+        // What the operator was told, handed back to the writer: a notice this
+        // call could not see would be a notification nobody could verify had
+        // been raised.
+        const notice = store.incidentNotices(at).rows.find((row) => row.ticket_id === id && row.at === at) ?? null;
+        return ok({ incident, notified: notice });
       } catch (e) {
         return fail(e);
       }

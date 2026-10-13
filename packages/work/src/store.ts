@@ -5,7 +5,7 @@ import { namesInstallation, type Installation } from './install.js';
 import { actionFingerprint, questionFingerprint } from './presentation.js';
 import { parseSchedule } from './schedule.js';
 import { issueKey, replayIssues, type IssueDisposition, type IssueEvent, type IssueSubjectKind, type IssuesSnapshot, type RecordedValue } from './issues.js';
-import { assertIncident, blankIncident, replayIncidents, type IncidentEvent, type IncidentPatch, type IncidentRecord } from './incidents.js';
+import { assertIncident, blankIncident, incidentNoticeBoard, replayIncidents, type IncidentEvent, type IncidentNoticeBoard, type IncidentPatch, type IncidentRecord } from './incidents.js';
 import {
   ActionReport, ActionRequest, Actor, ActorKind, ACTOR_KINDS, Answer, AnswerEvent, BlastRadius, BLAST_RADII, CapacityHold, CompletionAccount, CompletionAccountInput, COMPLETION_CATEGORIES, COMPLETION_SUMMARY_MAX, Confidence, Dep, DepType, Evidence, EVIDENCE_ROLES,
   AcceptanceCoverage, ActivityEvents, CauseOnset, CoveringCompletion, EventType, HelmoError, HelmoEvent, HumanRequest, Notice, ProductAcceptance, ProductArtifact, Question, QuestionInput, ReleaseHandoff, Status, Ticket, TicketProgress, UnresolvedCompletion, VerdictEvent, Workstream, WorkstreamInfo,
@@ -2510,9 +2510,22 @@ export class Store {
     return candidate;
   }
 
-  incidentsSnapshot(asOf = now()): { as_of: string; coverage: { state: 'available'; source: string }; records: IncidentRecord[] } {
+  private incidentEvents(asOf: string): IncidentEvent[] {
     const rows = this.db.prepare("SELECT seq, ts, ticket_id, payload FROM events WHERE event_type = 'incident_recorded' AND ts <= ? ORDER BY seq").all(asOf) as { seq: number; ts: string; ticket_id: string; payload: string }[];
-    return { as_of: asOf, coverage: { state: 'available', source: 'work:event-log' }, records: replayIncidents(rows.map((row) => ({ ...row, payload: JSON.parse(row.payload) })) as IncidentEvent[], asOf) };
+    return rows.map((row) => ({ ...row, payload: JSON.parse(row.payload) })) as IncidentEvent[];
+  }
+
+  incidentsSnapshot(asOf = now()): { as_of: string; coverage: { state: 'available'; source: string }; records: IncidentRecord[] } {
+    return { as_of: asOf, coverage: { state: 'available', source: 'work:event-log' }, records: replayIncidents(this.incidentEvents(asOf), asOf) };
+  }
+
+  /** What the operator has been told about every incident, derived from the
+   *  same events the records are (H-3216). No ticket is withheld from an agent
+   *  queue to raise one of these: `needs_human` parks work, and an incident
+   *  being worked on is exactly the work that must not be parked. A response is
+   *  asked for separately, through the request path, only when one is needed. */
+  incidentNotices(asOf = now()): IncidentNoticeBoard {
+    return incidentNoticeBoard(this.incidentEvents(asOf), asOf);
   }
 
   incident(ticketId: string, asOf = now()): IncidentRecord | null {

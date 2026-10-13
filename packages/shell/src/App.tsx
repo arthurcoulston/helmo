@@ -8,6 +8,7 @@ import { TeamActivity, activityOf } from "./TeamActivity"
 import { Runway, runwayOf } from "./Runway"
 import { TeamNow, teamNowOf } from "./TeamNow"
 import { IncidentsView, type IncidentsData } from "./IncidentsView"
+import { IncidentNoticeBand, incidentNoticesOf } from "./IncidentNotices"
 import {
   ActivityIcon,
   ChevronRightIcon,
@@ -841,13 +842,22 @@ function AreaContent({ area, state, selected, areas, period, onPeriodChange }: {
     const team = teamNowOf(state.data)
     const next = runwayOf(state.data)
     const activity = activityOf(state.data)
+    /* Incidents first, above the readings rather than among them: this is the
+       one thing on the page that can be about something happening right now,
+       and a notice below the fold is not a notice. It draws nothing at all
+       when the record has nothing to say, so Arthur's four ratified readings
+       keep the page they were ratified on (H-3092, H-3216). */
+    const notices = incidentNoticesOf(state.data)
     return (
+      <>
+      {notices ? <IncidentNoticeBand data={notices} /> : null}
       <section aria-label="Overview readings" className="grid items-start gap-3 lg:grid-cols-2">
         {team ? <TeamNow data={team} /> : null}
         {next ? <Runway data={next} /> : null}
         {activity ? <TeamActivity data={activity} /> : null}
         {results ? <RecentResults data={results} /> : null}
       </section>
+      </>
     )
   }
 

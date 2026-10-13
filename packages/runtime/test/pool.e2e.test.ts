@@ -785,6 +785,9 @@ describe('lane workers on one seat', { timeout: 90000 }, () => {
     expect(status.ready_without_progress).toEqual([]);
     expect(status.self_triage).toEqual([expect.objectContaining({ ticket: created.id, seat: 'builder' })]);
     expect(status.stalled_work).toEqual([expect.objectContaining({ id: `self_triage:${created.id}`, checks: 1 })]);
+    const repeated = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    expect(repeated.stalled_work).toEqual([expect.objectContaining({ id: `self_triage:${created.id}`, checks: 2 })]);
+    expect(repeated.stalled_work[0].first_observed_at).toBe(status.stalled_work[0].first_observed_at);
 
     const human = execFileSync('npx', ['tsx', REV_CLI, 'status'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') });
     expect(human).toContain(`SELF-TRIAGE HOLD: ${created.id} (builder)`);
@@ -819,6 +822,14 @@ describe('lane workers on one seat', { timeout: 90000 }, () => {
       expect.objectContaining({ id: `unavailable_seat:${review}`, checks: 1 }),
       expect.objectContaining({ id: `unavailable_seat:${integration}`, checks: 1 }),
     ]));
+    const repeated = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    expect(repeated.stalled_work).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: `unavailable_seat:${review}`, checks: 2 }),
+      expect.objectContaining({ id: `unavailable_seat:${integration}`, checks: 2 }),
+    ]));
+    for (const episode of status.stalled_work) {
+      expect(repeated.stalled_work.find((candidate: { id: string }) => candidate.id === episode.id)?.first_observed_at).toBe(episode.first_observed_at);
+    }
     expect(ticket(e, review)).toMatchObject({ status: 'open', assignee: 'reviewer' });
     expect(ticket(e, integration)).toMatchObject({ status: 'open', assignee: 'builder' });
     for (const worker of ['w1', 'w2']) expect(existsSync(join(e.home, 'state', worker, 'launches'))).toBe(false);

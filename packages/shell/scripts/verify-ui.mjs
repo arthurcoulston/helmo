@@ -391,14 +391,24 @@ try {
   const standoff = new Map();
   /** Measure every rendered role on the current page, in the current theme. */
   async function measurePalette(where, theme) {
-    /* A theme class put on from script cross-fades every `transition-all`
-       element, and a badge read mid-fade is sitting at the OTHER theme's colour
-       on this theme's ground — a real contrast failure, and a flaky one.
-       Settle on CSS transitions only: a skeleton's pulse never finishes. */
-    await page.waitForFunction(() => !document.getAnimations().some((a) => a.constructor.name === 'CSSTransition'));
     /* Both ways in: the marker, and a class naming a token. An element that
        lost its class entirely still has the marker and still gets measured. */
     const found = await page.evaluate(() => {
+      /* A theme class put on from script cross-fades every `transition-all`
+         element, and a badge read mid-fade is sitting at the OTHER theme's
+         colour on this theme's ground — a real contrast failure, and a flaky
+         one. So the fade is ENDED rather than waited out, and ended in the
+         same task as the reading below, where nothing can start another:
+         `finish()` puts a transition at the value it was heading for, which is
+         the one a settled page shows. Waiting made the measurement depend on
+         every fade being over within the 15s default, and this machine under
+         load is where that stopped being true — the verifier timed out here
+         with no finding to show for it (H-3216). CSS transitions only, as
+         before: a skeleton's pulse never finishes, and `finish()` on an
+         animation with no end throws. */
+      for (const animation of document.getAnimations()) {
+        if (animation.constructor.name === 'CSSTransition') animation.finish();
+      }
       /* The browser is the authority on what a colour IS. The preset's own
          surfaces are declared in oklch and `getComputedStyle` hands them back
          that way, so reading a colour's three components as if they were sRGB

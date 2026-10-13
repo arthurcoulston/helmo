@@ -222,30 +222,28 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     return false;
   };
 
-  // The drain's last step. A signal arriving mid-iteration cannot be delivered
-  // until the event loop turns (see the yield below), so by the time this runs
-  // the iteration it interrupted has finished — say so in the loop's own log,
-  // which otherwise records nothing at all about why the process ended.
+  // Sessions stream asynchronously: signals can arrive while a child
+  // is running, or during its close-out. Keep the runner alive until both are
+  // finished. The supervisor still bounds this courtesy with its drain grace.
+  let iterationInFlight = false;
+  let pendingStop: { code: number; reason: string } | undefined;
+  const finishIteration = () => {
+    iterationInFlight = false;
+    if (pendingStop) {
+      logEvent(l.name, 'loop-stop', `reason=${pendingStop.reason} runs=${i}`);
+      process.exit(pendingStop.code);
+    }
+  };
   const stopOnSignal = (code: number, reason: string) => () => {
-    logEvent(l.name, 'loop-stop', `reason=${reason} runs=${i}`);
-    process.exit(code);
+    pendingStop ??= { code, reason };
+    if (!iterationInFlight) finishIteration();
   };
   process.on('SIGINT', stopOnSignal(130, 'SIGINT'));
   process.on('SIGTERM', stopOnSignal(143, 'drain'));
 
   while (true) {
-    // One turn of the event loop, and the reason it has to be here (H-1109).
-    // The shim runs a session with spawnSync, so a SIGTERM that arrives during
-    // an iteration is held until something yields to libuv — and on the
-    // continue path back to here, nothing does: every await between run-end
-    // and the next run-start resolves synchronously, which drains microtasks
-    // without ever letting the signal watcher fire. So the drain was not
-    // deferred to the iteration boundary, as the supervisor's cascade
-    // documents; it was swallowed. On 2026-09-07 six loops exited in
-    // milliseconds while mason ran three more full-price iterations on the old
-    // code and held the whole fleet down for ten minutes. The halt sentinels
-    // below already promise that an operator signal between iterations always
-    // wins; this is what makes that true for signals as well as files.
+    // Give queued signals a turn before another iteration (H-1109), including
+    // paths whose awaits resolve synchronously without turning libuv.
     await new Promise((r) => setImmediate(r));
     // Orphan watchdog (H-281): a broken ancestor chain is the one unforgeable
     // sign nobody who started this loop is still watching it — a SIGKILLed
@@ -799,6 +797,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     // Only preclaimed pool work is fenced to a launch generation. Scoped
     // seats claim inside the session and may carry that claim across the next
     // iteration; changing their generation would fence the same seat out.
+    iterationInFlight = true;
     const res = await runSession(g, l, prompt, model, run, claimedTicket ? journaledLaunchId ?? undefined : undefined, journaledLaunchId ? launchGroupFile(l.name, journaledLaunchId) : undefined);
     if (journaledLaunchId) {
       try {
@@ -1003,6 +1002,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
           at, investigation_ticket: investigationTicket,
         });
         console.log(`rev: ${anomaly.reason} — halting '${l.name}'.`);
+        finishIteration();
         return;
       }
     }
@@ -1108,6 +1108,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
           }
           console.log(`rev: '${l.name}' BLOCKED — escalation ${standing} already open; not filing another.`);
           logEvent(l.name, 'escalation-standing', `ticket=${standing}`);
+          finishIteration();
           return;
         }
         try {
@@ -1119,11 +1120,13 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
           console.error(`rev: '${l.name}' BLOCKED — AND the escalation to Helm failed (${String(e).slice(0, 200)}). The operator must find this in the dashboard/status.`);
           logEvent(l.name, 'escalate-failed', String(e).slice(0, 200));
         }
+        finishIteration();
         return;
       }
       case 'limit_wait': {
         sSet(l.name, 'LIMIT', `attempt=${action.attempt}\nretry_s=${action.waitSeconds}\n`);
         console.log(`rev: transient condition — parking '${l.name}' ${action.waitSeconds}s (attempt ${action.attempt}/${g.limit_cap}).`);
+        finishIteration();
         let waited = 0;
         while (waited < action.waitSeconds && !sHas(l.name, 'STOP') && !sHas(l.name, 'BLOCKED')) {
           await sleep(Math.min(60, action.waitSeconds - waited));
@@ -1172,6 +1175,9 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
         break;
     }
 
+    // Close-out is complete: count exits and inter-iteration waits must honor
+    // a pending drain too, without waiting for a throttle or the next poll.
+    finishIteration();
     if (countReached()) return;
 
     // Inter-iteration velocity throttle, honoring live sentinel changes.

@@ -1,7 +1,7 @@
 // The fleet supervisor: one child process per roster loop, respawns decided by
-// the ladder's respawn policy, graceful drain on SIGTERM/SIGINT. The shim runs
-// sessions with spawnSync, so a loop process defers signals past its in-flight
-// iteration — the SIGTERM cascade here IS the drain: agents finish their
+// the ladder's respawn policy, graceful drain on SIGTERM/SIGINT. Each loop
+// explicitly defers signals past its in-flight async session and close-out,
+// so the SIGTERM cascade here IS the drain: agents finish their
 // close-out, then exit. That deferral is a courtesy the cascade extends, never
 // a guarantee the session can rely on: what actually keeps an agent's turn
 // intact is its own process group (shim.ts, H-467), because the signals that

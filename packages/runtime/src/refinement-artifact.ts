@@ -119,8 +119,9 @@ export async function buildIsolatedRefinement(options: IsolatedArtifactOptions, 
   if (realpathSync(await git(source, 'rev-parse', '--show-toplevel')) !== source) throw new PreparationRefused('artifact source is not a repository root');
   await git(source, 'cat-file', '-e', options.baseRef + '^{commit}');
   if (!existsSync(checkout)) {
-    // A pushed branch is fetched before checkout creation. This reconciles a
-    // lost push even if the isolated directory was lost, without force/update.
+    // A remotely retained branch is fetched before a fresh local registration.
+    // Conflicting local branches or missing registered worktree directories
+    // refuse through Git for Builder inspection; never prune/reset them here.
     const listed = await git(source, 'ls-remote', 'origin', `refs/heads/${t.branch}`);
     if (listed) {
       await git(source, 'fetch', '--quiet', 'origin', `refs/heads/${t.branch}:refs/remotes/origin/${t.branch}`);

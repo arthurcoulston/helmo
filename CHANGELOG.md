@@ -11,7 +11,7 @@ consolidation imported still carried that release's notes under "Unreleased";
 this is the published wording, which is two entries and one commit reference
 longer.
 
-## Unreleased — 0.12.0
+## v0.12.0 — 2026-10-13
 
 - An incident is a ticket, and its lifecycle now has a supported input.
   `helmo_record_incident` and `helmo work incident-record` record

@@ -9,7 +9,17 @@ export type IncidentsData = { as_of: string; coverage: { state: string; source: 
 function RecordedField<T>({ label, item, render = String }: { label: string; item: Recorded<T>; render?: (v: T) => string }) {
   return <div><dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</dt><dd>{item.state === "known" ? <>{render(item.value)}<span className="block text-xs text-muted-foreground">{item.source_ref} · {new Date(item.recorded_at).toLocaleString()}</span></> : <>Unknown<span className="block text-xs text-muted-foreground">{item.reason}</span></>}</dd></div>
 }
-function Evidence({ label, rows }: { label: string; rows: Recorded<unknown>[] }) { return <div><h3 className="font-medium">{label}</h3>{rows.length ? rows.map((row, index) => <RecordedField key={index} label={`Evidence ${index + 1}`} item={row} render={(v) => typeof v === "string" ? v : JSON.stringify(v)} />) : <p className="text-sm text-muted-foreground">None recorded.</p>}</div> }
+// An evidence item is `{ref, note?}`. Stringifying the object printed
+// `{"ref":"run:suite-green"}` at the reader — the proof is the ref, and a
+// reader should not have to parse JSON to find it (H-3216).
+function evidenceText(item: unknown): string {
+  if (typeof item === "string") return item
+  const row = item as { ref?: unknown; note?: unknown }
+  if (typeof row?.ref !== "string") return JSON.stringify(item)
+  return typeof row.note === "string" && row.note ? `${row.ref} — ${row.note}` : row.ref
+}
+
+function Evidence({ label, rows }: { label: string; rows: Recorded<unknown>[] }) { return <div><h3 className="font-medium">{label}</h3>{rows.length ? rows.map((row, index) => <RecordedField key={index} label={`Evidence ${index + 1}`} item={row} render={evidenceText} />) : <p className="text-sm text-muted-foreground">None recorded.</p>}</div> }
 
 export function IncidentsView({ data }: { data: IncidentsData }) {
   if (data.record) return <IncidentDetail row={data.record} />

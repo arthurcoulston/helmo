@@ -1760,3 +1760,27 @@ is admitted only for `REV_LOOP=prime`; its STOP records carry Prime provenance,
 and resume clears only those records while preserving every HOLD and BLOCKED
 marker. Test it only against disposable `REV_HOME` state until the GP release
 hold is independently cleared.
+
+## Reconcile a cleanly ended, stopped worker's claim
+
+`reconcile-ended-claim --worker <exact worker> --record <JSON file>
+--installation <name>` releases only an unchanged ordinary claim into a
+mandatory deliberate hold. It never resumes a worker or changes controls.
+The record names raw `ticket_id`, exact `session` and `generation`,
+`expected_updated_at` and `expected_event_seq` from Work's ticket/history,
+`hold` (reason, provenance, reconsider_when, no release) and `body_patch`
+(old unique continuation anchor, new paused instruction).
+
+Runtime requires STOP, a dead worker marker and original driver PID, the exact
+completed claimed journal, an absent recorded detached session group, the
+last run-start matching the iteration, exactly one clean run-end followed by
+STOP exit, and two identical evidence snapshots. Missing, unknown, live or
+replaced evidence refuses. Work independently compares and retires the claim
+under its write lock, so a concurrent claim replacement or ticket event wins
+and repair refuses, or the hold wins and prevents further selection. No store
+is read directly by Runtime. OS/control files and local actor assertions remain
+the existing trust boundary, not authentication against hostile local users.
+After the operation, read the ticket through Work and the fleet status through
+this installation's Runtime. Generation retirement is append-only: there is
+no one-step undo restoring an old execution identity. Software selection can
+roll back, but the ticket hold remains until separately authorized release.

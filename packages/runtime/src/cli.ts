@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // rev — run and control loops. Control verbs are sentinel writes; anything
 // that reads state is safe from any context (the watch officer uses these).
-import { existsSync, statSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildLine, compare, parseMarker, runningLine, snapshot } from './build.js';
 import { controlTargets, loadRoster, resolveRef, stateDir } from './config.js';
@@ -9,7 +9,7 @@ import { sessionSpec } from './shim.js';
 import { LoopConfig } from './types.js';
 import { pollUsage, readCodexUsage, readUsage, refreshCodexUsage, usageLine, usagePath } from './usage.js';
 import { selectRun } from './routing.js';
-import { unservedLaneWork } from './helm.js';
+import { reconcileEndedClaim, unservedLaneWork } from './helm.js';
 import { runLoop } from './loop.js';
 import { serviceFile, serviceInstall, serviceStart, serviceStatusLine, serviceUninstall, stalePinnedService } from './service.js';
 import { assertInstallation, requireTarget, target, targetLine } from './install.js';
@@ -24,6 +24,8 @@ import { buildIntakeResult, recordIntakeResult } from './intake-preparation.js';
 import { commandName, runCommand } from './command-name.js';
 import { assertTicketIdentity, readTicketLaunches, sessionTrace } from './session-trace.js';
 import { ticketHistory } from './helm.js';
+
+import { endedClaimEvidence, type EndedClaimRequest } from './ended-claim.js';
 
 const [cmd, ...rest] = process.argv.slice(2);
 const TRACE_REFUSAL = 'trace refused: diagnostic unavailable';
@@ -335,6 +337,20 @@ switch (cmd) {
     console.log(targetLine(requireTarget(`run '${name}'`)));
     const count = flag('count') ? Number(flag('count')) : undefined;
     await runLoop(g, l, { count });
+    break;
+  }
+  case 'reconcile-ended-claim': {
+    const allowed = new Set(['--worker', '--record']);
+    if (rest.length !== 4 || rest.some((x, i) => i % 2 === 0 && !allowed.has(x))) throw new Error('usage: reconcile-ended-claim --worker <exact worker> --record <JSON file> --installation <name>');
+    if (!requestedInstall) throw new Error('An explicit installation is required for ended-claim repair.');
+    const name = flag('worker'), file = flag('record');
+    if (!name || !file || !loops[name]) throw new Error('Exact registered worker and record file required.');
+    const installation = requireTarget('reconcile ended claim').label;
+    const request = JSON.parse(readFileSync(file, 'utf8')) as EndedClaimRequest;
+    const first = endedClaimEvidence(name, request);
+    const second = endedClaimEvidence(name, request);
+    if (first.snapshot !== second.snapshot) throw new Error('Worker evidence changed; repair refused.');
+    console.log(JSON.stringify(reconcileEndedClaim(g, request.ticket_id, { ...request, proof: second.proof }, installation)));
     break;
   }
   // Activating a fix the crew has already committed and tested is the crew's
@@ -796,6 +812,7 @@ switch (cmd) {
   service <verb>           install|uninstall|start|status — survive reboots (launchd/systemd)
   install remove           delete this installation's records, controls and selection (no undo; --confirm)
   release <verb>           status|upgrade <dir>|rollback|activate — select, then activate with a bounded drain
+  reconcile-ended-claim --worker <exact worker> --record <JSON file> --installation <name>
   redeploy [--ticket <id>] [--reason "<why>"]
                            activate a committed fix: drain after in-flight iterations, come back on the new code
   tail <loop>              print the path of the loop's event trace

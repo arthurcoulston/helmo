@@ -785,3 +785,8 @@ export function escalateSilentDeclines(g: GlobalConfig, l: LoopConfig, ids: stri
   for (const id of ids) run(g, ['update', '--ticket', id, '--note', `Rev routed disposition of this unchanged ticket through team coordination after three passes by loop '${l.name}'; coordination ${standing}. No human dependency was inferred.`], revActor());
   return standing;
 }
+
+/** Hold-only ended-generation repair, through Work's public CLI boundary. */
+export function reconcileEndedClaim(g: GlobalConfig, ticket: string, record: object, installation: string): unknown {
+  return run(g, ['ended-claim-reconcile', '--ticket', ticket, '--record', JSON.stringify(record), '--installation', installation], revActor(), true);
+}

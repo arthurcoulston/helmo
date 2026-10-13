@@ -1451,3 +1451,17 @@ and record owner. Estate also owns the design tokens and avatar sprite this repo
 vendors. Operators keep their own agent identities and estate maps outside this
 repo. helmo-roadmap is a client of this repo's MCP surface and holds no code
 path into it; the seam above is the whole coupling.
+
+## Ended execution claim repair
+
+`ended-claim-reconcile --ticket <id> --record <JSON>` is the Runtime-only
+hold/release boundary. Runtime observes the stopped worker and completed
+launch; Work does no process inspection. Work requires Runtime provenance,
+a fresh consistent proof, the exact unchanged session/generation plus ticket
+event sequence and timestamp, a unique body correction and a deliberate hold
+without a release. Its IMMEDIATE transaction appends the correction, sets OPEN
+without changing the reservation, installs the hold and retires the generation.
+Workflow-bound claims and existing holds refuse. Normal foreign-attempt write
+checks remain in force. Provenance is asserted, as for existing CLI writes;
+this is not protection from a malicious local process forging Runtime's actor
+or proof. The Runtime command is the supported operator entry point.

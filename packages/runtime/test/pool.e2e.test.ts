@@ -795,6 +795,19 @@ describe('lane workers on one seat', { timeout: 90000 }, () => {
     expect(existsSync(join(e.home, 'state', 'w1', 'launches'))).toBe(false);
   });
 
+  it('reports unreadable stalled-work state as unknown without replacing it', () => {
+    const e = setup((h) => worker('w1', h, 'true'));
+    const episodeFile = join(e.home, 'state', 'supervisor', 'stalled-work.json');
+    mkdirSync(join(e.home, 'state', 'supervisor'), { recursive: true });
+    writeFileSync(episodeFile, '{not-json\n');
+
+    const status = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    expect(status.stalled_work).toBeNull();
+    expect(readFileSync(episodeFile, 'utf8')).toBe('{not-json\n');
+    const human = execFileSync('npx', ['tsx', REV_CLI, 'status'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') });
+    expect(human).toContain('STALL EPISODES: unreadable — prior observation state could not be reconciled');
+  });
+
   it('reports review and integration reservations that no configured worker can draw', () => {
     const e = setup((h) => worker('w1', h, 'true', 'project = "R-44"\n') + worker('w2', h, 'true', 'project = "R-45"\n'));
     const review = (helm(e, ['create', '--title', 'Independent review', '--body', 'review the candidate', '--workstream', 'review', '--type', 'review', '--assignee', 'reviewer']) as { id: string }).id;

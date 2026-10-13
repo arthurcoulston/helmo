@@ -14,6 +14,7 @@ import { actedRequest } from './acted.js';
 import { answerRequest } from './answer.js';
 import { loaded, running } from './build.js';
 import { installationLine, requestedInstallation, requireInstallation } from './install.js';
+import { history, type HistoryPeriod } from './history.js';
 import { actionFingerprint, activityWindowStart, ask, checkInBound, CLOSED_TAIL, recentResults, recordTickets, resultDisplay, teamActivity } from './presentation.js';
 import { ContinuationGap, quietAccount } from './quiet.js';
 import { DURATION_WINDOW_DAYS, runway, SeatReading } from './runway.js';
@@ -136,6 +137,11 @@ export function incidentNoticesSnapshot() {
 export function incidentSnapshot(ticketId: string) {
   const record = store.incident(ticketId);
   return record ? { as_of: new Date().toISOString(), source_revision: running().commit, coverage: { state: 'available', source: 'work:event-log' }, record } : null;
+}
+
+export function historySnapshot(period: HistoryPeriod, actor?: string) {
+  const asOf = new Date().toISOString();
+  return { as_of: asOf, period, actor: actor ?? null, buckets: history(store.historyInput(asOf), period, asOf, actor), source_revision: running().commit };
 }
 
 /** The awaiting-you family as JSON, for the application that draws these

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { appConfig, startAppServer } from '../app-server.mjs';
 import { appRequest, shellRequest } from '../../app/server.mjs';
-import { activitySnapshot, checkInSnapshot, incidentNoticesSnapshot, incidentSnapshot, incidentsSnapshot, issuesSnapshot, runwaySnapshot, workHealth, workListening, workRequest, workSnapshot } from '../../work/dist/view.js';
+import { activitySnapshot, checkInSnapshot, historySnapshot, incidentNoticesSnapshot, incidentSnapshot, incidentsSnapshot, issuesSnapshot, runwaySnapshot, workHealth, workListening, workRequest, workSnapshot } from '../../work/dist/view.js';
 import { seatWork } from '../../work/dist/presentation.js';
 import { roadmapHealth, roadmapRequest, roadmapSnapshot } from '../../roadmap/dist/view.js';
 import { runtimeRequest, runtimeSnapshot, teamFile, teamMember, teamNowSnapshot, teamPeriod, teamSnapshot } from '../../runtime/dist/view.js';
@@ -146,6 +146,16 @@ const running = await startAppServer(appConfig(), (request, response) => {
     }
     if (request.url === '/api/v1/incidents') {
       response.writeHead(200, JSON_HEADERS); response.end(apiJson('incidents', incidentsSnapshot())); return;
+    }
+    if (/^\/api\/v1\/history(?:\?|$)/.test(request.url ?? '')) {
+      const url = new URL(request.url ?? '/', 'http://localhost');
+      const period = url.searchParams.get('period') ?? 'week';
+      if (!['day', 'week', 'month'].includes(period)) {
+        response.writeHead(400, JSON_HEADERS); response.end(JSON.stringify({ error: 'period must be day, week, or month' })); return;
+      }
+      response.writeHead(200, JSON_HEADERS);
+      response.end(apiJson('history', historySnapshot(period, url.searchParams.get('actor') || undefined)));
+      return;
     }
     const incident = /^\/api\/v1\/incidents\/(H-\d+)$/.exec(request.url ?? '');
     if (incident) {

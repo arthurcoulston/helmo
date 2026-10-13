@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { history, type HistoryInput } from '../src/history.js';
+import { Store } from '../src/store.js';
+import type { Actor } from '../src/types.js';
 
 const asOf = '2026-10-13T00:00:00.000Z';
 const base = (): HistoryInput => ({
@@ -11,6 +13,23 @@ const base = (): HistoryInput => ({
 });
 
 describe('failure history', () => {
+  it('projects the supported event-log inputs without turning passes into failures', () => {
+    const store = new Store(':memory:');
+    const builder: Actor = { name: 'mason', kind: 'agent', model: 'test', version: '1' };
+    const reviewer: Actor = { name: 'proof', kind: 'agent', model: 'test', version: '1' };
+    const ticket = store.createTicket(builder, { title: 'Candidate', body: 'Fixture', workstream: 'test', type: 'build', status: 'in_progress' });
+    store.updateTicket(builder, { ticket_id: ticket.id, note: 'Measured the run.', tokens: 250 });
+    store.recordProductCompletion(builder, { ticket_id: ticket.id, artifacts: [{ ref: 'helmo@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', author: 'mason' }], note: 'Ready.' });
+    store.recordAcceptanceVerdict(reviewer, { ticket_id: ticket.id, refs: ['helmo@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'], verdict: 'fail', note: 'A regression remains.' });
+    store.recordTestResult(builder, { suite: 'work', failed: 2, total: 10, ref: 'run:work' });
+    const projected = store.historyInput('9999-12-31T23:59:59.999Z');
+    expect(projected.tokens).toMatchObject([{ actor: 'mason', value: 250 }]);
+    expect(projected.acceptance_failures).toMatchObject([{ actor: 'proof', ref: ticket.id }]);
+    expect(projected.test_results).toMatchObject([{ actor: 'mason', failed: 2, total: 10, ref: 'run:work' }]);
+    expect(projected.recording_began_at).toMatchObject({ tokens: expect.any(String), acceptance_failures: expect.any(String), test_results: expect.any(String) });
+    store.close();
+  });
+
   it('keeps equal rates at different volumes while retaining raw counts', () => {
     const input = base();
     input.tokens.push(

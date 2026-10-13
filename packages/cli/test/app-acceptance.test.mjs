@@ -602,6 +602,11 @@ test('unified routes retain the established product workflows and common navigat
   assert.ok(detail.events.some((event) => event.event_type === 'ship_next_set'));
   const runtime = (await (await fetch(origin + '/api/v1/runtime')).json()).data;
   for (const row of runtime.loops) for (const field of ['state', 'workstream', 'runtime', 'model', 'pace', 'spend', 'recent_events']) assert.ok(field in row, field);
+  const history = (await (await fetch(origin + '/api/v1/history?period=week&actor=mason')).json()).data;
+  assert.equal(history.period, 'week');
+  assert.equal(history.actor, 'mason');
+  assert.equal(history.buckets.length, 7);
+  assert.equal((await fetch(origin + '/api/v1/history?period=quarter')).status, 400);
 
 });
 

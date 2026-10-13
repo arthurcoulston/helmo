@@ -6,6 +6,7 @@ import { actionFingerprint, questionFingerprint } from './presentation.js';
 import { parseSchedule } from './schedule.js';
 import { issueKey, replayIssues, type IssueDisposition, type IssueEvent, type IssueSubjectKind, type IssuesSnapshot, type RecordedValue } from './issues.js';
 import { assertIncident, blankIncident, incidentNoticeBoard, replayIncidents, type IncidentEvent, type IncidentNoticeBoard, type IncidentPatch, type IncidentRecord } from './incidents.js';
+import type { HistoryInput } from './history.js';
 import {
   ActionReport, ActionRequest, Actor, ActorKind, ACTOR_KINDS, Answer, AnswerEvent, BlastRadius, BLAST_RADII, CapacityHold, CompletionAccount, CompletionAccountInput, COMPLETION_CATEGORIES, COMPLETION_SUMMARY_MAX, Confidence, Dep, DepType, Evidence, EVIDENCE_ROLES,
   AcceptanceCoverage, ActivityEvents, CauseOnset, CoveringCompletion, EventType, HelmoError, HelmoEvent, HumanRequest, Notice, ProductAcceptance, ProductArtifact, Question, QuestionInput, ReleaseHandoff, Status, Ticket, TicketProgress, UnresolvedCompletion, VerdictEvent, Workstream, WorkstreamInfo,
@@ -2530,6 +2531,42 @@ export class Store {
     }
     const seq = this.append(recordedAt, `test:${input.suite}`, 'test_result_recorded', actor, { ...input });
     return { ...input, seq, at: recordedAt, actor: actor.name };
+  }
+
+  /** The bounded, explicit event sources History can truthfully measure. */
+  historyInput(asOf = now()): HistoryInput {
+    type Row = { seq: number; ts: string; ticket_id: string; event_type: EventType; actor: string; payload: string };
+    const rows = this.db.prepare(`
+      SELECT seq, ts, ticket_id, event_type, actor, payload
+      FROM events
+      WHERE ts <= ? AND event_type IN ('updated','spend','acceptance_verdict','test_result_recorded','incident_recorded')
+      ORDER BY seq
+    `).all(asOf) as Row[];
+    const input: HistoryInput = { tokens: [], acceptance_failures: [], test_results: [], incidents: [], recording_began_at: {} };
+    const incidentIds = new Set<string>();
+    for (const row of rows) {
+      const actor = (JSON.parse(row.actor) as Actor).name;
+      const payload = JSON.parse(row.payload) as Record<string, unknown>;
+      if (row.event_type === 'spend' || row.event_type === 'updated') {
+        if (typeof payload['tokens'] === 'number') {
+          input.recording_began_at.tokens ??= row.ts;
+          input.tokens.push({ at: row.ts, actor, value: payload['tokens'], ref: `${row.ticket_id}#event-${row.seq}` });
+        }
+      } else if (row.event_type === 'acceptance_verdict') {
+        input.recording_began_at.acceptance_failures ??= row.ts;
+        if (payload['verdict'] === 'fail') input.acceptance_failures.push({ at: row.ts, actor, ref: row.ticket_id });
+      } else if (row.event_type === 'test_result_recorded') {
+        input.recording_began_at.test_results ??= row.ts;
+        input.test_results.push({ at: row.ts, actor, failed: Number(payload['failed']), total: Number(payload['total']), ref: String(payload['ref']) });
+      } else {
+        input.recording_began_at.incidents ??= row.ts;
+        if (!incidentIds.has(row.ticket_id)) {
+          incidentIds.add(row.ticket_id);
+          input.incidents.push({ at: row.ts, actor, ref: row.ticket_id });
+        }
+      }
+    }
+    return input;
   }
 
   private incidentEvents(asOf: string): IncidentEvent[] {

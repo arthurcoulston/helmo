@@ -14,11 +14,11 @@ function recorder() {
 }
 
 test('every area uses the shared application', () => {
-  assert.deepEqual(APP_AREAS, ['overview', 'incidents', 'team', 'work', 'roadmap', 'runtime']);
+  assert.deepEqual(APP_AREAS, ['overview', 'incidents', 'history', 'team', 'work', 'roadmap', 'runtime']);
 });
 
 test('a migrated area answers with the built document, with or without a trailing slash', () => {
-  for (const url of ['/', '/?whole=1', '/?section=awaiting', '/overview', '/team', '/team/', '/overview?scope=all', '/work', '/roadmap/', '/run']) {
+  for (const url of ['/', '/?whole=1', '/?section=awaiting', '/overview', '/history', '/history?period=month&actor=mason', '/team', '/team/', '/overview?scope=all', '/work', '/roadmap/', '/run']) {
     const { writes, response } = recorder();
     assert.equal(appRequest({ url, headers: { host: 'localhost' } }, response), true, url);
     assert.ok(writes[0].code === 200 || writes[0].code === 503, `${url}: status ${writes[0].code}`);

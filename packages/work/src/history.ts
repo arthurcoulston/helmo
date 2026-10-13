@@ -28,6 +28,7 @@ export type HistoryBucket = {
   to: string;
   tokens: number;
   token_coverage: 'measured' | 'missing';
+  token_evidence: string[];
   acceptance_failures: FailureReading;
   test_failures: FailureReading & { measured_tests: number };
   incidents: FailureReading;
@@ -78,6 +79,7 @@ export function history(input: HistoryInput, period: HistoryPeriod, asOf: string
       to: new Date(to).toISOString(),
       tokens,
       token_coverage: coverage('tokens', from),
+      token_evidence: tokenEvents.map((event) => event.ref),
       acceptance_failures: reading(acceptance, tokens, 'acceptance_failures', from),
       test_failures: {
         ...reading(tests, tokens, 'test_results', from, tests.reduce((sum, event) => sum + event.failed, 0)),

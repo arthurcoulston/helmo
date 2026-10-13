@@ -9,11 +9,13 @@ import { Runway, runwayOf } from "./Runway"
 import { TeamNow, teamNowOf } from "./TeamNow"
 import { IncidentsView, type IncidentsData } from "./IncidentsView"
 import { IncidentNoticeBand, incidentNoticesOf } from "./IncidentNotices"
+import { HistoryView, type HistoryData } from "./HistoryView"
 import {
   ActivityIcon,
   ChevronRightIcon,
   ClipboardListIcon,
   LayoutDashboardIcon,
+  ChartNoAxesCombinedIcon,
   SirenIcon,
   MapIcon,
   MoonIcon,
@@ -107,6 +109,7 @@ const DESTINATIONS: Destination[] = [
     rendered: true,
   },
   { id: "incidents", label: "Incidents", href: "/incidents", icon: SirenIcon, rendered: true },
+  { id: "history", label: "History", href: "/history", icon: ChartNoAxesCombinedIcon, rendered: true },
   {
     id: "roadmap",
     label: "Roadmap",
@@ -756,7 +759,12 @@ function AreaView({ area, areas, onHeaderBadges }: { area: Destination; areas: s
   /* Team's usage period. Held here because `useArea` is what reads with it. */
   const [period, setPeriod] = React.useState("7d")
   const selected = useFragment()
-  const state = useArea(area.id, selected, area.id === "team" ? { period } : {})
+  const query = new URLSearchParams(location.search)
+  const extra = area.id === "team" ? { period } : area.id === "history" ? {
+    period: query.get("period") ?? "week",
+    ...(query.get("actor") ? { actor: query.get("actor")! } : {}),
+  } : {}
+  const state = useArea(area.id, selected, extra)
   React.useEffect(() => {
     if (!onHeaderBadges) return
     if (area.id !== "work" || state.status !== "ready") return onHeaderBadges([])
@@ -833,6 +841,8 @@ function AreaContent({ area, state, selected, areas, period, onPeriodChange }: {
   if (area.id === "roadmap") return <RoadmapView data={state.data as RoadmapData} selected={selected} />
 
   if (area.id === "incidents") return <IncidentsView data={state.data as IncidentsData} />
+
+  if (area.id === "history") return <HistoryView data={state.data as HistoryData} />
 
   if (area.id === "overview") {
     /* The results document rides along on the Overview read (R-44). A build of

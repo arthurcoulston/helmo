@@ -1105,7 +1105,7 @@ try {
   await page.getByText(/at identification, at every material change and at verified resolution/).waitFor();
   console.log(`Incidents notice board: ${told.map((row) => row.join(' · ')).join('; ')}`);
 
-  const areas = ['overview', 'incidents', `incidents/${incident.id}`, 'work', 'roadmap', 'team', 'run'], themes = ['light', 'dark'], widths = [390, 640, 1280];
+  const areas = ['overview', 'incidents', `incidents/${incident.id}`, 'history', 'work', 'roadmap', 'team', 'run'], themes = ['light', 'dark'], widths = [390, 640, 1280];
   const audited = [];
   /* Where the horizontal fold falls on a phone. Nothing above can see this:
      the page itself never overflows — the table scrolls inside its own
@@ -1364,10 +1364,10 @@ try {
      regardless. */
   assert.deepEqual(
     [...new Set(folds.map((fold) => fold.column))].sort(),
-    ['context', 'incident', 'loop', 'member', 'moment', 'project', 'stage', 'state', 'work'],
+    ['context', 'incident', 'interval', 'loop', 'member', 'moment', 'project', 'stage', 'state', 'work'],
     'every above-fold column every view declares must be measured at 390',
   );
-  assert.ok(folds.length >= 24, `only ${folds.length} above-fold columns were measured at 390, so the fold was not really read`);
+  assert.ok(folds.length >= 26, `only ${folds.length} above-fold columns were measured at 390, so the fold was not really read`);
   /* Reported, not asserted: how much room the tightest column had to spare. A
      pass says nothing was cut; this says how close the next longer word is. */
   const tightest = folds.reduce((worst, fold) => (fold.over > worst.over ? fold : worst));
@@ -1379,7 +1379,7 @@ try {
     `the WCAG audit ran on ${audited.length} layouts, not all ${areas.length * themes.length * widths.length}: ${audited.join(', ')}`,
   );
   assert.deepEqual(errors, []);
-  console.log(`All seven areas plus incident detail, Work's and Roadmap's compact tables, bounded summaries and full records, held state, copy, focused refresh, embedded answer, runtime trace, Team's composed/discovered/available context with its bounded file reads, Inter, the four status roles measured at rest and on hovered and expanded rows in both themes, all ${audited.length} layouts verified and audited against WCAG 2 A/AA with axe-core ${axeVersion}, ${shapes.size} multi-group views aligned column for column, and nothing wider than the column holding it. Red outranks amber by at least ${LOUDER_BY} on every ground both were found on: ${redVsAmber.join('; ')}. At 390 the tightest of ${folds.length} declared above-fold columns, ${tightest.column} ("${tightest.text}") in ${tightest.table}, cleared the fold by ${-tightest.over}px, and all ${previews.length} expanded previews read inside the window, the tightest with ${-Math.max(...previews.map((p) => p.over))}px to spare. Evidence: ${dir}`);
+  console.log(`All eight routed views including incident detail, Work's and Roadmap's compact tables, bounded summaries and full records, held state, copy, focused refresh, embedded answer, runtime trace, Team's composed/discovered/available context with its bounded file reads, Inter, the four status roles measured at rest and on hovered and expanded rows in both themes, all ${audited.length} layouts verified and audited against WCAG 2 A/AA with axe-core ${axeVersion}, ${shapes.size} multi-group views aligned column for column, and nothing wider than the column holding it. Red outranks amber by at least ${LOUDER_BY} on every ground both were found on: ${redVsAmber.join('; ')}. At 390 the tightest of ${folds.length} declared above-fold columns, ${tightest.column} ("${tightest.text}") in ${tightest.table}, cleared the fold by ${-tightest.over}px, and all ${previews.length} expanded previews read inside the window, the tightest with ${-Math.max(...previews.map((p) => p.over))}px to spare. Evidence: ${dir}`);
   writeFileSync(join(dir, 'result.json'), JSON.stringify({ origin, artifacts: dir, errors, verified: new Date().toISOString() }, null, 2));
 } finally {
   await browser?.close();

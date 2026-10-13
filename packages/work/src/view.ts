@@ -141,7 +141,11 @@ export function incidentSnapshot(ticketId: string) {
 
 export function historySnapshot(period: HistoryPeriod, actor?: string) {
   const asOf = new Date().toISOString();
-  return { as_of: asOf, period, actor: actor ?? null, buckets: history(store.historyInput(asOf), period, asOf, actor), source_revision: running().commit };
+  const input = store.historyInput(asOf);
+  const actors = [...new Set([
+    ...input.tokens, ...input.acceptance_failures, ...input.test_results, ...input.incidents,
+  ].map((event) => event.actor).filter((value): value is string => Boolean(value)))].sort();
+  return { as_of: asOf, period, actor: actor ?? null, actors, buckets: history(input, period, asOf, actor), source_revision: running().commit };
 }
 
 /** The awaiting-you family as JSON, for the application that draws these

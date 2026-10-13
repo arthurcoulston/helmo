@@ -202,12 +202,14 @@ the latest notice of every unresolved incident. No ticket is marked
 `needs_human` to raise one — that withholds the work from every agent queue —
 so a response is asked for separately, through the request path, only when one
 is needed.
-History is the bounded event-log projection at `/api/v1/history`: `period` is
+History is the bounded event-log projection at `/api/v1/history` and the
+shipped `/history` view: `period` is
 day, week or month and optional `actor` applies to every source. It keeps
 measured tokens, failed acceptance verdicts, explicitly recorded validation
 results and incident identifications separate; each bucket carries raw counts,
-valid token-normalized rates, evidence refs and source coverage. Missing input
-and a measured zero remain different readings.
+valid rates, evidence refs and source coverage. The view exposes the same
+period and whole-team/agent filters and opens the source refs. Missing input,
+a measured zero and a zero denominator remain different readings.
 The four operator readings are the first Overview content: a two-column grid
 at the 1280×800 baseline and one column on narrow windows. The incident band
 is the one thing drawn above them, at most three lines and nothing at all when

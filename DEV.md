@@ -95,7 +95,10 @@ composing `RecordTable` — it has no expanding record — and UI.md says what t
 geometry is and why. Runtime `status` also reconciles complete unavailable-seat
 observations into `state/supervisor/stalled-work.json`: the same case/ticket
 updates one durable episode, a resolved observation disappears, and unreadable
-episode state is reported as unknown rather than an empty healthy result. Team profiles
+episode state is reported as unknown rather than an empty healthy result. The
+same independent check records ready work an eligible worker has not yet removed
+from the complete backlog; a claim/launch is the progress signal, so a lost
+incremental wake cannot hide the ticket. Team profiles
 are fetched only from configured roster members and shown in standard
 Collapsible components; a missing profile is an explicit Alert. All standalone
 entries serve the same application with navigation limited to their API areas.

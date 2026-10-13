@@ -596,6 +596,30 @@ export function unavailableSeatWork(g: GlobalConfig, loops: LoopConfig[], live: 
   return out;
 }
 
+/** Complete ready work an available worker can draw. This is the independent
+ * side of the wake comparison: a missed incremental edge cannot hide a ticket
+ * that remains in Work's current ready backlog. A launch/claim removes the
+ * ticket from that backlog, which is the authoritative progress signal. */
+export function eligibleSeatBacklog(g: GlobalConfig, loops: LoopConfig[], live: (name: string) => string | null):
+  { ticket: string; seat: string; reason: string; action: string }[] {
+  const observations = new Map<string, { ticket: string; seat: string; workers: string[] }>();
+  for (const loop of loops) {
+    if (live(loop.name) !== null) continue;
+    for (const ticket of readyTicketIds(g, loop)) {
+      const key = `${seatName(loop)}:${ticket}`;
+      const observation = observations.get(key) ?? { ticket, seat: seatName(loop), workers: [] };
+      observation.workers.push(loop.name);
+      observations.set(key, observation);
+    }
+  }
+  return [...observations.values()].map(({ ticket, seat, workers }) => ({
+    ticket,
+    seat,
+    reason: `${ticket} remains in the complete ready backlog while ${workers.join(', ')} ${workers.length === 1 ? 'is' : 'are'} eligible`,
+    action: `${seat} must launch the ticket or its coordinator must repair the wake path`,
+  }));
+}
+
 export function investigatorFor(g: GlobalConfig, stopped: LoopConfig): LoopConfig | null {
   for (const loop of Object.values(loadRoster().loops)) {
     if (seatName(loop) === seatName(stopped) || processObservation(loop.name).state !== 'alive') continue;

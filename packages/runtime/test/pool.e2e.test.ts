@@ -4,7 +4,7 @@
 // its ticket, and every path that must put a claim back down.
 import { describe, it, expect } from 'vitest';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { HELMO_CLI as HELM_CLI, HELMO_SERVER, HELMO_STORE } from './helmo.js';
@@ -725,6 +725,26 @@ describe('lane workers on one seat', { timeout: 90000 }, () => {
     const held = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
     expect(held.unavailable_seats).toEqual([]);
     expect(held.stalled_work).toEqual([]);
+
+    rmSync(join(e.home, 'state', 'w1', 'HOLD'));
+    writeFileSync(join(e.home, 'state', 'w1', 'RUNNING'), `${process.pid}\n`);
+    const waiting = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    expect(waiting.ready_without_progress).toEqual([expect.objectContaining({ ticket: id, seat: 'builder' })]);
+    expect(waiting.stalled_work).toEqual([expect.objectContaining({
+      id: `ready_without_progress:${id}`, ticket: id, checks: 1,
+    })]);
+    const stillWaiting = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    expect(stillWaiting.stalled_work).toEqual([expect.objectContaining({
+      id: `ready_without_progress:${id}`, ticket: id, checks: 2,
+    })]);
+
+    rmSync(join(e.home, 'state', 'w1', 'RUNNING'));
+    runOnce(e, 'w1');
+    expect(ticket(e, id).status).toBe('in_progress');
+    expect(journal(e, 'w1')).toHaveLength(1);
+    const resumed = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    expect(resumed.ready_without_progress).toEqual([]);
+    expect(resumed.stalled_work).toEqual([]);
   });
 
   it('a worker swapped to a lane while it holds work launches nothing and releases nothing; restoring its allowlist resumes it', () => {

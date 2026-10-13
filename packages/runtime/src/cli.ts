@@ -9,7 +9,7 @@ import { sessionSpec } from './shim.js';
 import { LoopConfig } from './types.js';
 import { pollUsage, readCodexUsage, readUsage, refreshCodexUsage, usageLine, usagePath } from './usage.js';
 import { selectRun } from './routing.js';
-import { unavailableSeatWork, unservedLaneWork } from './helm.js';
+import { eligibleSeatBacklog, unavailableSeatWork, unservedLaneWork } from './helm.js';
 import { runLoop } from './loop.js';
 import { serviceFile, serviceInstall, serviceStart, serviceStatusLine, serviceUninstall, stalePinnedService } from './service.js';
 import { assertInstallation, requireTarget, target, targetLine } from './install.js';
@@ -251,9 +251,26 @@ function unavailableSeats(): ReturnType<typeof unavailableSeatWork> | null {
   }
 }
 
-function stalledWork(unavailable: NonNullable<ReturnType<typeof unavailableSeatWork>>) {
+function readyWithoutProgress(): ReturnType<typeof eligibleSeatBacklog> | null {
   try {
-    return recordStallEpisodes(unavailable.map((gap) => ({ case: 'unavailable_seat' as const, ...gap })));
+    return eligibleSeatBacklog(g, Object.values(loops), (name) => {
+      const s = state(name);
+      return s === 'RUNNING' || s === 'IDLE' ? null : s;
+    });
+  } catch {
+    return null;
+  }
+}
+
+function stalledWork(
+  unavailable: NonNullable<ReturnType<typeof unavailableSeatWork>>,
+  ready: NonNullable<ReturnType<typeof eligibleSeatBacklog>>,
+) {
+  try {
+    return recordStallEpisodes([
+      ...unavailable.map((gap) => ({ case: 'unavailable_seat' as const, ...gap })),
+      ...ready.map((gap) => ({ case: 'ready_without_progress' as const, ...gap })),
+    ]);
   } catch {
     return null;
   }
@@ -406,7 +423,8 @@ switch (cmd) {
     // loop's seat and claim scope, which the human table does not print. The
     // table stays as it is: four estate tools parse its header exactly.
     const unavailable = unavailableSeats();
-    const episodes = unavailable === null ? null : stalledWork(unavailable);
+    const ready = readyWithoutProgress();
+    const episodes = unavailable === null || ready === null ? null : stalledWork(unavailable, ready);
     if (rest.includes('--json')) {
       console.log(JSON.stringify({
         installation: target('unchecked').label, home: target('unchecked').home,
@@ -421,6 +439,7 @@ switch (cmd) {
         }),
         unserved_lanes: laneGaps(),
         unavailable_seats: unavailable,
+        ready_without_progress: ready,
         stalled_work: episodes,
       }, null, 2));
       break;
@@ -453,6 +472,8 @@ switch (cmd) {
         : gaps.map((gap) => `UNSERVED LANE WORK: ${gap.ticket} (${gap.seat}, lane ${gap.lane}) — ${gap.reason}`)),
       ...(unavailable === null ? ['UNAVAILABLE SEAT WORK: unreadable — Helmo did not answer']
         : unavailable.map((gap) => `UNAVAILABLE SEAT WORK: ${gap.ticket} (${gap.seat}) — ${gap.reason}; ${gap.action}`)),
+      ...(ready === null ? ['READY-PROGRESS CHECK: unreadable — Helmo did not answer']
+        : ready.map((gap) => `READY WITHOUT PROGRESS: ${gap.ticket} (${gap.seat}) — ${gap.reason}; ${gap.action}`)),
       ...(episodes === null ? ['STALL EPISODES: unreadable — prior observation state could not be reconciled']
         : episodes.map((episode) => `STALL EPISODE: ${episode.id} — observed ${episode.checks} time${episode.checks === 1 ? '' : 's'} since ${episode.first_observed_at}`)),
     ];

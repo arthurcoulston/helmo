@@ -592,37 +592,47 @@ fi
     expect(readTicketLaunches(['traced-loop'], side).launches).toEqual([]);
   });
 
-  it('stands down while a desk session holds work in its name, resumes when the seat clears (H-558)', async () => {
+  it('works on beside an attended sitting in its name, leaving only the sitting\'s ticket alone (H-558)', async () => {
+    // The mock "agent" is the single worker drawing its own work: it claims
+    // and completes the first ready ticket, then tries to close the sitting's
+    // and records Helmo's answer.
     const e = setup(`[loops.seat-loop]
 workstream = "rev-test"
 cwd = "/tmp"
 runtime = "mock"
-mock_cmd = "true"
+mock_cmd = '''
+printf '%s' "$REV_PROMPT" > ${'$'}{REV_HOME}/prompt
+ID=$(node ${HELM_CLI} list --ready --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
+if [ -n "$ID" ]; then
+  node ${HELM_CLI} update --ticket $ID --note "claimed by the loop" --status in_progress
+  node ${HELM_CLI} update --ticket $ID --note "completed by the loop" --status done --completion-category maintenance --completion-summary "Closed by a test fixture." --evidence-kind other --evidence-ref loop
+fi
+node ${HELM_CLI} update --ticket "$SITTING" --note "closing the sitting" --status done --completion-category maintenance --completion-summary "Closed by a test fixture." --evidence-kind other --evidence-ref loop 2> ${'$'}{REV_HOME}/sitting-refusal && echo written > ${'$'}{REV_HOME}/sitting-written
+'''
 `);
-    // A desk session sharing the crew name claims a ticket reserved for it —
-    // the exact H-542/H-560 shape. Same actor name, no rev seat stamp.
-    const id = (helm(e, ['create', '--title', 'Seat collision', '--body', 'held by a desk session sharing the name', '--workstream', 'rev-test', '--type', 'ops', '--assignee', 'seat-loop']) as { id: string }).id;
-    const desk = '{"name":"seat-loop","kind":"agent","model":"claude-fable-5","version":"claude-code-2.1.221","session":"desk"}';
-    helm(e, ['update', '--ticket', id, '--note', 'claimed at the desk', '--status', 'in_progress'], desk);
+    // An attended sitting claims through the ordinary path: the true name, no
+    // worker session — the shape that idled every worker of a role.
+    const sitting = (helm(e, ['create', '--title', 'The sitting', '--body', 'held by an attended session sharing the name', '--workstream', 'rev-test', '--type', 'ops', '--assignee', 'seat-loop']) as { id: string }).id;
+    const desk = '{"name":"seat-loop","kind":"agent","model":"claude-fable-5","version":"claude-code-2.1.221"}';
+    helm(e, ['update', '--ticket', sitting, '--note', 'claimed at the desk', '--status', 'in_progress'], desk);
+    const work = seedTicket(e, 'Independent ready work');
+
+    const out = rev({ ...e, env: { ...e.env, SITTING: sitting } }, ['run', 'seat-loop', '--count', '1']);
+    expect(out).toContain('run 1 started');
+    expect((helm(e, ['get', work]) as { status: string }).status).toBe('done');
+    expect(helm(e, ['get', sitting])).toMatchObject({ status: 'in_progress', assignee: 'seat-loop' });
+    expect(readFileSync(join(e.home, 'sitting-refusal'), 'utf8')).toMatch(/session_claim_held/);
+    expect(existsSync(join(e.home, 'sitting-written'))).toBe(false);
+    expect(readFileSync(join(e.home, 'prompt'), 'utf8')).toContain(`Another live session in your name — an attended sitting or a subagent — holds ${sitting}.`);
 
     const dir = join(e.home, 'state', 'seat-loop');
-    const events = () => (existsSync(join(dir, 'events.log')) ? readFileSync(join(dir, 'events.log'), 'utf8') : '');
-    const until = (re: RegExp) => waitUntil(() => re.test(events()), String(re));
-    const child = spawn(process.execPath, ['--import', 'tsx', REV_CLI, 'run', 'seat-loop'], { env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore' });
-    try {
-      await until(/seat-held/);
-      expect(events()).toMatch(/seat-held.*another live session \('desk'\)/);
-      expect(events()).not.toMatch(/run-start/); // no session spent over the foreign hold
-      expect(readFileSync(join(dir, 'SEAT_HELD'), 'utf8')).toMatch(/another live session \('desk'\)/);
-      // The desk session finishes its work; the seat clears and the loop runs.
-      helm(e, ['update', '--ticket', id, '--note', 'done at the desk', '--status', 'done', '--completion-category', 'maintenance', '--completion-summary', 'Closed by a test fixture.', '--evidence-kind', 'other', '--evidence-ref', 'x'], desk);
-      await until(/run-start/);
-      expect(existsSync(join(dir, 'SEAT_HELD'))).toBe(false);
-      expect(events()).toMatch(/seat-clear/);
-      expect(events()).toMatch(/run-start/);
-    } finally {
-      await stop(child);
-    }
+    const events = readFileSync(join(dir, 'events.log'), 'utf8');
+    expect(events).toMatch(new RegExp(`seat-shared\\s+${sitting} held in this name by an attended session`));
+    expect(events).not.toMatch(/seat-held/);
+    expect(existsSync(join(dir, 'SEAT_HELD'))).toBe(false);
+    expect(readFileSync(join(dir, 'SEAT_SHARED'), 'utf8')).toContain(sitting);
+    // The loop has exited, so it shares nothing now: status reports live loops only.
+    expect(rev(e, ['status'])).not.toContain('SHARED SEAT');
   });
 
   it('a note-only session is not production — the loop idles instead of running on (H-412)', async () => {
@@ -918,13 +928,9 @@ mock_cmd = "true"
     }
   });
 
-  it('a drain that lands mid-iteration stops the loop at the boundary instead of starting another (H-1109)', async () => {
-    // The shim runs a session with spawnSync, so the supervisor's drain
-    // SIGTERM cannot be delivered while an iteration is in flight. Mid-flight
-    // is the only interesting moment: the iteration must be allowed to finish
-    // its close-out, and then the loop must stop — with more ready work still
-    // waiting, which is exactly what used to pull it into another full-price
-    // session on the code the redeploy was replacing.
+  it('a drain waits for an async session and its close-out, then exits 143 without another iteration (H-1109)', async () => {
+    // Hold a genuinely in-flight async session until the test releases it.
+    // Ready work remains, so a second run would overlap the returning fleet.
     const e = setup(`[loops.drain-loop]
 workstream = "rev-test"
 cwd = "/tmp"
@@ -932,12 +938,15 @@ runtime = "mock"
 idle_floor_s = 0
 mock_cmd = '''
 set -e
-sleep 2
+echo $$ > "$REV_HOME/session.pid"
+while [ ! -f "$REV_HOME/finish-session" ]; do sleep 0.05; done
 ID=$(node ${HELM_CLI} list --ready --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
 if [ -n "$ID" ]; then
   node ${HELM_CLI} update --ticket $ID --note "claimed by mock" --status in_progress
   node ${HELM_CLI} update --ticket $ID --note "completed by mock" --status done --completion-category maintenance --completion-summary "Closed by a test fixture." --evidence-kind other --evidence-ref mock
 fi
+echo 'rev-mock-usage tokens=1200 cost_usd=0.25'
+echo closed > "$REV_HOME/session-closed"
 '''
 `);
     const ids = [seedTicket(e, 'The piece the drained iteration is working'), seedTicket(e, 'Work still ready when the drain lands')];
@@ -954,24 +963,117 @@ fi
     const child = spawn(process.execPath, ['--import', 'tsx', REV_CLI, 'run', 'drain-loop'], {
       env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore',
     });
+    let session = 0;
     try {
-      await until(/run-start.*iter=1/, 'the first iteration to start');
+      await waitForFile(join(e.home, 'session.pid'));
+      session = Number(readFileSync(join(e.home, 'session.pid'), 'utf8'));
       // Signal the loop process by the pid it records: the tsx wrapper above
       // it is not the process holding the drain.
       process.kill(parseInt(/loop-start\s+pid=(\d+)/.exec(events())![1]!, 10), 'SIGTERM');
 
+      await new Promise((r) => setTimeout(r, 200));
+      expect(child.exitCode).toBeNull();
+      expect(child.signalCode).toBeNull();
+      expect(() => process.kill(session, 0)).not.toThrow();
+      expect(events()).not.toMatch(/loop-stop|run-end/);
+      // A repeated drain must not turn the pending stop into an early exit.
+      process.kill(child.pid!, 'SIGTERM');
+      writeFileSync(join(e.home, 'finish-session'), 'finish');
+
       await until(/loop-stop\s+reason=drain/, 'the drain to be honoured');
+      await waitUntil(() => child.exitCode !== null, 'runner exit');
+      expect(child.exitCode).toBe(143);
+      expect(existsSync(join(e.home, 'session-closed'))).toBe(true);
+      expect(() => process.kill(-session, 0)).toThrow();
+      expect(existsSync(join(dir, 'RUNNING'))).toBe(false);
       const log = events();
       // The courtesy the supervisor's cascade extends: the interrupted
       // iteration finished and closed out before the loop went.
       expect(log).toMatch(/run-end.*iter=1/);
       expect(log.indexOf('run-end')).toBeLessThan(log.indexOf('reason=drain'));
+      expect(log).toMatch(/spend .*tokens=1200 cost=0.25/);
+      expect(log.indexOf('spend ')).toBeLessThan(log.indexOf('reason=drain'));
       // And the failure itself: no second session on the old code.
       expect(log).not.toMatch(/run-start.*iter=2/);
       // Ready work was there to pull it into one, so the silence above is a
       // decision and not an empty queue.
-      expect(ids.map((id) => (helm(e, ['get', id]) as { status: string }).status)).toContain('open');
+      const tickets = ids.map((id) => helm(e, ['get', id]));
+      expect(tickets.map((t) => t.status).sort()).toEqual(['done', 'open']);
+      expect(tickets.find((t) => t.status === 'done')).toMatchObject({ tokens_total: 1200, cost_usd_total: 0.25 });
     } finally {
+      if (session) { try { process.kill(-session, 'SIGKILL'); } catch { /* already gone */ } }
+      await stop(child);
+    }
+  });
+
+  it.each(['parked', 'idle'])('a drain exits promptly while %s between iterations', async (state) => {
+    const e = setup(`[loops.between]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = "true"
+`);
+    const roster = join(e.home, 'roster.toml');
+    writeFileSync(roster, readFileSync(roster, 'utf8').replace('poll_seconds = 0.1', 'poll_seconds = 60'));
+    const dir = join(e.home, 'state', 'between');
+    mkdirSync(dir, { recursive: true });
+    if (state === 'parked') writeFileSync(join(dir, 'PACE'), 'park');
+    const child = spawn(process.execPath, ['--import', 'tsx', REV_CLI, 'run', 'between'], {
+      env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore',
+    });
+    try {
+      await waitForFile(join(dir, state === 'parked' ? 'PARKED' : 'IDLE'));
+      child.kill('SIGTERM');
+      await waitUntil(() => child.exitCode !== null, 'drain without waiting for the 60s poll', 3000);
+      expect(child.exitCode).toBe(143);
+      expect(readFileSync(join(dir, 'events.log'), 'utf8')).toMatch(/loop-stop\s+reason=drain/);
+      expect(existsSync(join(dir, 'RUNNING'))).toBe(false);
+    } finally {
+      await stop(child);
+    }
+  });
+
+  it.each([
+    { outcome: 'count exit', rc: 0, action: 'idle' },
+    { outcome: 'transient wait', rc: 75, action: 'limit_wait' },
+    { outcome: 'blocked exit', rc: 78, action: 'blocked' },
+  ])('a pending drain survives the $outcome close-out path', async ({ rc, action }) => {
+    const e = setup(`[loops.drain-end]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = '''
+echo $$ > "$REV_HOME/session.pid"
+while [ ! -f "$REV_HOME/finish-session" ]; do sleep 0.05; done
+exit ${rc}
+'''
+`);
+    const dir = join(e.home, 'state', 'drain-end');
+    const child = spawn(process.execPath, ['--import', 'tsx', REV_CLI, 'run', 'drain-end', '--count', '1'], {
+      env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore',
+    });
+    let session = 0;
+    try {
+      await waitForFile(join(e.home, 'session.pid'));
+      session = Number(readFileSync(join(e.home, 'session.pid'), 'utf8'));
+      child.kill('SIGTERM');
+      await new Promise((r) => setTimeout(r, 200));
+      expect(child.exitCode).toBeNull();
+      writeFileSync(join(e.home, 'finish-session'), 'finish');
+      await waitUntil(() => child.exitCode !== null, 'drain after close-out, without retry wait', 15000);
+      expect(child.exitCode).toBe(143);
+      const log = readFileSync(join(dir, 'events.log'), 'utf8');
+      expect(log).toContain(`action=${action}`);
+      expect(log).toMatch(/loop-stop\s+reason=drain runs=1/);
+      expect(log).not.toMatch(/reason=count|run-start.*iter=2/);
+      expect(existsSync(join(dir, 'BLOCKED'))).toBe(action === 'blocked');
+      if (action === 'blocked') {
+        expect(log).toMatch(/escalated\s+ticket=/);
+        expect(log.indexOf('escalated ')).toBeLessThan(log.indexOf('reason=drain'));
+      }
+      expect(() => process.kill(-session, 0)).toThrow();
+    } finally {
+      if (session) { try { process.kill(-session, 'SIGKILL'); } catch { /* already gone */ } }
       await stop(child);
     }
   });

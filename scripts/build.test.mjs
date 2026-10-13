@@ -140,6 +140,16 @@ const PACKAGES = JSON.parse(readFileSync(new URL('package.json', ROOT)))
   .workspaces.map((workspace) => workspace.replace(/^packages\//, ''));
 const CORE_DEPENDENTS = ['work', 'roadmap', 'runtime'];
 
+test('the workspace root owns the only dependency lock', () => {
+  assert.ok(existsSync(new URL('package-lock.json', ROOT)), 'root package-lock.json');
+  for (const pkg of PACKAGES) {
+    assert.ok(
+      !existsSync(new URL(`packages/${pkg}/package-lock.json`, ROOT)),
+      `packages/${pkg}/package-lock.json is a stale independent install surface`,
+    );
+  }
+});
+
 test('every product-wide document exists once, at the root', () => {
   for (const doc of PRODUCT_DOCS) {
     assert.ok(existsSync(new URL(doc, ROOT)), `root ${doc}`);

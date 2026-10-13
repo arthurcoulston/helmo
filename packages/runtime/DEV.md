@@ -132,10 +132,12 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   on its second (H-954): either no executable work exists in the seat's scope,
   held work is non-executable, or a session left executable work untouched.
   The view and `/health.json` expose that reason; it stays local so observing a
-  wait cannot create Helmo motion and wake the same seat again. A SEAT_HELD
-  sentinel makes the same-seat guard visible while the loop stands down for
-  another live session; the view, health feed, and CLI show the hold instead
-  of calling it a running iteration, and the marker clears with the hold.
+  wait cannot create Helmo motion and wake the same seat again. A SEAT_SHARED
+  sentinel names the tickets another live session holds in the seat's name
+  while the loop works on beside it; the view, health feed
+  (`shared_with`) and CLI (`SHARED SEAT:`) show it on a live loop, and it
+  clears with the holds. SEAT_HELD is only ever left by an older process,
+  which stood down instead; a current loop clears it.
   Multiple roster loops may explicitly share an accountable `seat`: each
   keeps its own state directory and `rev:<loop>` session identity, while
   Helmo sees the role name for assignment, authorship and self-review. The
@@ -582,9 +584,11 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   trade this bug was about. A journaled launch's replacement waits for that
   orphan rather than running beside it (H-685, under the pool section). After a CLI returns normally, the shim terminates
   background children still in that session group (H-1013); this cleanup is
-  deliberately unreachable when the loop dies during `spawnSync`, so H-467's
-  orphaned session still finishes. `test/shim.test.ts` proves both sides with
-  real process groups.
+  unreachable when the loop is killed while awaiting its session, so H-467's
+  close-out protection against external group signals still stands. Mock
+  sessions use the same async spawn as real CLIs, so drain tests
+  exercise delivery of signals during a session. `test/shim.test.ts` proves both
+  sides with real process groups.
 
   **`sessionSpec()` is that composition as data** (H-1152), so a consumer that
   is not a loop can run a seat's session without a second copy of the recipe.
@@ -616,27 +620,23 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
 
 - `ladder.ts` — pure decision functions for the failure ladder (transient ≠
   failure ≠ apparatus). Unit-tested; change with tests.
-- `supervisor.ts` — the fleet (v1, H-18): one child process per roster loop
-  (the shim is spawnSync, so a loop process can only drive one loop), respawn
-  decided by `respawnDecide` in the ladder (halt sentinel → await clearance;
-  healthy clean exit → fresh spawn; crash/short-lived → exponential backoff,
-  BACKOFF sentinel). Drain = SIGTERM cascade: a loop process sits inside a
-  blocking `spawnSync`, so its handler cannot run until the session returns —
-  the deferral is real, and everything the loop does after a session (run-end,
-  the ladder, `record-spend`) is synchronous, so it completes before the
-  handler's first chance to fire. That synchronous stretch used to run straight
-  past the iteration boundary and into the NEXT session (H-1109): `await` on an
-  already-resolved promise drains microtasks without turning libuv, so the
-  signal watcher never got its turn and a busy loop swallowed the drain
-  outright — six loops gone in milliseconds while mason ran three more
-  full-price iterations on the old code and held the fleet down for ten
-  minutes. `loop.ts` yields once (`setImmediate`) at the top of every
-  iteration, which is the only thing making the deferral end where it is
-  documented to end, and the handler logs `loop-stop reason=drain` so the
-  loop's own events.log says why it went. What that deferral never covered is
-  a signal aimed at the process GROUP rather than the loop, which is where
-  H-467's orphaned artifacts came from: see the session process group under
-  `shim.ts`.
+- `supervisor.ts` — the fleet (v1, H-18): one child process per roster loop,
+  respawn decided by `respawnDecide` in the ladder (halt sentinel → await
+  clearance; healthy clean exit → fresh spawn; crash/short-lived → exponential
+  backoff, BACKOFF sentinel). Drain = SIGTERM cascade. Each loop explicitly
+  records a pending signal while its async session or close-out is in flight,
+  then logs `loop-stop reason=drain` and exits 143 after run-end,
+  journal settlement, metering and the ladder's state writes. Terminal ladder
+  paths honor the pending drain too. Idle, parked, capacity, transient and
+  throttle waits exit promptly rather than adding their wait to the drain.
+  The top-of-loop `setImmediate` still gives queued signals a turn before a
+  new iteration (H-1109), including paths whose awaits resolve synchronously.
+  Deferral used to rely on `spawnSync`; once real CLIs streamed asynchronously,
+  the old handler instead exited immediately, orphaning the detached session
+  beside the returning fleet. Synchronous mocks hid this failure. A wedged
+  session is still bounded by `drain_grace_seconds`; the supervisor enumerates
+  and ends its detached group when killing the runner (H-1089). Group isolation
+  still protects sessions from external broadcast signals (H-467, above).
   Child stdout/err goes to state/<loop>/console.log; supervisor decisions to
   state/supervisor/events.log. 'supervisor' is a reserved loop name.
   An installation may also opt this same poll into the narrow Good Plumb
@@ -648,11 +648,33 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   using only Helmo CLI-supported fields; project metadata is not passed because
   that CLI refuses fields which exist only on the MCP create surface.
   Attempt state contains no signup text and lives under state/supervisor; a
-  stale result is discarded on the Worker's 409. Before heartbeat or result,
-  the adapter re-reads that ticket and retains the lease only while it is open
-  or in progress; any other status discards the local attempt and result so the
-  Worker can recover it after lease expiry. There is no listener or
+  stale result is discarded on the Worker's 409. A staged result is delivered
+  whatever the ticket's status: staging then closing is the Builder's
+  ordinary sequence, and the close can land before the poll. Any other refusal
+  is logged with the Worker's error phrase (bounded by shape, never the raw
+  body); while the ticket is open or in progress the lease is renewed and the
+  result kept for retry, and once it is not, or before a heartbeat with nothing
+  staged, the adapter discards the local attempt. A discard is recorded,
+  identifiers only, in `intake-preparation-abandoned.json` (last 20), because
+  the Worker hands a live lease straight back to its owner: the next ticket for
+  that occurrence names the prior ticket, attempt and commit and the refusal,
+  so it reads as a resubmission rather than fresh preparation. There is no listener or
   second scheduler, and an installation declaring neither key is unchanged.
+  The same poll and keys run `refinement-commit.ts`, the Worker's
+  `/api/refinement-commit/*` pull: a claimed directive revision is checked
+  against its hash, its path (`clients/<org>/projects/<project>/directive.md`)
+  and its own `refinement/<org>/<project>/` branch, then committed with
+  plumbing (`hash-object`, a private index, `commit-tree`) on origin/main and
+  pushed without force, so the operator's checkout and main are never
+  touched. A branch already pushed by an earlier attempt is reused only if it
+  is one commit whose parent is on origin/main and whose tree is that
+  parent's with only the directive set to these words; anything else on a
+  matching name is refused, never overwritten. The result carries the raw commit, directive blob and
+  path trees. State under state/supervisor holds identifiers and the commit,
+  never the words; a 422 keeps the lease and retries, and the fifth hands the
+  attempt back as retryable. Refused claims fail as not retryable; Git or
+  network errors as retryable. Each non-idle pass is a `refinement-commit`
+  event.
 - A human answer reopens a Helmo ticket with `resolution: resume` regardless
   of whether its operational choice was resume, hold, or investigate. The
   supervisor clears `BLOCKED` only when `last_answer.chosen_option` is the
@@ -1633,18 +1655,27 @@ follow a module imported dynamically much later.
   are recycled across a reboot: a stale marker whose number had been reused by
   an unrelated process made the supervisor abort as "already running" through
   57 launchd retries, with the whole fleet down and unable to converge (H-154).
-- **One seat, one worker** (H-558). Before spending an iteration the loop asks
-  Helmo who holds in_progress work in its name (`seat-check`) and stands down —
-  polls, spawns nothing — while a FRESH hold its own iterations did not claim
-  exists: a desk session or subagent sharing the crew name is live in the
-  seat, and working over it is how H-542 and H-560 were both trampled. Loop
-  sessions stamp `session: "rev:<loop>"` into their Helmo actor (`loopActor`),
-  which is how the seat's own mid-flight work is recognized across
-  iterations. Stale holds (past `seat_stale_seconds`, default 24h — Helmo's
-  own takeover convention) and unattributable claims never block: the guard
-  yields to live work, it does not wedge a seat on an abandoned one.
-  Best-effort — a seat-check failure logs and proceeds. The race window
-  (a desk claim landing mid-iteration) is accepted per Arthur's H-558 answer.
+- **A sitting owns its ticket, not the seat** (H-558). Before
+  spending an iteration the loop asks Helmo who holds in_progress work in its
+  name (`seat-check`). A FRESH hold its own seat's workers did not claim is
+  another live session sharing the crew name — an attended sitting or a
+  subagent — and working over it is how H-542 and H-560 were both trampled.
+  H-558 stood the whole loop down for it; that idled every worker of a role
+  for as long as an operator sat with one of them, so the loop now works
+  on and leaves exactly those tickets alone. Helmo is the fence: a claim
+  without an execution generation belongs to the session stamped on the event
+  that claimed it (an attended claim carries none), and another session of the
+  same name may only note it — any other write is refused `session_claim_held`
+  until the claim is over 24h stale and taken over explicitly. Pool workers
+  were already fenced by their execution claim and launch binding, and draw
+  only ready (open) tickets. Rev keeps those tickets out of the seat's held
+  work for wakes and the probe tier (`withoutHolds`), names them in a
+  self-drawing worker's prompt, and records them as SEAT_SHARED. Loop sessions
+  stamp `session: "rev:<loop>"` into their Helmo actor (`loopActor`), which is
+  how the seat's own mid-flight work is recognized across iterations. Stale
+  holds (past `seat_stale_seconds`, default 24h — Helmo's own takeover
+  convention) and unattributable claims are not named. Best-effort — a
+  seat-check failure logs and proceeds, and Helmo's fence still holds.
 - Wake is MOTION for store-wide loops and READINESS for scoped ones (H-426
   and H-92, rewritten by H-1072). A scoped loop wakes when Helmo's wake-check
   reports `newly_ready_count > 0` — currently-ready tickets carrying a

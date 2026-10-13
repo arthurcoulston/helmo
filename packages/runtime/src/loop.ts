@@ -4,13 +4,13 @@
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { stateDir, tokenLogPath } from './config.js';
-import { LaunchAdmission, LaunchClaim, WakeCheck, WorkstreamInfo, actorActivity, actorSelfSpend, actorTickets, escalateBlocked, escalateSilentDeclines, launchAdmit, launchClaim, launchId, launchQuarantine, launchReceipt, launchRevalidate, openEscalation, poolWorker, readyTicketIds, recordSpend, releaseClaim, scopeLabel, seatHolds, seatId, seatName, seatStreams, ticketState, ticketStatus, wakeCheck, workstreamInfo } from './helm.js';
+import { LaunchAdmission, LaunchClaim, WakeCheck, WorkstreamInfo, actorActivity, actorSelfSpend, actorTickets, escalateBlocked, escalateSilentDeclines, launchAdmit, launchClaim, launchId, launchQuarantine, launchReceipt, launchRevalidate, openEscalation, poolWorker, readyTicketIds, recordSpend, releaseClaim, scopeLabel, seatHolds, seatId, seatName, seatStreams, ticketState, ticketStatus, wakeCheck, withoutHolds, workstreamInfo } from './helm.js';
 import { burnWindow, markBurnFloor, recentCosts } from './burn.js';
 import { exhaustedLimit, pollUsage, readCodexUsage, readUsage, refreshCodexUsage, refreshFor, usageForModel } from './usage.js';
 import { anomalyDecide, capacityDecide, planPointsConsumed } from './capacity.js';
 import { choiceExhausted, selectRun } from './routing.js';
 import { raiseWedgeAlarm, wedgeDecide } from './health.js';
-import { breakerDecide, declineDecide, ladderDecide, routedDeclines, limitDecide, probeDecide, rollingMean, seatDecide, velocityToPause, wakeDecide } from './ladder.js';
+import { breakerDecide, declineDecide, ladderDecide, routedDeclines, limitDecide, probeDecide, rollingMean, foreignHolds, foreignHoldsReason, velocityToPause, wakeDecide, type ForeignHold } from './ladder.js';
 import { logEvent, occupiedPid, paceAutoRelease, pidAlive, runningStamp, sClear, sGet, sHas, sOwner, sReleaseOwned, sSet, sSetOwned, sValue, streak, streakMap, streakMapSet, streakReset } from './sentinels.js';
 import { ancestryBroken, ancestryStamp } from './ancestry.js';
 import { runSession } from './shim.js';
@@ -60,6 +60,30 @@ function tryWakeCheck(g: GlobalConfig, l: LoopConfig, sinceSeq: number): WakeChe
     if (decision.act === 'wedge') raiseWedgeAlarm(l.name, decision.reason);
     return null;
   }
+}
+
+/** The tickets another live session — an attended sitting, a subagent —
+ *  holds in this loop's name. Best-effort: Helmo's session fence is
+ *  what protects them, so a failed read reports none and the loop works on. */
+function readForeignHolds(g: GlobalConfig, l: LoopConfig): ForeignHold[] {
+  try {
+    const holds = seatHolds(g, l).map((h) => ({
+      ticketId: h.ticket_id,
+      claimSession: h.claim_actor?.session ?? null,
+      ageSeconds: h.claimed_at && Number.isFinite(Date.parse(h.claimed_at)) ? Math.max(0, (Date.now() - Date.parse(h.claimed_at)) / 1000) : null,
+    }));
+    return foreignHolds({ holds, sessions: l.peer_sessions ?? [seatId(l)], staleSeconds: g.seat_stale_seconds });
+  } catch (e) {
+    logEvent(l.name, 'seat-check-failed', String(e).slice(0, 200));
+    return [];
+  }
+}
+
+/** Held-work wake signals name only the seat's own claims once another
+ *  session's are taken out; the read is skipped when there are none. */
+function ownHeldWork(g: GlobalConfig, l: LoopConfig, w: WakeCheck, restart: boolean): WakeCheck {
+  const signals = (w.newly_ready_ids?.length ?? 0) + (restart && (w.held_count ?? 0) > 0 ? 1 : 0);
+  return signals ? withoutHolds(w, readForeignHolds(g, l).map((h) => h.ticketId)) : w;
 }
 
 // Steering is numbers in fixed wording (H-1186): the budget figures from the
@@ -177,7 +201,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
   let durWindow: number[] = [];
   let tAvg = 0;
   let firstPoll = true; // restart pickup: see the wake gate below (H-426)
-  let seatHeld = false; // same-seat guard episode flag: log once per hold, not per poll (H-558)
+  let sharedWith = ''; // which tickets another live session holds in this name, as last logged
   let sessionHeld = false; // dead launch's session still running: same, per hold (H-685)
   let claimUnanswered = false; // a claim awaiting Helmo's answer: same, per wait (H-686)
   const lineage = ancestryStamp();
@@ -198,30 +222,28 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     return false;
   };
 
-  // The drain's last step. A signal arriving mid-iteration cannot be delivered
-  // until the event loop turns (see the yield below), so by the time this runs
-  // the iteration it interrupted has finished — say so in the loop's own log,
-  // which otherwise records nothing at all about why the process ended.
+  // Sessions stream asynchronously: signals can arrive while a child
+  // is running, or during its close-out. Keep the runner alive until both are
+  // finished. The supervisor still bounds this courtesy with its drain grace.
+  let iterationInFlight = false;
+  let pendingStop: { code: number; reason: string } | undefined;
+  const finishIteration = () => {
+    iterationInFlight = false;
+    if (pendingStop) {
+      logEvent(l.name, 'loop-stop', `reason=${pendingStop.reason} runs=${i}`);
+      process.exit(pendingStop.code);
+    }
+  };
   const stopOnSignal = (code: number, reason: string) => () => {
-    logEvent(l.name, 'loop-stop', `reason=${reason} runs=${i}`);
-    process.exit(code);
+    pendingStop ??= { code, reason };
+    if (!iterationInFlight) finishIteration();
   };
   process.on('SIGINT', stopOnSignal(130, 'SIGINT'));
   process.on('SIGTERM', stopOnSignal(143, 'drain'));
 
   while (true) {
-    // One turn of the event loop, and the reason it has to be here (H-1109).
-    // The shim runs a session with spawnSync, so a SIGTERM that arrives during
-    // an iteration is held until something yields to libuv — and on the
-    // continue path back to here, nothing does: every await between run-end
-    // and the next run-start resolves synchronously, which drains microtasks
-    // without ever letting the signal watcher fire. So the drain was not
-    // deferred to the iteration boundary, as the supervisor's cascade
-    // documents; it was swallowed. On 2026-09-07 six loops exited in
-    // milliseconds while mason ran three more full-price iterations on the old
-    // code and held the whole fleet down for ten minutes. The halt sentinels
-    // below already promise that an operator signal between iterations always
-    // wins; this is what makes that true for signals as well as files.
+    // Give queued signals a turn before another iteration (H-1109), including
+    // paths whose awaits resolve synchronously without turning libuv.
     await new Promise((r) => setImmediate(r));
     // Orphan watchdog (H-281): a broken ancestor chain is the one unforgeable
     // sign nobody who started this loop is still watching it — a SIGKILLed
@@ -270,11 +292,12 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     const idle = sGet(l.name, 'IDLE');
     if (idle !== null) {
       const since = parseInt(idle, 10) || 0;
-      const w = tryWakeCheck(g, l, since);
-      if (!w) {
+      const polled = tryWakeCheck(g, l, since);
+      if (!polled) {
         await sleep(g.poll_seconds);
         continue;
       }
+      const w = ownHeldWork(g, l, polled, firstPoll && poolWorker(l));
       // All loops wake on motion only (H-426; store-wide since H-92): ready_count
       // is a standing property, not motion, so a loop that declines a ticket and
       // idles would be re-woken by that same ticket every poll, forever. The one
@@ -352,45 +375,35 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       sessionHeld = false;
       logEvent(l.name, 'launch-session-ended', 'the dead launch\'s session has ended; launching resumes');
     }
-    const before = tryWakeCheck(g, l, 0);
-    if (!before) {
+    const polled = tryWakeCheck(g, l, 0);
+    if (!polled) {
       await sleep(g.poll_seconds);
       continue;
     }
-    // Same-seat guard (H-558): before spending a session, ask who already
-    // holds in_progress work in this name. The loop's own claims carry its
-    // seat stamp; anything else fresh is another live instance — a desk
-    // session or subagent sharing the crew name — and working over it is how
-    // H-542 and H-560 were both trampled. Stand down and keep polling; the
-    // guard is best-effort and a check failure never stops the loop.
-    try {
-      const holds = seatHolds(g, l).map((h) => ({
-        ticketId: h.ticket_id,
-        claimSession: h.claim_actor?.session ?? null,
-        ageSeconds: h.claimed_at && Number.isFinite(Date.parse(h.claimed_at)) ? Math.max(0, (Date.now() - Date.parse(h.claimed_at)) / 1000) : null,
-      }));
-      const seat = seatDecide({ holds, sessions: l.peer_sessions ?? [seatId(l)], staleSeconds: g.seat_stale_seconds });
-      if (seat.act === 'stand_down') {
-        sSet(l.name, 'SEAT_HELD', seat.reason);
-        if (!seatHeld) {
-          seatHeld = true;
-          logEvent(l.name, 'seat-held', seat.reason);
-          console.log(`rev: '${l.name}' standing down — ${seat.reason}. Polling until the seat clears.`);
-        }
-        await sleep(g.poll_seconds);
-        continue;
-      }
-      if (seatHeld) {
-        seatHeld = false;
-        sClear(l.name, 'SEAT_HELD');
+    // Same-seat holds (H-558): before spending a session, ask who
+    // else holds in_progress work in this name — a desk sitting or subagent
+    // sharing the crew name. Working over their tickets is how H-542 and H-560
+    // were trampled, and standing the whole loop down for them idled every
+    // worker of a role while its operator sat with it. So the loop works on
+    // and leaves exactly those tickets alone: Helmo refuses its writes to
+    // them, its prompt names them, and they are not its held work.
+    const shared = readForeignHolds(g, l);
+    const before = withoutHolds(polled, shared.map((h) => h.ticketId));
+    // A SEAT_HELD left by an older process stands no one down now.
+    sClear(l.name, 'SEAT_HELD');
+    // Logged once per change in who holds what, not per poll; the age ticks.
+    const sharedKey = shared.map((h) => `${h.ticketId}:${h.claimSession ?? ''}`).join(',');
+    if (sharedKey !== sharedWith) {
+      const reason = foreignHoldsReason(shared);
+      if (reason) {
+        sSet(l.name, 'SEAT_SHARED', reason);
+        logEvent(l.name, 'seat-shared', reason);
+        console.log(`rev: '${l.name}' working on beside another live session in this name — ${reason}.`);
+      } else {
+        sClear(l.name, 'SEAT_SHARED');
         logEvent(l.name, 'seat-clear');
       }
-    } catch (e) {
-      if (seatHeld) {
-        seatHeld = false;
-        sClear(l.name, 'SEAT_HELD');
-      }
-      logEvent(l.name, 'seat-check-failed', String(e).slice(0, 200));
+      sharedWith = sharedKey;
     }
     // Workflow launch admission (H-2561): the last gate before a session is
     // spent. A ticket bound to a workflow attempt may only be started once its
@@ -728,6 +741,11 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       `Loop iteration ${i} for agent '${l.name}'. Working directory: ${l.cwd}. ` +
       toolset +
       steering +
+      // A seat that draws its own work sees the sitting's ticket in its
+      // assigned list; naming it saves a refused write.
+      (!claimedTicket && shared.length
+        ? `Another live session in your name — an attended sitting or a subagent — holds ${shared.map((h) => h.ticketId).join(', ')}. That work is theirs, not yours: do not claim, change or complete it, and Helmo refuses if you try; a note is the most you may add. `
+        : '') +
       draw +
       split +
       (claimedTicket ? '' : disposition) +
@@ -779,6 +797,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     // Only preclaimed pool work is fenced to a launch generation. Scoped
     // seats claim inside the session and may carry that claim across the next
     // iteration; changing their generation would fence the same seat out.
+    iterationInFlight = true;
     const res = await runSession(g, l, prompt, model, run, claimedTicket ? journaledLaunchId ?? undefined : undefined, journaledLaunchId ? launchGroupFile(l.name, journaledLaunchId) : undefined);
     if (journaledLaunchId) {
       try {
@@ -983,6 +1002,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
           at, investigation_ticket: investigationTicket,
         });
         console.log(`rev: ${anomaly.reason} — halting '${l.name}'.`);
+        finishIteration();
         return;
       }
     }
@@ -1088,6 +1108,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
           }
           console.log(`rev: '${l.name}' BLOCKED — escalation ${standing} already open; not filing another.`);
           logEvent(l.name, 'escalation-standing', `ticket=${standing}`);
+          finishIteration();
           return;
         }
         try {
@@ -1099,11 +1120,13 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
           console.error(`rev: '${l.name}' BLOCKED — AND the escalation to Helm failed (${String(e).slice(0, 200)}). The operator must find this in the dashboard/status.`);
           logEvent(l.name, 'escalate-failed', String(e).slice(0, 200));
         }
+        finishIteration();
         return;
       }
       case 'limit_wait': {
         sSet(l.name, 'LIMIT', `attempt=${action.attempt}\nretry_s=${action.waitSeconds}\n`);
         console.log(`rev: transient condition — parking '${l.name}' ${action.waitSeconds}s (attempt ${action.attempt}/${g.limit_cap}).`);
+        finishIteration();
         let waited = 0;
         while (waited < action.waitSeconds && !sHas(l.name, 'STOP') && !sHas(l.name, 'BLOCKED')) {
           await sleep(Math.min(60, action.waitSeconds - waited));
@@ -1117,7 +1140,8 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
         // If the cursor read fails, idle at the seq we entered on rather than
         // guessing forward: too low costs one redundant wake, too high skips
         // motion silently.
-        const after = tryWakeCheck(g, l, 0);
+        const polledAfter = tryWakeCheck(g, l, 0);
+        const after = polledAfter && ownHeldWork(g, l, polledAfter, false);
         // A store-wide session may make its final queue read before it exits.
         // Advancing to a snapshot taken after that exit would acknowledge any
         // event in between without ever showing it to the session. Retain the
@@ -1151,6 +1175,9 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
         break;
     }
 
+    // Close-out is complete: count exits and inter-iteration waits must honor
+    // a pending drain too, without waiting for a throttle or the next poll.
+    finishIteration();
     if (countReached()) return;
 
     // Inter-iteration velocity throttle, honoring live sentinel changes.

@@ -204,6 +204,10 @@ Pinned releases accept both the historical three-component layout and C1's one
   A server whose `HELMO_ACTOR` carries `generation` is supervised:
   `writingActor` refuses caller-stated name/kind/session/generation that
   conflict and inherits omitted ones; outside it a stated generation refuses.
+  Session is server-bound even without a generation: all MCP and CLI
+  writes inherit the server/launcher's stamp, including its absence on an
+  unstamped attended or remote server. A conflicting caller session refuses
+  before the store is reached; truthful caller model/version remain intact.
   Explicitly named installations claim `meta.installation_name` atomically
   with their first event. Every writer, including a derived one, must match
   that claim; the path-derived `dev.helmo[.*]` name and shared `dev.rev[.*]`

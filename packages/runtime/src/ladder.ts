@@ -94,34 +94,33 @@ export function routedDeclines(streaks: Record<string, number>, cap = 3): string
   return Object.keys(streaks).filter((id) => streaks[id]! >= cap);
 }
 
-// Same-seat guard (H-558): two live sessions sharing one crew name (a rev loop
-// and a desk session or subagent) collided twice, each working over the
-// other's in-flight tickets. Before spending an iteration, the loop asks who
-// holds in_progress work in its name. Its own claims carry its seat stamp;
-// anything else FRESH is another live instance and the loop stands down. A
-// stale hold (past Helmo's takeover convention) is an abandoned claim, not a
-// live session — blocking on it would let one forgotten ticket idle a loop
-// forever, so the session gets to apply the normal takeover discipline
-// instead. A hold whose claim cannot be found or dated is skipped for the
-// same reason: the guard exists to yield to live work, never to wedge a seat
-// on an unattributable record.
-export type SeatAction = { act: 'work' } | { act: 'stand_down'; reason: string };
+// Same-seat holds (H-558): one crew name can run a Rev loop and an
+// attended sitting (or a subagent) at once, and the two collided twice working
+// over each other's in-flight tickets. The loop's own claims carry its seat
+// stamp; a FRESH hold stamped by any other session is that other live
+// instance's ticket. H-558 stood the whole loop down for it, which idled every
+// worker of a role for as long as its operator sat with it. A sitting owns its
+// ticket, not the role: the loop keeps drawing other work, and these are the
+// tickets it leaves alone — Helmo refuses its writes to them
+// (session_claim_held), and the loop keeps them out of its wakes and prompt.
+// A stale hold (past Helmo's takeover convention) or one whose claim cannot be
+// dated is not reported: the session applies the normal takeover discipline.
+export interface ForeignHold { ticketId: string; claimSession: string | null; ageSeconds: number }
 
-export function seatDecide(opts: {
+export function foreignHolds(opts: {
   holds: { ticketId: string; claimSession: string | null; ageSeconds: number | null }[];
   sessions: string[];
   staleSeconds: number;
-}): SeatAction {
-  if (opts.staleSeconds <= 0) return { act: 'work' };
-  for (const h of opts.holds) {
-    if (h.claimSession && opts.sessions.includes(h.claimSession)) continue; // a supervised worker in this seat
-    if (h.ageSeconds === null || h.ageSeconds > opts.staleSeconds) continue; // abandoned or unattributable
-    return {
-      act: 'stand_down',
-      reason: `${h.ticketId} held in this name by another live session${h.claimSession ? ` ('${h.claimSession}')` : ''} — claimed ${Math.round(h.ageSeconds / 60)}m ago`,
-    };
-  }
-  return { act: 'work' };
+}): ForeignHold[] {
+  if (opts.staleSeconds <= 0) return [];
+  return opts.holds.filter((h): h is ForeignHold =>
+    !(h.claimSession && opts.sessions.includes(h.claimSession)) // a supervised worker in this seat
+    && h.ageSeconds !== null && h.ageSeconds <= opts.staleSeconds); // abandoned or unattributable
+}
+
+/** One line naming the tickets another live session holds in this name. */
+export function foreignHoldsReason(holds: ForeignHold[]): string {
+  return holds.map((h) => `${h.ticketId} held in this name by ${h.claimSession ? `session '${h.claimSession}'` : 'an attended session'} — claimed ${Math.round(h.ageSeconds / 60)}m ago`).join('; ');
 }
 
 // Supervisor respawn policy for a loop-process exit. A halt sentinel means the

@@ -4,6 +4,10 @@ One repository, one product, three areas and the module they share. This file
 is what holds across all of them; each area's own `DEV.md` is the context for its
 internals, and a dev session reads this one first and then that one.
 
+The root `package-lock.json` is the product's only lockfile. Package-level
+lockfiles are unsupported: cold installs and releases always run from the
+workspace root, and a nested lock can drift while looking authoritative.
+
 | Area | Package | Name on npm/bin | Its context |
 | --- | --- | --- | --- |
 | App shell | `packages/app` | served by `helmo serve` | this file |

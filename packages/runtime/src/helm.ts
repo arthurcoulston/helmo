@@ -22,6 +22,20 @@ export interface WakeCheck {
   ready_ids?: string[];
 }
 
+/** A wake-check with the tickets another live session holds in this seat's
+ *  name taken out of its held work. Held wakes ride newly_ready_ids, so a
+ *  verdict or answer on a sitting's ticket would otherwise wake this loop for
+ *  news that is the sitting's, on a ticket the loop may not act on. */
+export function withoutHolds(w: WakeCheck, ids: string[]): WakeCheck {
+  if (!ids.length) return w;
+  const newly = w.newly_ready_ids?.filter((id) => !ids.includes(id));
+  return {
+    ...w,
+    ...(w.held_count === undefined ? {} : { held_count: Math.max(0, w.held_count - ids.length) }),
+    ...(newly ? { newly_ready_ids: newly, newly_ready_count: newly.length } : {}),
+  };
+}
+
 export function readyTicketIds(g: GlobalConfig, l: LoopConfig): string[] {
   if (l.workstream === '*') return [];
   const list = (args: string[]) => (run(g, ['list', '--ready', ...args, '--limit', '100'], loopActor(l)) as { tickets: { id: string; lane?: string | null }[] }).tickets;

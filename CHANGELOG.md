@@ -11,7 +11,17 @@ consolidation imported still carried that release's notes under "Unreleased";
 this is the published wording, which is two entries and one commit reference
 longer.
 
-## Unreleased
+## Unreleased — 0.12.0
+
+- An incident is a ticket, and its lifecycle now has a supported input.
+  `helmo_record_incident` and `helmo work incident-record` record
+  investigation, mitigation and verified resolution on the same `H-n`, with
+  cause, containment, fix, recovery proof, recurrence proof, the
+  acknowledgement of a human report, and the work still owned. The record
+  refuses what it cannot stand behind: mitigation without containment,
+  resolution without recovery proof. An incident opens onto a record whose
+  every field reads Unknown rather than absent, so the guards and the view
+  read a statement rather than a missing key.
 
 - An incident now reaches the operator. Identification, every material change
   and verified resolution appear on his dashboard, derived from the incident's
@@ -21,6 +31,50 @@ longer.
   the board, and no ticket is withheld from the agents to raise either: a
   response is asked for separately, only when one is needed. Existing stores
   are unchanged; the notices are derived from already-recorded events.
+
+- The separate Issues surface is withdrawn. The Issues navigation entry, the
+  `/issues` page and the Overview Issues card published in v0.11.0 are
+  removed, and nothing replaces them: tickets remain the work record.
+  `/api/v1/issues` stays a versioned compatibility reader, every recorded
+  `issue_observed` and `issue_disposed` event is retained and still replayed,
+  and the `issues` reading on the Overview document is unchanged. Grooming and
+  the hygiene checks behind it are untouched.
+
+- History is a measured reading of what went wrong, at `/api/v1/history` and
+  the shipped `/history` view. Day, week or month, whole team or one actor,
+  with measured tokens, failed acceptance verdicts, explicitly recorded
+  validation results and incident identifications kept apart rather than
+  blended into a score. Each bucket carries raw counts, a rate only where a
+  valid measured denominator exists, evidence refs, and its own source
+  coverage. Missing input, a measured zero and a zero denominator read
+  differently, and nothing is allocated across time it was not measured in.
+
+- Validation results have an explicit writer, so History's test failures are
+  recorded rather than assumed. `helmo_record_test_result` and `helmo work
+  test-result-record` take one named suite, its failed and total counts, the
+  actor, and a durable evidence ref; a blank suite or ref, a non-integer or
+  negative count, and failed greater than total are all refused. A zero is a
+  measured zero for that named run alone and claims nothing about suites or
+  installations nobody recorded.
+
+- A reader can ask what happened while they were away. `/api/v1/work?since=`
+  an ISO instant adds a check-in reading to the Work document: the activity
+  and results in that window, plus an account of a quiet one — finished, held,
+  waiting, no continuation, or honestly unknown. Each stated cause is dated and
+  labelled by whether it covers the window asked about, so a hold that began
+  yesterday cannot explain a week of quiet. This is a reading only; no screen
+  is shipped for it.
+
+- Compatibility and rollback: this is a backward-compatible addition. Two MCP
+  tools and two `helmo work` subcommands are added and none published before
+  is removed or narrowed; no configuration key, service identity or default
+  port changed; the store schema is unchanged, with `incident_recorded` and
+  `test_result_recorded` appended as new values in the existing event-type
+  column. What is removed is browser surface outside the versioned
+  compatibility list — the Issues page, its navigation entry and its Overview
+  card — while its API reader and records stay. The immediately preceding
+  consolidated release remains supported: rolling back to it requires no data
+  migration, because a version that does not select an event type ignores it.
 
 ## v0.11.0 — 2026-10-12
 

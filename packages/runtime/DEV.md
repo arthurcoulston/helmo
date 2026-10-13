@@ -679,6 +679,29 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   attempt back as retryable. Refused claims fail as not retryable; Git or
   network errors as retryable. Each non-idle pass is a `refinement-commit`
   event.
+- `refinement-preparation.ts` is the H-1523 preparation protocol adapter,
+  currently **not wired to the supervisor**. It consumes the separate signed
+  `/api/refinement-preparation/*` contract. A claim carries one meeting's
+  organization/project, directive version/content hash, submitted-feedback
+  hash, lease token and provider-publication decision reference. The Worker
+  checks configured scope and current evidence on heartbeat; configuration is
+  trusted operator relay, not a Helmo-verified grant. The adapter validates
+  identifiers and portable meeting names before any callback. It saves only
+  those identifiers, artifact refs, binding receipts and closed failure
+  diagnostics, bound to the original origin and executor identity.
+  Build/publish callbacks must call the supplied checkpoint immediately before
+  each external effect. The adapter also checkpoints between phases, preserves
+  a receipt before readback, and requires a read-only provider verification
+  callback before result delivery. Verification mismatch fails for owned
+  inspection rather than another mutation. A verified result or outstanding
+  failure is reconciled first on restart; a lost result response cannot repeat
+  publication. Five 422 result refusals stop automatic retry. Network ambiguity
+  retains state, with Builder named in the content-free last-run record.
+  These are local protocol guarantees tested with injected callbacks, **not**
+  actual provider or isolated Git/prompt-pipeline proof. The supported isolated
+  pull/build/scoped-commit/publish callbacks and real provider readback remain
+  to be implemented before poll wiring, upstream adoption or deployment. There
+  is no new roster setting, listener, scheduler or live authority scope.
 - A human answer reopens a Helmo ticket with `resolution: resume` regardless
   of whether its operational choice was resume, hold, or investigate. The
   supervisor clears `BLOCKED` only when `last_answer.chosen_option` is the

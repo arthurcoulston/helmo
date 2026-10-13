@@ -14,6 +14,11 @@ function envelope(version = 1, start = '2026-10-01T16:00:00Z') {
   return { ...e, identity: hash([e.orgId, e.projectId, e.bookingId, e.scheduledStart].join('\0')), signupSha256: hash(e.signupDocument) };
 }
 
+function staged() {
+  return { artifactRef: `goodplumb@${'a'.repeat(40)}`, signupSha256: envelope().signupSha256,
+    promptSha256: 'b'.repeat(64), artifactProof: { commit: 'x', signup: 'x', prompt: 'x', trees: {} } };
+}
+
 function harness(responses: Array<[number, unknown]>) {
   const calls: Array<{ action: string; body: Record<string, unknown>; headers: Headers }> = [];
   const request = async (input: string | URL | Request, init?: RequestInit) => {
@@ -47,16 +52,74 @@ describe('intake preparation executor', () => {
     expect(h.calls.every((c) => c.headers.get('x-gp-signature')?.match(/^[0-9a-f]{64}$/))).toBe(true);
   });
 
-  it.each(['done', 'cancelled', 'awaiting_human'])('stops lease retention when the assignment is %s', async (status) => {
+  it.each(['done', 'cancelled', 'awaiting_human'])('stops lease retention when the assignment is %s with nothing staged', async (status) => {
     const h = harness([[200, envelope()]]);
     const o = options(h.request);
     expect(await intakePreparationPass(o)).toBe('claimed');
-    writeFileSync(o.resultFile, '{}');
     o.assignmentStatus = () => status;
     expect(await intakePreparationPass(o)).toBe('abandoned');
     expect(h.calls.map((c) => c.action)).toEqual(['claim']);
     expect(() => readFileSync(o.stateFile)).toThrow();
+  });
+
+  // the Builder stages, then closes; the close landed before the poll
+  // and the staged result was thrown away, so the attempt came back as new work.
+  it.each(['done', 'cancelled'])('delivers a result staged before the assignment became %s', async (status) => {
+    const h = harness([[200, envelope()], [200, { state: 'ready' }]]);
+    const o = options(h.request);
+    expect(await intakePreparationPass(o)).toBe('claimed');
+    writeFileSync(o.resultFile, JSON.stringify(staged()));
+    o.assignmentStatus = () => status;
+    expect(await intakePreparationPass(o)).toBe('completed');
+    expect(h.calls.map((c) => c.action)).toEqual(['claim', 'result']);
     expect(() => readFileSync(o.resultFile)).toThrow();
+  });
+
+  it('keeps the lease and the result while a refused result can still be repaired, and says why', async () => {
+    const h = harness([[200, envelope()], [422, { error: 'commit not reachable' }], [200, { leaseExpiresAt: 'later' }]]);
+    const o = options(h.request);
+    await intakePreparationPass(o);
+    writeFileSync(o.resultFile, JSON.stringify(staged()));
+    await expect(intakePreparationPass(o)).rejects.toThrow(/refused \(422: commit not reachable\); lease renewed, result kept/);
+    expect(h.calls.map((c) => c.action)).toEqual(['claim', 'result', 'heartbeat']);
+    expect(readFileSync(o.resultFile, 'utf8')).toContain('goodplumb@');
+  });
+
+  it('prints only a Worker error phrase, never an arbitrary body', async () => {
+    const h = harness([[200, envelope()], [422, { error: 'Signup text: Dear Jane' }], [200, {}]]);
+    const o = options(h.request);
+    await intakePreparationPass(o);
+    writeFileSync(o.resultFile, JSON.stringify(staged()));
+    await expect(intakePreparationPass(o)).rejects.toThrow(/refused \(422\); lease renewed/);
+  });
+
+  it('names the abandoned attempt and its commit when the same attempt is assigned again', async () => {
+    const h = harness([[200, envelope()], [422, { error: 'commit not reachable' }], [200, envelope()]]);
+    const bodies: string[] = [];
+    let n = 0;
+    const o = options(h.request, (body) => { bodies.push(body); return `H-${++n}`; });
+    await intakePreparationPass(o);
+    writeFileSync(o.resultFile, JSON.stringify(staged()));
+    o.assignmentStatus = () => 'done';
+    expect(await intakePreparationPass(o)).toBe('abandoned');
+    o.assignmentStatus = () => 'in_progress';
+    expect(await intakePreparationPass(o)).toBe('claimed');
+    expect(bodies[0]).not.toMatch(/abandoned/);
+    expect(bodies[1]).toContain(`This same attempt was assigned to H-1 and abandoned when that ticket closed; its result goodplumb@${'a'.repeat(40)} was refused (422: commit not reachable).`);
+    expect(bodies[1]).toMatch(/Do not prepare again/);
+  });
+
+  it('marks a later attempt of the same occurrence as a retry', async () => {
+    const h = harness([[200, envelope()], [200, envelope(2)]]);
+    const bodies: string[] = [];
+    const o = options(h.request, (body) => { bodies.push(body); return `H-${bodies.length}`; });
+    await intakePreparationPass(o);
+    o.assignmentStatus = () => 'cancelled';
+    await intakePreparationPass(o);
+    o.assignmentStatus = () => 'in_progress';
+    await intakePreparationPass(o);
+    expect(bodies[1]).toContain('Earlier attempt attempt_1 was assigned to H-1 and abandoned when that ticket closed without a result.');
+    expect(bodies[1]).toContain('This is attempt 2 of this preparation.');
   });
 
   it('reports a bounded invariant failure and leaves retry ownership with the Worker', async () => {

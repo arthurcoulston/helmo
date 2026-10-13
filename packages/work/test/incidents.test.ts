@@ -103,6 +103,21 @@ describe('incident notices', () => {
     expect(closed.unresolved).toEqual([]);
   });
 
+  test('an old unresolved incident shows what it is now, not what it was at identification', () => {
+    const store = new Store(':memory:'); stores.push(store); const id = opened(store);
+    // Contained eight days ago and never resolved. The identification is the
+    // only row old enough to have survived a day window, and it says "still
+    // happening" — which stopped being true on the second event.
+    store.recordIncidentEvent(actor, id, { stage: known('mitigated'), containment: known('service disabled'), happening_now: known(false) }, later(15));
+    const week = new Date(Date.parse(at) + 8 * 24 * 60 * 60 * 1000).toISOString();
+
+    const board = store.incidentNotices(week);
+    expect(board.unresolved).toEqual([id]);
+    expect(board.rows).toHaveLength(1);
+    expect(board.rows[0]).toMatchObject({ moment: 'material_change', stage: 'mitigated', happening_now: false });
+    expect(board.total).toBe(2);
+  });
+
   test('a notice is never raised by withholding the ticket from the agents', () => {
     const store = new Store(':memory:'); stores.push(store); const id = opened(store);
     const ticket = store.getTicket(id);

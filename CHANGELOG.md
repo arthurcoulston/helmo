@@ -11,6 +11,17 @@ consolidation imported still carried that release's notes under "Unreleased";
 this is the published wording, which is two entries and one commit reference
 longer.
 
+## Unreleased
+
+- An incident now reaches the operator. Identification, every material change
+  and verified resolution appear on his dashboard, derived from the incident's
+  own events — recording is what notifies him, and `helmo_record_incident` and
+  `helmo work incident-record` hand back the notice the call raised. A band
+  above the Overview readings carries what is live, the Incidents page carries
+  the board, and no ticket is withheld from the agents to raise either: a
+  response is asked for separately, only when one is needed. Existing stores
+  are unchanged; the notices are derived from already-recorded events.
+
 ## v0.11.0 — 2026-10-12
 
 - Work now projects sourced issues and incidents from ticket events without

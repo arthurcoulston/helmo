@@ -500,6 +500,23 @@ disclosure. Colour follows the same restraint as everywhere: queued work, a
 deliberate hold and a date gate stay neutral, and the two readings that are
 about Arthur carry a role.
 
+**An incident interrupts, and says it is not asking.** The notice band sits
+above Arthur's four Overview readings in `packages/shell/src/
+IncidentNotices.tsx`: at most three lines, each one incident and the moment it
+was recorded, and nothing at all when no incident is unresolved and none was
+recorded in the rolling day — so the four ratified readings keep the page they
+were ratified on, and an incident is the only thing that may push them down.
+Its loudness is the loudest thing it carries, through `incidentNoticeRole`:
+red is an incident recorded as still happening, amber is unresolved, green is
+a verified resolution, and an earlier notice on a closed incident takes no
+colour rather than keeping its red under its own green. The board behind it,
+on Incidents, is the record of what he was told — the moment, the changed
+fields in words rather than the codes the server sends, and a count of what
+the day window is not showing. Neither rendering is a request: both say in
+words that nothing on them is waiting on him, because the surface that does
+wait, `needs_human`, withholds the ticket from every agent queue and a live
+incident is exactly the work that must not be parked.
+
 **All five areas now use the same standard application.** Overview, Work,
 Roadmap, Team and Runtime share the official sidebar and components. Work,
 Roadmap and Runtime standalone entry points serve that same built document;

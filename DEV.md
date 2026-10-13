@@ -194,8 +194,19 @@ versioned compatibility reader for retained historical issue events; it has no
 page, card, or supported write workflow. The unified app serves
 `/api/v1/incidents` and `/api/v1/incidents/H-n`, and the shell routes
 `/incidents` and incident detail through the same built application.
+Incident notices are derived from the incident events, never stored: recording
+an incident is what notifies the operator. The board rides on
+`/api/v1/incidents` and on the Overview document, carries identification,
+every material change and verified resolution, and holds the rolling day plus
+the latest notice of every unresolved incident. No ticket is marked
+`needs_human` to raise one — that withholds the work from every agent queue —
+so a response is asked for separately, through the request path, only when one
+is needed.
 The four operator readings are the first Overview content: a two-column grid
-at the 1280×800 baseline and one column on narrow windows. Their own card
+at the 1280×800 baseline and one column on narrow windows. The incident band
+is the one thing drawn above them, at most three lines and nothing at all when
+no incident is unresolved and none was recorded in the day, so an incident is
+the only thing that may push the four readings down. Their own card
 titles are the only section titles; Overview carries no duplicate area-card
 navigation below them, while the sidebar remains the route to each product.
 The reading order is present state, next work, team activity, then the taller

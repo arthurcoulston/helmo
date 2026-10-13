@@ -23,7 +23,8 @@
    The window comes from the server with the rows. Nothing here can be marked
    read, because the view carries no record data-entry, so the day window is
    what clears a notice — except for an incident still unresolved, whose
-   identification stays however old it is. */
+   latest notice stays however old it is, so an old open incident reads as
+   what it is now rather than as what it was at identification. */
 import { AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { incidentNoticeRole, StatusAlert, StatusBadge } from "./Status"

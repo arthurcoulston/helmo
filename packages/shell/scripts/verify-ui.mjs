@@ -1096,7 +1096,7 @@ try {
      quiet record draw exactly alike. */
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto(`${origin}/incidents`);
-  const board = page.locator('[aria-label="Incident notice record"]');
+  const board = page.locator('table[aria-label="Incident notice record"]');
   await board.waitFor();
   const told = await board.evaluate((el) => [...el.querySelectorAll('tbody tr')].map((row) =>
     [...row.querySelectorAll('[data-column]')].map((cell) => cell.textContent.replace(/\s+/g, ' ').trim())));
@@ -1211,11 +1211,25 @@ try {
     const geometry = await page.evaluate(() => [...document.querySelectorAll('[data-slot="table-container"]')].map((container) => {
       const table = container.querySelector('table');
       const left = table.getBoundingClientRect().left;
-      return [...container.querySelectorAll('thead th[data-column]')]
-        .map((th) => `${th.dataset.column}@${Math.round(th.getBoundingClientRect().left - left)}+${Math.round(th.getBoundingClientRect().width)}`)
-        .join(' ');
+      const heads = [...container.querySelectorAll('thead th[data-column]')];
+      return {
+        columns: heads.map((th) => th.dataset.column).join(' '),
+        shape: heads
+          .map((th) => `${th.dataset.column}@${Math.round(th.getBoundingClientRect().left - left)}+${Math.round(th.getBoundingClientRect().width)}`)
+          .join(' '),
+      };
     }));
-    if (geometry.length > 1) shapes.set(`${area} ${theme} ${width}`, [...new Set(geometry)]);
+    /* Grouped by which COLUMNS a table has, not merely by being on the same
+       page. Equivalence is what this check is about, and Incidents now draws
+       two tables that are not groups of one view — the incident records and
+       the notice board behind them (H-3216) — so every table on a page being
+       one shape was never the invariant. Two tables with the same columns
+       still have to line up, which is Work's and Roadmap's groups and the 12
+       below. */
+    for (const columns of new Set(geometry.map((table) => table.columns))) {
+      const group = geometry.filter((table) => table.columns === columns);
+      if (group.length > 1) shapes.set(`${area} ${theme} ${width} [${columns}]`, [...new Set(group.map((table) => table.shape))]);
+    }
     spill.push(...(await page.evaluate(() => [...document.querySelectorAll('tbody td[data-column]')].flatMap((cell) => {
       const style = getComputedStyle(cell);
       const box = cell.getBoundingClientRect();
@@ -1350,7 +1364,7 @@ try {
      regardless. */
   assert.deepEqual(
     [...new Set(folds.map((fold) => fold.column))].sort(),
-    ['context', 'incident', 'issue', 'loop', 'member', 'moment', 'project', 'stage', 'state', 'work'],
+    ['context', 'incident', 'loop', 'member', 'moment', 'project', 'stage', 'state', 'work'],
     'every above-fold column every view declares must be measured at 390',
   );
   assert.ok(folds.length >= 24, `only ${folds.length} above-fold columns were measured at 390, so the fold was not really read`);

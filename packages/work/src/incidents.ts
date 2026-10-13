@@ -162,7 +162,7 @@ export interface IncidentNoticeBoard {
 }
 
 /** The notices the dashboard shows: everything recorded in the rolling day,
- *  plus the identification of every incident that is still unresolved however
+ *  plus the LATEST notice of every incident that is still unresolved however
  *  long ago that was.
  *
  *  A day, because nothing on this page can be marked read — the view carries no
@@ -170,7 +170,13 @@ export interface IncidentNoticeBoard {
  *  clear a notice, and the day is the window Overview's other readings already
  *  use. The unresolved exception is the part that matters: an incident nobody
  *  has closed must not age off the surface that is supposed to be telling him
- *  about it. */
+ *  about it.
+ *
+ *  Its LATEST notice and not its identification, because a notice carries the
+ *  incident as it stood when it was recorded: an incident opened as ongoing
+ *  nine days ago and contained eight days ago would otherwise have kept
+ *  saying "still happening" from the one row old enough to survive the
+ *  window. */
 export function incidentNoticeBoard(events: IncidentEvent[], asOf: string): IncidentNoticeBoard {
   const notices = incidentNotices(events, asOf);
   const records = replayIncidents(events, asOf);
@@ -179,6 +185,9 @@ export function incidentNoticeBoard(events: IncidentEvent[], asOf: string): Inci
     .map((row) => row.ticket_id);
   const since = new Date(new Date(asOf).getTime() - DAY_MS).toISOString();
   const sinceMs = Date.parse(since);
+  // Newest first, so the first notice seen for an incident is its latest.
+  const latest = new Map<string, IncidentNotice>();
+  for (const notice of notices) if (!latest.has(notice.ticket_id)) latest.set(notice.ticket_id, notice);
   return {
     as_of: asOf,
     window_started_at: since,
@@ -188,7 +197,7 @@ export function incidentNoticeBoard(events: IncidentEvent[], asOf: string): Inci
     rows: notices.filter(
       (notice) =>
         Date.parse(notice.at) > sinceMs ||
-        (notice.moment === 'identified' && unresolved.includes(notice.ticket_id)),
+        (unresolved.includes(notice.ticket_id) && latest.get(notice.ticket_id) === notice),
     ),
   };
 }

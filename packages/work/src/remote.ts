@@ -40,7 +40,7 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
   return raw ? JSON.parse(raw) : undefined;
 }
 
-createServer((req: IncomingMessage, res: ServerResponse) => {
+const listener = createServer((req: IncomingMessage, res: ServerResponse) => {
   void (async () => {
     if (req.headers.authorization !== `Bearer ${token}`) {
       res.writeHead(401, { 'content-type': 'application/json' });
@@ -72,3 +72,11 @@ createServer((req: IncomingMessage, res: ServerResponse) => {
 }).listen(port, '127.0.0.1', () =>
   console.log(`Helmo remote MCP: http://127.0.0.1:${port} (Streamable HTTP, bearer-gated) — ${installationLine(install, store.installationIdentity())}`),
 );
+
+// Test and supervised callers use IPC as the lifetime bond. Without this,
+// an interrupted caller leaves a bearer-gated server and its store behind.
+if (process.channel) {
+  process.once('disconnect', () => {
+    listener.close(() => store.close());
+  });
+}

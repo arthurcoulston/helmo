@@ -243,6 +243,14 @@ describe('every entry point reaches one installation through its home (H-2472)',
     });
     expect(await res.text()).toContain(title);
     expect(line).toContain(`install: ${installation(env({ HELMO_HOME: home })).label}`);
+    child.disconnect();
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('the remote surface outlived its IPC caller')), 5_000);
+      child.once('exit', () => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
   });
 });
 

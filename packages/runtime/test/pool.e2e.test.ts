@@ -747,6 +747,23 @@ describe('lane workers on one seat', { timeout: 90000 }, () => {
     expect(resumed.stalled_work).toEqual([]);
   });
 
+  it('reports a self-filed reservation as a triage hold, not launchable work', () => {
+    const e = setup((h) => worker('w1', h, 'true'));
+    const created = JSON.parse(execFileSync('node', [HELM_CLI, 'create', '--title', 'Builder discovery', '--body', 'needs second eyes', '--workstream', 'rev-test', '--type', 'ops', '--assignee', 'builder'], {
+      env: { ...e.env, HELMO_ACTOR: JSON.stringify({ name: 'builder', kind: 'agent', model: 't', version: '0', session: 'rev:w1' }) }, encoding: 'utf8',
+    })) as { id: string };
+
+    const status = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    expect(status.ready_without_progress).toEqual([]);
+    expect(status.self_triage).toEqual([expect.objectContaining({ ticket: created.id, seat: 'builder' })]);
+    expect(status.stalled_work).toEqual([expect.objectContaining({ id: `self_triage:${created.id}`, checks: 1 })]);
+
+    const human = execFileSync('npx', ['tsx', REV_CLI, 'status'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') });
+    expect(human).toContain(`SELF-TRIAGE HOLD: ${created.id} (builder)`);
+    expect(ticket(e, created.id)).toMatchObject({ status: 'open', assignee: 'builder' });
+    expect(existsSync(join(e.home, 'state', 'w1', 'launches'))).toBe(false);
+  });
+
   it('a worker swapped to a lane while it holds work launches nothing and releases nothing; restoring its allowlist resumes it', () => {
     const keep = `${BOUND}; [ -f $REV_HOME/second ] || { node ${HELM_CLI} update --ticket $T --note "partial progress"; exit 1; }; ${FINISH}`;
     const e = setup((h) => worker('w1', h, keep, 'tickets = ["H-1"]\n') + worker('w2', h, 'true'));

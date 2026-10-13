@@ -318,16 +318,22 @@ try {
       break;
     }
     case 'list': {
+      const caller = actorSafe()?.name;
+      const ready = has('ready') ? true : undefined;
       const tickets = store.listTickets({
-        ready: has('ready') ? true : undefined,
+        ready,
         status: flag('status') as never,
         workstream: flag('workstream'),
         assignee: flag('assignee'),
         lane: flag('lane'),
-        caller: actorSafe()?.name,
+        caller,
         limit: Number(flag('limit') ?? 20),
       });
-      out({ tickets: tickets.map((t) => ({ id: t.id, title: t.title, status: t.status, priority: t.priority, workstream: t.workstream, assignee: t.assignee, lane: t.lane })) });
+      const awaitingTriage = ready && caller ? store.selfFiledPending(caller) : [];
+      out({
+        tickets: tickets.map((t) => ({ id: t.id, title: t.title, status: t.status, priority: t.priority, workstream: t.workstream, assignee: t.assignee, lane: t.lane })),
+        ...(awaitingTriage.length ? { awaiting_triage: awaitingTriage.map((id) => ({ id })) } : {}),
+      });
       break;
     }
     case 'get': {

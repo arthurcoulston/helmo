@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { revHome } from './config.js';
 
 export interface StallObservation {
-  case: 'unavailable_seat' | 'ready_without_progress';
+  case: 'unavailable_seat' | 'ready_without_progress' | 'self_triage';
   ticket: string;
   seat: string;
   reason: string;

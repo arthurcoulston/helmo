@@ -34,6 +34,27 @@ export function readyTicketIds(g: GlobalConfig, l: LoopConfig): string[] {
   ].filter(ours).map((t) => t.id))];
 }
 
+/** Work reserved to a seat but withheld from that same seat because it filed
+ * the ticket and nobody else has judged it yet. This is not launchable work:
+ * the supported recovery is another seat's recorded triage. */
+export function selfTriageWork(g: GlobalConfig, loops: LoopConfig[]):
+  { ticket: string; seat: string; reason: string; action: string }[] {
+  const out = new Map<string, { ticket: string; seat: string; reason: string; action: string }>();
+  for (const seat of [...new Set(loops.map(seatName))]) {
+    const worker = loops.find((loop) => seatName(loop) === seat)!;
+    const result = run(g, ['list', '--ready', '--assignee', seat, '--limit', '200'], loopActor(worker)) as {
+      awaiting_triage?: { id: string }[];
+    };
+    for (const ticket of result.awaiting_triage ?? []) out.set(ticket.id, {
+      ticket: ticket.id,
+      seat,
+      reason: `${ticket.id} was filed by ${seat} and is withheld from that same seat pending second eyes`,
+      action: `another seat must record its triage judgment or hand the ticket to an eligible owner`,
+    });
+  }
+  return [...out.values()];
+}
+
 export interface WorkstreamInfo {
   name: string;
   budget_usd: number | null;

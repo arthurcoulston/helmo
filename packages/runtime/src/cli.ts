@@ -9,7 +9,7 @@ import { sessionSpec } from './shim.js';
 import { LoopConfig } from './types.js';
 import { pollUsage, readCodexUsage, readUsage, refreshCodexUsage, usageLine, usagePath } from './usage.js';
 import { selectRun } from './routing.js';
-import { eligibleSeatBacklog, unavailableSeatWork, unservedLaneWork } from './helm.js';
+import { eligibleSeatBacklog, selfTriageWork, unavailableSeatWork, unservedLaneWork } from './helm.js';
 import { runLoop } from './loop.js';
 import { serviceFile, serviceInstall, serviceStart, serviceStatusLine, serviceUninstall, stalePinnedService } from './service.js';
 import { assertInstallation, requireTarget, target, targetLine } from './install.js';
@@ -265,11 +265,13 @@ function readyWithoutProgress(): ReturnType<typeof eligibleSeatBacklog> | null {
 function stalledWork(
   unavailable: NonNullable<ReturnType<typeof unavailableSeatWork>>,
   ready: NonNullable<ReturnType<typeof eligibleSeatBacklog>>,
+  selfTriage: NonNullable<ReturnType<typeof selfTriageWork>>,
 ) {
   try {
     return recordStallEpisodes([
       ...unavailable.map((gap) => ({ case: 'unavailable_seat' as const, ...gap })),
       ...ready.map((gap) => ({ case: 'ready_without_progress' as const, ...gap })),
+      ...selfTriage.map((gap) => ({ case: 'self_triage' as const, ...gap })),
     ]);
   } catch {
     return null;
@@ -424,7 +426,9 @@ switch (cmd) {
     // table stays as it is: four estate tools parse its header exactly.
     const unavailable = unavailableSeats();
     const ready = readyWithoutProgress();
-    const episodes = unavailable === null || ready === null ? null : stalledWork(unavailable, ready);
+    let selfTriage: ReturnType<typeof selfTriageWork> | null;
+    try { selfTriage = selfTriageWork(g, Object.values(loops)); } catch { selfTriage = null; }
+    const episodes = unavailable === null || ready === null || selfTriage === null ? null : stalledWork(unavailable, ready, selfTriage);
     if (rest.includes('--json')) {
       console.log(JSON.stringify({
         installation: target('unchecked').label, home: target('unchecked').home,
@@ -440,6 +444,7 @@ switch (cmd) {
         unserved_lanes: laneGaps(),
         unavailable_seats: unavailable,
         ready_without_progress: ready,
+        self_triage: selfTriage,
         stalled_work: episodes,
       }, null, 2));
       break;
@@ -474,6 +479,8 @@ switch (cmd) {
         : unavailable.map((gap) => `UNAVAILABLE SEAT WORK: ${gap.ticket} (${gap.seat}) — ${gap.reason}; ${gap.action}`)),
       ...(ready === null ? ['READY-PROGRESS CHECK: unreadable — Helmo did not answer']
         : ready.map((gap) => `READY WITHOUT PROGRESS: ${gap.ticket} (${gap.seat}) — ${gap.reason}; ${gap.action}`)),
+      ...(selfTriage === null ? ['SELF-TRIAGE CHECK: unreadable — Helmo did not answer']
+        : selfTriage.map((gap) => `SELF-TRIAGE HOLD: ${gap.ticket} (${gap.seat}) — ${gap.reason}; ${gap.action}`)),
       ...(episodes === null ? ['STALL EPISODES: unreadable — prior observation state could not be reconciled']
         : episodes.map((episode) => `STALL EPISODE: ${episode.id} — observed ${episode.checks} time${episode.checks === 1 ? '' : 's'} since ${episode.first_observed_at}`)),
     ];

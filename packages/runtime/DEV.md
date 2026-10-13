@@ -1115,7 +1115,9 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   roster seat. `unavailable_seats` names ready work no eligible worker can draw
   and the coordinator action; unreadable Work state stays `null`, UNKNOWN asks
   for verification, and deliberate STOP/HOLD/PARKED/SEAT_HELD controls are not
-  recovery findings.
+  recovery findings. `self_triage` separately names a seat's own filings that
+  Work has correctly withheld for second eyes; their action is recorded triage,
+  never a launch or a bypass of the gate.
 - `node dist/cli.js trace H-n@installation` is the read-only exact-key
   diagnostic across Runtime launch journals and Work history. It requires a
   qualified ticket reference, emits closed metadata only, and keeps observed,

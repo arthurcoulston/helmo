@@ -603,7 +603,19 @@ export function unservedLaneWork(g: GlobalConfig, loops: LoopConfig[], live: (na
 export function unavailableSeatWork(g: GlobalConfig, loops: LoopConfig[], live: (name: string) => string | null):
   { ticket: string; seat: string; reason: string; action: string }[] {
   const out: { ticket: string; seat: string; reason: string; action: string }[] = [];
-  for (const seat of [...new Set(loops.map(seatName))]) {
+  const rosterSeats = [...new Set(loops.map(seatName))];
+  const allReady = (run(g, ['list', '--ready', '--all-assignees', '--limit', '200'], revActor()) as
+    { tickets: { id: string; assignee: string | null }[] }).tickets;
+  for (const ticket of allReady) {
+    if (!ticket.assignee || rosterSeats.includes(ticket.assignee)) continue;
+    out.push({
+      ticket: ticket.id,
+      seat: ticket.assignee,
+      reason: `${ticket.assignee} has no configured worker`,
+      action: `coordinator must configure the ${ticket.assignee} seat or reroute the ticket`,
+    });
+  }
+  for (const seat of rosterSeats) {
     const workers = loops.filter((l) => seatName(l) === seat);
     const rows = (run(g, ['list', '--ready', '--assignee', seat, '--limit', '200'], loopActor(workers[0]!)) as
       { tickets: { id: string; workstream: string; project?: string | null; lane?: string | null }[] }).tickets;

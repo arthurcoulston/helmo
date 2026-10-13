@@ -43,7 +43,7 @@ const COMMAND_FLAGS: Record<string, readonly string[]> = {
   'workstream-set': ['name', 'budget-usd', 'seat'],
   'rename-workstream': ['from', 'to', 'note'],
   'record-spend': ['ticket', 'tokens', 'cost-usd', 'cost-basis', 'note'],
-  list: ['ready', 'status', 'workstream', 'assignee', 'lane', 'limit'],
+  list: ['ready', 'all-assignees', 'status', 'workstream', 'assignee', 'lane', 'limit'],
   get: ['ticket', 'history', 'trace'],
   'product-complete': ['ticket', 'artifacts', 'note'],
   'acceptance-verdict': ['ticket', 'refs', 'verdict', 'note'],
@@ -322,6 +322,7 @@ try {
       const ready = has('ready') ? true : undefined;
       const tickets = store.listTickets({
         ready,
+        all_assignees: ready && has('all-assignees'),
         status: flag('status') as never,
         workstream: flag('workstream'),
         assignee: flag('assignee'),
@@ -331,7 +332,7 @@ try {
       });
       const awaitingTriage = ready && caller ? store.selfFiledPending(caller) : [];
       out({
-        tickets: tickets.map((t) => ({ id: t.id, title: t.title, status: t.status, priority: t.priority, workstream: t.workstream, assignee: t.assignee, lane: t.lane })),
+        tickets: tickets.map((t) => ({ id: t.id, title: t.title, status: t.status, priority: t.priority, workstream: t.workstream, assignee: t.assignee, project: t.project, lane: t.lane })),
         ...(awaitingTriage.length ? { awaiting_triage: awaitingTriage.map((id) => ({ id })) } : {}),
       });
       break;
@@ -541,7 +542,7 @@ try {
   actor-tickets  --name A --since-seq N [--session S]          (which tickets, most-touched first)
   actor-spend    --name A --since-seq N [--session S]          (self-reported spend in the window, total + by_ticket)
   record-spend   --ticket H-n [--tokens N] [--cost-usd X --cost-basis provider_reported_metered|api_equivalent_estimate|legacy_mixed_unknown] --note N
-  list           [--ready] [--status S] [--workstream W] [--assignee A] [--lane L] [--limit N]
+  list           [--ready] [--all-assignees] [--status S] [--workstream W] [--assignee A] [--lane L] [--limit N]
   get            <ticket-id>
   action         --ticket H-n --situation S --action A --why-human W [--if-unanswered C]
   action-report  --ticket H-n --did D

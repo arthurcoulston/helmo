@@ -792,6 +792,38 @@ describe('lane workers on one seat', { timeout: 90000 }, () => {
     expect(existsSync(join(e.home, 'state', 'w1', 'launches'))).toBe(false);
   });
 
+  it('reports review and integration reservations that no configured worker can draw', () => {
+    const e = setup((h) => worker('w1', h, 'true', 'project = "R-44"\n') + worker('w2', h, 'true', 'project = "R-45"\n'));
+    const review = (helm(e, ['create', '--title', 'Independent review', '--body', 'review the candidate', '--workstream', 'review', '--type', 'review', '--assignee', 'reviewer']) as { id: string }).id;
+    const integration = seed(e, 'Integrate the candidate', 'R-43');
+    execFileSync('node', [HELM_CLI, 'update', '--ticket', integration, '--handoff-to', 'builder', '--note', 'hand the candidate to its integration owner'], {
+      env: { ...e.env, HELMO_ACTOR: JSON.stringify({ name: 'router', kind: 'agent', model: 't', version: '0' }) }, encoding: 'utf8',
+    });
+
+    const status = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    expect(status.unavailable_seats).toEqual(expect.arrayContaining([
+      {
+        ticket: review,
+        seat: 'reviewer',
+        reason: 'reviewer has no configured worker',
+        action: 'coordinator must configure the reviewer seat or reroute the ticket',
+      },
+      {
+        ticket: integration,
+        seat: 'builder',
+        reason: 'no builder worker is configured for its scope',
+        action: 'coordinator must repair the builder routing or reroute the ticket',
+      },
+    ]));
+    expect(status.stalled_work).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: `unavailable_seat:${review}`, checks: 1 }),
+      expect.objectContaining({ id: `unavailable_seat:${integration}`, checks: 1 }),
+    ]));
+    expect(ticket(e, review)).toMatchObject({ status: 'open', assignee: 'reviewer' });
+    expect(ticket(e, integration)).toMatchObject({ status: 'open', assignee: 'builder' });
+    for (const worker of ['w1', 'w2']) expect(existsSync(join(e.home, 'state', worker, 'launches'))).toBe(false);
+  });
+
   it('a worker swapped to a lane while it holds work launches nothing and releases nothing; restoring its allowlist resumes it', () => {
     const keep = `${BOUND}; [ -f $REV_HOME/second ] || { node ${HELM_CLI} update --ticket $T --note "partial progress"; exit 1; }; ${FINISH}`;
     const e = setup((h) => worker('w1', h, keep, 'tickets = ["H-1"]\n') + worker('w2', h, 'true'));

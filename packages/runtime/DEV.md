@@ -1135,7 +1135,9 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   work. `usage --poll` refreshes Claude remotely and Codex from local rollouts.
 - `status` independently reads the complete ready backlog reserved to each
   roster seat. `unavailable_seats` names ready work no eligible worker can draw
-  and the coordinator action; unreadable Work state stays `null`, UNKNOWN asks
+  — including reservations to a seat absent from the roster and work outside
+  every configured project/ticket/lane scope — and the coordinator action;
+  unreadable Work state stays `null`, UNKNOWN asks
   for verification, and deliberate STOP/HOLD/PARKED/SEAT_HELD controls are not
   recovery findings. `self_triage` separately names a seat's own filings that
   Work has correctly withheld for second eyes; their action is recorded triage,

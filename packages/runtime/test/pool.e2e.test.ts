@@ -710,12 +710,21 @@ describe('lane workers on one seat', { timeout: 90000 }, () => {
       reason: 'w1 is halted',
       action: 'coordinator must restore an eligible builder worker or reroute the ticket',
     }]);
+    expect(status.stalled_work).toEqual([expect.objectContaining({
+      id: `unavailable_seat:${id}`, ticket: id, checks: 1,
+    })]);
+    const repeated = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    expect(repeated.stalled_work).toEqual([expect.objectContaining({
+      id: `unavailable_seat:${id}`, ticket: id, checks: 2,
+    })]);
+    expect(repeated.stalled_work[0].first_observed_at).toBe(status.stalled_work[0].first_observed_at);
     const human = execFileSync('npx', ['tsx', REV_CLI, 'status'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') });
     expect(human).toContain(`UNAVAILABLE SEAT WORK: ${id} (builder) — w1 is halted; coordinator must restore an eligible builder worker or reroute the ticket`);
 
     writeFileSync(join(e.home, 'state', 'w1', 'HOLD'), 'deliberate\n');
     const held = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
     expect(held.unavailable_seats).toEqual([]);
+    expect(held.stalled_work).toEqual([]);
   });
 
   it('a worker swapped to a lane while it holds work launches nothing and releases nothing; restoring its allowlist resumes it', () => {

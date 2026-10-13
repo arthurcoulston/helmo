@@ -92,7 +92,10 @@ table opens. Work's record groups are the same composition in
 `WorkRecord.tsx`. Runtime's complete status projection uses the official Table
 in `RuntimeView.tsx`, which declares its own column geometry rather than
 composing `RecordTable` — it has no expanding record — and UI.md says what that
-geometry is and why. Team profiles
+geometry is and why. Runtime `status` also reconciles complete unavailable-seat
+observations into `state/supervisor/stalled-work.json`: the same case/ticket
+updates one durable episode, a resolved observation disappears, and unreadable
+episode state is reported as unknown rather than an empty healthy result. Team profiles
 are fetched only from configured roster members and shown in standard
 Collapsible components; a missing profile is an explicit Alert. All standalone
 entries serve the same application with navigation limited to their API areas.

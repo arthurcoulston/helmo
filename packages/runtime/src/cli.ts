@@ -24,6 +24,7 @@ import { buildIntakeResult, recordIntakeResult } from './intake-preparation.js';
 import { commandName, runCommand } from './command-name.js';
 import { assertTicketIdentity, readTicketLaunches, sessionTrace } from './session-trace.js';
 import { ticketHistory } from './helm.js';
+import { recordStallEpisodes } from './stalled-work.js';
 
 const [cmd, ...rest] = process.argv.slice(2);
 const TRACE_REFUSAL = 'trace refused: diagnostic unavailable';
@@ -250,6 +251,14 @@ function unavailableSeats(): ReturnType<typeof unavailableSeatWork> | null {
   }
 }
 
+function stalledWork(unavailable: NonNullable<ReturnType<typeof unavailableSeatWork>>) {
+  try {
+    return recordStallEpisodes(unavailable.map((gap) => ({ case: 'unavailable_seat' as const, ...gap })));
+  } catch {
+    return null;
+  }
+}
+
 function state(name: string): string {
   const observation = processObservation(name);
   const pid = observation.pid;
@@ -396,6 +405,8 @@ switch (cmd) {
     // loops, so a liveness check asking "can builder take this?" needs each
     // loop's seat and claim scope, which the human table does not print. The
     // table stays as it is: four estate tools parse its header exactly.
+    const unavailable = unavailableSeats();
+    const episodes = unavailable === null ? null : stalledWork(unavailable);
     if (rest.includes('--json')) {
       console.log(JSON.stringify({
         installation: target('unchecked').label, home: target('unchecked').home,
@@ -409,7 +420,8 @@ switch (cmd) {
           };
         }),
         unserved_lanes: laneGaps(),
-        unavailable_seats: unavailableSeats(),
+        unavailable_seats: unavailable,
+        stalled_work: episodes,
       }, null, 2));
       break;
     }
@@ -433,7 +445,6 @@ switch (cmd) {
     // Below the table, never in it: estate tools parse the table exactly.
     const lanes = Object.values(loops).filter((l) => l.lane);
     const gaps = Object.values(loops).some((l) => (l.peer_sessions?.length ?? 0) > 1) ? laneGaps() : [];
-    const unavailable = unavailableSeats();
     const laneLines = [
       ...(lanes.length ? [`LANES: ${lanes.map((l) => `${l.lane}=${l.name}`).join('  ')}`] : []),
       ...Object.keys(loops).filter((name) => sHas(name, 'OUT_OF_SCOPE'))
@@ -442,6 +453,8 @@ switch (cmd) {
         : gaps.map((gap) => `UNSERVED LANE WORK: ${gap.ticket} (${gap.seat}, lane ${gap.lane}) — ${gap.reason}`)),
       ...(unavailable === null ? ['UNAVAILABLE SEAT WORK: unreadable — Helmo did not answer']
         : unavailable.map((gap) => `UNAVAILABLE SEAT WORK: ${gap.ticket} (${gap.seat}) — ${gap.reason}; ${gap.action}`)),
+      ...(episodes === null ? ['STALL EPISODES: unreadable — prior observation state could not be reconciled']
+        : episodes.map((episode) => `STALL EPISODE: ${episode.id} — observed ${episode.checks} time${episode.checks === 1 ? '' : 's'} since ${episode.first_observed_at}`)),
     ];
     if (laneLines.length) console.log(`\n${laneLines.join('\n')}`);
     console.log('\nSTATE: RUNNING=iteration in flight  IDLE=waiting on wake cursor  PARKED=held via PACE');

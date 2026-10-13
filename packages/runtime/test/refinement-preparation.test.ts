@@ -43,7 +43,7 @@ function harness(replies: Reply[]) {
     last: () => JSON.parse(readFileSync(options.lastRunFile!, 'utf8')) };
 }
 
-describe('preparation protocol adapter (not wired to supervisor)', () => {
+describe('preparation protocol adapter', () => {
   it.each([
     { orgSlug: '../outside' }, { projectSlug: 'x/y' }, { meetingId: 'booking:../outside' },
     { meetingId: 'booking:garbage' }, { directiveVersionId: '-v bad\ntext' }, { identity: '' },
@@ -196,5 +196,32 @@ describe('preparation protocol adapter (not wired to supervisor)', () => {
     const h = harness([[200, envelope()], reply]);
     expect(await pass(h.options)).toBe('pending'); expect(existsSync(h.options.stateFile)).toBe(true);
     expect(h.options.build).not.toHaveBeenCalled(); expect(h.options.publish).not.toHaveBeenCalled();
+  });
+});
+
+describe('supervisor drain fences', () => {
+  it('does not start a signed pass once draining', async () => {
+    const h = harness([]);
+    await expect(pass({ ...h.options, shouldContinue: () => false })).rejects.toThrow('unavailable');
+    expect(h.calls).toEqual([]); expect(h.options.build).not.toHaveBeenCalled();
+  });
+  it('retains the claim when drain begins during build; restart resumes from retained pins', async () => {
+    const h = harness([[200, envelope()], beat()]);
+    let live = true;
+    h.options.build = vi.fn(async (_e, checkpoint) => { live = false; await checkpoint(); return artifact; });
+    expect(await pass({ ...h.options, shouldContinue: () => live })).toBe('pending');
+    expect(h.saved().failure).toBeUndefined(); expect(h.options.publish).not.toHaveBeenCalled();
+    expect(h.calls.map(c => c.action)).toEqual(['claim', 'heartbeat']);
+    live = true; h.options.build = vi.fn(async () => artifact);
+    h.replies.push(beat(), beat(), beat(), [200, {}]);
+    expect(await pass({ ...h.options, shouldContinue: () => live })).toBe('bound');
+    expect(h.calls.filter(c => c.action === 'claim')).toHaveLength(1);
+  });
+  it('drain during heartbeat refuses provider effects without discarding attempt', async () => {
+    const h = harness([[200, envelope()], beat()]); let live = true;
+    const request = h.options.request!;
+    h.options.request = async (...args) => { const response = await request(...args); if (String(args[0]).endsWith('/heartbeat')) live = false; return response; };
+    expect(await pass({ ...h.options, shouldContinue: () => live })).toBe('pending');
+    expect(h.options.build).not.toHaveBeenCalled(); expect(h.saved().envelope.attemptId).toBe('attempt-1');
   });
 });

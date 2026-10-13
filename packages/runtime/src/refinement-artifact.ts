@@ -1,4 +1,4 @@
-// H-1523: isolated exact-meeting artifacts. Not wired to the supervisor.
+// H-1523: isolated exact-meeting artifacts. Used only by the explicit supervisor opt-in.
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, realpathSync } from 'node:fs';
@@ -260,8 +260,8 @@ async function providerChild(options: IsolatedArtifactOptions, raw: PreparationE
   });
 }
 
-/** Concrete callbacks for refinementPreparationPass. Still not wired: source
- * acceptance/upstream adoption and configured action scope precede use. */
+/** Concrete callbacks for refinementPreparationPass. Source acceptance/upstream adoption
+ * and configured action scope precede enabled supervisor use. */
 export function isolatedRefinementCallbacks(options: IsolatedArtifactOptions) {
   return {
     build: (e: PreparationEnvelope, checkpoint: () => Promise<void>) => buildIsolatedRefinement(options, e, checkpoint),

@@ -114,7 +114,7 @@ describe.skipIf(!product || !publishing)('actual product builder and scanner-bac
       expect(f.git(f.remote, 'show-ref', '--heads')).not.toContain(refinementArtifactTarget(e).branch);
     } finally { f.dispose(); }
   });
-  it.each(['create', 'bind'])('runs actual provider callbacks and independently verifies after a lost %s response', async phase => {
+  it.each(['create', 'bind'])('runs actual provider callbacks and independently verifies after a lost %s response', { timeout: 15000 }, async phase => {
     const f = fixture();
     try {
       const callbacks = isolatedRefinementCallbacks(f.options);
@@ -148,7 +148,8 @@ describe.skipIf(!product || !publishing)('actual product builder and scanner-bac
       expect(JSON.parse(readFileSync(f.state, 'utf8')).calls.some((s: string) => s.startsWith('POST'))).toBe(false);
     } finally { f.dispose(); }
   });
-  it('builds exact artifacts, pushes only their branch, and reconciles a committed lost sync response', async () => {
+  // Four real build/sync passes can exceed Vitest's 5s default under fleet load.
+  it('builds exact artifacts, pushes only their branch, and reconciles a committed lost sync response', { timeout: 15000 }, async () => {
     const f = fixture();
     try {
       let beats = 0;

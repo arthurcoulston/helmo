@@ -1,6 +1,5 @@
 // H-1523: the signed preparation protocol, independent of directive commits.
-// Deliberately not connected to the supervisor until the supported isolated
-// artifact/publisher pipeline and live provider readback are implemented.
+// Supervisor use requires explicit pinned isolated artifact configuration.
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { atomicJson, keychainSecret, signedPost } from './intake-preparation.js';
 
@@ -64,6 +63,8 @@ interface Active {
 
 export interface PreparationOptions {
   origin: string; stateFile: string; lastRunFile?: string;
+  /** Drain fence: false retains the durable attempt for restart, before any new effect. */
+  shouldContinue?: () => boolean;
   executorId?: string; executorVersion?: string; secret?: () => string; request?: typeof fetch;
   /** Each implementation must use the checkpoint immediately before external
    * effects, including Git push, provider mutation and product binding. */
@@ -98,7 +99,11 @@ export function refinementPreparationPass(options: PreparationOptions): Promise<
 }
 
 async function run(options: PreparationOptions, seen: { claim?: number }): Promise<PreparationPassResult> {
-  const request = options.request ?? fetch;
+  const continuing = () => { if (options.shouldContinue?.() === false) throw new Unavailable(); };
+  continuing();
+  // Bound signed network ambiguity so supervisor drain does not wait forever.
+  const send = options.request ?? fetch;
+  const request: typeof fetch = (input, init) => send(input, { ...init, signal: AbortSignal.timeout(30_000) });
   const executor = { executorId: options.executorId ?? 'goodplumb-rev', executorVersion: options.executorVersion ?? '1' };
   const url = new URL(options.origin);
   if (url.username || url.password || url.search || url.hash || url.pathname !== '/'
@@ -144,20 +149,24 @@ async function run(options: PreparationOptions, seen: { claim?: number }): Promi
   const owned = { identity: e.identity, attemptId: e.attemptId };
   const save = () => atomicJson(options.stateFile, active);
   const checkpoint = async () => {
+    continuing();
     const beat = await post('heartbeat', owned).catch(() => { throw new Unavailable(); });
     if (beat.status === 409) throw new Superseded();
     if (!beat.ok) throw new Unavailable();
     const body = await beat.json().catch(() => { throw new Unavailable(); }) as { leaseExpiresAt?: string };
     if (!ISO.test(body.leaseExpiresAt ?? '') || Date.parse(body.leaseExpiresAt ?? '') <= Date.now()) throw new Unavailable();
+    continuing();
     e.leaseExpiresAt = body.leaseExpiresAt!;
     save();
   };
   const fail = async () => {
+    continuing();
     const response = await post('failure', { ...owned, ...active.failure });
     if (response.ok || response.status === 409) { forget(); return response.ok ? 'failed' as const : 'superseded' as const; }
     return 'pending' as const;
   };
   const deliver = async (): Promise<PreparationPassResult> => {
+    continuing();
     const response = await post('result', { ...owned, ...active.receipt });
     if (response.ok || response.status === 409) { forget(); return response.ok ? 'bound' : 'superseded'; }
     if (response.status === 422) {

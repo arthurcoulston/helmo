@@ -34,6 +34,12 @@ export interface GlobalConfig {
   probe?: RunChoice;                    // global probe pin ("provider:tier"): every probe pass runs here while its cap stands (H-625)
   intake_preparation_origin?: string;   // opt-in Good Plumb Worker origin; capability remains in Keychain
   intake_preparation_checkout?: string; // checkout receiving the verified signup source
+  refinement_preparation_enabled?: boolean; // explicit separate provider-capable opt-in
+  refinement_preparation_source?: string;
+  refinement_preparation_base_ref?: string; // independently accepted immutable product commit
+  refinement_preparation_work_root?: string;
+  refinement_preparation_sync_script?: string;
+  refinement_preparation_scan_script?: string;
 }
 
 export type Runtime = 'claude' | 'codex' | 'mock';

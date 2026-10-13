@@ -43,6 +43,22 @@ describe('the MCP tool surface after the standing notice was retired (H-1126)', 
   });
 });
 
+describe('the explicit test-result input (H-3216)', () => {
+  it('records only a named measured run with evidence', async () => {
+    const store = new Store(':memory:');
+    const client = await connect(store);
+    const bad = await client.callTool({ name: 'helmo_record_test_result', arguments: { suite: 'work', failed: 3, total: 2, ref: 'run:bad' } });
+    expect(bad.isError).toBe(true);
+    const good = await client.callTool({ name: 'helmo_record_test_result', arguments: { suite: 'work', failed: 1, total: 689, ref: 'run:work-689' } });
+    expect(good.isError).not.toBe(true);
+    expect(JSON.parse((good.content as { text: string }[])[0]!.text).result.result).toMatchObject({ suite: 'work', failed: 1, total: 689, ref: 'run:work-689', actor: orch.name });
+    const [event] = store.db.prepare("SELECT event_type, payload FROM events WHERE event_type = 'test_result_recorded'").all() as { event_type: string; payload: string }[];
+    expect({ event_type: event!.event_type, ...JSON.parse(event!.payload) }).toEqual({ event_type: 'test_result_recorded', suite: 'work', failed: 1, total: 689, ref: 'run:work-689' });
+    await client.close();
+    store.close();
+  });
+});
+
 describe('mistaken human returns through the MCP boundary (H-391)', () => {
   it('pins the contract and records a non-consent correction only for the inspected ask with an owner', async () => {
     const store = new Store(':memory:');

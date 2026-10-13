@@ -646,3 +646,12 @@ describe('the incident recording command', () => {
     expect(record.recurrence_evidence).toHaveLength(1);
   });
 });
+
+describe('the test-result recording command', () => {
+  it('records a named measured run and refuses impossible counts', () => {
+    expect(cli('test-result-record', '--suite', 'work', '--failed', '2', '--total', '1', '--ref', 'run:bad').stderr).toContain('no greater than total');
+    const recorded = cli('test-result-record', '--suite', 'work', '--failed', '0', '--total', '689', '--ref', 'run:work-689');
+    expect(recorded.status).toBe(0);
+    expect(JSON.parse(recorded.stdout)).toMatchObject({ suite: 'work', failed: 0, total: 689, ref: 'run:work-689' });
+  });
+});

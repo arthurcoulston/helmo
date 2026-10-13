@@ -38,6 +38,7 @@ const COMMAND_FLAGS: Record<string, readonly string[]> = {
   hygiene: [],
   'hygiene-dispose': ['check', 'ticket', 'reason'],
   'incident-record': ['ticket', 'stage', 'owner', 'detected-by', 'detected-at', 'affected', 'happening-now', 'cause', 'cause-confidence', 'containment', 'fix', 'recovery-ref', 'recurrence-ref', 'acknowledge', 'remaining'],
+  'test-result-record': ['suite', 'failed', 'total', 'ref'],
   workstream: ['name'],
   'workstream-set': ['name', 'budget-usd', 'seat'],
   'rename-workstream': ['from', 'to', 'note'],
@@ -262,6 +263,12 @@ try {
       // dashboard notice is derived from this event, so the writer can see
       // the notification it raised rather than take it on trust (H-3216).
       out({ incident, notified: store.incidentNotices(at).rows.find((row) => row.ticket_id === on && row.at === at) ?? null });
+      break;
+    }
+    case 'test-result-record': {
+      out(store.recordTestResult(actor(), {
+        suite: req('suite'), failed: Number(req('failed')), total: Number(req('total')), ref: req('ref'),
+      }));
       break;
     }
     case 'workstream': {
@@ -543,6 +550,7 @@ try {
   hygiene                                                      (deterministic record checks, read-only)
   hygiene-dispose --check C --ticket H-n --reason R  (stop re-reporting a finding: any check on a TERMINAL ticket, or spend_anomaly on live work, where it holds until the cost grows by half again)
   incident-record --ticket H-n [--stage investigating|mitigated|resolved] [--owner A] [--detected-by agent|automated_check|human [--detected-at ISO]] [--affected S] [--happening-now true|false] [--cause C [--cause-confidence known|suspected|unknown]] [--containment S] [--fix S] [--recovery-ref REF] [--recurrence-ref REF] [--acknowledge] [--remaining '{"account":..,"owner":..}']
+  test-result-record --suite NAME --failed N --total N --ref REF  (record one explicitly invoked validation run for History)
                  (one lifecycle event on a type:incident ticket. Opens at investigating with every unnamed field Unknown; mitigated needs containment; resolved needs cause, fix, recovery proof and an owner on every remaining item)
   workstream     --name W                                      (budget, seat, spend-to-date; read-only)
   rename-workstream --from X --to Y --note N   (relabel every ticket incl. closed; one evented rename)

@@ -119,6 +119,13 @@ export interface ListFilter {
   cursor?: number; // offset
 }
 
+export interface TestResultInput {
+  suite: string;
+  failed: number;
+  total: number;
+  ref: string;
+}
+
 export interface UpdateResult {
   ticket: Ticket;
   warnings: string[];
@@ -2508,6 +2515,21 @@ export class Store {
     try { assertIncident(candidate); } catch (error) { throw new HelmoError(error instanceof Error ? error.message : String(error)); }
     this.append(recordedAt, ticketId, 'incident_recorded', actor, { patch });
     return candidate;
+  }
+
+  /** A deliberately invoked validation result. This is not inferred from CI
+   *  or arbitrary test output: callers name the covered suite and an evidence
+   *  reference, so History can distinguish missing input from a measured zero. */
+  recordTestResult(actor: Actor, input: TestResultInput, recordedAt = now()): TestResultInput & { seq: number; at: string; actor: string } {
+    validateActor(actor);
+    if (!input.suite.trim()) throw new HelmoError('suite is required.');
+    if (!input.ref.trim()) throw new HelmoError('ref is required: link the recorded run or transcript.');
+    if (!Number.isSafeInteger(input.total) || input.total < 0) throw new HelmoError('total must be a non-negative integer.');
+    if (!Number.isSafeInteger(input.failed) || input.failed < 0 || input.failed > input.total) {
+      throw new HelmoError('failed must be a non-negative integer no greater than total.');
+    }
+    const seq = this.append(recordedAt, `test:${input.suite}`, 'test_result_recorded', actor, { ...input });
+    return { ...input, seq, at: recordedAt, actor: actor.name };
   }
 
   private incidentEvents(asOf: string): IncidentEvent[] {

@@ -379,6 +379,28 @@ Recording IS notifying the operator: identification, every material change and v
   );
 
   server.registerTool(
+    'helmo_record_test_result',
+    {
+      description:
+        `Record one explicitly invoked validation run for History. Name the suite whose tests were actually run, the failed and total counts, and a durable evidence reference. This records only what the caller supplies; it does not imply coverage of unrecorded suites or installations, and failed 0 is measured only for this named run.`,
+      inputSchema: strict({
+        suite: z.string(),
+        failed: z.number().int().min(0),
+        total: z.number().int().min(0),
+        ref: z.string().describe('Durable run, transcript, file or URL that supports these counts'),
+        actor: actorSchema,
+      }),
+    },
+    async ({ actor, ...input }) => {
+      try {
+        return ok({ result: store.recordTestResult(resolveActor(actor as Actor | undefined), input) });
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
+
+  server.registerTool(
     'helmo_dispose_hygiene_finding',
     {
       description:

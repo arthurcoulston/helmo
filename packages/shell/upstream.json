@@ -72,7 +72,6 @@
       "src/Runway.tsx",
       "src/TeamNow.tsx",
       "src/TeamActivity.tsx",
-      "src/IssuesView.tsx",
       "src/IncidentsView.tsx"
     ],
     "manifest": {

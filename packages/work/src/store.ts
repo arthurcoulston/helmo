@@ -6,7 +6,6 @@ import { actionFingerprint, questionFingerprint } from './presentation.js';
 import { parseSchedule } from './schedule.js';
 import { issueKey, replayIssues, type IssueDisposition, type IssueEvent, type IssueSubjectKind, type IssuesSnapshot, type RecordedValue } from './issues.js';
 import { assertIncident, blankIncident, replayIncidents, type IncidentEvent, type IncidentPatch, type IncidentRecord } from './incidents.js';
-import { findingSubject, observationFrom, type ObservationSubject } from './issue-recording.js';
 import {
   ActionReport, ActionRequest, Actor, ActorKind, ACTOR_KINDS, Answer, AnswerEvent, BlastRadius, BLAST_RADII, CapacityHold, CompletionAccount, CompletionAccountInput, COMPLETION_CATEGORIES, COMPLETION_SUMMARY_MAX, Confidence, Dep, DepType, Evidence, EVIDENCE_ROLES,
   AcceptanceCoverage, ActivityEvents, CauseOnset, CoveringCompletion, EventType, HelmoError, HelmoEvent, HumanRequest, Notice, ProductAcceptance, ProductArtifact, Question, QuestionInput, ReleaseHandoff, Status, Ticket, TicketProgress, UnresolvedCompletion, VerdictEvent, Workstream, WorkstreamInfo,
@@ -2471,46 +2470,6 @@ export class Store {
     return key;
   }
 
-  /** The sweep that makes the issue log a record of this installation rather
-   *  than of its fixtures (H-3216): every finding hygiene reports right now
-   *  becomes an observation on its stable key. Call it as often as you like —
-   *  a repeat observation updates one row's latest/count, it does not add a
-   *  second row — and note what it does NOT do: a finding that has stopped
-   *  appearing leaves its issue active, because only an explicit disposition
-   *  resolves one. Owner is the ticket's assignee, else the workstream's seat,
-   *  else explicitly nobody; `unknown` is reserved for a subject whose owner
-   *  could not be read at all. */
-  recordCheckObservations(actor: Actor, observedAt = now()): { key: string; check: string; subject_ref: string; owner: string | null }[] {
-    validateActor(actor);
-    const recorded: { key: string; check: string; subject_ref: string; owner: string | null }[] = [];
-    for (const finding of this.hygiene(new Date(observedAt))) {
-      const subject = findingSubject(finding);
-      if (!subject) continue;
-      const owner = this.issueOwner(subject, observedAt);
-      const key = this.recordIssueObservation(actor, observationFrom(finding, subject, owner, observedAt), observedAt);
-      recorded.push({ key, check: finding.check, subject_ref: subject.ref, owner: owner.state === 'known' ? owner.value : null });
-    }
-    return recorded;
-  }
-
-  /** Who the record says owns this subject, with the provenance the view
-   *  shows beside the name. A ticket nobody holds is a known `null` — the
-   *  record does say the seat is empty — while a subject the store cannot
-   *  read at all is Unknown, which is not the same claim. */
-  private issueOwner(subject: ObservationSubject, readAt: string): RecordedValue<string | null> {
-    if (subject.kind === 'workstream') {
-      const info = this.getWorkstreamInfo(subject.ref);
-      // A stream nobody has ever steered has no `updated_at` of its own, so
-      // the honest provenance time is when this read happened — never the wall
-      // clock, which would make a replayed sweep disagree with itself.
-      return { state: 'known', value: info.seat ?? null, source_ref: `work:workstream:${subject.ref}`, recorded_at: info.updated_at || readAt };
-    }
-    const ticket = this.getTicket(subject.ref);
-    if (!ticket) return { state: 'unknown', reason: 'source_unavailable' };
-    const owner = ticket.assignee ?? this.workstreamSeat(ticket.workstream);
-    return { state: 'known', value: owner, source_ref: `work:${ticket.id}`, recorded_at: ticket.updated_at };
-  }
-
   recordIssueDisposition(actor: Actor, key: string, disposition: IssueDisposition, recordedAt = now()): void {
     validateActor(actor);
     const exists = this.db.prepare("SELECT 1 FROM events WHERE event_type = 'issue_observed' AND json_extract(payload, '$.key') = ? LIMIT 1").get(key);
@@ -2519,30 +2478,6 @@ export class Store {
       throw new HelmoError('Resolving an issue requires at least one known evidence item.');
     }
     this.append(recordedAt, `issue:${key}`, 'issue_disposed', actor, { key, disposition });
-  }
-
-  /** The callable disposition door (H-3216). An actor says what the judgment
-   *  is; the owner is resolved from the issue's own subject rather than typed
-   *  again, so the name on the row cannot drift from the record it came from.
-   *  A resolution still needs evidence — `recordIssueDisposition` refuses
-   *  without it, and an absent check result is never a resolution. */
-  disposeIssue(actor: Actor, key: string, input: { state: IssueDisposition['state']; reason?: string; next_action?: string; evidence?: { ref: string; note?: string }[] }, recordedAt = now()): void {
-    const snapshot = this.issuesSnapshot(recordedAt);
-    const row = [...snapshot.active, ...snapshot.history].find((r) => r.key === key);
-    if (!row) throw new HelmoError(`Issue ${key} has no observation.`);
-    const owner = this.issueOwner({ kind: row.subject_kind, ref: row.subject_ref }, recordedAt);
-    const known = <T>(value: T): RecordedValue<T> => ({ state: 'known', value, source_ref: `work:issue:${key}`, recorded_at: recordedAt });
-    if (input.state === 'active') {
-      if (!input.next_action?.trim()) throw new HelmoError('Returning an issue to active needs a next_action: what happens about it now.');
-      this.recordIssueDisposition(actor, key, { state: 'active', owner, next_action: known(input.next_action) }, recordedAt);
-      return;
-    }
-    if (input.state === 'accepted') {
-      if (!input.reason?.trim()) throw new HelmoError('Accepting an issue needs a reason: why this condition stands, for the next reader to audit.');
-      this.recordIssueDisposition(actor, key, { state: 'accepted', owner, reason: known(input.reason) }, recordedAt);
-      return;
-    }
-    this.recordIssueDisposition(actor, key, { state: 'resolved', owner, evidence: (input.evidence ?? []).map(known) }, recordedAt);
   }
 
   issuesSnapshot(asOf = now()): IssuesSnapshot {

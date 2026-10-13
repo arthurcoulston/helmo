@@ -608,40 +608,9 @@ describe('acceptance-coverage says who has judged a commit (H-3031)', () => {
   });
 });
 
-// H-3216. The store could record issues and incidents from the day the
-// projections landed; nothing could reach those methods from outside a test,
-// so the shipped Issues and Incidents views had only fixtures to show. These
-// walk the commands a real sweep and a real responder use.
-describe('the issue and incident recording commands', () => {
-  it('records what the checks find now, then takes the judgment that resolves it', () => {
-    const swept = cli('issues-record');
-    expect(swept.status).toBe(0);
-    const recorded = JSON.parse(swept.stdout).recorded as { key: string; check: string; subject_ref: string }[];
-    // The fixture ticket is unaccounted work in a seatless stream, so the
-    // sweep has something real to say rather than an empty list.
-    expect(recorded.length).toBeGreaterThan(0);
-    const mine = recorded.find((r) => r.subject_ref === ticket || r.subject_ref === 'helmo-dev')!;
-    expect(mine.check).toBeTruthy();
-
-    // Resolving needs evidence, and says so rather than recording an empty
-    // judgment.
-    const bare = cli('issue-dispose', '--key', mine.key, '--state', 'resolved');
-    expect(bare.status).toBe(1);
-    expect(bare.stderr).toContain('evidence');
-
-    expect(cli('issue-dispose', '--key', mine.key, '--state', 'accepted', '--reason', 'Deliberate for now; the stream is parked.').status).toBe(0);
-    const s = new Store(dbPath);
-    const row = s.issuesSnapshot().active.find((r) => r.key === mine.key)!;
-    s.close();
-    expect(row.disposition.state).toBe('accepted');
-  });
-
-  it('refuses a bad state by name instead of absorbing it', () => {
-    const r = cli('issue-dispose', '--key', 'whatever', '--state', 'closed');
-    expect(r.status).toBe(1);
-    expect(r.stderr).toContain('active, accepted, resolved');
-  });
-
+// H-3216. The incident projection existed before a real responder could reach
+// it; this walks the command that now carries the supported lifecycle.
+describe('the incident recording command', () => {
   it('walks one incident from identification to verified resolution, refusing each shortcut', { timeout: 60_000 }, () => {
     const incident = JSON.parse(cli('create', '--title', 'The loop stopped claiming work', '--body', 'Goal: restore claims. Current state: investigating.', '--workstream', 'helmo-dev', '--type', 'incident').stdout).id as string;
 

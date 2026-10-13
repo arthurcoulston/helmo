@@ -7,14 +7,12 @@ import { RecentResults, resultsOf } from "./RecentResults"
 import { TeamActivity, activityOf } from "./TeamActivity"
 import { Runway, runwayOf } from "./Runway"
 import { TeamNow, teamNowOf } from "./TeamNow"
-import { IssuesCard, IssuesView, type IssuesData } from "./IssuesView"
 import { IncidentsView, type IncidentsData } from "./IncidentsView"
 import {
   ActivityIcon,
   ChevronRightIcon,
   ClipboardListIcon,
   LayoutDashboardIcon,
-  CircleAlertIcon,
   SirenIcon,
   MapIcon,
   MoonIcon,
@@ -107,7 +105,6 @@ const DESTINATIONS: Destination[] = [
     icon: ClipboardListIcon,
     rendered: true,
   },
-  { id: "issues", label: "Issues", href: "/issues", icon: CircleAlertIcon, rendered: true },
   { id: "incidents", label: "Incidents", href: "/incidents", icon: SirenIcon, rendered: true },
   {
     id: "roadmap",
@@ -834,8 +831,6 @@ function AreaContent({ area, state, selected, areas, period, onPeriodChange }: {
 
   if (area.id === "roadmap") return <RoadmapView data={state.data as RoadmapData} selected={selected} />
 
-  if (area.id === "issues") return <IssuesView data={state.data as IssuesData} />
-
   if (area.id === "incidents") return <IncidentsView data={state.data as IncidentsData} />
 
   if (area.id === "overview") {
@@ -852,7 +847,6 @@ function AreaContent({ area, state, selected, areas, period, onPeriodChange }: {
         {next ? <Runway data={next} /> : null}
         {activity ? <TeamActivity data={activity} /> : null}
         {results ? <RecentResults data={results} /> : null}
-        {(state.data as { issues?: IssuesData }).issues ? <IssuesCard data={(state.data as { issues: IssuesData }).issues} /> : null}
       </section>
     )
   }

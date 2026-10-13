@@ -10,41 +10,19 @@ The old server-rendered HTML, bespoke CSS and DOM-replacement refresh are gone.
 Earlier renderer details below are historical; they describe the behavior to
 preserve, not permission to restore that implementation.
 
-`src/issues.ts` and `src/incidents.ts` are the append-only R-44 lifecycle
-projections. Issue identity is `check + subject kind + subject ref`; absence
-never resolves one, and recurrence reopens that same key. Incident stage is
+`src/issues.ts` remains the compatibility reader for historical
+`issue_observed` and `issue_disposed` events and `/api/v1/issues`; there is no
+Issues page, card, or supported issue write workflow. Existing records are
+retained and replayed. `src/incidents.ts` is the active append-only R-44
+lifecycle projection. Incident stage is
 independent of ticket status: only investigating → mitigated → resolved is
 allowed, with containment at mitigation and cause, fix, recovery evidence and
 owned remaining work at resolution. Both retain each field's own provenance
 envelope; store snapshot reads are side-effect free and accept an explicit
 `as_of` for deterministic replay.
-
-`src/issue-recording.ts` is the production path into that log (H-3216). Until
-it existed the projections could only be written by a test, so every row the
-shipped views could show was a fixture. `store.recordCheckObservations` runs
-`hygiene()` and records each current finding as an observation: the next action
-per check is a FIXED table in that module, because a finding's `detail` is free
-text and free text must never become a command, and the owner is the ticket's
-assignee, else the workstream's seat, else a known nobody — Unknown is reserved
-for a subject the store cannot read at all. The two workstream-scoped checks
-(`budget_pressure`, `unseated_pool`) carry no `ticket_id`, so they take a
-workstream subject; giving them a ticket-shaped one would record the empty
-string as an identity and collapse every stream into a single row.
-The sweep is safe to repeat and records only — a finding that stops appearing
-leaves its issue ACTIVE, since only `disposeIssue` resolves one and resolution
-needs evidence. Note the two distinct doors: `hygiene-dispose` stops a check
-re-reporting, `issue-dispose` says what happened about the issue.
-Agents reach all three through `helmo_record_check_observations`,
-`helmo_dispose_issue` and `helmo_record_incident`; scripts and harnesses
-through `helmo-cli issues-record | issue-dispose | incident-record`.
 An incident opens onto `blankIncident`, so no field is ever ABSENT: Unknown is
 a statement the guards can read and the view can render, a missing key is
 neither.
-The issues snapshot's `coverage.last_recorded_at` is what dates a clean bill of
-health. `as_of` is only when the page was read, and an empty log read at noon
-does not mean the checks ran at noon and were happy; null — coverage `missing`
-— says no sweep has recorded here at all, which the view states as such rather
-than as "no issues detected" (`packages/shell/test/issues-empty-state.test.mjs`).
 `src/view.ts` exposes those projections to the unified listener. Every document
 fixes its own `as_of`, names the running commit as `source_revision`, and leaves
 the field-level source envelopes intact; incident detail is a projection read,

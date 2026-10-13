@@ -318,54 +318,6 @@ export function buildServer(store: Store, envActor: Actor | null, server = new M
   );
 
   server.registerTool(
-    'helmo_record_check_observations',
-    {
-      description:
-        `Record every finding the deterministic checks report RIGHT NOW as an observation in the issue log, so the operator's Issues view shows what this installation has actually been like rather than what one sweep happened to see. helmo_hygiene answers "what is wrong now" and forgets; this answers "since when, how often, who owns it, and what was done".
-
-Safe to call on any sweep: an issue's identity is its check plus its subject, so a repeat observation moves one row's latest time and count instead of adding a second row. The first observation is honestly the first RECORDED one, never a claim about when the condition began.
-
-It records; it never judges. A finding that stops appearing leaves its issue ACTIVE — only helmo_dispose_issue resolves one, and resolution needs evidence. Note the two different doors: helmo_dispose_hygiene_finding stops a check re-reporting, helmo_dispose_issue says what happened about the issue.`,
-      inputSchema: strict({ actor: actorSchema }),
-    },
-    async ({ actor }) => {
-      try {
-        return ok({ recorded: store.recordCheckObservations(resolveActor(actor as Actor | undefined)) });
-      } catch (e) {
-        return fail(e);
-      }
-    },
-  );
-
-  server.registerTool(
-    'helmo_dispose_issue',
-    {
-      description:
-        `Say what happened about one recorded issue, by the 'key' helmo_record_check_observations or the Issues view gives you. This is the issue's own lifecycle, not hygiene suppression.
-
-'active' keeps it open and replaces its next action — use it when the issue is yours now and the standing next step is wrong. 'accepted' says the condition stands on purpose and needs a reason another agent can audit. 'resolved' says it is actually fixed and requires at least one evidence ref; a resolution with nothing behind it is refused.
-
-Resolved and accepted rows move to the History tab after 30 days and stay searchable. They are never deleted, and a later observation of the same key reopens it as a recurrence while keeping the earlier resolution on the record. Active issues never age out.`,
-      inputSchema: strict({
-        key: z.string().describe('The issue key: check + subject, exactly as the issue record gives it'),
-        state: z.enum(['active', 'accepted', 'resolved']),
-        next_action: z.string().optional().describe("Required for 'active': what happens about this issue now"),
-        reason: z.string().optional().describe("Required for 'accepted': why this condition stands"),
-        evidence: z.array(z.object({ ref: z.string(), note: z.string().optional() })).optional().describe("Required for 'resolved': what proves it is fixed"),
-        actor: actorSchema,
-      }),
-    },
-    async ({ actor, key, ...input }) => {
-      try {
-        store.disposeIssue(resolveActor(actor as Actor | undefined), key, input);
-        return ok({ disposed: `${input.state} on ${key}` });
-      } catch (e) {
-        return fail(e);
-      }
-    },
-  );
-
-  server.registerTool(
     'helmo_record_incident',
     {
       description:

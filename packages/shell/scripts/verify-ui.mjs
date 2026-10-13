@@ -843,13 +843,13 @@ try {
   await page.locator('[aria-label="Team now"]').waitFor();
   const overviewCards = await page.evaluate(() => [...document.querySelectorAll('[aria-label="Overview readings"] > [data-slot="card"]')]
     .map((card) => ({ label: card.getAttribute('aria-label'), top: Math.round(card.getBoundingClientRect().top), height: Math.round(card.getBoundingClientRect().height), bottom: Math.round(card.getBoundingClientRect().bottom) })));
-  assert.deepEqual(overviewCards.map((card) => card.label), ['Team now', 'What happens next', 'Team activity', 'Results · Past 24 hours', 'Issues detected']);
+  assert.deepEqual(overviewCards.map((card) => card.label), ['Team now', 'What happens next', 'Team activity', 'Results · Past 24 hours']);
   assert.ok(overviewCards.slice(0, 4).every((card) => card.top < 800), `one of the established Overview readings starts below the 1280×800 fold: ${JSON.stringify(overviewCards)}`);
   assert.equal(await page.locator('h1').count(), 1, 'Overview must have one shared page title');
   console.log(`Overview at 1280×800: ${overviewCards.map((card) => `${card.label} ${card.height}px high, top ${card.top}px, bottom ${card.bottom}px`).join('; ')}`);
   await page.setViewportSize({ width: 390, height: 800 });
   const narrowOverviewCards = await page.locator('[aria-label="Overview readings"] > [data-slot="card"]').evaluateAll((cards) => cards.map((card) => card.getAttribute('aria-label')));
-  assert.deepEqual(narrowOverviewCards, ['Team now', 'What happens next', 'Team activity', 'Results · Past 24 hours', 'Issues detected'], 'the narrow Overview must preserve the four established readings before issues');
+  assert.deepEqual(narrowOverviewCards, ['Team now', 'What happens next', 'Team activity', 'Results · Past 24 hours'], 'the narrow Overview must preserve the four established readings');
   const teamNow = page.locator('[aria-label="Team now"]');
   await teamNow.getByText('Team now', { exact: true }).waitFor();
   /* Element by element rather than `textContent`: nothing in this card puts a
@@ -1070,7 +1070,7 @@ try {
   await activity.getByText(/the past 7 days, in days/).waitFor({ timeout: 1_000 });
   assert.equal((await table()).length, 7, 'the refresh closed the numbers or put the reader back on the day');
 
-  const areas = ['overview', 'issues', 'incidents', `incidents/${incident.id}`, 'work', 'roadmap', 'team', 'run'], themes = ['light', 'dark'], widths = [390, 640, 1280];
+  const areas = ['overview', 'incidents', `incidents/${incident.id}`, 'work', 'roadmap', 'team', 'run'], themes = ['light', 'dark'], widths = [390, 640, 1280];
   const audited = [];
   /* Where the horizontal fold falls on a phone. Nothing above can see this:
      the page itself never overflows — the table scrolls inside its own

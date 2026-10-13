@@ -592,40 +592,14 @@ describe('acceptance coverage on the agent surface (H-3031)', () => {
   });
 });
 
-// H-3216. An agent cannot record an issue's disposition or advance an incident
-// through a store method it has no tool for, so the lifecycle the Issues and
-// Incidents views render was unreachable from the surface agents actually use.
-describe('the issue and incident tools agents record through', () => {
+// H-3216. An agent cannot advance an incident through a store method it has no
+// tool for, so the lifecycle the Incidents view renders was unreachable from
+// the surface agents actually use.
+describe('the incident tool agents record through', () => {
   async function call(client: Awaited<ReturnType<typeof connect>>, name: string, args: Record<string, unknown>) {
     const res = await client.callTool({ name, arguments: args });
     return JSON.parse((res.content as { text: string }[])[0]!.text) as { result?: Record<string, unknown>; error?: string };
   }
-
-  it('offers all three, and the sweep writes real rows the views can read', async () => {
-    const store = new Store(':memory:');
-    store.createTicket(orch, { title: 'Pool work nobody is seated for', body: 'Goal: something. Current state: open.', workstream: 'orphaned-stream', type: 'ops' });
-    const client = await connect(store);
-
-    const names = (await client.listTools()).tools.map((t) => t.name);
-    expect(names).toContain('helmo_record_check_observations');
-    expect(names).toContain('helmo_dispose_issue');
-    expect(names).toContain('helmo_record_incident');
-
-    const swept = await call(client, 'helmo_record_check_observations', {});
-    const recorded = swept.result!['recorded'] as { key: string; check: string }[];
-    expect(recorded.map((r) => r.check)).toContain('unseated_pool');
-    expect(store.issuesSnapshot().active.map((r) => r.key)).toContain(recorded[0]!.key);
-
-    // Resolution needs evidence; the refusal arrives as a refusal, not as a
-    // recorded empty judgment.
-    const bare = await call(client, 'helmo_dispose_issue', { key: recorded[0]!.key, state: 'resolved' });
-    expect(bare.error).toMatch(/evidence/);
-    const done = await call(client, 'helmo_dispose_issue', { key: recorded[0]!.key, state: 'resolved', evidence: [{ ref: 'helmo@abc1234' }] });
-    expect(done.result).toMatchObject({ disposed: `resolved on ${recorded[0]!.key}` });
-
-    await client.close();
-    store.close();
-  });
 
   it('refuses an incident on a ticket that is not one, and refuses mitigation with nothing containing it', async () => {
     const store = new Store(':memory:');

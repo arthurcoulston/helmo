@@ -14,7 +14,7 @@ function recorder() {
 }
 
 test('every area uses the shared application', () => {
-  assert.deepEqual(APP_AREAS, ['overview', 'issues', 'incidents', 'team', 'work', 'roadmap', 'runtime']);
+  assert.deepEqual(APP_AREAS, ['overview', 'incidents', 'team', 'work', 'roadmap', 'runtime']);
 });
 
 test('a migrated area answers with the built document, with or without a trailing slash', () => {

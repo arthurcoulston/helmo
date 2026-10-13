@@ -189,12 +189,11 @@ IDLE and SEAT_HELD controls remain healthy. The product view entries remain exec
 surfaces; importing them never binds their old ports.
 Overview reads each product snapshot independently and summarizes them without
 joining their stores — with one deliberate exception.
-Issues and incidents remain Work-owned projections even though the unified app
-serves them at `/api/v1/issues`, `/api/v1/incidents` and
-`/api/v1/incidents/H-n`. The shell routes `/issues`, `/incidents` and incident
-detail through the same built application; Overview carries Work's issues
-snapshot for the fifth card without performing another read or deriving a
-condition from Runtime prose.
+Issues and incidents remain Work-owned projections. `/api/v1/issues` remains a
+versioned compatibility reader for retained historical issue events; it has no
+page, card, or supported write workflow. The unified app serves
+`/api/v1/incidents` and `/api/v1/incidents/H-n`, and the shell routes
+`/incidents` and incident detail through the same built application.
 The four operator readings are the first Overview content: a two-column grid
 at the 1280×800 baseline and one column on narrow windows. Their own card
 titles are the only section titles; Overview carries no duplicate area-card

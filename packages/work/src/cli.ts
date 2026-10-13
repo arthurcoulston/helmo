@@ -37,8 +37,6 @@ const COMMAND_FLAGS: Record<string, readonly string[]> = {
   verdicts: ['since-seq', 'workstream'],
   hygiene: [],
   'hygiene-dispose': ['check', 'ticket', 'reason'],
-  'issues-record': [],
-  'issue-dispose': ['key', 'state', 'reason', 'next-action', 'evidence-ref'],
   'incident-record': ['ticket', 'stage', 'owner', 'detected-by', 'detected-at', 'affected', 'happening-now', 'cause', 'cause-confidence', 'containment', 'fix', 'recovery-ref', 'recurrence-ref', 'acknowledge', 'remaining'],
   workstream: ['name'],
   'workstream-set': ['name', 'budget-usd', 'seat'],
@@ -251,29 +249,6 @@ try {
       const disposedOn = ticketRef('ticket');
       store.disposeHygieneFinding(actor(), { check: req('check'), ticket_id: disposedOn, reason: req('reason') });
       out({ disposed: `${flag('check')} on ${disposedOn}` });
-      break;
-    }
-    case 'issues-record': {
-      // The sweep hygiene never had: turn every finding standing right now
-      // into an observation on its stable key, so the issue views read this
-      // installation instead of a fixture (H-3216). Idempotent in effect —
-      // a repeat observation moves one row's latest/count.
-      out({ recorded: store.recordCheckObservations(actor()) });
-      break;
-    }
-    case 'issue-dispose': {
-      // Judgment on a recorded issue, which is NOT hygiene-dispose: that one
-      // stops a check re-reporting, this one says what happened about the
-      // issue. An issue nobody disposes stays active however quiet the check
-      // goes.
-      const state = oneOf('state', ['active', 'accepted', 'resolved'] as const);
-      if (!state) throw new HelmoError("--state is required for 'issue-dispose'");
-      const ref = flag('evidence-ref');
-      store.disposeIssue(actor(), req('key'), {
-        state, reason: flag('reason'), next_action: flag('next-action'),
-        ...(ref ? { evidence: [{ ref }] } : {}),
-      });
-      out({ disposed: `${state} on ${flag('key')}` });
       break;
     }
     case 'incident-record': {
@@ -562,8 +537,6 @@ try {
   verdicts       --since-seq N [--actor A] [--workstream W]     (acceptance verdicts recorded since a cursor, + max_seq; the sweep's forged-PASS replay)
   hygiene                                                      (deterministic record checks, read-only)
   hygiene-dispose --check C --ticket H-n --reason R  (stop re-reporting a finding: any check on a TERMINAL ticket, or spend_anomaly on live work, where it holds until the cost grows by half again)
-  issues-record                                     (record every current hygiene finding as an issue observation on its stable key; repeats update one row's latest/count)
-  issue-dispose  --key K --state active|accepted|resolved [--next-action A (active)] [--reason R (accepted)] [--evidence-ref REF (resolved; required)]   (judgment on a recorded issue — NOT hygiene-dispose, which only stops a check re-reporting)
   incident-record --ticket H-n [--stage investigating|mitigated|resolved] [--owner A] [--detected-by agent|automated_check|human [--detected-at ISO]] [--affected S] [--happening-now true|false] [--cause C [--cause-confidence known|suspected|unknown]] [--containment S] [--fix S] [--recovery-ref REF] [--recurrence-ref REF] [--acknowledge] [--remaining '{"account":..,"owner":..}']
                  (one lifecycle event on a type:incident ticket. Opens at investigating with every unnamed field Unknown; mitigated needs containment; resolved needs cause, fix, recovery proof and an owner on every remaining item)
   workstream     --name W                                      (budget, seat, spend-to-date; read-only)

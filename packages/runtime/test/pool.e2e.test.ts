@@ -775,6 +775,48 @@ describe('lane workers on one seat', { timeout: 90000 }, () => {
     expect(resumed.stalled_work).toEqual([]);
   });
 
+  it('observes a final blocker release across restart and admits only one worker in the race', async () => {
+    const e = setup((h) => worker('w1', h, `${BOUND}; ${FINISH}`) + worker('w2', h, `${BOUND}; ${FINISH}`));
+    const store = new Store(e.db);
+    let blocker: string;
+    let waiting: string;
+    try {
+      blocker = store.createTicket({ name: 'seeder', kind: 'agent', model: 't', version: '0' }, {
+        title: 'Final prerequisite', body: 'blocks the delivery', workstream: 'rev-test', type: 'ops', assignee: 'builder',
+      }).id;
+      waiting = store.createTicket({ name: 'router', kind: 'agent', model: 't', version: '0' }, {
+        title: 'Released delivery', body: 'runs after the final prerequisite', workstream: 'rev-test', type: 'ops', assignee: 'builder',
+        deps: [{ to: blocker, type: 'blocks' }],
+      }).id;
+    } finally { store.close?.(); }
+
+    const blocked = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    expect(blocked.ready_without_progress).not.toEqual(expect.arrayContaining([expect.objectContaining({ ticket: waiting })]));
+    expect(blocked.stalled_work).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: `ready_without_progress:${waiting}` })]));
+
+    execFileSync('node', [HELM_CLI, 'update', '--ticket', blocker, '--note', 'final prerequisite complete', '--status', 'done', '--completion-category', 'maintenance', '--completion-summary', 'The final prerequisite is complete.', '--evidence-kind', 'other', '--evidence-ref', 'fixture'], {
+      env: { ...e.env, HELMO_ACTOR: JSON.stringify({ name: 'builder', kind: 'agent', model: 't', version: '0' }) }, encoding: 'utf8',
+    });
+    for (const workerName of ['w1', 'w2']) writeFileSync(join(e.home, 'state', workerName, 'RUNNING'), `${process.pid}\n`);
+    const observed = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    expect(observed.ready_without_progress).toEqual([expect.objectContaining({ ticket: waiting, seat: 'builder' })]);
+    expect(observed.stalled_work).toEqual([expect.objectContaining({ id: `ready_without_progress:${waiting}`, checks: 1 })]);
+
+    const restarted = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    expect(restarted.stalled_work).toEqual([expect.objectContaining({ id: `ready_without_progress:${waiting}`, checks: 2 })]);
+    expect(restarted.stalled_work[0].first_observed_at).toBe(observed.stalled_work[0].first_observed_at);
+
+    for (const workerName of ['w1', 'w2']) rmSync(join(e.home, 'state', workerName, 'RUNNING'));
+    await Promise.all([runAsync(e, 'w1'), runAsync(e, 'w2')].map(exited));
+    expect(ticket(e, waiting).status).toBe('done');
+    expect(readFileSync(join(e.home, 'bound'), 'utf8').trim().split('\n')).toEqual([expect.stringMatching(new RegExp(`^w[12] ${waiting}$`))]);
+    expect(['w1', 'w2'].filter((workerName) => journal(e, workerName).some((entry) => entry.ticket_id === waiting))).toHaveLength(1);
+
+    const progressed = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    expect(progressed.ready_without_progress).toEqual([]);
+    expect(progressed.stalled_work).toEqual([]);
+  });
+
   it('reports a self-filed reservation as a triage hold, not launchable work', () => {
     const e = setup((h) => worker('w1', h, 'true'));
     const created = JSON.parse(execFileSync('node', [HELM_CLI, 'create', '--title', 'Builder discovery', '--body', 'needs second eyes', '--workstream', 'rev-test', '--type', 'ops', '--assignee', 'builder'], {

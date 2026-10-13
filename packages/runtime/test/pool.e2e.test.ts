@@ -775,6 +775,51 @@ describe('lane workers on one seat', { timeout: 90000 }, () => {
     expect(resumed.stalled_work).toEqual([]);
   });
 
+  it('requires every same-seat worker to be unavailable and confirms the episode by the second check', () => {
+    const e = setup((h) => worker('w1', h, 'true') + worker('w2', h, 'true'));
+    const id = seed(e, 'Shared-seat work');
+    execFileSync('node', [HELM_CLI, 'update', '--ticket', id, '--handoff-to', 'builder', '--note', 'route to builder'], {
+      env: { ...e.env, HELMO_ACTOR: JSON.stringify({ name: 'router', kind: 'agent', model: 't', version: '0' }) }, encoding: 'utf8',
+    });
+    mkdirSync(join(e.home, 'state', 'w2'), { recursive: true });
+    writeFileSync(join(e.home, 'state', 'w2', 'RUNNING'), `${process.pid}\n`);
+
+    const drawable = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    expect(drawable.unavailable_seats).toEqual([]);
+    expect(drawable.stalled_work).toEqual([expect.objectContaining({ id: `ready_without_progress:${id}`, checks: 1 })]);
+
+    rmSync(join(e.home, 'state', 'w2', 'RUNNING'));
+    const first = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    const confirmed = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    expect(first.stalled_work).toEqual([expect.objectContaining({ id: `unavailable_seat:${id}`, checks: 1 })]);
+    expect(confirmed.stalled_work).toEqual([expect.objectContaining({ id: `unavailable_seat:${id}`, checks: 2 })]);
+    expect(confirmed.stalled_work[0].first_observed_at).toBe(first.stalled_work[0].first_observed_at);
+    for (const workerName of ['w1', 'w2']) expect(existsSync(join(e.home, 'state', workerName, 'launches'))).toBe(false);
+  });
+
+  it('keeps Work and Runtime deliberate holds out of stalled-work episodes', () => {
+    const e = setup((h) => worker('w1', h, 'true'));
+    const store = new Store(e.db);
+    try {
+      const actor = { name: 'router', kind: 'agent' as const, model: 't', version: '0' };
+      store.createTicket(actor, { title: 'Date gate', body: 'wait', workstream: 'rev-test', type: 'ops', assignee: 'builder', not_before: '2099-01-01' });
+      store.createTicket(actor, { title: 'Human wait', body: 'wait', workstream: 'rev-test', type: 'ops', assignee: 'builder', needs_human: 'Two minutes to make the fixture decision.' });
+      const held = store.createTicket(actor, { title: 'Capacity hold', body: 'wait', workstream: 'rev-test', type: 'ops', assignee: 'builder' });
+      store.updateTicket(actor, { ticket_id: held.id, note: 'hold', capacity_hold: { reason: 'fixture hold', provenance: 'fixture', reconsider_when: 'fixture ends' } });
+    } finally { store.close?.(); }
+
+    for (const control of ['STOP', 'HOLD', 'PARKED', 'SEAT_HELD']) {
+      const dir = join(e.home, 'state', 'w1');
+      mkdirSync(dir, { recursive: true });
+      for (const name of ['STOP', 'HOLD', 'PARKED', 'SEAT_HELD', 'RUNNING']) rmSync(join(dir, name), { force: true });
+      if (control === 'PARKED' || control === 'SEAT_HELD') writeFileSync(join(dir, 'RUNNING'), `${process.pid}\n`);
+      writeFileSync(join(dir, control), 'deliberate fixture control\n');
+      const status = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+      expect(status.stalled_work).toEqual([]);
+      expect(existsSync(join(dir, 'launches'))).toBe(false);
+    }
+  });
+
   it('observes a final blocker release across restart and admits only one worker in the race', async () => {
     const e = setup((h) => worker('w1', h, `${BOUND}; ${FINISH}`) + worker('w2', h, `${BOUND}; ${FINISH}`));
     const store = new Store(e.db);

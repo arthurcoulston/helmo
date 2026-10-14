@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // rev — run and control loops. Control verbs are sentinel writes; anything
 // that reads state is safe from any context (the watch officer uses these).
-import { existsSync, statSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildLine, compare, parseMarker, runningLine, snapshot } from './build.js';
 import { controlTargets, loadRoster, resolveRef, stateDir } from './config.js';
@@ -25,6 +25,7 @@ import { commandName, runCommand } from './command-name.js';
 import { assertTicketIdentity, readTicketLaunches, sessionTrace } from './session-trace.js';
 import { ticketHistory } from './helm.js';
 import { recordStallEpisodes } from './stalled-work.js';
+import { requestRuntimeRecovery, type RuntimeRecoveryRequest } from './runtime-recovery.js';
 
 const [cmd, ...rest] = process.argv.slice(2);
 const TRACE_REFUSAL = 'trace refused: diagnostic unavailable';
@@ -144,6 +145,7 @@ const COMMAND_HELP: Record<string, string> = {
   run: `usage: ${commandName} run [<loop> [--count N]]`,
   stop: `usage: ${commandName} stop [<loop|role> [--worker]]`,
   resume: `usage: ${commandName} resume <loop|role> [--worker]`,
+  'recover-runtime': `usage: ${commandName} recover-runtime <exact worker> --record <JSON file> --installation <name>`,
   reload: `usage: ${commandName} reload <loop|role> [--worker]`,
   service: `usage: ${commandName} service <install|uninstall|start|status>`,
   install: `usage: ${commandName} install remove [--confirm]`,
@@ -551,6 +553,23 @@ switch (cmd) {
     );
     break;
   }
+  case 'recover-runtime': {
+    const worker = rest[0];
+    const record = flag('record');
+    if (!worker || !loops[worker] || !record || !requestedInstall) {
+      console.error(`usage: ${commandName} recover-runtime <exact worker> --record <JSON file> --installation <name>`);
+      process.exit(1);
+    }
+    console.log(targetLine(requireTarget(`recover runtime '${worker}'`)));
+    try {
+      requestRuntimeRecovery(worker, JSON.parse(readFileSync(record, 'utf8')) as RuntimeRecoveryRequest, cliActor().label);
+      console.log('Runtime recovery queued once; the supervisor validates and consumes it. Verify this worker\'s status and useful work.');
+    } catch (e) {
+      console.error(e instanceof Error ? e.message : String(e));
+      process.exit(1);
+    }
+    break;
+  }
   // Reload one worker's roster without a fleet drain and without touching a
   // halt (H-891). `resume` cannot do this safely: it clears STOP/HOLD/BLOCKED
   // unconditionally, so a hold that someone else set, even mid-operation,
@@ -842,6 +861,7 @@ switch (cmd) {
   stop <loop|role>         set STOP — clean halt after the in-flight iteration; a pooled
                            role reaches every worker of its seat, --worker only that loop
   resume <loop|role>       clear STOP/HOLD/BLOCKED; a running supervisor picks the loop back up
+  recover-runtime <worker> queue one exact runtime-trip recovery for the supervisor; preserves independent controls
   reload <loop|role>       respawn after the in-flight iteration on the current roster; never
                            clears a halt (a STOP/HOLD/BLOCKED present then keeps it down)
   pace <loop|role> <v>     velocity: fraction (0,1], 'park', or 'clear'

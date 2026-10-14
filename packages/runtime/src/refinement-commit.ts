@@ -12,7 +12,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { atomicJson, keychainSecret, signedPost } from './intake-preparation.js';
 
+import { refinementContext, sameRefinementContext, matchesClaimScope, type ContextOptions, type RefinementContext } from './refinement-context.js';
+
 const BASE = '/api/refinement-commit';
+const ID = /^[A-Za-z0-9_-]{1,128}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const COMMIT = /^[0-9a-f]{40}$/;
@@ -21,12 +24,13 @@ export const MAX_REFUSALS = 5;
 
 export interface RefinementEnvelope {
   identity: string; version: number; attemptId: string; leaseExpiresAt: string; attemptCount: number;
-  orgSlug: string; projectSlug: string; meetingId: string; baseVersionId: string;
+  orgId?: string; projectId?: string; orgSlug: string; projectSlug: string; meetingId: string; baseVersionId: string;
   path: string; branch: string; markdown: string; markdownSha256: string; changeSummary: string;
 }
 
 /** What survives a pass: identifiers and the pushed commit, never the words. */
 interface Pending {
+  target: RefinementContext; orgId?: string; projectId?: string;
   identity: string; version: number; attemptId: string;
   path: string; commit: string; markdownSha256: string; refusals: number;
 }
@@ -45,6 +49,10 @@ export function validateRefinement(value: unknown): RefinementEnvelope {
       || typeof e.meetingId !== 'string' || typeof e.markdown !== 'string' || !e.markdown
       || !SHA256.test(e.markdownSha256 ?? '') || typeof e.changeSummary !== 'string') {
     throw new Refused('claim returned an invalid refinement-commit envelope');
+  }
+  if ((e.orgId !== undefined || e.projectId !== undefined)
+    && ![e.orgId, e.projectId].every(v => typeof v === 'string' && ID.test(v))) {
+    throw new Refused('claim returned invalid tenant identifiers');
   }
   if (e.path !== `clients/${e.orgSlug}/projects/${e.projectSlug}/directive.md`) {
     throw new Refused('claim path is not the project directive');
@@ -92,9 +100,10 @@ async function treeWith(checkout: string, base: string, blob: string, path: stri
 }
 
 /** Put the exact words on the job's branch and push it; returns the commit. Never forces. */
-export async function commitRefinement(checkout: string, e: RefinementEnvelope): Promise<string> {
-  await git(checkout, ['fetch', '--quiet', 'origin', 'refs/heads/main:refs/remotes/origin/main']);
-  const base = await text(checkout, ['rev-parse', '--verify', 'refs/remotes/origin/main^{commit}']);
+export async function commitRefinement(checkout: string, e: RefinementEnvelope, baseRef?: string): Promise<string> {
+  if (baseRef !== undefined) await exactBase(checkout, baseRef);
+  if (baseRef === undefined) await git(checkout, ['fetch', '--quiet', 'origin', 'refs/heads/main:refs/remotes/origin/main']);
+  const base = baseRef ?? await text(checkout, ['rev-parse', '--verify', 'refs/remotes/origin/main^{commit}']);
   const blob = await text(checkout, ['hash-object', '-w', '--no-filters', '--stdin'], { input: Buffer.from(e.markdown, 'utf8') });
   // A pushed branch from an earlier attempt is reused only if it is exactly one
   // commit on main's history that changes nothing but these words: descent alone
@@ -105,7 +114,7 @@ export async function commitRefinement(checkout: string, e: RefinementEnvelope):
     await git(checkout, ['fetch', '--quiet', '--no-write-fetch-head', 'origin', `refs/heads/${e.branch}`]);
     const [, ...parents] = (await text(checkout, ['rev-list', '--parents', '-n', '1', existing])).split(' ');
     const parent = parents.length === 1 ? parents[0]! : '';
-    const onMain = parent && await git(checkout, ['merge-base', '--is-ancestor', parent, base]).then(() => true, () => false);
+    const onMain = baseRef !== undefined ? parent === base : parent && await git(checkout, ['merge-base', '--is-ancestor', parent, base]).then(() => true, () => false);
     if (!onMain || await text(checkout, ['rev-parse', `${existing}^{tree}`]) !== await treeWith(checkout, parent, blob, e.path)) {
       throw new Refused('the proposal branch already holds something other than these words on main');
     }
@@ -121,6 +130,34 @@ export async function commitRefinement(checkout: string, e: RefinementEnvelope):
   if (await blobSha256(checkout, commit, e.path) !== e.markdownSha256) throw new Refused('the built commit does not hold the claimed words');
   await git(checkout, ['push', '--quiet', 'origin', `${commit}:refs/heads/${e.branch}`]);
   return commit;
+}
+
+async function exactBase(checkout: string, baseRef: string): Promise<void> {
+  if (!COMMIT.test(baseRef) || await text(checkout, ['cat-file', '-t', baseRef]) !== 'commit'
+    || await text(checkout, ['rev-parse', '--verify', `${baseRef}^{commit}`]) !== baseRef) {
+    throw new Refused('immutable refinement base must be an exact local commit object');
+  }
+}
+
+function validatePending(p: Pending): void {
+  if (!p || typeof p.identity !== 'string' || !p.identity || typeof p.attemptId !== 'string' || !p.attemptId
+    || ((p.orgId !== undefined || p.projectId !== undefined) && ![p.orgId, p.projectId].every(v => typeof v === 'string' && ID.test(v)))
+    || !Number.isInteger(p.version) || p.version < 1 || !COMMIT.test(p.commit) || !SHA256.test(p.markdownSha256)
+    || !Number.isInteger(p.refusals) || p.refusals < 0 || p.refusals >= MAX_REFUSALS
+    || !/^clients\/[a-z0-9]+(?:-[a-z0-9]+)*\/projects\/[a-z0-9]+(?:-[a-z0-9]+)*\/directive\.md$/.test(p.path)) {
+    throw new Refused('invalid saved refinement commit');
+  }
+}
+
+async function verifyPinnedPending(checkout: string, pending: Pending, baseRef: string): Promise<void> {
+  await exactBase(checkout, baseRef);
+  const [, ...parents] = (await text(checkout, ['rev-list', '--parents', '-n', '1', pending.commit])).split(' ');
+  const blob = await text(checkout, ['rev-parse', `${pending.commit}:${pending.path}`]);
+  if (parents.length !== 1 || parents[0] !== baseRef
+    || await blobSha256(checkout, pending.commit, pending.path) !== pending.markdownSha256
+    || await text(checkout, ['rev-parse', `${pending.commit}^{tree}`]) !== await treeWith(checkout, baseRef, blob, pending.path)) {
+    throw new Refused('saved refinement commit differs from immutable base plus directive');
+  }
 }
 
 /** The Worker's proof: the raw commit, the directive blob and every tree on its path. */
@@ -139,20 +176,26 @@ export async function refinementProof(checkout: string, commit: string, path: st
   };
 }
 
-export interface RefinementCommitOptions {
-  origin: string; checkout: string; stateFile: string;
+export interface RefinementCommitOptions extends ContextOptions {
+  checkout: string; stateFile: string;
   /** Overwritten after every pass with its time, pid, outcome and claim status, so an idle pass is still visible (H-1087). */
   lastRunFile?: string;
-  executorId?: string; executorVersion?: string; secret?: () => string;
+  secret?: () => string;
   request?: typeof fetch;
 }
 
 export type RefinementPassResult = 'idle' | 'committed' | 'pending' | 'superseded' | 'failed';
-let running: Promise<RefinementPassResult> | null = null;
+const running = new Map<string, { target: RefinementContext; pass: Promise<RefinementPassResult> }>();
 
 /** One bounded pass: deliver an owned pushed commit, or claim, commit and deliver one job. */
 export function refinementCommitPass(options: RefinementCommitOptions): Promise<RefinementPassResult> {
-  if (running) return running;
+  let target: RefinementContext;
+  try { target = refinementContext(options); }
+  catch { return Promise.reject(new Refused('invalid refinement commit context')); }
+  const current = running.get(options.stateFile);
+  if (current) return sameRefinementContext(current.target, target) ? current.pass
+    : Promise.reject(new Refused('concurrent refinement commit context differs'));
+  options = { ...options, ...target };
   const seen: { claim?: number } = {};
   const record = (outcome: { result: RefinementPassResult } | { error: string }) => {
     // Evidence only: a failed write must never change what the pass reports.
@@ -160,32 +203,42 @@ export function refinementCommitPass(options: RefinementCommitOptions): Promise<
       if (options.lastRunFile) atomicJson(options.lastRunFile, { at: new Date().toISOString(), pid: process.pid, ...outcome, ...seen });
     } catch { /* the next pass tries again */ }
   };
-  running = runPass(options, seen)
+  const pass = runPass(options, seen)
     .then((result) => { record({ result }); return result; },
       (error: unknown) => { record({ error: String(error).replace(/\s+/g, ' ').slice(0, 200) }); throw error; })
-    .finally(() => { running = null; });
-  return running;
+    .finally(() => { running.delete(options.stateFile); });
+  running.set(options.stateFile, { target, pass });
+  return pass;
 }
 
 async function runPass(options: RefinementCommitOptions, seen: { claim?: number }): Promise<RefinementPassResult> {
+  const target = refinementContext(options);
   const request = options.request ?? fetch;
   const secret = (options.secret ?? keychainSecret)();
-  const executor = { executorId: options.executorId ?? 'goodplumb-rev', executorVersion: options.executorVersion ?? '1' };
-  const post = (action: string, body: object) => signedPost(options.origin, action, { ...executor, ...body }, secret, request, BASE);
+  const executor = { executorId: target.executorId, executorVersion: target.executorVersion };
+  const post = (action: string, body: object) => signedPost(target.origin, action, { ...executor, ...body }, secret, request, BASE);
 
   if (existsSync(options.stateFile)) {
-    return deliver(options, post, JSON.parse(readFileSync(options.stateFile, 'utf8')) as Pending);
+    const saved = JSON.parse(readFileSync(options.stateFile, 'utf8')) as Pending;
+    if (!sameRefinementContext(saved.target, target) || !matchesClaimScope(target, saved)) {
+      throw new Refused('saved refinement commit belongs to another or unknown context');
+    }
+    validatePending(saved);
+    if (target.baseRef) await verifyPinnedPending(options.checkout, saved, target.baseRef);
+    return deliver(options, post, saved);
   }
-  const claimed = await post('claim', {});
+  if (target.baseRef) await exactBase(options.checkout, target.baseRef);
+  const claimed = await post('claim', target.claimScope ? { claimScope: target.claimScope } : {});
   seen.claim = claimed.status;
   if (claimed.status === 204 || claimed.status === 409) return 'idle';
   if (!claimed.ok) throw new Error(`refinement claim refused (${claimed.status})`);
   const candidate = await claimed.json() as Partial<RefinementEnvelope>;
+  if (!matchesClaimScope(target, candidate ?? {})) throw new Refused('claimed tenant differs from requested scope');
   let pending: Pending;
   try {
     const e = validateRefinement(candidate);
-    const commit = await commitRefinement(options.checkout, e);
-    pending = { identity: e.identity, version: e.version, attemptId: e.attemptId, path: e.path, commit, markdownSha256: e.markdownSha256, refusals: 0 };
+    const commit = await commitRefinement(options.checkout, e, target.baseRef);
+    pending = { target, orgId: e.orgId, projectId: e.projectId, identity: e.identity, version: e.version, attemptId: e.attemptId, path: e.path, commit, markdownSha256: e.markdownSha256, refusals: 0 };
   } catch (error) {
     if (candidate?.identity && Number.isInteger(candidate.version) && candidate.attemptId) {
       await post('failure', { identity: candidate.identity, version: candidate.version, attemptId: candidate.attemptId,

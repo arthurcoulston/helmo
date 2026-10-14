@@ -1,10 +1,10 @@
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { MAX_REFUSALS, refinementCommitPass, validateRefinement } from '../src/refinement-commit.js';
+import { commitRefinement, MAX_REFUSALS, refinementCommitPass, validateRefinement } from '../src/refinement-commit.js';
 
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
 const objectId = (kind: string, bytes: Buffer) =>
@@ -20,11 +20,11 @@ function envelope(markdown = '# Directive\n\nStatus: **proposed**\n\n1. Ship the
 }
 
 function harness(responses: Array<[number, unknown]>) {
-  const calls: Array<{ path: string; action: string; body: Record<string, unknown> }> = [];
+  const calls: Array<{ path: string; action: string; body: Record<string, unknown>; headers: Headers; raw: string }> = [];
   const request = async (input: string | URL | Request, init?: RequestInit) => {
     const [status, body] = responses.shift()!;
     const path = new URL(String(input)).pathname;
-    calls.push({ path, action: path.split('/').pop()!, body: JSON.parse(String(init?.body)) });
+    calls.push({ path, action: path.split('/').pop()!, body: JSON.parse(String(init?.body)), headers: new Headers(init?.headers), raw: String(init?.body) });
     return new Response(body === null ? null : JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
   };
   return { calls, request: request as typeof fetch };
@@ -57,6 +57,9 @@ function options(request: typeof fetch, r: ReturnType<typeof repos>) {
 describe('refinement commit executor', () => {
   it('refuses envelopes that would write anywhere but the project directive on its own branch', () => {
     expect(() => validateRefinement(envelope())).not.toThrow();
+    for (const ids of [{ orgId: 'org_a' }, { orgId: { private: 'words' }, projectId: 'project_a' }]) {
+      expect(() => validateRefinement(envelope(undefined, ids))).toThrow('tenant identifiers');
+    }
     expect(() => validateRefinement({ ...envelope(), markdown: '# tampered\n' })).toThrow(/markdownSha256/);
     for (const branch of ['main', 'refinement/other-org/test-project/x-v1', 'refinement/test-org/test-project/../main-v1',
       'refinement/test-org/test-project/x', 'refinement/test-org/test-project/a/b-v1']) {
@@ -229,5 +232,103 @@ describe('refinement commit executor', () => {
     const down = harness([[200, envelope()], [200, { state: 'drafted' }]]);
     expect(await refinementCommitPass(options(down.request, gone))).toBe('failed');
     expect(down.calls[1]).toMatchObject({ action: 'failure', body: { retryable: true, diagnostic: expect.stringMatching(/git fetch failed/) } });
+  });
+});
+
+
+describe('H-1523 scoped immutable commit context', () => {
+  const claimScope = { orgId: 'org_a', projectId: 'project_a' };
+  const scoped = () => envelope(undefined, claimScope);
+  it('signs the exact selector and commits on the explicit base even after main changes', async () => {
+    const r = repos(); const baseRef = git(r.checkout, 'rev-parse', 'HEAD');
+    const clone = mkdtempSync(join(tmpdir(), 'rev-pinned-main-'));
+    execFileSync('git', ['clone', '--quiet', r.origin, clone]);
+    writeFileSync(join(clone, 'new-on-main'), 'must not enter pinned proposal');
+    git(clone, 'add', 'new-on-main');
+    git(clone, '-c', 'user.name=Other', '-c', 'user.email=other@example.invalid', 'commit', '--quiet', '-m', 'main moves');
+    git(clone, 'push', '--quiet', 'origin', 'HEAD:refs/heads/main');
+    const h = harness([[200, scoped()], [200, {}]]);
+    expect(await refinementCommitPass({ ...options(h.request, r), claimScope, baseRef })).toBe('committed');
+    const claim = h.calls[0]; expect(claim.body.claimScope).toEqual(claimScope);
+    expect(claim.headers.get('x-gp-signature')).toBe(createHmac('sha256', 'NOT_A_REAL_SECRET')
+      .update(['POST', claim.path, claim.headers.get('x-gp-timestamp'), claim.headers.get('x-gp-nonce'), hash(claim.raw)].join('\n')).digest('hex'));
+    const pushed = git(r.origin, 'rev-parse', `refs/heads/${BRANCH}`);
+    expect(git(r.origin, 'rev-parse', `${pushed}^`)).toBe(baseRef);
+    expect(git(r.origin, 'ls-tree', '--name-only', pushed)).not.toContain('new-on-main');
+    // Reusing pushed words on a different explicit base is refused, never rewritten.
+    const newBase = git(clone, 'rev-parse', 'HEAD');
+    git(r.checkout, 'fetch', '--quiet', 'origin', 'main');
+    await expect(commitRefinement(r.checkout, scoped(), newBase)).rejects.toThrow('other than these words');
+    expect(git(r.origin, 'rev-parse', `refs/heads/${BRANCH}`)).toBe(pushed);
+    expect(await commitRefinement(r.checkout, scoped(), baseRef)).toBe(pushed);
+  });
+  it.each([{ orgId: 'other' }, { projectId: 'other' }, { orgId: undefined }])('refuses foreign or absent envelope tenant %j without failure delivery', async change => {
+    const r = repos(); const h = harness([[200, { ...scoped(), ...change }]]);
+    await expect(refinementCommitPass({ ...options(h.request, r), claimScope })).rejects.toThrow('claimed tenant');
+    expect(h.calls.map(c => c.action)).toEqual(['claim']); expect(existsSync(r.stateFile)).toBe(false);
+    expect(git(r.origin, 'for-each-ref', '--format=%(refname)')).toBe('refs/heads/main');
+  });
+  it('preserves retained result under changed origin/executor/scope/base and refuses legacy unbound state', async () => {
+    const r = repos(); const baseRef = git(r.checkout, 'rev-parse', 'HEAD');
+    const h = harness([[200, scoped()], [503, {}], [200, {}]]);
+    const o = { ...options(h.request, r), claimScope, baseRef };
+    await expect(refinementCommitPass(o)).rejects.toThrow('503');
+    const saved = readFileSync(r.stateFile, 'utf8'); const count = h.calls.length;
+    for (const override of [{ origin: 'https://another.test' }, { executorId: 'other' }, { executorVersion: '2' },
+      { claimScope: undefined }, { claimScope: { ...claimScope, projectId: 'other' } }, { baseRef: undefined }, { baseRef: 'e'.repeat(40) }]) {
+      await expect(refinementCommitPass({ ...o, ...override })).rejects.toThrow('context');
+      expect(h.calls).toHaveLength(count); expect(readFileSync(r.stateFile, 'utf8')).toBe(saved);
+    }
+    const legacy = JSON.parse(saved); delete legacy.target;
+    writeFileSync(r.stateFile, JSON.stringify(legacy));
+    await expect(refinementCommitPass(o)).rejects.toThrow('unknown context'); expect(h.calls).toHaveLength(count);
+    writeFileSync(r.stateFile, saved);
+    expect(await refinementCommitPass(o)).toBe('committed');
+  });
+  it('refuses a saved envelope tenant mismatch before result, heartbeat or failure delivery', async () => {
+    const r = repos(); const h = harness([[200, scoped()], [503, {}]]);
+    const o = { ...options(h.request, r), claimScope };
+    await expect(refinementCommitPass(o)).rejects.toThrow('503');
+    const saved = JSON.parse(readFileSync(r.stateFile, 'utf8')); saved.projectId = 'other';
+    writeFileSync(r.stateFile, JSON.stringify(saved));
+    await expect(refinementCommitPass(o)).rejects.toThrow('context');
+    expect(h.calls.map(c => c.action)).toEqual(['claim', 'result']);
+  });
+  it('refuses a retained matching-word commit with an unrelated file before result delivery', async () => {
+    const r = repos(); const baseRef = git(r.checkout, 'rev-parse', 'HEAD');
+    const h = harness([[200, scoped()], [503, {}]]); const o = { ...options(h.request, r), claimScope, baseRef };
+    await expect(refinementCommitPass(o)).rejects.toThrow('503');
+    const saved = JSON.parse(readFileSync(r.stateFile, 'utf8'));
+    const clone = mkdtempSync(join(tmpdir(), 'rev-pinned-tamper-'));
+    execFileSync('git', ['clone', '--quiet', r.origin, clone]);
+    git(clone, 'checkout', '--quiet', saved.commit);
+    writeFileSync(join(clone, 'payload'), 'foreign'); git(clone, 'add', 'payload');
+    const tree = git(clone, 'write-tree');
+    const fake = git(clone, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit-tree', tree, '-p', baseRef, '-m', 'fake');
+    git(clone, 'push', '--quiet', 'origin', `${fake}:refs/heads/test-tamper`);
+    git(r.checkout, 'fetch', '--quiet', 'origin', 'test-tamper');
+    writeFileSync(r.stateFile, JSON.stringify({ ...saved, commit: fake }));
+    await expect(refinementCommitPass(o)).rejects.toThrow('base plus directive');
+    expect(h.calls.map(c => c.action)).toEqual(['claim', 'result']);
+  });
+  it.each([null, {}, { orgId: 'org_a' }, { orgId: 'org_a', projectId: 'project_a', extra: true }])('rejects invalid scope %j before a request', async bad => {
+    const r = repos(); const h = harness([]);
+    await expect(refinementCommitPass({ ...options(h.request, r), claimScope: bad as never })).rejects.toThrow('context'); expect(h.calls).toEqual([]);
+  });
+  it('requires a full actual commit object before any claim', async () => {
+    const r = repos(); const h = harness([]);
+    for (const baseRef of ['main', 'A'.repeat(40), git(r.checkout, 'rev-parse', 'HEAD:README.md'), 'e'.repeat(40)]) {
+      await expect(refinementCommitPass({ ...options(h.request, r), baseRef })).rejects.toThrow(); expect(h.calls).toEqual([]);
+    }
+  });
+  it('does not coalesce concurrent changed scopes and freezes caller options', async () => {
+    const r = repos(); const h = harness([[200, scoped()], [200, {}]]);
+    let release!: () => void; const blocked = new Promise<void>(resolve => { release = resolve; });
+    const request: typeof fetch = async (...args) => { await blocked; return h.request(...args); };
+    const mutableScope = { ...claimScope }; const o = { ...options(request, r), claimScope: mutableScope };
+    const first = refinementCommitPass(o); expect(refinementCommitPass(o)).toBe(first);
+    mutableScope.orgId = 'other';
+    await expect(refinementCommitPass(o)).rejects.toThrow('concurrent');
+    release(); expect(await first).toBe('committed'); expect(h.calls[0].body.claimScope).toEqual(claimScope);
   });
 });

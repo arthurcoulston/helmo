@@ -85,9 +85,20 @@ describe('supervisor refinement opt-in lifecycle', () => {
   it('restart reconciles verified receipt; drain waits for delivery without new claims', async () => {
     const f = fixture(true, false, 500), state = join(f.dir, 'refinement-preparation.json');
     const a = { gitRef: 'c'.repeat(40), promptHash: 'd'.repeat(64) };
-    writeFileSync(state, JSON.stringify({ target: { origin: 'http://localhost:9876', executorId: 'goodplumb-rev', executorVersion: '1' },
+    writeFileSync(state, JSON.stringify({ target: { origin: 'http://localhost:9876', executorId: 'goodplumb-rev', executorVersion: '1', baseRef: 'a'.repeat(40) },
       envelope: { identity: 'job-1', orgId: 'org_a', projectId: 'project_a', orgSlug: 'test-org', projectSlug: 'test-project', meetingId: 'booking:2026-10-13T20:00:00.000Z', directiveVersionId: 'version_a', contentHash: 'a'.repeat(64), feedbackSha256: 'b'.repeat(64), attemptId: 'attempt-1', attemptCount: 1, leaseExpiresAt: '2026-10-13T21:00:00.000Z', providerPublicationDecisionRef: 'H-1523@dev.helmo.gp' },
       artifact: a, receipt: { ...a, agentId: 'agent_refinement_000000001' }, verified: true, refusals: 0 }));
+    // A changed configured artifact base must not deliver a previously verified receipt.
+    const saved = readFileSync(state, 'utf8');
+    writeFileSync(state, saved.replace('"baseRef":"' + 'a'.repeat(40), '"baseRef":"' + 'b'.repeat(40)));
+    const changed = f.start();
+    try {
+      await until(() => existsSync(join(f.dir, 'events.log')) && readFileSync(join(f.dir, 'events.log'), 'utf8').includes('refinement-preparation-error'));
+      changed.child.kill('SIGTERM'); expect(await changed.exit).toBe(0);
+      expect(f.requests().some(r => r.path.includes('refinement-preparation'))).toBe(false);
+      expect(readFileSync(state, 'utf8')).not.toBe(saved);
+    } finally { changed.child.kill('SIGKILL'); }
+    writeFileSync(state, saved);
     const p = f.start();
     try {
       await until(() => f.requests().some(r => r.path.endsWith('/refinement-preparation/result')));

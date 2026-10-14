@@ -225,3 +225,67 @@ describe('supervisor drain fences', () => {
     expect(h.options.build).not.toHaveBeenCalled(); expect(h.saved().envelope.attemptId).toBe('attempt-1');
   });
 });
+
+
+describe('H-1523 exact callable preparation context', () => {
+  const claimScope = { orgId: 'org_a', projectId: 'project_a' };
+  it('signs exact scope in claim and retains the frozen base/scope across pending recovery', async () => {
+    const h = harness([[200, envelope()], beat(), [503, {}]]);
+    const o = { ...h.options, claimScope, baseRef: 'e'.repeat(40) };
+    expect(await pass(o)).toBe('pending');
+    expect(h.calls[0].body.claimScope).toEqual(claimScope); // harness checks HMAC against the entire raw body
+    expect(h.saved().target).toMatchObject({ claimScope, baseRef: o.baseRef });
+    const saved = readFileSync(o.stateFile, 'utf8'); const count = h.calls.length;
+    for (const override of [{ claimScope: { ...claimScope, orgId: 'other' } },
+      { claimScope: { ...claimScope, projectId: 'other' } }, { claimScope: undefined }, { baseRef: 'f'.repeat(40) }, { baseRef: undefined }]) {
+      await expect(pass({ ...o, ...override })).rejects.toThrow('unavailable');
+      expect(h.calls).toHaveLength(count); expect(readFileSync(o.stateFile, 'utf8')).toBe(saved);
+    }
+    h.replies.push(beat(), beat(), beat(), [200, {}]);
+    expect(await pass(o)).toBe('bound');
+    expect(h.options.build).toHaveBeenCalledOnce();
+  });
+  it.each([{ orgId: 'other' }, { projectId: 'other' }])('refuses mismatching claimed tenant %j before saving or callbacks', async change => {
+    const h = harness([[200, { ...envelope(), ...change }]]);
+    await expect(pass({ ...h.options, claimScope })).rejects.toThrow('unavailable');
+    expect(h.calls.map(c => c.action)).toEqual(['claim']);
+    expect(existsSync(h.options.stateFile)).toBe(false); expect(h.options.build).not.toHaveBeenCalled();
+  });
+  it.each([null, {}, { orgId: 'org_a' }, { orgId: 'org_a', projectId: 'project_a', extra: true }])('refuses malformed scope before transport: %j', async bad => {
+    const h = harness([]);
+    await expect(pass({ ...h.options, claimScope: bad as never })).rejects.toThrow('unavailable');
+    expect(h.calls).toEqual([]);
+  });
+  it('refuses a concurrent changed context while preserving the first pass and snapshots mutable input', async () => {
+    const h = harness([[200, envelope()], beat(), beat(), beat(), [200, {}]]);
+    let release!: () => void; const blocked = new Promise<void>(resolve => { release = resolve; });
+    h.options.build = vi.fn(async () => { await blocked; return artifact; });
+    const mutableScope = { ...claimScope };
+    const o = { ...h.options, claimScope: mutableScope, baseRef: 'e'.repeat(40) };
+    const first = pass(o);
+    expect(pass(o)).toBe(first);
+    mutableScope.projectId = 'other';
+    await expect(pass(o)).rejects.toThrow('concurrent context');
+    release(); expect(await first).toBe('bound');
+    expect(h.calls[0].body.claimScope).toEqual(claimScope);
+  });
+  it('refuses a saved envelope outside the unchanged requested tenant before any delivery', async () => {
+    const h = harness([[200, envelope()], beat(), beat(), beat(), [503, {}]]);
+    const o = { ...h.options, claimScope, baseRef: 'e'.repeat(40) };
+    expect(await pass(o)).toBe('pending');
+    const saved = h.saved(); saved.envelope.projectId = 'other';
+    writeFileSync(o.stateFile, JSON.stringify(saved)); const count = h.calls.length;
+    await expect(pass(o)).rejects.toThrow('unavailable'); expect(h.calls).toHaveLength(count);
+    expect(h.options.publish).toHaveBeenCalledOnce();
+  });
+  it.each(['verified', 'failure'])('does not deliver saved %s state to a changed context', async kind => {
+    const h = harness(kind === 'verified' ? [[200, envelope()], beat(), beat(), beat(), [503, {}]]
+      : [[200, envelope()], beat(), [503, {}]]);
+    if (kind === 'failure') h.options.build = vi.fn(async () => { throw new PreparationRefused('closed'); });
+    const o = { ...h.options, claimScope, baseRef: 'e'.repeat(40) };
+    expect(await pass(o)).toBe('pending');
+    const count = h.calls.length;
+    await expect(pass({ ...o, baseRef: 'f'.repeat(40) })).rejects.toThrow('unavailable');
+    expect(h.calls).toHaveLength(count);
+  });
+});

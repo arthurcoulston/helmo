@@ -3,6 +3,8 @@
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { atomicJson, keychainSecret, signedPost } from './intake-preparation.js';
 
+import { refinementContext, sameRefinementContext, matchesClaimScope, type ContextOptions, type RefinementContext } from './refinement-context.js';
+
 const BASE = '/api/refinement-preparation';
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -52,7 +54,7 @@ function receipt(value: PreparationReceipt): PreparationReceipt {
 }
 
 interface Active {
-  target: { origin: string; executorId: string; executorVersion: string };
+  target: RefinementContext;
   envelope: PreparationEnvelope;
   artifact?: PreparationArtifact;
   receipt?: PreparationReceipt;
@@ -61,11 +63,11 @@ interface Active {
   failure?: { diagnostic: string; retryable: boolean };
 }
 
-export interface PreparationOptions {
-  origin: string; stateFile: string; lastRunFile?: string;
+export interface PreparationOptions extends ContextOptions {
+  stateFile: string; lastRunFile?: string;
   /** Drain fence: false retains the durable attempt for restart, before any new effect. */
   shouldContinue?: () => boolean;
-  executorId?: string; executorVersion?: string; secret?: () => string; request?: typeof fetch;
+  secret?: () => string; request?: typeof fetch;
   /** Each implementation must use the checkpoint immediately before external
    * effects, including Git push, provider mutation and product binding. */
   build: (e: PreparationEnvelope, checkpoint: () => Promise<void>) => Promise<PreparationArtifact>;
@@ -77,11 +79,17 @@ export interface PreparationOptions {
 export type PreparationPassResult = 'idle' | 'bound' | 'pending' | 'superseded' | 'failed';
 // A state file is the installation's ownership unit. Independent disposable
 // installations do not accidentally share a promise, while repeated polls do.
-const running = new Map<string, Promise<PreparationPassResult>>();
+const running = new Map<string, { target: RefinementContext; pass: Promise<PreparationPassResult> }>();
 
 export function refinementPreparationPass(options: PreparationOptions): Promise<PreparationPassResult> {
+  let target: RefinementContext;
+  try { target = refinementContext(options); }
+  catch { return Promise.reject(new PreparationRefused('refinement preparation unavailable; invalid context')); }
   const current = running.get(options.stateFile);
-  if (current) return current;
+  if (current) return sameRefinementContext(current.target, target) ? current.pass
+    : Promise.reject(new PreparationRefused('refinement preparation unavailable; concurrent context differs'));
+  // Snapshot mutable caller options before the first await.
+  options = { ...options, ...target };
   const seen: { claim?: number } = {};
   const record = (result: PreparationPassResult | 'unknown') => {
     try {
@@ -94,7 +102,7 @@ export function refinementPreparationPass(options: PreparationOptions): Promise<
     record('unknown');
     throw new Unavailable('refinement preparation unavailable; retained attempt needs inspection');
   }).finally(() => { running.delete(options.stateFile); });
-  running.set(options.stateFile, pass);
+  running.set(options.stateFile, { target, pass });
   return pass;
 }
 
@@ -104,22 +112,16 @@ async function run(options: PreparationOptions, seen: { claim?: number }): Promi
   // Bound signed network ambiguity so supervisor drain does not wait forever.
   const send = options.request ?? fetch;
   const request: typeof fetch = (input, init) => send(input, { ...init, signal: AbortSignal.timeout(30_000) });
-  const executor = { executorId: options.executorId ?? 'goodplumb-rev', executorVersion: options.executorVersion ?? '1' };
-  const url = new URL(options.origin);
-  if (url.username || url.password || url.search || url.hash || url.pathname !== '/'
-    || (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)))
-    || !/^[a-z0-9_-]{1,48}$/.test(executor.executorId) || !/^[a-z0-9._-]{1,32}$/.test(executor.executorVersion)) {
-    throw new PreparationRefused('invalid preparation origin or executor');
-  }
-  const target = { origin: url.origin, ...executor };
+  const target = refinementContext(options);
+  const executor = { executorId: target.executorId, executorVersion: target.executorVersion };
   const secret = (options.secret ?? keychainSecret)();
   const post = (action: string, body: object) => signedPost(target.origin, action, { ...executor, ...body }, secret, request, BASE);
   const forget = () => rmSync(options.stateFile, { force: true });
   let active: Active;
   if (existsSync(options.stateFile)) {
     const saved = JSON.parse(readFileSync(options.stateFile, 'utf8')) as Active;
-    if (saved.target?.origin !== target.origin || saved.target.executorId !== target.executorId || saved.target.executorVersion !== target.executorVersion) {
-      throw new PreparationRefused('saved attempt belongs to another origin or executor');
+    if (!sameRefinementContext(saved.target, target)) {
+      throw new PreparationRefused('saved attempt belongs to another refinement context');
     }
     active = { target, envelope: validatePreparation(saved.envelope), refusals: saved.refusals };
     if (!Number.isInteger(active.refusals) || active.refusals < 0 || active.refusals > MAX_REFUSALS) throw new PreparationRefused('invalid saved retry count');
@@ -137,15 +139,17 @@ async function run(options: PreparationOptions, seen: { claim?: number }): Promi
       throw new PreparationRefused('saved receipt differs from artifact');
     }
   } else {
-    const claimed = await post('claim', {});
+    const claimed = await post('claim', target.claimScope ? { claimScope: target.claimScope } : {});
     seen.claim = claimed.status;
     if (claimed.status === 204 || claimed.status === 409) return 'idle';
     if (!claimed.ok) throw new Unavailable();
     // Invalid envelopes are never allowed to invoke any artifact/provider work.
     active = { target, envelope: validatePreparation(await claimed.json()), refusals: 0 };
+    if (!matchesClaimScope(target, active.envelope)) throw new PreparationRefused('claimed tenant differs from requested scope');
     atomicJson(options.stateFile, active);
   }
   const e = active.envelope;
+  if (!matchesClaimScope(target, e)) throw new PreparationRefused('claimed or saved tenant differs from requested scope');
   const owned = { identity: e.identity, attemptId: e.attemptId };
   const save = () => atomicJson(options.stateFile, active);
   const checkpoint = async () => {

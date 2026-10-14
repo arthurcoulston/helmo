@@ -555,6 +555,17 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   attempt back as retryable. Refused claims fail as not retryable; Git or
   network errors as retryable. Each non-idle pass is a `refinement-commit`
   event.
+  Both callable refinement passes now share `refinement-context.ts`: optional
+  exact `claimScope` is signed in claims and checked against both envelope tenant
+  IDs before further effects. `baseRef` pins directive commits to an exact local
+  commit object and exact parent/base-plus-directive tree, including branch and
+  retained-result replay. Unpinned mode preserves the main-ancestry rule above.
+  Saved and concurrent attempts are fenced by origin/executor/scope/base, and
+  mutable options are snapshotted. Unbound old commit state refuses for Builder
+  reconciliation; no original target is inferred. Preparation callbacks still
+  own using their supplied artifact pin; the supervisor now includes that pin in
+  protocol state, so a config base change cannot deliver an older receipt.
+  Scope/base are callable options, not new roster switches or authority grants.
 - `refinement-preparation.ts` is the H-1523 preparation protocol adapter,
   disabled by default in the supervisor. It consumes the separate signed
   `/api/refinement-preparation/*` contract. A claim carries one meeting's

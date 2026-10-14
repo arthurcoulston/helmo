@@ -101,6 +101,32 @@ and no change to the checkout's working tree.
 Omitting either setting disables the integration and preserves ordinary Rev
 behaviour.
 
+The callable `refinementPreparationPass` and `refinementCommitPass` also accept
+`claimScope: { orgId, projectId }` and `baseRef` for an isolated bounded runner.
+The exact selector is signed in the claim body; both returned tenant IDs must
+match before artifact work or any failure/result delivery. Omission keeps the
+legacy pool selector. A selector narrows work; it grants no access or publication
+authority. Credentials may be supplied with the existing `secret` callback;
+these options do not retarget the serving fleet or install credentials.
+
+`baseRef` is a full lowercase commit hash. For directive commits it must already
+be a local commit object, becomes the exact parent, and branch replay must have
+the whole base tree plus only the directive. Moving `main` cannot change it.
+Without a base the existing `origin/main` behavior remains. For preparation it
+binds retained state to the caller's artifact pin; the callbacks must build from
+that same pin. Supervisor preparation passes its configured artifact base.
+
+Retained attempts bind origin, executor identity/version, selector and base.
+Changing any pin refuses before heartbeat/result/failure delivery and preserves
+state for Builder inspection. Same-state concurrent calls coalesce only under
+the same pins; caller inputs are snapshotted. Old directive-commit state without
+an origin/executor context is refused, never automatically rebound. Builder must
+reconcile its original Worker attempt and pushed branch under the original
+configuration before resuming or deliberately archiving it; deleting the receipt
+is not proof that its effects never happened. Existing preparation state without
+a base also refuses when a configured base is newly supplied. These callable
+options do not add a scheduler, enable provider scope, or authorize rollout.
+
 ## Development
 
 ```bash

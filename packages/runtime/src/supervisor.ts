@@ -413,7 +413,7 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
           scanScript: g.refinement_preparation_scan_script!, origin: g.intake_preparation_origin,
         });
         preparationPending = refinementPreparationPass({
-          ...callbacks, origin: g.intake_preparation_origin,
+          ...callbacks, origin: g.intake_preparation_origin, baseRef: g.refinement_preparation_base_ref,
           stateFile: join(dir, 'refinement-preparation.json'),
           lastRunFile: join(dir, 'refinement-preparation-last.json'),
           shouldContinue: () => !shuttingDown,

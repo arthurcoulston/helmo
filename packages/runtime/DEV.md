@@ -679,6 +679,72 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   attempt back as retryable. Refused claims fail as not retryable; Git or
   network errors as retryable. Each non-idle pass is a `refinement-commit`
   event.
+- `refinement-preparation.ts` is the H-1523 preparation protocol adapter,
+  disabled by default in the supervisor. It consumes the separate signed
+  `/api/refinement-preparation/*` contract. A claim carries one meeting's
+  organization/project, directive version/content hash, submitted-feedback
+  hash, lease token and provider-publication decision reference. The Worker
+  checks configured scope and current evidence on heartbeat; configuration is
+  trusted operator relay, not a Helmo-verified grant. The adapter validates
+  identifiers and portable meeting names before any callback. It saves only
+  those identifiers, artifact refs, binding receipts and closed failure
+  diagnostics, bound to the original origin and executor identity.
+  Build/publish callbacks must call the supplied checkpoint immediately before
+  each external effect. The adapter also checkpoints between phases, preserves
+  a receipt before readback, and requires a read-only provider verification
+  callback before result delivery. Verification mismatch fails for owned
+  inspection rather than another mutation. A verified result or outstanding
+  failure is reconciled first on restart; a lost result response cannot repeat
+  publication. Five 422 result refusals stop automatic retry. Network ambiguity
+  retains state, with Builder named in the content-free last-run record.
+  `refinement-artifact.ts` supplies the concrete callbacks. The EXISTING intake
+  poll invokes them only with `refinement_preparation_enabled = true`, the
+  existing intake origin/checkout, and all five explicit fields:
+  `refinement_preparation_source`, `refinement_preparation_base_ref` (40 lowercase
+  hex characters), `refinement_preparation_work_root`,
+  `refinement_preparation_sync_script`, `refinement_preparation_scan_script`.
+  Paths are absolute; the work root must be outside the source (including
+  real-path validation before artifacts). Incomplete enabled configuration
+  refuses startup with a closed diagnostic. No defaults select a source or
+  infer independent acceptance. Do not enable an unaccepted/unadopted snapshot;
+  the signed Worker's original provider-publication scope must also be configured.
+  One retained attempt belongs to `state/supervisor/refinement-preparation.json`.
+  Repeated polls do not overlap; stopped roster workers stay stopped. The
+  content-free `refinement-preparation-last.json` records time/result/claim status
+  and Builder ownership; errors log a closed inspection instruction. A drain
+  stops new polls, fences future effects at checkpoints and waits for the current
+  pass to settle. Signed requests have a 30-second timeout; artifact commands and
+  provider children retain their 120-second ceilings. Retained state reconciles
+  on restart, including verified result delivery without republishing. Empty
+  rosters start no adapter/timer. Runtime adoption and live verification remain
+  separate from this source wiring.
+  The operator pins an accepted product commit, a registered source repository,
+  private work root, origin and the existing company's scanner/sync tools.
+  Each immutable meeting gets a registered isolated worktree and deterministic
+  proposal branch; no shared working files are edited. Product export must
+  return the resolved tenant/project and exact current meeting evidence.
+  The product's own readers validate content/feedback hashes before artifacts
+  are written; its prompt builder/configuration determine the actual sent hash.
+  Only the prompt and meeting snapshot enter one commit on that pinned base.
+  Candidate scan precedes commit; signed checkpoint precedes scanner-backed
+  private sync; exact clean remote tip is verified. Lost push responses reuse
+  the retained exact commit. Foreign edits, links in artifact paths, conflicting
+  branch/base/content and scanner findings require Builder inspection.
+  Source/artifact worktrees remain private evidence; no automatic cleanup.
+  A separate product child invokes the supported callable publisher, using IPC
+  to checkpoint immediately before provider/binding effects. Permanent product
+  refusals map to protocol refusals, network ambiguity to owned recovery.
+  No child stdout, credentials, provider body or client words enter status.
+  The verify callback independently reads actual provider configuration.
+  Local integration runs the actual product builder/publisher and company
+  scanner/sync against disposable Git plus intercepted API/provider/keychain
+  access. Run `REFINEMENT_TEST_PRODUCT=<exact-product-checkout>` and
+  `REFINEMENT_TEST_PUBLISHING=<company-tools/publishing>` with runtime tests
+  `test/refinement-artifact.test.ts`; these integration cases are explicitly
+  skipped without both inputs. This proves local composition and recovery,
+  **not** live provider, deployed Durable Object, or publication authority.
+  Poll wiring, independent reviews/upstream merge and pinned runtime adoption
+  remain. No new roster setting, scheduler or live authority scope is enabled.
 - A human answer reopens a Helmo ticket with `resolution: resume` regardless
   of whether its operational choice was resume, hold, or investigate. The
   supervisor clears `BLOCKED` only when `last_answer.chosen_option` is the

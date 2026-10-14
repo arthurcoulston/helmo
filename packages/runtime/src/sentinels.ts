@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync, rmSync, appendFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, rmSync, appendFileSync, mkdirSync, rmdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { markerLines } from './build.js';
 import { revHome, stateDir } from './config.js';
@@ -36,7 +36,17 @@ export function sPath(loop: string, s: Sentinel | string): string {
 }
 
 export function sSet(loop: string, s: Sentinel, content = ''): void {
-  writeFileSync(sPath(loop, s), content);
+  const write = () => writeFileSync(sPath(loop, s), content);
+  if (s === 'BLOCKED') withBlockedLock(loop, write);
+  else write();
+}
+
+// Compare/release and every supported BLOCKED writer share this lock. Never
+// guess that an abandoned lock is safe to remove: contention fails closed.
+export function withBlockedLock<T>(loop: string, action: () => T): T {
+  const lock = sPath(loop, '.blocked-lock');
+  try { mkdirSync(lock); } catch { throw new Error(`BLOCKED control busy for '${loop}' (${lock})`); }
+  try { return action(); } finally { rmdirSync(lock); }
 }
 
 export type SentinelOwner = {
@@ -115,7 +125,11 @@ export function sGet(loop: string, s: Sentinel): string | null {
 }
 
 export function sClear(loop: string, ...ss: Sentinel[]): void {
-  for (const s of ss) rmSync(sPath(loop, s), { force: true });
+  for (const s of ss) {
+    const clear = () => rmSync(sPath(loop, s), { force: true });
+    if (s === 'BLOCKED') withBlockedLock(loop, clear);
+    else clear();
+  }
 }
 
 export function sHas(loop: string, s: Sentinel): boolean {

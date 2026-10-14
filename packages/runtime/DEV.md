@@ -1766,6 +1766,34 @@ identical 185 specifiers from all 37 of them — the case is proven by
 front of it, which the old scan passed and the new one refuses. What it still
 cannot see is a specifier assembled at runtime, and the inside of a template
 literal's `${...}`.
+# Recover one diagnosed runtime failure
+
+`recover-runtime <exact worker> --record <JSON file> --installation <name>`
+queues one request for the owning supervisor. The immutable record contains
+`installation`, `worker`, `ticket`, the exact plain runtime-trip `reason` and
+`at`, SHA256 of the complete BLOCKED bytes as `sha256`, and `expires_at` no
+more than fifteen minutes ahead. It does not claim or complete a work ticket.
+Diagnose and verify current startup through issued provider access first.
+
+The supervisor consumes the request once with no child, rechecks the trip and
+refuses a live/unknown worker, structured block, STOP, HOLD, PACE, pending PACE
+writer or LIMIT. Release clears only the matching BLOCKED and fail streak.
+All supported BLOCKED writers share an exclusive per-worker `.blocked-lock`;
+contention or an interrupted lock fails closed and needs operator diagnosis,
+never automatic stale-lock removal. This is the existing local filesystem
+trust boundary, not protection from hostile direct file edits or old binaries.
+Deploy a coherent accepted runtime before using the command.
+
+`RUNTIME_RECOVERY.last.json`, retained per-request decision files, and
+`events.log` record release/refusal. A consumed manifest cannot be replayed;
+a new failure needs diagnosis and a fresh manifest. A crash during consumption
+can leave a consumed request with the old block still present; inspect the
+decision and controls before any new request. No hold or provider policy is
+changed, and no worker health or useful-work verdict is invented. Verify new
+worker PID/startup and actual admitted useful work separately. `stop <worker>
+--worker --installation <name>` contains the recovered worker; there is no
+one-step undo restoring the old incident state.
+
 # Prime team control
 
 `gp-rev team stop|resume <loop|all>` is the Good Plumb leadership surface. It

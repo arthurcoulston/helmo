@@ -11,6 +11,13 @@ consolidation imported still carried that release's notes under "Unreleased";
 this is the published wording, which is two entries and one commit reference
 longer.
 
+## Unreleased
+
+- Runtime can recover one exact diagnosed failure through the supervisor without
+  clearing independent STOP, HOLD, PACE, LIMIT or structured block controls.
+  Recovery requests expire, bind the observed failure and worker, and are
+  consumed once under the shared BLOCKED writer lock.
+
 ## v0.12.1 — 2026-10-13
 
 - Attended work now belongs to its ticket rather than parking the whole seat.

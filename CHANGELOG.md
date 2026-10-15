@@ -11,7 +11,7 @@ consolidation imported still carried that release's notes under "Unreleased";
 this is the published wording, which is two entries and one commit reference
 longer.
 
-## Unreleased
+## Unreleased — 0.13.0
 
 - Runtime can recover one exact diagnosed failure through the supervisor without
   clearing independent STOP, HOLD, PACE, LIMIT or structured block controls.

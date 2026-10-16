@@ -18,6 +18,11 @@ longer.
   Recovery requests expire, bind the observed failure and worker, and are
   consumed once under the shared BLOCKED writer lock.
 
+- Browser checks can run against a managed browser session supplied by the
+  session owner. Work validates the loopback capability and connects with a
+  bounded timeout; an invalid endpoint or a failed connection reports a
+  sanitized error and never launches a local browser instead.
+
 ## v0.12.1 — 2026-10-13
 
 - Attended work now belongs to its ticket rather than parking the whole seat.

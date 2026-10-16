@@ -906,6 +906,12 @@ Pinned releases accept both the historical three-component layout and C1's one
   policies can close the user's other windows even on a headless launch.
   `test/browser-launch.test.ts` proves the missing-browser path cannot retry
   against a desktop browser and keeps all three entrypoints on this launcher.
+  Setting `MANAGED_BROWSER_WS_ENDPOINT` connects to a browser the session
+  owner already runs instead of launching one: the value must be a loopback
+  `ws://127.0.0.1:<port>/<token>` capability, and an invalid endpoint or a
+  failed connection raises a sanitized error rather than falling back to a
+  local launch. That is for a sandboxed client whose browser lives on its
+  owner's host; the owner keeps the host, its policy and its cleanup.
   `npm run screenshot -- <url> <output.png>` replaces direct Chrome commands.
   Two things it taught, both of which made an earlier control useless: every
   row is a collapsed `<details>`, so a browser that only loads the page lays

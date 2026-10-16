@@ -142,6 +142,11 @@ Commit coverage: `102e88c`, `78f88c6`, `996f4fc`, `8f3d46e`, `ad52e3e`,
 
 ## v0.10.0 — 2026-10-12
 
+- The spend-rate anomaly breaker compares a run's cost only with the last five
+  iterations of the same loop on the same runtime. Cheap idle probes on another
+  runtime no longer drag the baseline down and trip an ordinary session on a
+  costlier one. Thresholds are unchanged.
+
 - The hourly and daily burn ceilings now measure spend over the time a session
   actually ran. Token-log entries carry `duration_ms`, and a rolling window
   counts only the overlapping fraction of a long session instead of assigning

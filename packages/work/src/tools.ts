@@ -207,8 +207,11 @@ export function buildServer(store: Store, envActor: Actor | null, server = new M
     },
     async ({ actor, ...filter }) => {
       try {
-        const caller = resolveActor(actor as Actor | undefined)?.name;
-        const tickets = store.listTickets({ ...filter, caller });
+        const reader = resolveActor(actor as Actor | undefined);
+        const caller = reader?.name;
+        // A supervised reader's ready queue is what it may start (H-2070).
+        const projects = filter.ready ? store.deliveryProjectsFor(reader) : undefined;
+        const tickets = store.listTickets({ ...filter, caller, projects });
         const blockers = store.blockersFor(tickets.map((t) => t.id));
         const workstreams = store.listWorkstreamInfo().map((w) => ({
           name: w.name,
@@ -229,6 +232,8 @@ export function buildServer(store: Store, envActor: Actor | null, server = new M
           ...(gated.length ? { gated } : {}),
           ...(capacityHeld.length ? { capacity_held: capacityHeld } : {}),
           ...(withHuman.length ? { with_human: withHuman } : {}),
+          // Why an emptier queue is empty: only Ship Next projects run (H-2070).
+          ...(projects ? { delivery_scope: { ship_next: projects, note: 'Your ready queue holds only tickets in a Ship Next project; everything else stays queued until its project is in Ship Next.' } } : {}),
         });
       } catch (e) {
         return fail(e);

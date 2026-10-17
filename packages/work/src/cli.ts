@@ -26,6 +26,7 @@ const COMMAND_FLAGS: Record<string, readonly string[]> = {
   'seat-check': ['assignee'],
   leader: ['actor-name', 'off'],
   'self-triage': ['on', 'off'],
+  'delivery-scope': ['roadmap-db', 'off'],
   'launch-admit': ['workstream', 'assignee', 'launch-id'],
   'missing-claim-inspect': ['ticket', 'session', 'generation'],
   'missing-claim-reconcile': ['ticket', 'record'],
@@ -333,6 +334,7 @@ try {
         assignee: flag('assignee'),
         lane: flag('lane'),
         caller,
+        projects: ready ? store.deliveryProjectsFor(actorSafe()) : undefined,
         limit: Number(flag('limit') ?? 20),
       });
       const awaitingTriage = ready && caller ? store.selfFiledPending(caller) : [];
@@ -446,6 +448,17 @@ try {
         : has('on') ? store.setSelfTriage(actor(), true)
         : store.selfTriage();
       out({ self_triage: on ? 'on' : 'off', set_by: store.settingProvenance('self_triage') });
+      break;
+    }
+    case 'delivery-scope': {
+      // Which roadmap's Ship Next bounds autonomous work (H-2070). Bare, it
+      // reports the scope as a worker would see it now; --roadmap-db points the
+      // store at a roadmap and --off removes the bound.
+      if (has('off') && flag('roadmap-db')) throw new HelmoError('delivery-scope takes --roadmap-db or --off, not both.');
+      const scope = has('off') ? store.setDeliveryScope(actor(), null)
+        : flag('roadmap-db') ? store.setDeliveryScope(actor(), flag('roadmap-db')!)
+        : store.deliveryScope();
+      out({ delivery_scope: scope });
       break;
     }
     case 'launch-admit': {

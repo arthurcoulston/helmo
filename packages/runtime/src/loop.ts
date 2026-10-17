@@ -991,7 +991,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
         sSet(l.name, 'BLOCKED', `kind=anomaly\nreason=${anomaly.reason}\nat=${at}\n`);
         let investigationTicket: string | null = null;
         try {
-          investigationTicket = escalateBlocked(g, l, anomaly.reason, res.outputTail, dir, 'anomaly');
+          investigationTicket = escalateBlocked(g, l, anomaly.reason, res.outputTail, dir, 'anomaly', claimedTicket);
           logEvent(l.name, 'escalated', `ticket=${investigationTicket}`);
         } catch (e) {
           logEvent(l.name, 'escalate-failed', String(e).slice(0, 200));
@@ -1113,7 +1113,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
           return;
         }
         try {
-          const id = escalateBlocked(g, l, action.reason, res.outputTail, dir, kind);
+          const id = escalateBlocked(g, l, action.reason, res.outputTail, dir, kind, claimedTicket);
           if (kind) writeFileSync(join(dir, 'BLOCKED.json'), `${JSON.stringify({ kind, reason: action.reason, at, investigation_ticket: id }, null, 2)}\n`);
           console.log(`rev: '${l.name}' BLOCKED — escalated as Helm ticket ${id}.`);
           logEvent(l.name, 'escalated', `ticket=${id}`);

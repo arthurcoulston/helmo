@@ -212,6 +212,44 @@ describe('Ship Next bounds autonomous work (H-2070)', () => {
     expect(tpl.status).toBe('open');
   });
 
+  it('gives support work the project of the in-flight ticket it serves, never overriding one already set', () => {
+    shipNext(alpha);
+    s.setDeliveryScope(orch, roadmapPath);
+    const inflight = file({ project: alpha, assignee: 'someone-else' });
+
+    // A subtask filed with a parent link inherits at the door.
+    const sub = file({ deps: [{ to: inflight.id, type: 'parent' }] });
+    expect(s.getTicket(sub.id).project).toBe(alpha);
+    // A ticket in-flight work comes to wait on inherits when the link lands.
+    const unblock = file();
+    s.linkTickets(orch, inflight.id, unblock.id, 'blocks', 'add');
+    expect(s.getTicket(unblock.id).project).toBe(alpha);
+    expect(s.getEvents(unblock.id).at(-1)).toMatchObject({ event_type: 'updated', payload: { diffs: { project: { from: null, to: alpha } } } });
+    // A later parent link inherits too.
+    const later = file();
+    s.linkTickets(orch, later.id, inflight.id, 'parent', 'add');
+    expect(s.getTicket(later.id).project).toBe(alpha);
+
+    // Support work under Ship Next is runnable; lineage-only and related
+    // work, and work with its own project, keep their own standing.
+    const found = file({ deps: [{ to: inflight.id, type: 'discovered_from' }] });
+    const related = file();
+    s.linkTickets(orch, related.id, inflight.id, 'relates', 'add');
+    const own = file({ project: beta });
+    s.linkTickets(orch, inflight.id, own.id, 'blocks', 'add');
+    const explicit = file({ project: beta, deps: [{ to: inflight.id, type: 'parent' }] });
+    expect([found, related].map((t) => s.getTicket(t.id).project)).toEqual([null, null]);
+    expect([own, explicit].map((t) => s.getTicket(t.id).project)).toEqual([beta, beta]);
+
+    const ready = [...s.wakeCheck(0, 'goodplumb', 'builder').ready_ids].sort();
+    expect(ready).toEqual([sub.id, unblock.id, later.id].sort());
+
+    // Derived state is still the event log's.
+    const before = [sub, unblock, later].map((t) => s.getTicket(t.id).project);
+    s.rebuild();
+    expect([sub, unblock, later].map((t) => s.getTicket(t.id).project)).toEqual(before);
+  });
+
   it('leaves a store that names no roadmap exactly as before', () => {
     const loose = file();
     expect(s.deliveryScope()).toBeNull();

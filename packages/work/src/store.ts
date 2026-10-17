@@ -3527,6 +3527,14 @@ export class Store {
       if (seat) input = { ...input, assignee: seat };
     }
     for (const d of input.deps ?? []) this.getTicket(d.to); // existence check before mint
+    // Project inheritance (H-2070): a subtask filed without a project takes
+    // its parent's, so work created to support an in-flight ticket runs under
+    // the same Ship Next item rather than needing an exemption class. Only an
+    // empty project is filled; an explicit one is never overridden.
+    if (!input.project) {
+      const inherited = (input.deps ?? []).filter((d) => d.type === 'parent').map((d) => this.getTicket(d.to).project).find((p) => !!p);
+      if (inherited) input = { ...input, project: inherited };
+    }
 
     return this.db.transaction(() => {
       if (input.workflow_attempt_id) {
@@ -4309,12 +4317,32 @@ export class Store {
         this.checkNoBlocksCycle(fromId, toId, type);
         this.append(ts, fromId, 'linked', actor, { to: toId, type });
         this.applyLinked(fromId, toId, type, true);
+        this.inheritProjectOnLink(ts, actor, fromId, toId, type);
       } else {
         this.append(ts, fromId, 'unlinked', actor, { to: toId, type });
         this.applyLinked(fromId, toId, type, false);
       }
       this.db.prepare('UPDATE tickets SET updated_at = ? WHERE id = ?').run(ts, fromId);
     }).immediate();
+  }
+
+  /** Project inheritance on a new link (H-2070). A ticket made a subtask of
+   *  in-flight work, or one that in-flight work now waits on, supports that
+   *  work: with no project of its own it takes the supported ticket's, as an
+   *  ordinary recorded update. A ticket that already has a project keeps it,
+   *  so a link can never relabel unrelated work. */
+  private inheritProjectOnLink(ts: string, actor: Actor, fromId: string, toId: string, type: DepType): void {
+    const pair = type === 'parent' ? { child: fromId, source: toId } : type === 'blocks' ? { child: toId, source: fromId } : null;
+    if (!pair) return;
+    const child = this.getTicket(pair.child);
+    const source = this.getTicket(pair.source);
+    if (child.project || !source.project || child.status === 'done' || child.status === 'cancelled') return;
+    const payload = {
+      diffs: { project: { from: null, to: source.project } },
+      note: `Took project ${source.project} from ${source.id}, the ${type === 'parent' ? 'parent' : 'blocked'} ticket it supports, so it runs under the same Ship Next item.`,
+    };
+    const seq = this.append(ts, child.id, 'updated', actor, payload);
+    this.applyUpdated(ts, child.id, payload, seq);
   }
 
   // ---------- rebuild (the invariant) ----------

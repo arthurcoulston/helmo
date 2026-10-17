@@ -796,7 +796,7 @@ export function redeployFailed(g: GlobalConfig, r: { by: string; reason: string;
 // A BLOCKED loop is a summons, not a log line. Mechanical safety stops go to
 // an independent peer when one is live and remain open for one otherwise;
 // faults that need a decision still reach the human.
-export function escalateBlocked(g: GlobalConfig, l: LoopConfig, reason: string, outputTail: string, stateDir: string, kind?: 'anomaly' | 'capacity' | 'burn'): string {
+export function escalateBlocked(g: GlobalConfig, l: LoopConfig, reason: string, outputTail: string, stateDir: string, kind?: 'anomaly' | 'capacity' | 'burn', forTicket?: string | null): string {
   const investigator = kind ? investigatorFor(g, l) : null;
   const investigationInstructions = kind
     ? `\n\nInvestigate the trace. If this is a false alarm, add evidence kind 'other' with this exact ref and leave the ticket in progress while Rev proves the restart (do not clear a sentinel yourself):\nrev:false_alarm:${encodeURIComponent(reason)}`
@@ -816,6 +816,10 @@ export function escalateBlocked(g: GlobalConfig, l: LoopConfig, reason: string, 
       // The seat, not the loop: workers draw by seat, and a pool worker's own
       // name is no assignee anything wakes on (H-676).
       ...(investigator ? ['--assignee', seatName(investigator)] : []),
+      // A loop halted mid-ticket files its escalation as that ticket's
+      // subtask, so it inherits the ticket's roadmap project and stays
+      // runnable under Ship Next delivery scope (H-2070).
+      ...(forTicket ? ['--dep', forTicket, '--dep-type', 'parent'] : []),
     ],
     revActor(),
   ) as { id: string };

@@ -212,6 +212,19 @@ describe('pool workers on one seat (H-574)', { timeout: 60000 }, () => {
     } finally { store.close?.(); }
   });
 
+  it('files a halted worker\'s escalation under the ticket it stopped on, so it inherits that ticket\'s project (H-2070)', () => {
+    const e = setup((h) => worker('w1', h, `${BOUND}; exit 1`) + worker('w2', h, 'true'));
+    const id = seed(e, 'Work under a Ship Next item', 'R-41');
+    for (let i = 0; i < 3 && !existsSync(join(e.home, 'state', 'w1', 'BLOCKED')); i++) {
+      try { execFileSync('npx', ['tsx', REV_CLI, 'run', 'w1', '--count', '1'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }); } catch { /* a blocked run exits non-zero */ }
+    }
+    const escalated = events(e, 'w1').match(/escalated\s+ticket=(H-\d+)/)?.[1];
+    expect(escalated, events(e, 'w1')).toBeTruthy();
+    const esc = helm(e, ['get', escalated!]) as { project: string | null; deps: { outgoing: { to_id: string; type: string }[] } };
+    expect(esc.project).toBe('R-41');
+    expect(esc.deps.outgoing).toContainEqual(expect.objectContaining({ to_id: id, type: 'parent' }));
+  });
+
   it('keeps unfinished work with its worker, and that worker\'s next launch resumes it', () => {
     // The first session works the ticket and stops mid-way, leaving it in
     // progress; the second finds it handed back to it, not to the queue.

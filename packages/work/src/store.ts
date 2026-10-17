@@ -381,6 +381,26 @@ function readShipNext(path: string): string[] {
   }
 }
 
+/** When each current Ship Next project last entered Ship Next, read-only
+ *  from the roadmap's own event log (H-2102). Entering Ship Next writes no
+ *  Work event, so this is the only record of the moment a ticket came into a
+ *  seat's scope. Throws like readShipNext; wake callers treat that as no edge. */
+function readShipNextEntered(path: string): Map<string, string> {
+  const db = new Database(path, { readonly: true, fileMustExist: true });
+  try {
+    const rows = db
+      .prepare(
+        `SELECT p.id AS id, MAX(e.ts) AS ts FROM projects p
+         JOIN events e ON e.subject_id = p.id AND e.event_type = 'ship_next_set'
+         WHERE p.status = 'ship_next' GROUP BY p.id`,
+      )
+      .all() as { id: string; ts: string }[];
+    return new Map(rows.map((r) => [r.id, r.ts]));
+  } finally {
+    db.close();
+  }
+}
+
 function now(): string {
   return new Date().toISOString();
 }
@@ -1450,6 +1470,17 @@ export class Store {
   deliveryProjectsFor(actor: Actor | null | undefined): string[] | undefined {
     if (!actor || !supervised(actor)) return undefined;
     return this.deliveryScope()?.projects;
+  }
+
+  /** When each in-scope project entered Ship Next, for the wake. An unread
+   *  roadmap gives no edge: the scope is already empty then (H-2070). */
+  private shipNextEnteredAt(scope: DeliveryScope | null): Map<string, string> | undefined {
+    if (!scope || scope.error || !scope.projects.length) return undefined;
+    try {
+      return readShipNextEntered(scope.roadmap_db);
+    } catch {
+      return undefined;
+    }
   }
 
   private refuseOutsideDelivery(actor: Actor, ticketId: string | null, project: string | null | undefined): void {
@@ -3172,7 +3203,7 @@ export class Store {
       const ready = this.listTickets({ ready: true, workstream, caller: assignee, lane, projects: scope?.projects, limit: 1000 });
       const held = assignee ? this.executableHeld(assignee).filter((t) => !scope || (t.project !== null && scope.projects.includes(t.project))) : [];
       const offered = assignee ? [...ready, ...held] : ready;
-      const newlyReadyIds = assignee ? this.newlyReadyFrom(offered, seq, assignee) : [];
+      const newlyReadyIds = assignee ? this.newlyReadyFrom(offered, seq, assignee, this.shipNextEnteredAt(scope)) : [];
       return {
         ...(scope ? { delivery_scope: scope } : {}),
         max_seq: maxSeq,
@@ -3221,7 +3252,7 @@ export class Store {
 
   /** The narrowing half of newlyReadySince, over a ready set the caller already
    *  holds — so wakeCheck reports both from one read rather than two. */
-  private newlyReadyFrom(ready: Ticket[], seq: number, caller: string): string[] {
+  private newlyReadyFrom(ready: Ticket[], seq: number, caller: string, shipNextEntered?: Map<string, string>): string[] {
     if (!ready.length) return [];
 
     const candidates = new Set(
@@ -3298,6 +3329,10 @@ export class Store {
       const current = now();
       for (const t of ready) {
         if (t.not_before && t.not_before > cursor.ts && t.not_before <= current) candidates.add(t.id);
+        // Its project entered Ship Next after the cursor (H-2102): the same
+        // kind of gate opening as a date, recorded in the roadmap, not here.
+        const entered = t.project ? shipNextEntered?.get(t.project) : undefined;
+        if (entered && entered > cursor.ts) candidates.add(t.id);
       }
     }
 

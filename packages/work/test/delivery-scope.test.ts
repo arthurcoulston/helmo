@@ -173,6 +173,34 @@ describe('Ship Next bounds autonomous work (H-2070)', () => {
     expect(claim('f-2')).toMatchObject({ claimed: true });
   });
 
+  it('lets a loop bound an unbounded store but never repoint the bound, and gates a takeover like a claim (review H-2070)', () => {
+    shipNext(alpha);
+    const other = join(dir, 'other.db');
+    new RoadmapStore(other).close();
+    expect(s.setDeliveryScope(pool, roadmapPath)).toMatchObject({ projects: [alpha] });
+    expect(s.setDeliveryScope(pool, roadmapPath)).toMatchObject({ projects: [alpha] });
+    expect(() => s.setDeliveryScope(pool, other)).toThrow(/delivery_scope_refused.*repoint/);
+    expect(s.setDeliveryScope(attended, other)).toMatchObject({ projects: [] });
+    s.setDeliveryScope(arthur, roadmapPath);
+
+    // Out-of-scope work someone else holds cannot be taken over by a loop.
+    const held = file({ project: beta, assignee: 'reviewer' });
+    s.updateTicket({ ...attended, name: 'reviewer' }, { ticket_id: held.id, note: 'start', status: 'in_progress' });
+    expect(() => s.updateTicket(pool, { ticket_id: held.id, note: 'taking over', status: 'in_progress', takeover: true })).toThrow(/delivery_scope_refused/);
+  });
+
+  it('leaves a non-loop supervised claim alone at launch-admit', () => {
+    shipNext(alpha);
+    s.setDeliveryScope(orch, roadmapPath);
+    const meeting: Actor = { ...single, session: 'meeting:m-1' };
+    const t = file({ project: beta, assignee: 'reviewer' });
+    s.setDeliveryScope(arthur, null);
+    s.updateTicket(meeting, { ticket_id: t.id, note: 'start', status: 'in_progress' });
+    s.setDeliveryScope(arthur, roadmapPath);
+    expect(s.launchAdmission('goodplumb', 'reviewer', 'm-1')).not.toHaveProperty('released');
+    expect(s.getTicket(t.id).status).toBe('in_progress');
+  });
+
   it('gives recurring instances their template\'s project, so scheduled work under Ship Next runs', () => {
     shipNext(alpha);
     s.setDeliveryScope(orch, roadmapPath);

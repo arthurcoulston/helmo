@@ -1294,13 +1294,17 @@ export class Store {
   }
 
   /** Point this store's delivery scope at a roadmap, or turn it off. Setting
-   *  it proves the roadmap readable first. Turning it off widens what loops may
-   *  run, so a supervised worker may not: only an attended session or a human
-   *  can, the same people who can change Ship Next itself. */
+   *  it proves the roadmap readable first. A supervised worker may only bound
+   *  an unbounded store: turning the scope off, or repointing it at another
+   *  roadmap it could fill itself, widens what every loop may run, so only an
+   *  attended session or a human can — the people who change Ship Next. */
   setDeliveryScope(actor: Actor, roadmapDb: string | null): DeliveryScope | null {
     validateActor(actor);
+    const current = this.db.prepare("SELECT value FROM meta WHERE key = 'delivery_scope_roadmap_db'").get() as { value: string } | undefined;
+    if (supervised(actor) && (roadmapDb === null || (current && current.value !== roadmapDb))) {
+      throw new HelmoError(`delivery_scope_refused: a supervised worker cannot ${roadmapDb === null ? 'turn the delivery scope off' : `repoint the delivery scope from ${current!.value}`}; that can widen what every loop may run. An attended session or a human can. Nothing was written.`);
+    }
     if (roadmapDb === null) {
-      if (supervised(actor)) throw new HelmoError('delivery_scope_refused: a supervised worker cannot turn the delivery scope off; that widens what every loop may run. Nothing was written.');
       this.db.prepare("DELETE FROM meta WHERE key = 'delivery_scope_roadmap_db'").run();
       return null;
     }
@@ -1337,8 +1341,10 @@ export class Store {
     for (const { id } of held) {
       const t = this.getTicket(id);
       if (t.project && projects.includes(t.project)) continue;
+      // Only a Rev loop's own claim: another supervised consumer holding work
+      // in this seat's name may be mid-turn, and is scoped at its own claim.
       const holder = this.claimActor(id);
-      if (!holder?.session) continue;
+      if (!holder?.session?.startsWith('rev:')) continue;
       const ts = now();
       this.endExecution(id, `delivery_scope_release:${launchId}`, ts);
       const payload = {
@@ -3701,7 +3707,8 @@ export class Store {
           `${t.id} is your own filing, untouched by anyone else — executing your own discoveries takes a second pair of eyes first (the same triage rule that withholds it from your ready queue). helmo_hygiene surfaces it as awaiting_second_eyes so a reviewing seat can record that judgment. Any event by a human, an orchestrator relaying the human, or another agent releases it: a meeting answer, a note, a handoff, a priority change. takeover does not apply — it exists for stale claims, not self-triage. If this cannot wait, helmo_return_to_human with the case for urgency; if you are starting genuinely new work, create the ticket with status 'in_progress' in the same call instead of filing it and drawing it back later.`,
         );
       }
-      if (input.status === 'in_progress' && t.status !== 'in_progress') this.refuseOutsideDelivery(actor, t.id, t.project);
+      // Taking over a stale claim starts work as surely as claiming open work.
+      if (input.status === 'in_progress' && (t.status !== 'in_progress' || t.assignee !== actor.name)) this.refuseOutsideDelivery(actor, t.id, t.project);
       if (input.status === 'in_progress' && t.capacity_hold && !capacityReleased(t.capacity_hold)) {
         throw new HelmoError(`${t.id} is held for capacity: ${t.capacity_hold.reason} Record a fresh bounded release or remove the hold in a separate update before claiming it.`);
       }

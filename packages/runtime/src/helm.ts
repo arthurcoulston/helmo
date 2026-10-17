@@ -397,11 +397,17 @@ export function launchClaim(g: GlobalConfig, l: LoopConfig, id: string): LaunchC
     // worker's, so no session runs it in the wrong scope and nothing
     // releases it. Restoring the config it was claimed under resumes it.
     if (raw.includes('launch_claim_scope_conflict')) {
-      let body: { held_ticket_id?: string; lane?: string | null } = {};
+      let body: { held_ticket_id?: string; lane?: string | null; project?: string | null; ship_next?: string[] } = {};
       try {
         const error = String((JSON.parse(raw) as { error?: string }).error ?? '');
         body = JSON.parse(error.slice(error.indexOf('{'))) as typeof body;
       } catch { /* named below as unknown */ }
+      // Ship Next moved under workflow-bound work (H-2070): the roadmap, not
+      // this worker's config, is what has to change for it to resume.
+      if (body.ship_next) return {
+        act: 'deny', how: 'held_out_of_scope', ticketId: body.held_ticket_id ?? null,
+        reason: `holds workflow-bound ${body.held_ticket_id ?? 'a ticket'} in ${body.project ?? 'no project'}, which is not in Ship Next (${body.ship_next.join(', ') || 'empty'}); it resumes when that project is back in Ship Next or the attempt is ended`,
+      };
       return {
         act: 'deny', how: 'held_out_of_scope', ticketId: body.held_ticket_id ?? null,
         reason: `holds ${body.held_ticket_id ?? 'a ticket'} (lane ${body.lane ?? 'none'}) outside this worker's scope (lane ${l.lane ?? 'none'}); restore the config it was claimed under to resume it`,

@@ -127,6 +127,7 @@ export interface ListFilter {
   lane?: string | null; // exact lane; null means lane-null tickets only
   ids?: string[]; // exact ticket allowlist (H-671)
   exclude_ids?: string[]; // tickets other workers' allowlists own (H-671)
+  projects?: string[]; // delivery scope (H-2070): only these project tags; [] matches nothing
   assignee?: string;
   type?: string;
   priority_max?: number;
@@ -339,6 +340,29 @@ export interface WorkflowDecision {
   source: string; actor: Actor; revokes_decision_id?: string;
 }
 export type WorkflowOutcome = 'advanced' | 'rejected' | 'aborted_quarantined';
+
+export interface DeliveryScope {
+  roadmap_db: string;
+  projects: string[];
+  error?: string;
+}
+
+/** A Rev-launched worker: an agent whose writes carry a supervised session
+ *  stamp. Attended sessions carry none (H-1382). */
+function supervised(actor: Actor): boolean {
+  return actor.kind === 'agent' && Boolean(actor.session?.trim());
+}
+
+/** The roadmap's current Ship Next project ids, read-only. Throws when the
+ *  roadmap is missing or is not a roadmap, so the caller can fail closed. */
+function readShipNext(path: string): string[] {
+  const db = new Database(path, { readonly: true, fileMustExist: true });
+  try {
+    return (db.prepare("SELECT id FROM projects WHERE status = 'ship_next' ORDER BY id").all() as { id: string }[]).map((r) => r.id);
+  } finally {
+    db.close();
+  }
+}
 
 function now(): string {
   return new Date().toISOString();
@@ -1039,8 +1063,12 @@ export class Store {
   launchAdmission(workstream: string, assignee: string, launchId: string): Record<string, unknown> {
     if (!workstream.trim() || !assignee.trim() || !launchId.trim()) throw new HelmoError('launch-admit requires exact non-empty workstream, assignee, and launch-id values.');
     return this.db.transaction(() => {
-      const ticket = this.listTickets({ ready: true, workstream, caller: assignee, limit: 1 })[0];
-      if (!ticket) return { admitted: false, launch_id: launchId };
+      // A seat launched without a claim of its own is held to the delivery
+      // scope here, at the one call Rev makes before every launch (H-2070).
+      const scope = this.deliveryScope();
+      const released = scope ? this.releaseOutOfDelivery(assignee, scope.projects, launchId) : [];
+      const ticket = this.listTickets({ ready: true, workstream, caller: assignee, projects: scope?.projects, limit: 1 })[0];
+      if (!ticket) return { admitted: false, launch_id: launchId, ...(scope ? { delivery_scope: scope, ...(released.length ? { released } : {}) } : {}) };
       const admissionId = this.admitLaunch(ticket.id, ticket.workflow_attempt_id, launchId);
       return { admitted: true, ticket_id: ticket.id, workflow_attempt_id: ticket.workflow_attempt_id ?? null, admission_id: admissionId, launch_id: launchId };
     }).immediate();
@@ -1125,10 +1153,13 @@ export class Store {
         return prior;
       }
       this.refuseRetiredGeneration(worker);
-      const resumed = this.resumeExecution(worker, workstream, assignee, launchId, project, allow, deny, lane);
+      // Ship Next decides what autonomous work exists at all (H-2070); the
+      // roster's project, allowlist and lane only divide it between workers.
+      const scope = this.deliveryScope();
+      const resumed = this.resumeExecution(worker, workstream, assignee, launchId, project, allow, deny, lane, scope?.projects);
       if (resumed) return resumed;
-      const ticket = this.listTickets({ ready: true, workstream, caller: assignee, project, lane: lane ?? null, ids: allow, exclude_ids: deny, limit: 1 })[0];
-      if (!ticket) return { admitted: false, launch_id: launchId };
+      const ticket = this.listTickets({ ready: true, workstream, caller: assignee, project, projects: scope?.projects, lane: lane ?? null, ids: allow, exclude_ids: deny, limit: 1 })[0];
+      if (!ticket) return { admitted: false, launch_id: launchId, ...(scope ? { delivery_scope: scope } : {}) };
       const admissionId = this.admitLaunch(ticket.id, ticket.workflow_attempt_id, launchId);
       this.updateTicket(worker, { ticket_id: ticket.id, status: 'in_progress', note: `Claimed atomically for supervised launch ${launchId}.` });
       const receipt = { admitted: true, claimed: true, ticket_id: ticket.id, workflow_attempt_id: ticket.workflow_attempt_id ?? null, admission_id: admissionId, launch_id: launchId, scope: exact };
@@ -1150,7 +1181,7 @@ export class Store {
    *  ends the claim instead of refusing every later launch of this worker:
    *  the ticket goes back to the human, withheld from agent queues, because
    *  an attempt whose launch admission is spent cannot be admitted again. */
-  private resumeExecution(worker: Actor, workstream: string, assignee: string, launchId: string, project?: string, tickets?: string[], exclude?: string[], lane?: string): Record<string, unknown> | null {
+  private resumeExecution(worker: Actor, workstream: string, assignee: string, launchId: string, project?: string, tickets?: string[], exclude?: string[], lane?: string, delivery?: string[]): Record<string, unknown> | null {
     const held = this.db.prepare(`SELECT c.ticket_id, c.generation FROM execution_claims c JOIN tickets t ON t.id = c.ticket_id
       WHERE c.session = ? AND t.status = 'in_progress' AND t.assignee = ? ORDER BY c.created_at, c.ticket_id LIMIT 1`)
       .get(worker.session, assignee) as { ticket_id: string; generation: string } | undefined;
@@ -1162,6 +1193,25 @@ export class Store {
     const prior = this.db.prepare('SELECT claim FROM launch_claims WHERE launch_id = ? AND ticket_id = ?')
       .get(held.generation, t.id) as { claim: string } | undefined;
     const priorWorkstream = prior ? (JSON.parse(prior.claim) as { scope: { workstream: string } }).scope.workstream : t.workstream;
+    // A project taken out of Ship Next stops at this boundary (H-2070): the
+    // claim is put down, its work kept and still reserved to the seat, so the
+    // worker draws in-scope work now and resumes this when its project
+    // returns. Workflow-bound work cannot be released and re-admitted, so it
+    // holds the worker as any held ticket outside its scope does.
+    if (delivery && !(t.project && delivery.includes(t.project))) {
+      if (t.workflow_attempt_id) {
+        throw new HelmoError(`launch_claim_scope_conflict ${JSON.stringify({ launch_id: launchId, held_ticket_id: t.id, workstream: t.workstream, project: t.project, lane: t.lane, ship_next: delivery })}`);
+      }
+      const ts = now();
+      this.endExecution(t.id, `delivery_scope_release:${launchId}`, ts);
+      const payload = {
+        diffs: { status: { from: t.status, to: 'open' } },
+        note: `Supervised launch ${launchId} put this claim down instead of resuming it: ${t.project ? `project ${t.project} is` : 'it has no project, and so is'} not in Ship Next (${delivery.join(', ') || 'empty'}). Generation ${held.generation} retired; the work is kept, reserved to ${assignee}, and resumes when its project is in Ship Next.`,
+      };
+      const seq = this.append(ts, t.id, 'updated', worker, payload);
+      this.applyUpdated(ts, t.id, payload, seq);
+      return null;
+    }
     if (priorWorkstream !== workstream || (project !== undefined && t.project !== project) || (tickets && !tickets.includes(t.id)) || exclude?.includes(t.id)
       || (t.lane ?? undefined) !== lane) {
       throw new HelmoError(`launch_claim_scope_conflict ${JSON.stringify({ launch_id: launchId, held_ticket_id: t.id, workstream: t.workstream, project: t.project, lane: t.lane })}`);
@@ -1225,6 +1275,81 @@ export class Store {
     };
     this.db.prepare('INSERT INTO launch_claims (launch_id, ticket_id, claim, created_at) VALUES (?, ?, ?, ?)').run(launchId, t.id, JSON.stringify(receipt), ts);
     return receipt;
+  }
+
+  /** Delivery scope (H-2070): the projects autonomous work may start or
+   *  resume in, read from the roadmap's Ship Next at the moment of asking.
+   *  null when this store names no roadmap, which keeps the old behaviour for
+   *  installations that never opted in. A roadmap that cannot be read is an
+   *  EMPTY scope, never a fallback to the whole queue: unrelated work must not
+   *  run because the one place that says what to ship was unavailable. */
+  deliveryScope(): DeliveryScope | null {
+    const row = this.db.prepare("SELECT value FROM meta WHERE key = 'delivery_scope_roadmap_db'").get() as { value: string } | undefined;
+    if (!row) return null;
+    try {
+      return { roadmap_db: row.value, projects: readShipNext(row.value) };
+    } catch (e) {
+      return { roadmap_db: row.value, projects: [], error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  /** Point this store's delivery scope at a roadmap, or turn it off. Setting
+   *  it proves the roadmap readable first. Turning it off widens what loops may
+   *  run, so a supervised worker may not: only an attended session or a human
+   *  can, the same people who can change Ship Next itself. */
+  setDeliveryScope(actor: Actor, roadmapDb: string | null): DeliveryScope | null {
+    validateActor(actor);
+    if (roadmapDb === null) {
+      if (supervised(actor)) throw new HelmoError('delivery_scope_refused: a supervised worker cannot turn the delivery scope off; that widens what every loop may run. Nothing was written.');
+      this.db.prepare("DELETE FROM meta WHERE key = 'delivery_scope_roadmap_db'").run();
+      return null;
+    }
+    if (!roadmapDb.startsWith('/')) throw new HelmoError('delivery-scope --roadmap-db needs an absolute path to the roadmap store.');
+    readShipNext(roadmapDb);
+    this.db.prepare("INSERT INTO meta (key, value) VALUES ('delivery_scope_roadmap_db', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(roadmapDb);
+    return this.deliveryScope();
+  }
+
+  /** The project allowlist that applies to this actor, or undefined when none
+   *  does. Only supervised workers are scoped: attended sessions and humans
+   *  are how the scope itself gets changed and how explicit work still runs. */
+  deliveryProjectsFor(actor: Actor | null | undefined): string[] | undefined {
+    if (!actor || !supervised(actor)) return undefined;
+    return this.deliveryScope()?.projects;
+  }
+
+  private refuseOutsideDelivery(actor: Actor, ticketId: string | null, project: string | null | undefined): void {
+    const scope = supervised(actor) ? this.deliveryScope() : null;
+    if (!scope || (project && scope.projects.includes(project))) return;
+    const why = scope.error ? `the roadmap could not be read (${scope.error})` : scope.projects.length ? `Ship Next is ${scope.projects.join(', ')}` : 'Ship Next is empty';
+    throw new HelmoError(`delivery_scope_refused ${JSON.stringify({ ticket_id: ticketId, project: project ?? null, ship_next: scope.projects })}: autonomous work starts only on tickets in a Ship Next project, and ${why}. Leave it queued; a note is still accepted. Nothing was written.`);
+  }
+
+  /** Put down supervised claims the delivery scope no longer covers (H-2070),
+   *  for a seat that is launched without a claim of its own. The session that
+   *  held one has ended; releasing it before the next launch is the safe
+   *  boundary, and the reservation stands so the seat resumes it when its
+   *  project returns to Ship Next. Attended claims carry no session and are
+   *  not the scope's to move; workflow-bound claims keep theirs, as at a gate. */
+  private releaseOutOfDelivery(assignee: string, projects: string[], launchId: string): string[] {
+    const held = this.db.prepare("SELECT id FROM tickets WHERE status = 'in_progress' AND assignee = ? AND workflow_attempt_id IS NULL ORDER BY id").all(assignee) as { id: string }[];
+    const released: string[] = [];
+    for (const { id } of held) {
+      const t = this.getTicket(id);
+      if (t.project && projects.includes(t.project)) continue;
+      const holder = this.claimActor(id);
+      if (!holder?.session) continue;
+      const ts = now();
+      this.endExecution(id, `delivery_scope_release:${launchId}`, ts);
+      const payload = {
+        diffs: { status: { from: t.status, to: 'open' } },
+        note: `Launch ${launchId} put this claim down: ${t.project ? `project ${t.project} is` : 'it has no project, and so is'} not in Ship Next (${projects.join(', ') || 'empty'}). Unfinished work is kept; it stays reserved to ${assignee} and resumes when its project is in Ship Next.`,
+      };
+      const seq = this.append(ts, id, 'updated', holder, payload);
+      this.applyUpdated(ts, id, payload, seq);
+      released.push(id);
+    }
+    return released;
   }
 
   private executionClaim(ticketId: string): { session: string; generation: string } | undefined {
@@ -2094,6 +2219,10 @@ export class Store {
     const routedReady = filter.ready && filter.caller && filter.workstream && !filter.all_assignees;
     if (filter.workstream && !routedReady) { clauses.push('workstream = ?'); params.push(filter.workstream); }
     if (filter.project) { clauses.push('project = ?'); params.push(filter.project); }
+    if (filter.projects) {
+      if (!filter.projects.length) clauses.push('0');
+      else { clauses.push(`project IN (${filter.projects.map(() => '?').join(', ')})`); params.push(...filter.projects); }
+    }
     // Lane is ANDed over the routed-ready clause, never in place of
     // it: a lane ticket assigned to the caller in any workstream still
     // reaches the worker serving that lane.
@@ -2701,6 +2830,9 @@ export class Store {
           type: t.type,
           labels: t.labels,
           priority: t.priority,
+          // The project is what the instance serves (H-2070): without it a
+          // recurring task under a Ship Next project could never be worked.
+          project: t.project ?? undefined,
           assignee: t.assignee ?? undefined,
           // The lane is routing, like the assignee: an instance of a lane
           // template is that lane's work, not the general worker's.
@@ -2748,6 +2880,7 @@ export class Store {
     newly_ready_ids: string[];
     held_count?: number;
     changed_since: boolean;
+    delivery_scope?: DeliveryScope;
   } {
     return this.db.transaction(() => {
       const maxSeq = this.maxSeq();
@@ -2755,10 +2888,16 @@ export class Store {
       // null is the general pool worker. Undefined is every caller that does
       // not claim by lane, which keeps the whole queue. Held work is already
       // this caller's, so the lane does not narrow it.
-      const ready = this.listTickets({ ready: true, workstream, caller: assignee, lane, limit: 1000 });
-      const offered = assignee ? [...ready, ...this.executableHeld(assignee)] : ready;
+      // A seat's wake matches what it may launch on (H-2070): out-of-scope work,
+      // ready or held, must not buy a pass. Store-wide loops (no assignee)
+      // still see it all.
+      const scope = assignee ? this.deliveryScope() : null;
+      const ready = this.listTickets({ ready: true, workstream, caller: assignee, lane, projects: scope?.projects, limit: 1000 });
+      const held = assignee ? this.executableHeld(assignee).filter((t) => !scope || (t.project !== null && scope.projects.includes(t.project))) : [];
+      const offered = assignee ? [...ready, ...held] : ready;
       const newlyReadyIds = assignee ? this.newlyReadyFrom(offered, seq, assignee) : [];
       return {
+        ...(scope ? { delivery_scope: scope } : {}),
         max_seq: maxSeq,
         ready_count: ready.length,
         ready_ids: ready.map((ticket) => ticket.id),
@@ -3370,6 +3509,7 @@ export class Store {
     const sitting = parseSitting(input.needs_human, input.sitting_with);
     const status = input.status ?? 'open';
     if (status === 'in_progress') this.refuseOutsideLaunch(actor, null, 'Starting a new ticket');
+    if (status === 'in_progress') this.refuseOutsideDelivery(actor, null, input.project);
     if (status === 'in_progress' && !input.assignee) input = { ...input, assignee: actor.name };
     // Workstream seat (H-1026): an unassigned filing is reserved to the
     // stream's seat at the door, so it is ready for that seat's loop from the
@@ -3561,6 +3701,7 @@ export class Store {
           `${t.id} is your own filing, untouched by anyone else — executing your own discoveries takes a second pair of eyes first (the same triage rule that withholds it from your ready queue). helmo_hygiene surfaces it as awaiting_second_eyes so a reviewing seat can record that judgment. Any event by a human, an orchestrator relaying the human, or another agent releases it: a meeting answer, a note, a handoff, a priority change. takeover does not apply — it exists for stale claims, not self-triage. If this cannot wait, helmo_return_to_human with the case for urgency; if you are starting genuinely new work, create the ticket with status 'in_progress' in the same call instead of filing it and drawing it back later.`,
         );
       }
+      if (input.status === 'in_progress' && t.status !== 'in_progress') this.refuseOutsideDelivery(actor, t.id, t.project);
       if (input.status === 'in_progress' && t.capacity_hold && !capacityReleased(t.capacity_hold)) {
         throw new HelmoError(`${t.id} is held for capacity: ${t.capacity_hold.reason} Record a fresh bounded release or remove the hold in a separate update before claiming it.`);
       }

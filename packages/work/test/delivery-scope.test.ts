@@ -129,6 +129,49 @@ describe('Ship Next bounds autonomous work (H-2070)', () => {
     expect(s.getTicket(inScope.id)).toMatchObject({ status: 'open', assignee: 'reviewer' });
   });
 
+  it('wakes an idle seat when its project enters Ship Next, with no Work write (H-2102)', async () => {
+    shipNext(alpha);
+    s.setDeliveryScope(orch, roadmapPath);
+    const a = file({ project: alpha });
+    const b = file({ project: beta });
+    const idle = s.wakeCheck(0, 'goodplumb', 'builder');
+    expect(idle.ready_ids).toEqual([a.id]);
+    // The seat worked what it had and went idle at this cursor.
+    const cursor = s.wakeCheck(idle.max_seq, 'goodplumb', 'builder');
+    expect(cursor.newly_ready_ids).toEqual([]);
+
+    await new Promise((r) => setTimeout(r, 5));
+    shipNext(beta);
+    const after = s.wakeCheck(cursor.max_seq, 'goodplumb', 'builder');
+    expect(after.max_seq).toBe(cursor.max_seq);
+    expect(after.ready_ids).toEqual([a.id, b.id]);
+    // Only the ticket that came into scope wakes it, not the one already there.
+    expect(after.newly_ready_ids).toEqual([b.id]);
+
+    // Once the seat writes past the change, the entry is old news.
+    s.updateTicket(pool, { ticket_id: a.id, note: 'looked at it' });
+    expect(s.wakeCheck(s.maxSeq(), 'goodplumb', 'builder').newly_ready_ids).toEqual([]);
+
+    // Leaving Ship Next stays H-2070's: no wake, the ticket just drops out.
+    await new Promise((r) => setTimeout(r, 5));
+    const before = s.maxSeq();
+    shipOut(beta);
+    const out = s.wakeCheck(before, 'goodplumb', 'builder');
+    expect(out.ready_ids).toEqual([a.id]);
+    expect(out.newly_ready_ids).toEqual([]);
+  });
+
+  it('gives no Ship Next edge when the roadmap cannot be read', () => {
+    shipNext(alpha);
+    s.setDeliveryScope(orch, roadmapPath);
+    file({ project: alpha });
+    const seq = s.maxSeq();
+    rmSync(roadmapPath);
+    const w = s.wakeCheck(seq, 'goodplumb', 'builder');
+    expect(w.ready_ids).toEqual([]);
+    expect(w.newly_ready_ids).toEqual([]);
+  });
+
   it('scopes the wake, the ready list and in-progress filings for supervised workers only', async () => {
     shipNext(alpha);
     s.setDeliveryScope(orch, roadmapPath);

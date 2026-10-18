@@ -161,6 +161,20 @@ describe('Ship Next bounds autonomous work (H-2070)', () => {
     expect(out.newly_ready_ids).toEqual([]);
   });
 
+  it('wakes an idle seat when a reserved ticket is tagged into a Ship Next project (H-2124)', () => {
+    shipNext(alpha);
+    s.setDeliveryScope(orch, roadmapPath);
+    // Rev's intake assignment arrived untagged: reserved, P0, and out of scope.
+    const t = file();
+    const idle = s.wakeCheck(s.maxSeq(), 'goodplumb', 'builder');
+    expect(idle.ready_ids).toEqual([]);
+
+    s.updateTicket(orch, { ticket_id: t.id, note: 'placed under the entry item', project: alpha });
+    const after = s.wakeCheck(idle.max_seq, 'goodplumb', 'builder');
+    expect(after.ready_ids).toEqual([t.id]);
+    expect(after.newly_ready_ids).toEqual([t.id]);
+  });
+
   it('gives no Ship Next edge when the roadmap cannot be read', () => {
     shipNext(alpha);
     s.setDeliveryScope(orch, roadmapPath);

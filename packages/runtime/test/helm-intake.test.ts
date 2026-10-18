@@ -19,4 +19,19 @@ describe('intake assignment', () => {
       '--workstream', 'goodplumb', '--type', 'build', '--priority', '0', '--assignee', 'builder',
     ]);
   });
+
+  it('files the assignment under the configured project so a Ship Next scope admits it', () => {
+    const root = mkdtempSync(join(tmpdir(), 'rev-helm-intake-'));
+    const cli = join(root, 'helmo.mjs');
+    const seen = join(root, 'argv.json');
+    writeFileSync(cli, `import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(seen)}, JSON.stringify(process.argv.slice(2)));\nconsole.log(JSON.stringify({ id: 'H-test' }));\n`);
+    const g = { helmo_cli: cli, intake_preparation_project: 'R-37' } as GlobalConfig;
+
+    createIntakeAssignment(g, 'bounded body');
+    expect(JSON.parse(readFileSync(seen, 'utf8'))).toEqual([
+      'create', '--title', 'Prepare the claimed meeting intake', '--body', 'bounded body',
+      '--workstream', 'goodplumb', '--type', 'build', '--priority', '0', '--assignee', 'builder',
+      '--project', 'R-37',
+    ]);
+  });
 });

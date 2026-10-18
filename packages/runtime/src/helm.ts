@@ -135,12 +135,16 @@ export function revActor(): object {
   return { name: 'rev', kind: 'agent', model: 'rev-harness', version: HELMO_VERSION };
 }
 
-/** One visible Builder assignment for an owned intake-preparation attempt. */
+/** One visible Builder assignment for an owned intake-preparation attempt.
+ *  It carries the configured project: a store with a Ship Next scope refuses
+ *  Builder's claim on an untagged ticket, and a waiting client's invite sat
+ *  behind that refusal (H-2124). */
 export function createIntakeAssignment(g: GlobalConfig, body: string): string {
   return (run(g, [
     'create', '--title', 'Prepare the claimed meeting intake', '--body', body,
     '--workstream', 'goodplumb', '--type', 'build', '--priority', '0',
     '--assignee', 'builder',
+    ...(g.intake_preparation_project ? ['--project', g.intake_preparation_project] : []),
   ], revActor()) as { id: string }).id;
 }
 

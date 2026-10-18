@@ -331,12 +331,22 @@ describe('a flag the command has no field for (R-39 Q9)', () => {
   it('refuses a field the CLI has no flag for, rather than filing the ticket without it', () => {
     const before = snapshot();
     const r = cli('create', '--title', 'Ship the release gate', '--body', 'Goal: gate the release. Current state: not started.',
-      '--workstream', 'helmo-dev', '--type', 'build', '--project', 'R-41');
+      '--workstream', 'helmo-dev', '--type', 'build', '--labels', 'acct:direction');
 
     expect(r.status).toBe(1);
-    expect(r.stderr).toContain('--project');
+    expect(r.stderr).toContain('--labels');
     expect(r.stderr).toContain('go through the MCP server');
     expect(snapshot()).toBe(before);
+  });
+
+  it('files a ticket under the project --project names (H-2124: Rev files intake preparation this way)', () => {
+    const r = cli('create', '--title', 'Prepare the claimed meeting intake', '--body', 'Goal: prepare. Current state: claimed.',
+      '--workstream', 'helmo-dev', '--type', 'build', '--project', 'R-37');
+    expect(r.status).toBe(0);
+    const s = new Store(dbPath);
+    const project = s.getTicket(JSON.parse(r.stdout).id)?.project;
+    s.close();
+    expect(project).toBe('R-37');
   });
 
   it('refuses a misspelled flag by name and leaves the ticket untouched', () => {

@@ -40,6 +40,7 @@ export interface GlobalConfig {
   refinement_preparation_work_root?: string;
   refinement_preparation_sync_script?: string;
   refinement_preparation_scan_script?: string;
+  intake_preparation_project?: string;  // roadmap item that owns client entry: the assignment's project, so a Ship Next scope admits it (H-2124)
 }
 
 export type Runtime = 'claude' | 'codex' | 'mock';

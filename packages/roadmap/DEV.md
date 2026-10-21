@@ -167,11 +167,19 @@ append-only event log, materialized state, `.immediate()` write transactions
   no write, Planned only via the go, Active only from a recorded go, and any
   write resets a standing readiness verdict), and a rename is not a decision.
   The gates stay as they are for live callers. The only judgment calls are
-  the three shelved rows, named by id in `R46_SHELVED` from
-  R46-ROADMAP-CLARITY.md; an archived row not named there is reported for a
+  the shelved rows: `archived` said a row was put away and never whether it
+  was finished or dropped, so those come in as `--judgments <path>`, a JSON
+  object of `{"R-n": {"status": "Completed"|"Canceled", "reason": "..."}}`
+  the operator writes. The product holds no row ids of its own on purpose —
+  ids are minted per installation, so a table compiled in here would apply
+  one estate's reasons to another installation's unrelated rows by id
+  collision. An archived row with no judgment supplied is reported for a
   human call and left alone, because its stored word still reads as Canceled
-  until someone decides. `rebuild()` replays the migration like any other
-  update — the suite asserts that.
+  until someone decides; a judgment naming a row that is neither archived nor
+  already migrated is refused rather than ignored, so a mistyped id cannot
+  leave the row it meant sitting undecided under a complete-looking report.
+  `rebuild()` replays the migration like any other update — the suite asserts
+  that.
 - `types.ts` — the vocabulary. Gates and stances are named in PRODUCT.md
   but deliberately absent from v1 behavior; leave the room, don't fill it.
 

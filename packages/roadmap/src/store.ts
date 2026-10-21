@@ -5,7 +5,7 @@ import {
   Health, Project, ProjectSnapshot, Ranked, Readiness, ReadinessReview, ReadinessVerdict, RoadmapError, RoadmapEvent, SHIPPED, Status, STATUSES, statusReading, StoredStatus, TERMINAL, VALUE_LEVELS,
 } from './types.js';
 import { Installation, namesInstallation } from './install.js';
-import { planR46, R46Facts, R46Plan } from './migrate-lib.js';
+import { planR46, R46Facts, R46Judgments, R46Plan } from './migrate-lib.js';
 
 export interface CreateInput {
   title: string;
@@ -903,7 +903,7 @@ export class Store {
    *  It appends its own `updated` events rather than going through
    *  `updateProject`, deliberately and for every row, not just the awkward
    *  ones. That path exists to check new DECISIONS: it refuses a terminal
-   *  source (so the three shelved rows could not be mapped at all), it
+   *  source (so a shelved row could not be mapped at all), it
    *  refuses a plain write to Planned, it gates Active behind a recorded go,
    *  and it resets a standing readiness verdict on any write — which would
    *  undo the very field this migration is here to fill. None of those rules
@@ -912,10 +912,10 @@ export class Store {
    *  in one event, and `rebuild()` replays it like any other update.
    *
    *  Without `apply` nothing is written and the plan is the report. */
-  migrateR46(actor: Actor, input: { apply: boolean }): R46Plan {
+  migrateR46(actor: Actor, input: { apply: boolean; shelved?: R46Judgments }): R46Plan {
     if (input.apply) validateActor(actor);
     const facts = this.r46Facts();
-    const plan = planR46(facts);
+    const plan = planR46(facts, input.shelved);
     if (!input.apply || !plan.decisions.length) return plan;
     const before = new Map(facts.map((f) => [f.id, f]));
     return this.db.transaction(() => {

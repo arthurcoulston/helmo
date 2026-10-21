@@ -54,20 +54,53 @@ export interface R46Facts {
   ever_authorized: boolean;
 }
 
-/** The three shelved rows are the migration's only judgment calls, decided
- *  in R46-ROADMAP-CLARITY.md against each row's own history and record. An
- *  archived row not named here is reported for a human call rather than
- *  guessed: its stored word still reads as Canceled on every surface until
- *  someone decides what became of it, so leaving it costs nothing. */
-export const R46_SHELVED: Readonly<Record<string, { status: Status; reason: string }>> = {
-  'R-39': { status: 'Completed', reason: 'delivered through its successor initiatives' },
-  'R-4': { status: 'Canceled', reason: 'superseded by R-47, with no remaining deliverable' },
-  'R-18': { status: 'Canceled', reason: "closed on Arthur's instruction; its own body records that no outcome was supplied" },
-};
+/** What became of one shelved row. `archived` said the row was put away and
+ *  never whether it was finished or dropped, so it is the migration's only
+ *  judgment call — and only the installation's own record can make it. These
+ *  arrive as an input the operator supplies, never as a table in the product:
+ *  row ids are minted per installation, so ids compiled in here would apply
+ *  one estate's reasons to another installation's unrelated rows by id
+ *  collision. An archived row with no judgment supplied is reported for a
+ *  human to decide and left alone, which costs nothing — its stored word
+ *  still reads as Canceled on every surface until someone says otherwise. */
+export interface R46Judgment {
+  status: Extract<Status, 'Completed' | 'Canceled'>;
+  reason: string;
+}
+
+/** Judgments by row id, as the operator supplied them. */
+export type R46Judgments = Readonly<Record<string, R46Judgment>>;
+
+const TERMINAL: readonly string[] = ['Completed', 'Canceled'];
+
+/** Read judgments from whatever an operator's file parsed to. Every refusal
+ *  names the row and what was wrong with it, because the author of the file
+ *  is the only person who can fix it. */
+export function parseR46Judgments(raw: unknown): R46Judgments {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('judgments must be a JSON object keyed by row id, e.g. {"R-4": {"status": "Canceled", "reason": "..."}}');
+  }
+  const out: Record<string, R46Judgment> = {};
+  for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!/^R-\d+$/.test(id)) throw new Error(`judgments: ${JSON.stringify(id)} is not a row id of the form R-<n>`);
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error(`judgments: ${id} must be an object with a status and a reason`);
+    }
+    const { status, reason } = value as { status?: unknown; reason?: unknown };
+    if (typeof status !== 'string' || !TERMINAL.includes(status)) {
+      throw new Error(`judgments: ${id} status must be ${TERMINAL.join(' or ')} — an archived row is finished or dropped, nothing else`);
+    }
+    if (typeof reason !== 'string' || !reason.trim()) {
+      throw new Error(`judgments: ${id} needs a reason saying what became of it; it is written into the row's own event`);
+    }
+    out[id] = { status: status as R46Judgment['status'], reason: reason.trim() };
+  }
+  return out;
+}
 
 const NEW_VOCABULARY = new Set<string>(['Proposed', 'Planned', 'Active', 'Monitoring', 'Completed', 'Paused', 'Canceled']);
 
-function decide(f: R46Facts): R46Decision | R46Undecided {
+function decide(f: R46Facts, shelved: R46Judgments): R46Decision | R46Undecided {
   // A row refined by hand, or one the human once authorized, is shaped: the
   // go gate required `ready` before readiness was a field, so a recorded go
   // is itself the evidence. Everything else is a raw idea until reviewed.
@@ -107,11 +140,11 @@ function decide(f: R46Facts): R46Decision | R46Undecided {
     case 'abandoned':
       return row('Canceled', 'abandoned before shipping');
     case 'archived': {
-      const call = R46_SHELVED[f.id];
+      const call = shelved[f.id];
       if (!call) {
         return {
           id: f.id, title: f.title,
-          reason: 'archived with no recorded judgment — say whether it was Completed or Canceled, then archive it again to hide the row',
+          reason: 'archived with no judgment supplied — say whether it was Completed or Canceled in the judgments file, then archive it again to hide the row',
         };
       }
       return { ...row(call.status, call.reason), archive: true };
@@ -122,19 +155,34 @@ function decide(f: R46Facts): R46Decision | R46Undecided {
 }
 
 /** Read every row's stored word and produce the per-row plan. Pure: the
- *  caller writes nothing until it chooses to. */
-export function planR46(facts: R46Facts[]): R46Plan {
+ *  caller writes nothing until it chooses to.
+ *
+ *  A judgment naming a row this store cannot apply it to is refused rather
+ *  than ignored: a mistyped id would otherwise leave the row it meant sitting
+ *  undecided while the report looked complete. A judgment naming a row that
+ *  already carries a new word is accepted silently, because that is exactly
+ *  what the same file looks like on a second run. */
+export function planR46(facts: R46Facts[], shelved: R46Judgments = {}): R46Plan {
   const decisions: R46Decision[] = [];
   const already: string[] = [];
   const undecided: R46Undecided[] = [];
   const tally = new Map<string, number>();
+  const byId = new Map(facts.map((f) => [f.id, f]));
+
+  for (const id of Object.keys(shelved)) {
+    const f = byId.get(id);
+    if (!f) throw new Error(`judgments: ${id} is not a row in this installation's roadmap`);
+    if (f.status !== 'archived' && !NEW_VOCABULARY.has(f.status)) {
+      throw new Error(`judgments: ${id} is stored as "${f.status}", not archived — this migration judges shelved rows only, and every other word maps by rule`);
+    }
+  }
 
   for (const f of facts) {
     if (NEW_VOCABULARY.has(f.status)) {
       already.push(f.id);
       continue;
     }
-    const outcome = decide(f);
+    const outcome = decide(f, shelved);
     if ('status' in outcome) {
       decisions.push(outcome);
       const key = `${f.status}\u0000${outcome.status}${outcome.archive ? ' + hidden' : ''}`;

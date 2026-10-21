@@ -89,12 +89,25 @@ export function ticketStateRole(status: string): StatusRole | null {
   return null
 }
 
-/** A roadmap project's status. Ship next is the one in motion; stable is the
- *  one that came through; blocked is the one that needs a way opened. Shaping,
- *  ready and parked are the ordinary and the deliberate. */
+/** What a stored roadmap status means in today's words (R-46). A row keeps
+ *  the word it was written with until the one-shot migration writes the new
+ *  one, and the history panel shows old words forever, so both read here. */
+export function projectStatusReading(status: string): string {
+  return ({
+    parked: "Proposed", shaping: "Proposed", ready: "Proposed",
+    ship_next: "Active", shipping: "Active",
+    shipped_watching: "Monitoring", shipped: "Monitoring", shipped_stable: "Completed",
+    archived: "Canceled", abandoned: "Canceled",
+  })[status] ?? status
+}
+
+/** A roadmap project's status. The work phase is the one in motion; Completed
+ *  is the one that came through; blocked is the one that needs a way opened.
+ *  Proposed, Paused and Canceled are the ordinary and the deliberate. */
 export function projectStatusRole(status: string): StatusRole | null {
-  if (status === "ship_next" || status === "shipped_watching") return "info"
-  if (status === "shipped_stable") return "success"
+  const reading = projectStatusReading(status)
+  if (reading === "Planned" || reading === "Active" || reading === "Monitoring") return "info"
+  if (reading === "Completed") return "success"
   if (status === "blocked") return "attention"
   return null
 }

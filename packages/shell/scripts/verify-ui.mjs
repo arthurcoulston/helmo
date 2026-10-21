@@ -262,23 +262,29 @@ store.returnToHuman(actor, humanClosed.id, { situation: 'The fixture needs a dec
 store.answerTicket({ name: 'Fixture Operator', kind: 'human' }, humanClosed.id, { answer: 'Already covered elsewhere; nothing more to do.', resolution: 'done' });
 
 const roadmap = new RoadmapStore(join(dir, 'roadmap/roadmap.db'));
-const project = roadmap.createProject(actor, { title: 'The complete standard UI foundation', status: 'ready', body: 'Preserve the full project record while using standard components.' });
+const project = roadmap.createProject(actor, { title: 'The complete standard UI foundation', status: 'Proposed', body: 'Preserve the full project record while using standard components.' });
+roadmap.recordReadinessVerdict({ name: 'fixture-reviewer', kind: 'agent', model: 'fixture', version: '0' }, {
+  project_id: project.id, reviewed_revision: roadmap.readinessRevision(project.id), verdict: 'pass', note: 'Enough is known to commit.',
+});
 const objective = roadmap.setCharterItem(actor, { shape: 'objective', statement: 'A clear foundation', source: 'Fixture charter', horizon: 'near', rank: 1 });
 roadmap.cite(actor, { project_id: project.id, objective_id: objective.id, claim: 'A consistent interface makes the work legible.' });
 roadmap.recordClaim(actor, { project_id: project.id, kind: 'value', level: 'high', reason: 'Every operator reading benefits.' });
 roadmap.recordClaim(actor, { project_id: project.id, kind: 'effort', size: 'M', predicted_usd: 20, reason: 'A finite set of existing screens.' });
 roadmap.setShipNext(actor, { project_id: project.id, decided_by: 'Fixture operator', reason: 'The foundation is the next work.' });
+/* The go alone is Planned; this one is underway, which is the in-motion
+   reading the palette has to carry (R-46). */
+roadmap.updateProject(actor, { project_id: project.id, status: 'Active', note: 'Work is in flight.' });
 /* Three more projects, so the compact reading is proved on what it has to
    survive: a record far longer than a row can carry whose opening is filing
    prose rather than meaning, a second ranked row to compare the order
    against, and an unranked shipped one. */
-const unruly = roadmap.createProject(actor, { title: 'An unruly record whose opening is not the project', status: 'shaping', body: `${'Filing provenance recorded when this project was last reconciled, which is context rather than the project itself. '.repeat(5)}\n\nOutcome: the thing a reader actually wants from this record.` });
-roadmap.updateProject(actor, { project_id: unruly.id, status: 'parked', parked_reason: 'Another project is the current focus.', unpark_condition: 'The current focus ships.', note: 'Parked by the fixture operator.' });
-const shaping = roadmap.createProject(actor, { title: 'A shaping project with no stated objective', status: 'shaping', body: 'Still being shaped.' });
-const watching = roadmap.createProject(actor, { title: 'A shipped project under observation', status: 'shipped_watching', body: 'Shipped and watched.' });
+const unruly = roadmap.createProject(actor, { title: 'An unruly record whose opening is not the project', status: 'Proposed', body: `${'Filing provenance recorded when this project was last reconciled, which is context rather than the project itself. '.repeat(5)}\n\nOutcome: the thing a reader actually wants from this record.` });
+roadmap.updateProject(actor, { project_id: unruly.id, parked_reason: 'Another project is the current focus.', unpark_condition: 'The current focus ships.', note: 'Reconciled by the fixture operator.' });
+const shaping = roadmap.createProject(actor, { title: 'A shaping project with no stated objective', status: 'Proposed', body: 'Still being shaped.' });
+const watching = roadmap.createProject(actor, { title: 'A shipped project under observation', status: 'Monitoring', body: 'Shipped and watched.' });
 /* And one that came through observation, so Roadmap carries the healthy role
    as well as the in-motion one. */
-roadmap.createProject(actor, { title: 'A shipped project that settled', status: 'shipped_stable', body: 'Shipped and stable.' });
+roadmap.createProject(actor, { title: 'A shipped project that settled', status: 'Completed', body: 'Shipped and stable.' });
 
 const choice = create('Choose between the stored options');
 store.returnToHuman(actor, choice.id, { situation: 'Both options are valid.', question: 'Which option should be used?', recommendation: 'First', options: [{ label: 'First', consequence: 'Use the first path.' }, { label: 'Second', consequence: 'Use the second path.' }] });
@@ -662,7 +668,7 @@ try {
   const ranking = (await (await page.request.get(`${origin}/api/v1/roadmap`)).json()).data.ranked;
   assert.deepEqual(
     await list.locator('tbody tr[id]').evaluateAll((rows) => rows.map((row) => row.id)),
-    ranking.filter((r) => r.project.status !== 'ship_next').map((r) => r.project.id),
+    ranking.filter((r) => !['Planned', 'Active'].includes(r.project.status)).map((r) => r.project.id),
     'the table must keep the order the server ranked',
   );
   assert.deepEqual(
@@ -671,7 +677,7 @@ try {
   );
   await page.getByRole('table', { name: 'Shipped — watching', exact: true }).locator(`tr#${watching.id}`).getByText('—', { exact: true }).waitFor();
   // The server's own explanation is the only place a row says these things.
-  await page.locator(`tr#${shaping.id}`).getByText('shaping, advances nothing stated', { exact: true }).waitFor();
+  await page.locator(`tr#${shaping.id}`).getByText('Proposed, advances nothing stated', { exact: true }).waitFor();
   assert.equal(
     (await page.locator(`tr#${shaping.id}`).innerText()).match(/advances nothing stated/g).length,
     1,
@@ -684,7 +690,7 @@ try {
   const summary = page.locator(`[data-expanded-for="${unruly.id}"]`);
   await summary.getByText('Where it stands', { exact: true }).waitFor();
   await summary.getByText('The record opens', { exact: true }).waitFor();
-  assert.match(await summary.locator('p').first().innerText(), /^Parked by the fixture operator\. — fixture, /);
+  assert.match(await summary.locator('p').first().innerText(), /^Reconciled by the fixture operator\. — fixture, /);
   const preview = await summary.locator('p').nth(1).innerText();
   assert.ok(preview.startsWith('Filing provenance recorded when'), `the second reading is not the record's opening: ${preview.slice(0, 40)}`);
   assert.ok(preview.length <= 321 && preview.endsWith('…'), `the opening is not bounded: ${preview.length} characters`);

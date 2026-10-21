@@ -8,10 +8,10 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { expandColumn, type LatestProgress, RecordPreview, RecordTable, recordColumn, type RecordColumn } from "./RecordTable"
 import { CopyReference } from "./WorkRecord"
-import { projectStatusRole, StatusAlert, StatusBadge } from "./Status"
+import { projectStatusReading, projectStatusRole, StatusAlert, StatusBadge } from "./Status"
 
 type Usage = { value: number; basis: string; coverage: string }
-type Project = { id: string; title: string; body: string; status: string; actual_usd: number; updated_at: string; parked_reason?: string; unpark_condition?: string; usage_disclosure?: Usage; progress?: LatestProgress }
+type Project = { id: string; title: string; body: string; status: string; archived?: number; actual_usd: number; updated_at: string; parked_reason?: string; unpark_condition?: string; usage_disclosure?: Usage; progress?: LatestProgress }
 type Claim = { kind: string; level?: string; size?: string; predicted_usd?: number; reason: string; author: string; ts: string }
 type Citation = { objective_id: string; claim: string }
 type Ranked = { project: Project; rank: number; explanation: string; blocked_by: string[]; citations: Citation[]; value: Claim | null; effort: Claim | null }
@@ -158,13 +158,20 @@ export function RoadmapView({ data, selected }: { data: RoadmapData; selected: s
     /* `ranked` carries its own copy of each project; the one in `projects` is
        the whole record, including the server's usage disclosure. */
     const ranked: Row[] = data.ranked.map((r) => ({ project: byId.get(r.project.id) ?? r.project, ranked: r }))
-    const listed = (state: string): Row[] => data.projects.filter((p) => p.status === state).map((project) => ({ project }))
+    /* Grouped by what each stored status MEANS, so a row not yet migrated to
+       the R-46 words sits in the same section it always did. An archived row
+       is hidden from its own section and read in the Archived one — the flag
+       says whether to draw it, never what became of it. The sections
+       themselves are this packet's compatibility, not its new shape. */
+    const authorized = (p: Project) => ["Planned", "Active"].includes(projectStatusReading(p.status))
+    const listed = (state: string): Row[] =>
+      data.projects.filter((p) => !p.archived && projectStatusReading(p.status) === state).map((project) => ({ project }))
     return [
-      { title: "Ship next", rows: ranked.filter((r) => r.project.status === "ship_next"), empty: "Nothing has the go-ahead. The ranked list is waiting for your call." },
-      { title: "Shipped — watching", rows: listed("shipped_watching"), empty: "No projects in this section." },
-      { title: "The list", rows: ranked.filter((r) => r.project.status !== "ship_next"), empty: "No projects in this section." },
-      { title: "Shipped — stable", rows: listed("shipped_stable"), empty: "No projects in this section." },
-      { title: "Archived", rows: listed("archived"), empty: "No projects in this section." },
+      { title: "Ship next", rows: ranked.filter((r) => authorized(r.project)), empty: "Nothing has the go-ahead. The ranked list is waiting for your call." },
+      { title: "Shipped — watching", rows: listed("Monitoring"), empty: "No projects in this section." },
+      { title: "The list", rows: ranked.filter((r) => !authorized(r.project)), empty: "No projects in this section." },
+      { title: "Shipped — stable", rows: listed("Completed"), empty: "No projects in this section." },
+      { title: "Archived", rows: data.projects.filter((p) => p.archived || projectStatusReading(p.status) === "Canceled").map((project) => ({ project })), empty: "No projects in this section." },
     ]
   }, [data])
   const shipNext = groups[0]!.rows

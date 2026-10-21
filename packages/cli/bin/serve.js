@@ -4,6 +4,7 @@ import { appRequest, shellRequest } from '../../app/server.mjs';
 import { activitySnapshot, checkInSnapshot, historySnapshot, incidentNoticesSnapshot, incidentSnapshot, incidentsSnapshot, issuesSnapshot, runwaySnapshot, workHealth, workListening, workRequest, workSnapshot } from '../../work/dist/view.js';
 import { seatWork } from '../../work/dist/presentation.js';
 import { roadmapHealth, roadmapRequest, roadmapSnapshot } from '../../roadmap/dist/view.js';
+import { AUTHORIZED, statusReading } from '../../roadmap/dist/types.js';
 import { runtimeRequest, runtimeSnapshot, teamFile, teamMember, teamNowSnapshot, teamPeriod, teamSnapshot } from '../../runtime/dist/view.js';
 import { loadRoster } from '../../runtime/dist/config.js';
 import { apiJson, JSON_HEADERS } from '../../core/dist/index.js';
@@ -67,8 +68,10 @@ function checkInInput(work, roadmap, team) {
   // Roadmap and Runtime's views. It is existing practice, not an import rule:
   // Work remains independently testable, while the unified document can say
   // which selected initiatives have no open ticket carrying their project id.
+  // The work phase is Planned and Active alike: an authorized initiative with
+  // nothing underway is exactly the gap this reading exists to show (R-46).
   const continuations = roadmap.projects
-    .filter((project) => project.status === 'ship_next' && !continuing.has(project.id))
+    .filter((project) => AUTHORIZED.includes(statusReading(project.status)) && !continuing.has(project.id))
     .map((project) => ({
       id: project.id,
       title: project.title,

@@ -33,23 +33,37 @@ append-only event log, materialized state, `.immediate()` write transactions
   name are aliases only when the resolved home derives that exact pair. Other
   names refuse; reads remain available. Derived-only stores do not claim a
   durable name, preserving single-install use.
-  Derived rank: facts set the tier (ship_next · ready · shaping · blocked ·
-  parked), judgments order within it (best cited objective rank, latest
-  value claim, effort), every rank carries a one-line explanation; shipped
-  and archived projects are off the ranked list. Rules the store enforces,
-  not just the docs: judgments never land without a reason; 'ready' means
-  enough is known for an informed commitment and needs an agent other than
-  the last description shaper (the human is never gated; retitling is not
-  shaping); ship_next
-  — the work phase, ladder v2 (H-672) — only via `setShipNext` with
-  `decided_by`, several may hold it and the returned count is the
-  resistance signal; the shipped statuses (shipped_watching,
-  shipped_stable) are reachable only from ship_next, so nothing ships
-  without the human's go; archived is the one terminal status and is
-  permanent; actuals are absolute rollups recorded from Helmo's meter,
-  never deltas. Pre-v2 events ('shipping'/'shipped'/'abandoned' statuses,
-  ship_next 'demoted' payloads) still replay correctly — never strip that
-  handling.
+  The seven statuses (R-46, H-2953; `types.ts` carries the reasoning):
+  Proposed · Planned · Active · Monitoring · Completed · Paused · Canceled.
+  One value answers one question — how refined an idea is, is `readiness`;
+  whether a delivery is in trouble is `health`; whether a finished row is
+  drawn is the `archived` flag, which is the one field a Canceled project
+  still accepts. Derived rank: facts set the tier (Active 0 · Planned 1 ·
+  shaped 2 · blocked 3 · raw or Paused 4), judgments order within it (best
+  cited objective rank, latest value claim, effort), every rank carries a
+  one-line explanation; the shipped, completed and canceled families are off
+  the ranked list. Inactivity is checked BEFORE blocked-ness in that tiering,
+  or a blocker floats a raw idea above the prerequisite it waits on (H-441).
+  Rules the store enforces, not just the docs: judgments never land without a
+  reason; shaped readiness needs an agent other than the last description
+  shaper (the human is never gated; retitling is not shaping); Planned — the
+  go — only via `setShipNext` with `decided_by`, several may hold the work
+  phase and the returned count is the resistance signal; Active is reachable
+  only from a recorded go or a pause of one, and Monitoring/Completed only
+  from Active or within that family, so nothing starts or ships without the
+  human's go; Canceled is the one terminal status and is permanent; actuals
+  are absolute rollups recorded from Helmo's meter, never deltas.
+  **Both vocabularies live in one store.** Events are never rewritten, so
+  pre-R-46 words (`parked`, `shaping`, `ready`, `ship_next`,
+  `shipped_watching`, `shipped_stable`, `archived`, and the pre-v2
+  `shipping`/`shipped`/`abandoned`) stay on rows the one-shot migration has
+  not yet written and in the log forever. `statusReading` is how every gate,
+  tier and listing reads them — never off the raw column — and the SQL family
+  filters (`CLOSED_SQL`, `SHIPPED_SQL`, `AUTHORIZED_SQL`) are generated from
+  it. `setShipNext` puts its status in the event payload so a pre-R-46 go,
+  which carries none, still replays to `ship_next`; `applyCreated`'s `parked`
+  fallback is replay fidelity for the same reason. Pre-v2 `demoted` payloads
+  still replay too — never strip that handling.
   `updateProject` takes an optional `if_revision` and compares it inside its
   own write transaction; `projectSnapshot` is the read that token comes from,
   and is one transaction for the same reason — see below.
@@ -61,9 +75,9 @@ append-only event log, materialized state, `.immediate()` write transactions
   own correction, any FAIL governs, and PASS+FAIL is surfaced as contested.
   `recordHealth` is the separate explained judgment path for On track, At risk,
   or Off track; the event log and rebuild own both the value and its reason.
-- `tools.ts` — the 11-tool MCP surface, descriptions are
+- `tools.ts` — the 12-tool MCP surface, descriptions are
   guidance-as-deployed (Helmo's rule). v1 postures baked into them:
-  ship_next is FYI to the fleet, not tasking; the charter is derived from
+  the go is FYI to the fleet, not tasking; the charter is derived from
   the human's document, never authored here. Every argument schema is a
   strict Zod object: undeclared keys refuse during MCP validation before the
   handler, including on reads, so a misspelled filter cannot become an
@@ -318,8 +332,9 @@ on the same line.
 
 ## The update precondition
 
-Every rule `updateProject` enforces is a rule about STATE — archived takes no
-writes, only ship_next ships, the description's shaper cannot judge it ready —
+Every rule `updateProject` enforces is a rule about STATE — a Canceled record
+takes no writes but its hide flag, only an Active project ships, the
+description's shaper cannot judge it shaped —
 and each is decided against a `getProject` that finishes *before* the write
 begins. A project has more than one writer (an interactive session's and a
 bash-loop agent's, at least), so two of them interleave and the second one's

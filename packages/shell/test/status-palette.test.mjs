@@ -137,6 +137,9 @@ test('a deliberate or ordinary state takes no colour', () => {
      a date gate and somebody's decision to stop a loop are the system working.
      Colouring them is how a backlog starts looking like an incident. */
   for (const status of ['open', 'done', 'cancelled']) assert.equal(ticketStateRole(status), null, status);
+  for (const status of ['Proposed', 'Paused', 'Canceled']) assert.equal(projectStatusRole(status), null, status);
+  /* And the same states under the words a row still carries before the R-46
+     migration writes the new ones. */
   for (const status of ['shaping', 'ready', 'parked', 'archived']) assert.equal(projectStatusRole(status), null, status);
   for (const state of ['IDLE', 'HOLD', 'STOP', 'PARKED', 'SEAT_HELD', 'halted']) assert.equal(loopStateRole(state), null, state);
   for (const severity of ['normal', 'unknown']) assert.equal(usageSeverityRole(severity), null, severity);
@@ -184,6 +187,11 @@ test('failure stands further off the page than any other role, in both themes', 
 
 test('in motion is blue and a shipped project that settled is green', () => {
   assert.equal(ticketStateRole('in_progress'), 'info');
+  assert.equal(projectStatusRole('Planned'), 'info');
+  assert.equal(projectStatusRole('Active'), 'info');
+  assert.equal(projectStatusRole('Monitoring'), 'info');
+  assert.equal(projectStatusRole('Completed'), 'success');
+  /* The pre-R-46 words read as the same states: one store holds both. */
   assert.equal(projectStatusRole('ship_next'), 'info');
   assert.equal(projectStatusRole('shipped_watching'), 'info');
   assert.equal(projectStatusRole('shipped_stable'), 'success');

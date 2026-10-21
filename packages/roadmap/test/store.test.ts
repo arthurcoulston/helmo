@@ -45,7 +45,8 @@ describe('projects', () => {
   it('an idea costs a title and nothing else', () => {
     const p = store.createProject(mason, { title: 'Run a hackathon at the co-working space' });
     expect(p.id).toBe('R-1');
-    expect(p.status).toBe('parked');
+    expect(p.status).toBe('Proposed');
+    expect(p.readiness).toBe('raw idea');
     expect(p.body).toBe('');
   });
 
@@ -53,53 +54,65 @@ describe('projects', () => {
     expect(() => store.createProject({ name: 'x', kind: 'agent' }, { title: 't' })).toThrow(/model/);
   });
 
-  it('updates require a note and archived projects are permanent', () => {
-    const p = store.createProject(mason, { title: 'T', status: 'shaping' });
-    expect(() => store.updateProject(mason, { project_id: p.id, note: '', status: 'ready' })).toThrow(/note/);
-    store.updateProject(bosun, { project_id: p.id, note: 'ran its course', status: 'archived' });
-    expect(() => store.updateProject(mason, { project_id: p.id, note: 'reopen', status: 'shaping' })).toThrow(/terminal/);
+  it('updates require a note and canceled projects are permanent', () => {
+    const p = store.createProject(mason, { title: 'T' });
+    expect(() => store.updateProject(mason, { project_id: p.id, note: '', title: 'T2' })).toThrow(/note/);
+    store.updateProject(bosun, { project_id: p.id, note: 'ran its course', status: 'Canceled' });
+    expect(() => store.updateProject(mason, { project_id: p.id, note: 'reopen', status: 'Proposed' })).toThrow(/terminal/);
   });
 
-  it('parking without an exit warns', () => {
-    const p = store.createProject(mason, { title: 'T', status: 'shaping' });
-    const { warnings } = store.updateProject(mason, { project_id: p.id, note: 'not now', status: 'parked' });
+  it('archiving hides a finished record, and is the one write a canceled one still takes', () => {
+    const live = store.createProject(mason, { title: 'live' });
+    expect(() => store.updateProject(mason, { project_id: live.id, note: 'tidy the list', archived: true }))
+      .toThrow(/only a Completed or Canceled project can be archived/);
+
+    store.updateProject(bosun, { project_id: live.id, note: 'superseded by R-47', status: 'Canceled' });
+    const { project } = store.updateProject(bosun, { project_id: live.id, note: 'off the surfaces', archived: true });
+    expect(project.archived).toBe(1);
+    expect(project.status).toBe('Canceled');
+    // Hiding is a display fact; the judgment behind it stays refused.
+    expect(() => store.updateProject(bosun, { project_id: live.id, note: 'and reword it', archived: false, title: 'new' })).toThrow(/terminal/);
+    expect(store.updateProject(bosun, { project_id: live.id, note: 'back on the surfaces', archived: false }).project.archived).toBe(0);
+  });
+
+  it('pausing without an exit warns', () => {
+    const p = store.createProject(mason, { title: 'T' });
+    const { warnings } = store.updateProject(mason, { project_id: p.id, note: 'not now', status: 'Paused' });
     expect(warnings.some((w) => w.includes('unpark_condition'))).toBe(true);
   });
 });
 
-describe('the ready gate', () => {
+describe('the readiness gate', () => {
+  const judge = (actor: Actor, id: string, note: string) =>
+    store.recordReadinessVerdict(actor, { project_id: id, reviewed_revision: store.readinessRevision(id), verdict: 'pass', note });
+
   it('the description shaper cannot make their own commitment-readiness judgment', () => {
-    const p = store.createProject(mason, { title: 'T', body: 'the full plan', status: 'shaping' });
-    expect(() => store.updateProject(mason, { project_id: p.id, note: 'done shaping', status: 'ready' })).toThrow(/second pair of eyes|other than the shaper|shaped by you/);
-    const { project } = store.updateProject(bosun, { project_id: p.id, note: 'enough is known to decide whether to commit', status: 'ready' });
-    expect(project.status).toBe('ready');
+    const p = store.createProject(mason, { title: 'T', body: 'the full plan' });
+    expect(() => judge(mason, p.id, 'done shaping')).toThrow(/other than the description's shaper|shaped by you/);
+    const { project } = judge(bosun, p.id, 'enough is known to decide whether to commit');
+    expect(project.readiness).toBe('shaped');
+    expect(project.status).toBe('Proposed'); // readiness is a field, never the status
   });
 
   it('retitling is not shaping the description', () => {
-    const p = store.createProject(mason, { title: 'Working title', body: 'first sketch', status: 'shaping' });
+    const p = store.createProject(mason, { title: 'Working title', body: 'first sketch' });
     store.updateProject(bosun, { project_id: p.id, note: 'shaped the proposition', body: 'enough evidence and scope to decide whether to commit' });
     store.updateProject(mason, { project_id: p.id, note: 'settled the name', title: 'Final title' });
 
-    const { project } = store.updateProject(mason, { project_id: p.id, note: 'independently judged ready to commit', status: 'ready' });
-    expect(project.status).toBe('ready');
+    expect(judge(mason, p.id, 'independently judged ready to commit').project.readiness).toBe('shaped');
   });
 
-  it('an agent cannot reshape and declare ready in one update', () => {
-    const p = store.createProject(mason, { title: 'T', body: 'first sketch', status: 'shaping' });
-    expect(() => store.updateProject(bosun, {
-      project_id: p.id,
-      note: 'expanded it and called it ready',
-      body: 'a newly complete description',
-      status: 'ready',
-    })).toThrow(/shaped by you|description's shaper/);
-    expect(store.getProject(p.id).body).toBe('first sketch');
-    expect(store.getProject(p.id).status).toBe('shaping');
+  it('a reshape by the reviewer themselves is still their own work', () => {
+    const p = store.createProject(mason, { title: 'T', body: 'first sketch' });
+    store.updateProject(bosun, { project_id: p.id, note: 'expanded it', body: 'a newly complete description' });
+    expect(() => judge(bosun, p.id, 'and it reads ready to me')).toThrow(/shaped by you|description's shaper/);
+    expect(store.getProject(p.id).readiness).toBe('raw idea');
   });
 
   it('the human is never gated', () => {
-    const p = store.createProject(mason, { title: 'T', body: 'plan', status: 'shaping' });
-    const { project } = store.updateProject(arthur, { project_id: p.id, note: 'good enough', status: 'ready' });
-    expect(project.status).toBe('ready');
+    const p = store.createProject(mason, { title: 'T', body: 'plan' });
+    store.updateProject(arthur, { project_id: p.id, note: 'rewrote it myself', body: 'the plan, in my words' });
+    expect(judge(arthur, p.id, 'good enough').project.readiness).toBe('shaped');
   });
 });
 
@@ -167,47 +180,129 @@ describe('health readings', () => {
   });
 });
 
-describe('ship next — the work phase', () => {
-  function readyProject(title: string): string {
-    const p = store.createProject(mason, { title, status: 'shaping' });
-    store.updateProject(bosun, { project_id: p.id, note: 'ready', status: 'ready' });
+describe('the go, and the work phase it opens', () => {
+  function shapedProject(title: string): string {
+    const p = store.createProject(mason, { title, body: 'a description worth judging' });
+    store.recordReadinessVerdict(bosun, { project_id: p.id, reviewed_revision: store.readinessRevision(p.id), verdict: 'pass', note: 'enough is known' });
     return p.id;
   }
 
-  it('only a ready project, only via the recorded human decision', () => {
-    const a = readyProject('A');
-    const parked = store.createProject(mason, { title: 'C' });
+  it('only a shaped project, only via the recorded human decision', () => {
+    const a = shapedProject('A');
+    const raw = store.createProject(mason, { title: 'C' });
 
-    expect(() => store.updateProject(mason, { project_id: a, note: 'go', status: 'ship_next' as never })).toThrow(/ship_next/);
-    expect(() => store.setShipNext(mason, { project_id: parked.id, decided_by: 'arthur', reason: 'r' })).toThrow(/ready/);
+    expect(() => store.updateProject(mason, { project_id: a, note: 'go', status: 'Planned' as never })).toThrow(/go-ahead/);
+    expect(() => store.setShipNext(mason, { project_id: raw.id, decided_by: 'arthur', reason: 'r' })).toThrow(/shaped/);
     expect(() => store.setShipNext(mason, { project_id: a, decided_by: '', reason: 'r' })).toThrow(/decided_by/);
 
-    const { ship_next_count } = store.setShipNext(mason, { project_id: a, decided_by: 'arthur', reason: 'unblocks the fleet' });
+    const { project, ship_next_count } = store.setShipNext(mason, { project_id: a, decided_by: 'arthur', reason: 'unblocks the fleet' });
+    expect(project.status).toBe('Planned'); // authorized, and nothing underway yet
     expect(ship_next_count).toBe(1);
-    expect(store.shipNextProjects().map((p) => p.id)).toEqual([a]);
+    expect(store.authorizedProjects().map((p) => p.id)).toEqual([a]);
   });
 
-  it('several may hold it at once — the count is the resistance signal', () => {
-    const a = readyProject('A');
-    const b = readyProject('B');
+  it('the work phase holds the authorized and the underway together', () => {
+    const a = shapedProject('A');
+    const b = shapedProject('B');
     store.setShipNext(mason, { project_id: a, decided_by: 'arthur', reason: 'go' });
+    store.updateProject(mason, { project_id: a, note: 'claimed its first ticket', status: 'Active' });
     const { ship_next_count } = store.setShipNext(mason, { project_id: b, decided_by: 'arthur', reason: 'also go' });
-    expect(ship_next_count).toBe(2);
-    expect(store.getProject(a).status).toBe('ship_next'); // no demotion
+    expect(ship_next_count).toBe(2); // no demotion: one Active, one Planned
+    expect(store.getProject(a).status).toBe('Active');
+    expect(store.authorizedProjects().map((p) => p.id)).toEqual([a, b]);
   });
 
-  it('nothing ships that the human never declared go on', () => {
-    const shaped = store.createProject(mason, { title: 'S', status: 'shaping' });
-    expect(() => store.updateProject(mason, { project_id: shaped.id, note: 'shipped it', status: 'shipped_watching' })).toThrow(/go-ahead|ship_next/);
-    // The human is not gated; agents move a project only out of ship_next.
-    const a = readyProject('A');
+  it('nothing starts or ships that the human never declared go on', () => {
+    const shaped = shapedProject('S');
+    expect(() => store.updateProject(mason, { project_id: shaped, note: 'started it', status: 'Active' }))
+      .toThrow(/declared go on/);
+    expect(() => store.updateProject(mason, { project_id: shaped, note: 'shipped it', status: 'Monitoring' }))
+      .toThrow(/only an Active project/);
+
+    const a = shapedProject('A');
     store.setShipNext(mason, { project_id: a, decided_by: 'arthur', reason: 'go' });
-    store.updateProject(mason, { project_id: a, note: 'built, watching', status: 'shipped_watching' });
-    expect(store.getProject(a).status).toBe('shipped_watching');
+    // Authorized is not underway: a go alone does not reach the shipped family.
+    expect(() => store.updateProject(mason, { project_id: a, note: 'straight to watching', status: 'Monitoring' }))
+      .toThrow(/only an Active project/);
+    store.updateProject(mason, { project_id: a, note: 'work in flight', status: 'Active' });
+    store.updateProject(mason, { project_id: a, note: 'built, watching', status: 'Monitoring' });
+    expect(store.getProject(a).status).toBe('Monitoring');
     expect(store.getProject(a).closed_at).toBeTruthy();
-    // watching → stable stays open (records the human's maintenance call).
-    store.updateProject(mason, { project_id: a, note: 'quiet for weeks; Arthur calls it worth keeping', status: 'shipped_stable' });
-    expect(store.getProject(a).status).toBe('shipped_stable');
+    // Monitoring → Completed stays open (records the human's maintenance call).
+    store.updateProject(mason, { project_id: a, note: 'quiet for weeks; Arthur calls the outcome verified', status: 'Completed' });
+    expect(store.getProject(a).status).toBe('Completed');
+    expect(store.authorizedProjects()).toEqual([]);
+  });
+
+  it('a paused delivery resumes without a second go, and its health is a separate fact', () => {
+    const a = shapedProject('A');
+    store.setShipNext(mason, { project_id: a, decided_by: 'arthur', reason: 'go' });
+    store.updateProject(mason, { project_id: a, note: 'work in flight', status: 'Active' });
+    store.updateProject(arthur, { project_id: a, note: 'pending an evidence-backed plan', status: 'Paused', unpark_condition: 'Arthur authorizes resumption' });
+    store.recordHealth(mason, { project_id: a, health: 'Off track', reason: 'Both delivery tickets carry a capacity hold only Arthur can release.' });
+    expect(store.getProject(a)).toMatchObject({ status: 'Paused', health: 'Off track' });
+    store.updateProject(mason, { project_id: a, note: 'Arthur released the hold', status: 'Active' });
+    expect(store.getProject(a).status).toBe('Active');
+  });
+});
+
+describe('a store written before R-46', () => {
+  // Events are never rewritten, and a row keeps the word it was written with
+  // until the one-shot migration writes the new one. Every gate, tier and
+  // listing has to read the old vocabulary correctly in the meantime.
+  function writeLegacyEvents(events: [string, string, Record<string, unknown>][]): void {
+    const raw = new Database(join(dir, 'test.db'));
+    const insert = raw.prepare('INSERT INTO events (ts, subject_id, event_type, actor, payload) VALUES (?, ?, ?, ?, ?)');
+    events.forEach(([id, type, payload], i) => {
+      insert.run(`2026-09-0${i + 1}T00:00:00.000Z`, id, type, JSON.stringify(mason), JSON.stringify(payload));
+    });
+    raw.close();
+    store.rebuild();
+  }
+
+  const created = (id: string, status: string): [string, string, Record<string, unknown>] =>
+    [id, 'created', { id, title: id, body: 'written in the old words', status }];
+
+  it('reads every pre-R-46 word in today\'s vocabulary, and replays its events unchanged', () => {
+    writeLegacyEvents([
+      created('R-90', 'parked'),
+      created('R-91', 'shaping'),
+      created('R-92', 'ready'),
+      created('R-93', 'shipped_watching'),
+      created('R-94', 'shipped_stable'),
+      created('R-95', 'archived'),
+      created('R-96', 'ready'),
+      // A pre-R-46 go carries no status in its payload: replaying it must
+      // still materialize 'ship_next', the word it wrote when it happened.
+      ['R-96', 'ship_next_set', { decided_by: 'arthur', reason: 'the 2026-09 go' }],
+    ]);
+
+    expect(store.getProject('R-96').status).toBe('ship_next');
+    expect(store.authorizedProjects().map((p) => p.id)).toEqual(['R-96']);
+    expect(store.shippedProjects().map((p) => p.id).sort()).toEqual(['R-93', 'R-94']);
+    // The ranked list drops the shipped and terminal families whatever word
+    // they carry, and tiers the rest by what those words always meant.
+    expect(store.rankProjects().map((r) => r.project.id)).toEqual(['R-96', 'R-91', 'R-92', 'R-90']);
+    expect(store.rankProjects()[0]!.explanation).toContain('ACTIVE');
+
+    // The shipped door admits the legacy source: a go is a go.
+    store.updateProject(mason, { project_id: 'R-96', note: 'built, watching', status: 'Monitoring' });
+    expect(store.getProject('R-96')).toMatchObject({ status: 'Monitoring', closed_at: expect.any(String) });
+
+    // A legacy archive is still terminal, and hiding it does not reopen it.
+    expect(() => store.updateProject(mason, { project_id: 'R-95', note: 'reopen', status: 'Proposed' })).toThrow(/terminal/);
+    expect(store.updateProject(mason, { project_id: 'R-95', note: 'off the surfaces', archived: true }).project.archived).toBe(1);
+    expect(store.getProject('R-95').status).toBe('archived');
+  });
+
+  it('judges a legacy row\'s readiness as a field, leaving its stored word alone', () => {
+    writeLegacyEvents([created('R-97', 'parked')]);
+    const { project } = store.recordReadinessVerdict(bosun, {
+      project_id: 'R-97', reviewed_revision: store.readinessRevision('R-97'), verdict: 'pass', note: 'enough is known',
+    });
+    expect(project).toMatchObject({ status: 'parked', readiness: 'shaped' });
+    // And that shaped reading is what the go gate reads.
+    expect(store.setShipNext(mason, { project_id: 'R-97', decided_by: 'arthur', reason: 'go' }).project.status).toBe('Planned');
   });
 });
 
@@ -248,7 +343,7 @@ describe('claims, citations, ranking', () => {
 
     const top = store.rankProjects()[0]!;
     expect(top.explanation).toContain('1st');
-    expect(top.explanation).toContain('ready, no blockers');
+    expect(top.explanation).toContain('shaped, no blockers');
     expect(top.explanation).toContain('advances OBJ-1');
     expect(top.explanation).toContain('value high (mason');
   });

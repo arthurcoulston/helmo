@@ -102,14 +102,22 @@ function seedProject(homes, title) {
   }
 }
 
+// Authorized with nothing underway — the state the continuation reading
+// exists to show, and the one the pre-R-46 vocabulary could not express.
 function seedShipNextProject(homes, title) {
   const store = new Store(join(homes.ROADMAP_HOME, 'roadmap.db'));
   try {
-    const project = store.createProject(SEED, { title, status: 'shaping' });
-    store.updateProject({ ...SEED, name: 'readiness-reviewer' }, {
+    const project = store.createProject(SEED, { title });
+    store.updateProject(SEED, {
       project_id: project.id,
       note: 'Ready for the check-in continuation fixture.',
-      status: 'ready',
+      body: 'Shaped for the check-in continuation fixture.',
+    });
+    store.recordReadinessVerdict({ ...SEED, name: 'readiness-reviewer' }, {
+      project_id: project.id,
+      reviewed_revision: store.readinessRevision(project.id),
+      verdict: 'pass',
+      note: 'Ready for the check-in continuation: enough is known to commit.',
     });
     store.setShipNext(SEED, { project_id: project.id, decided_by: 'arthur', reason: 'Exercise the selected-project reading.' });
     return project.id;
@@ -583,8 +591,10 @@ test('unified routes retain the established product workflows and common navigat
   const ticket = seedTicket(homes, 'Preserved work disclosure');
   seedProject(homes, 'Preserved roadmap disclosure');
   const roadmap = new Store(join(homes.ROADMAP_HOME, 'roadmap.db'));
-  const next = roadmap.createProject(SEED, {title:'Prioritized fixture initiative',status:'ready'}).id;
+  const next = roadmap.createProject(SEED, {title:'Prioritized fixture initiative',status:'Proposed',body:'A description worth judging.'}).id;
+  roadmap.recordReadinessVerdict({name:'fixture-reviewer',kind:'agent',model:'fixture',version:'0'}, {project_id:next,reviewed_revision:roadmap.readinessRevision(next),verdict:'pass',note:'Enough is known to commit.'});
   roadmap.setShipNext(SEED, {project_id:next,decided_by:'fixture-operator',reason:'Synthetic priority decision'});
+  roadmap.updateProject(SEED, {project_id:next,status:'Active',note:'Work is in flight.'});
   roadmap.close();
   const { origin } = await startApp(t, homes);
   for (const path of ['/', '/?whole=1', '/?section=awaiting', '/overview', '/team', '/work', '/work/', '/roadmap', '/roadmap/', '/run', '/run/']) {
@@ -597,7 +607,7 @@ test('unified routes retain the established product workflows and common navigat
   const work = (await (await fetch(origin + '/api/v1/work')).json()).data;
   assert.ok(work.record.rows.some((row) => row.id === ticket));
   const projects = (await (await fetch(origin + '/api/v1/roadmap')).json()).data;
-  assert.ok(projects.ranked.some((row) => row.project.id === next && row.project.status === 'ship_next'));
+  assert.ok(projects.ranked.some((row) => row.project.id === next && row.project.status === 'Active'));
   const detail = (await (await fetch(origin + `/api/v1/roadmap/projects/${next}`)).json()).data;
   assert.ok(detail.events.some((event) => event.event_type === 'ship_next_set'));
   const runtime = (await (await fetch(origin + '/api/v1/runtime')).json()).data;

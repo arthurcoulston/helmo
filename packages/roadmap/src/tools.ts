@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { Store } from './store.js';
-import { Actor, ACTOR_KINDS, DEP_TYPES, EFFORT_SIZES, HORIZONS, Project, RoadmapError, STATUSES, VALUE_LEVELS } from './types.js';
+import { Actor, ACTOR_KINDS, DEP_TYPES, EFFORT_SIZES, HEALTH, HORIZONS, Project, RoadmapError, SHIPPED, STATUSES, statusReading, TERMINAL, VALUE_LEVELS } from './types.js';
 import { running } from './build.js';
 import { Installation } from './install.js';
 import { localRecordRef, qualifiedRecordRef } from './reference.js';
@@ -40,7 +40,9 @@ function fail(e: unknown): { content: { type: 'text'; text: string }[]; isError:
 
 function compact(p: Project) {
   return {
-    id: p.id, title: p.title, status: p.status, actual_usd: p.actual_usd, updated_at: p.updated_at,
+    id: p.id, title: p.title, status: p.status, readiness: p.readiness, actual_usd: p.actual_usd, updated_at: p.updated_at,
+    ...(p.health ? { health: p.health, health_reason: p.health_reason } : {}),
+    ...(p.archived ? { archived: true } : {}),
     usage_disclosure: {
       value: p.actual_usd,
       basis: 'ticket_cost_usd_rollup_legacy_mixed_unknown',
@@ -135,24 +137,26 @@ export function buildServer(
     'roadmap_list_projects',
     {
       description:
-        `The roadmap in derived rank order. Rank is never set by hand: facts (ship_next, ready, shaping, blocked, parked) set the tier; judgments (cited objective rank, latest value claim, effort) order within it; every row carries a one-line explanation of its position. Shipped and archived projects are excluded unless you filter for them by status; the response's ship_next array is the current work phase — every project the human has declared go on, and a growing array is a problem to surface, not a neutral fact.\n\n` +
+        `The roadmap in derived rank order. Rank is never set by hand: facts (Active, Planned, shaped, blocked, raw or Paused) set the tier; judgments (cited objective rank, latest value claim, effort) order within it; every row carries a one-line explanation of its position. Monitoring, Completed and Canceled projects are excluded unless you filter for them by status; the response's ship_next array is the current work phase — every project the human has declared go on, Planned (nothing underway) and Active alike — and a growing array is a problem to surface, not a neutral fact.\n\n` +
         `The response also carries the charter projection (objectives by the human's rank, and bets) so fit can be assessed without a second call. A project marked "advances nothing stated" is a signal worth reading, not an error — some work is maintenance; the visibility is the point.`,
       inputSchema: strict({
-        status: z.enum(STATUSES).optional().describe('Filter to one status; terminal statuses are only visible this way'),
+        status: z.enum(STATUSES).optional().describe('Filter to one status, read in today\'s vocabulary — a row still stored with a pre-R-46 word matches the status it always meant. Shipped, completed and canceled rows are only visible this way'),
         limit: z.number().int().optional(),
       }),
     },
     async ({ status, limit }) => {
       try {
-        if (status === 'shipped_watching' || status === 'shipped_stable' || status === 'archived') {
+        if (status && (SHIPPED.includes(status) || TERMINAL.includes(status))) {
           // Off the ranked list; a plain listing serves the shelf and the archive.
-          const rows = (store.dumpState()['projects'] as Project[]).filter((p) => p.status === status).slice(0, limit ?? 50);
+          const rows = (store.dumpState()['projects'] as Project[])
+            .filter((p) => statusReading(p.status) === status)
+            .slice(0, limit ?? 50);
           return ok({ projects: rows.map(compact), count: rows.length });
         }
         let ranked = store.rankProjects();
-        if (status) ranked = ranked.filter((r) => r.project.status === status);
+        if (status) ranked = ranked.filter((r) => statusReading(r.project.status) === status);
         ranked = ranked.slice(0, limit ?? 50);
-        const watching = (store.dumpState()['projects'] as Project[]).filter((p) => p.status === 'shipped_watching');
+        const watching = (store.dumpState()['projects'] as Project[]).filter((p) => statusReading(p.status) === 'Monitoring');
         return ok({
           projects: ranked.map((r) => ({
             ...compact(r.project),
@@ -163,7 +167,7 @@ export function buildServer(
           count: ranked.length,
           objectives: store.listObjectives().map((o) => ({ id: o.id, rank: o.rank, horizon: o.horizon, statement: o.statement })),
           bets: store.listBets().map((b) => ({ id: b.id, statement: b.statement, stake: b.stake, falsifier: b.falsifier })),
-          ship_next: store.shipNextProjects().map((p) => p.id),
+          ship_next: store.authorizedProjects().map((p: Project) => p.id),
           ...(watching.length ? { shipped_watching: watching.map((p) => p.id) } : {}),
         });
       } catch (e) {
@@ -176,8 +180,9 @@ export function buildServer(
     'roadmap_update_project',
     {
       description:
-        `Record a change to a project: shaping the description, moving it along the ladder (parked · shaping · ready · ship_next · shipped_watching · shipped_stable · archived), parking it with an exit condition. Every call requires a 'note' — one or two lines, human terms; notes are the story the human reads.\n\n` +
-        `Status rules the store enforces: ship_next is NEVER set here (roadmap_set_ship_next records that human go-ahead), and the shipped statuses are reachable only from ship_next — nothing ships that the human never declared go on. 'ready' means enough is known to make an informed decision about committing to the project; details may keep being decided while building. An agent declaring it must not be the one who last shaped the description: a second pair of eyes judges commitment-readiness, while a title-only change does not count as shaping. 'shipped_watching' means newly shipped: monitoring, feedback, bug fixes, loose ends. 'shipped_stable' records a standing human decision that the maintenance is worth it — move a project there only when that decision has been stated. When parking, record unpark_condition ("revisit when Helmo has one external user") so a sweep can retest the condition instead of the idea rotting silently. 'archived' is terminal and permanent — the project ran its course and no longer earns its maintenance, all surfaces closed/taken down (ideas killed before shipping land here too); a revived idea is a new project with a 'relates' link.\n\n` +
+        `Record a change to a project: shaping the description, moving it through the seven statuses (Proposed · Planned · Active · Monitoring · Completed · Paused · Canceled), pausing it with an exit condition, hiding a finished record. Every call requires a 'note' — one or two lines, human terms; notes are the story the human reads.\n\n` +
+        `One status answers one question. 'Proposed' is an idea on the list; how refined it is, is readiness (raw idea / shaped), set by an independent review (roadmap_record_readiness_verdict) and NOT by a status write. 'Planned' is the human's recorded go and is NEVER set here (roadmap_set_ship_next records it). 'Active' means work is in flight, and is reachable only from a recorded go — nothing ships that the human never declared go on. 'Monitoring' means newly delivered: feedback, bug fixes, loose ends; reachable only from Active or from within the shipped family. 'Completed' records that the outcome is verified and the maintenance is a standing human decision — move a project there only when that decision has been stated. 'Paused' is a delivery deliberately on hold; record unpark_condition ("revisit when Helmo has one external user") so a sweep can retest the condition instead of the pause rotting silently. 'Canceled' is terminal and permanent — ran its course, or killed before shipping; a revived idea is a new project with a 'relates' link.\n\n` +
+        `Whether a project is in trouble is 'health', a separate judgment with its own reason (roadmap_record_health): a Paused delivery can be Off track and a Monitoring one At risk. 'archived' hides a finished row from the surfaces — it is the one field a Canceled project still accepts, and only a Completed or Canceled row can be hidden.\n\n` +
         `Every one of those rules is decided against the project as it is when the write lands, and a project has more than one writer. If this update depends on what you read first — you reshaped the body you just read, you judged that description ready, you are reversing a status — pass 'if_revision' with the 'revision' that read gave you: the write is then refused, with nothing stored, if anyone moved the project in between, instead of silently landing on top of their change. Omit it for a write that turns on nothing you read. The response carries the new revision either way.`,
       inputSchema: strict({
         project_id: z.string(),
@@ -188,11 +193,12 @@ export function buildServer(
           .positive()
           .optional()
           .describe('The revision this update was decided against, from roadmap_get_project — refuses the write if the project has moved since'),
-        status: z.enum(['parked', 'shaping', 'ready', 'shipped_watching', 'shipped_stable', 'archived']).optional(),
+        status: z.enum(['Proposed', 'Active', 'Monitoring', 'Completed', 'Paused', 'Canceled']).optional(),
+        archived: z.boolean().optional().describe('Hide a Completed or Canceled row from the surfaces, or show it again'),
         title: z.string().optional(),
         body: z.string().optional().describe('The project description accretes and gets rewritten over months — keep it current enough to support an informed commitment decision'),
-        parked_reason: z.string().optional(),
-        unpark_condition: z.string().optional().describe('What would unpark this — phrased so a sweep can test it'),
+        parked_reason: z.string().optional().describe('Why it is paused'),
+        unpark_condition: z.string().optional().describe('What would resume this — phrased so a sweep can test it'),
         actor: actorSchema,
       }),
     },
@@ -235,7 +241,7 @@ export function buildServer(
     'roadmap_record_readiness_verdict',
     {
       description:
-        `Record an independent review of a project's commitment-readiness. Read the project first and pass its readiness revision: verdicts on identical state form one append-only set, each reviewer's latest verdict is their own correction, and any FAIL governs. A mixed set is contested. A passing set moves the project to ready; a failed or contested set leaves it shaping. Any non-verdict project change makes the old revision stale, and a refused write stores nothing. The description's last shaper cannot review their own work.`,
+        `Record an independent review of a project's commitment-readiness. Read the project first and pass its readiness revision: verdicts on identical state form one append-only set, each reviewer's latest verdict is their own correction, and any FAIL governs. A mixed set is contested. A passing set makes the project's readiness 'shaped' — the field, not its status; a failed or contested set leaves it 'raw idea'. Any non-verdict project change makes the old revision stale, and a refused write stores nothing. The description's last shaper cannot review their own work.`,
       inputSchema: strict({
         project_id: z.string(),
         reviewed_revision: z.number().int().positive().describe('The readiness_revision from roadmap_get_project'),
@@ -248,6 +254,27 @@ export function buildServer(
       try {
         const { project, readiness } = store.recordReadinessVerdict(resolveActor(actor as Actor | undefined), { ...input, project_id: local(input.project_id) });
         return ok({ project: compact(project), readiness });
+      } catch (e) {
+        return fail(e);
+      }
+    },
+  );
+
+  server.registerTool(
+    'roadmap_record_health',
+    {
+      description:
+        `Record whether a project is in trouble, and why. Health is On track, At risk or Off track, and the reason is required: a badge nobody can argue with decays into decoration. It is a separate fact from status — a Paused delivery can be Off track, a Monitoring one At risk — and it is the owner's own judgment, never derived from a count. Set it when the reading changes, not on a timer; pass health null with a reason to withdraw a reading that no longer holds.`,
+      inputSchema: strict({
+        project_id: z.string(),
+        health: z.enum(HEALTH).nullable().describe('On track | At risk | Off track, or null to withdraw the reading'),
+        reason: z.string().describe('One line on what makes it this — the blocker, the hold, or what came good'),
+        actor: actorSchema,
+      }),
+    },
+    async ({ actor, ...input }) => {
+      try {
+        return ok(compact(store.recordHealth(resolveActor(actor as Actor | undefined), { ...input, project_id: local(input.project_id) })));
       } catch (e) {
         return fail(e);
       }
@@ -305,8 +332,8 @@ export function buildServer(
     'roadmap_set_ship_next',
     {
       description:
-        `Record the human's go-ahead moving a ready project into ship_next — the work phase. This is ALWAYS the human's call: the tool exists for an agent to record a decision the human stated explicitly, with decided_by naming them and reason carrying their one-line why. Never call it on your own judgment, however ready a project looks. Only a 'ready' project can be declared.\n\n` +
-        `Several projects may hold ship_next at once, but with resistance: the response carries the resulting count, and a growing work phase is a problem to surface to the human, not a neutral fact — the standing aim is getting projects OFF it (to shipped_watching) when they are close. ship_next is disclosure — the human's current shipping order, readable here — not tasking: seeing it does not authorize starting the work. Building begins when the project is broken into Helmo tickets and those enter the ready queue like any other work.`,
+        `Record the human's go-ahead, moving a shaped project to Planned — the work phase, authorized and not yet started. This is ALWAYS the human's call: the tool exists for an agent to record a decision the human stated explicitly, with decided_by naming them and reason carrying their one-line why. Never call it on your own judgment, however ready a project looks. Only a Proposed project whose readiness is 'shaped' can be declared; the project moves to Active when work is actually in flight (roadmap_update_project).\n\n` +
+        `Several projects may hold the work phase at once, but with resistance: the response carries the resulting count of Planned and Active projects, and a growing work phase is a problem to surface to the human, not a neutral fact — the standing aim is getting projects OFF it (to Monitoring) when they are close. The go is disclosure — the human's current shipping order, readable here — not tasking: seeing it does not authorize starting the work. Building begins when the project is broken into Helmo tickets and those enter the ready queue like any other work.`,
       inputSchema: strict({
         project_id: z.string(),
         decided_by: z.string().describe('The human who made the call'),
@@ -320,7 +347,7 @@ export function buildServer(
         // Crowding is the only thing worth saying back: until H-1126 this also
         // told the caller to update Helmo's standing notice, which no longer exists.
         const crowded = ship_next_count >= 3
-          ? `ship_next now holds ${ship_next_count} projects — a growing work phase is a problem. Tell the human, and look for the ones close enough to move to shipped_watching.`
+          ? `the work phase now holds ${ship_next_count} projects — a growing work phase is a problem. Tell the human, and look for the ones close enough to move to Monitoring.`
           : null;
         return ok({ project: compact(project), ship_next_count, ...(crowded ? { note: crowded } : {}) });
       } catch (e) {

@@ -130,7 +130,7 @@ test('the stylesheet is actually imported by the application entry', () => {
 
 /* ---------- what the colours mean ---------- */
 
-const { acceptanceRole, loopStateRole, projectStatusRole, ticketStateRole, usageSeverityRole, inkRole, tintRole, StatusBadge, StatusAlert } = await import('../src/Status.tsx');
+const { acceptanceRole, loopStateRole, projectHealthRole, projectStatusRole, ticketStateRole, usageSeverityRole, inkRole, tintRole, StatusBadge, StatusAlert } = await import('../src/Status.tsx');
 
 test('a deliberate or ordinary state takes no colour', () => {
   /* The restraint Arthur asked for, as a list: queued work, a capacity hold,
@@ -141,6 +141,10 @@ test('a deliberate or ordinary state takes no colour', () => {
   /* And the same states under the words a row still carries before the R-46
      migration writes the new ones. */
   for (const status of ['shaping', 'ready', 'parked', 'archived']) assert.equal(projectStatusRole(status), null, status);
+  /* An initiative nobody has judged claims no health, so an unset reading has
+     to take no colour at all — otherwise nearly every row in a live store
+     would be painted for a judgment nobody made. */
+  for (const health of [null, undefined, '']) assert.equal(projectHealthRole(health), null, JSON.stringify(health));
   for (const state of ['IDLE', 'HOLD', 'STOP', 'PARKED', 'SEAT_HELD', 'halted']) assert.equal(loopStateRole(state), null, state);
   for (const severity of ['normal', 'unknown']) assert.equal(usageSeverityRole(severity), null, severity);
   assert.equal(acceptanceRole('not_requested', 'no_completion'), null);
@@ -149,7 +153,13 @@ test('a deliberate or ordinary state takes no colour', () => {
 
 test('what needs Arthur is amber and what has failed is red', () => {
   assert.equal(ticketStateRole('awaiting_human'), 'attention');
-  assert.equal(projectStatusRole('blocked'), 'attention');
+  /* Health, not status: `projectStatusRole('blocked')` used to be asserted here
+     and no roadmap status by that name has ever existed, so the assertion held
+     a branch that painted nothing (H-3341). At risk is the one that is drifting
+     and Off track the one its owner says will not arrive — R-46's reason for
+     taking health out of the status in the first place. */
+  assert.equal(projectHealthRole('At risk'), 'attention');
+  assert.equal(projectHealthRole('Off track'), 'failure');
   for (const state of ['BLOCKED', 'LIMIT', 'UNKNOWN']) assert.equal(loopStateRole(state), 'attention', state);
   assert.equal(usageSeverityRole('warning'), 'attention');
   for (const state of ['BACKOFF', 'WEDGED', 'CRASHED']) assert.equal(loopStateRole(state), 'failure', state);
@@ -191,6 +201,7 @@ test('in motion is blue and a shipped project that settled is green', () => {
   assert.equal(projectStatusRole('Active'), 'info');
   assert.equal(projectStatusRole('Monitoring'), 'info');
   assert.equal(projectStatusRole('Completed'), 'success');
+  assert.equal(projectHealthRole('On track'), 'success');
   /* The pre-R-46 words read as the same states: one store holds both. */
   assert.equal(projectStatusRole('ship_next'), 'info');
   assert.equal(projectStatusRole('shipped_watching'), 'info');

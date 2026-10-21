@@ -89,9 +89,9 @@ error, and removes it. That is also what runs the gate — nothing else in the
 repository calls `typecheck`, so the shell's suite is where it happens, and
 the two `tsc` runs are most of the five seconds that suite now takes.
 
-**Every area is in this application.** Roadmap's server-ranked groups are
+**Every area is in this application.** Roadmap's seven status groups are
 compact Data Tables composed in `RoadmapView.tsx` over the shared
-`RecordTable.tsx`; the charter, claims and lazy history are in the Sheet that
+`RecordTable.tsx`, ranked within each group by the server; the charter, claims and lazy history are in the Sheet that
 table opens. Work's record groups are the same composition in
 `WorkRecord.tsx`. Runtime's complete status projection uses the official Table
 in `RuntimeView.tsx`, which declares its own column geometry rather than

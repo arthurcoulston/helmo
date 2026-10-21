@@ -102,13 +102,36 @@ export function projectStatusReading(status: string): string {
 }
 
 /** A roadmap project's status. The work phase is the one in motion; Completed
- *  is the one that came through; blocked is the one that needs a way opened.
- *  Proposed, Paused and Canceled are the ordinary and the deliberate. */
+ *  is the one that came through. Proposed, Paused and Canceled are the ordinary
+ *  and the deliberate: an idea nobody has started and a delivery its owner
+ *  stopped on purpose are both the system working. Whether an initiative is
+ *  GOING well is a different fact, and `projectHealthRole` is where it lives. */
 export function projectStatusRole(status: string): StatusRole | null {
   const reading = projectStatusReading(status)
   if (reading === "Planned" || reading === "Active" || reading === "Monitoring") return "info"
   if (reading === "Completed") return "success"
-  if (status === "blocked") return "attention"
+  return null
+}
+
+/** How an initiative is going, which its status cannot say: one can be Paused
+ *  deliberately AND Off track at the same time, and one field carrying both
+ *  was the conflation R-46 set out to end.
+ *
+ *  All three readings carry a role, which the restraint at the top of this file
+ *  otherwise withholds. They earn it by not being the ordinary case: health is
+ *  set by the initiative's owner and never derived, so a row only has one
+ *  because somebody judged it. Off track is the loud one — the owner saying
+ *  this will not arrive as intended, which is the single roadmap reading that
+ *  asks for intervention rather than patience.
+ *
+ *  This replaces a `status === "blocked"` branch that could never fire: no
+ *  roadmap status by that name has ever existed, so the attention role it
+ *  returned painted nothing. Off track with the blocker named in its reason is
+ *  what that branch was reaching for (H-3341). */
+export function projectHealthRole(health?: string | null): StatusRole | null {
+  if (health === "On track") return "success"
+  if (health === "At risk") return "attention"
+  if (health === "Off track") return "failure"
   return null
 }
 

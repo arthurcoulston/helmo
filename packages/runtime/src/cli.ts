@@ -15,6 +15,7 @@ import { serviceFile, serviceInstall, serviceStart, serviceStatusLine, serviceUn
 import { assertInstallation, requireTarget, target, targetLine } from './install.js';
 import { planLines, removalPlan, removeInstallation } from './remove.js';
 import { ReleaseError, describe as describeRelease, migrationLine, readSelection, rollback, selectionFile, upgrade } from './release.js';
+import { intentRefusal, isReleaseWriteVerb } from './release-intent.js';
 import { beginActivation, deploymentFile } from './deployment.js';
 import { readRedeploy, requestRedeploy, watchRedeploy } from './redeploy.js';
 import { logEvent, NO_OWNER_PID, pidAlive, processObservation, sClear, sGet, sHas, sPendingPid, sSet, sSetOwned, sValue, streakReset } from './sentinels.js';
@@ -40,6 +41,11 @@ if (cmd === 'trace') {
 // than a redirect (H-2473, src/install.ts). Taken out of `rest` here so that
 // no command's own positional arguments have to know it might be there.
 const requestedInstall = takeInstallFlag(rest);
+// `--ticket <id>` is taken out of `rest` here for the same reason: `release
+// upgrade --ticket H-1 <dir>` must not hand '--ticket' to the verb as its
+// release directory. It is read by the release-intent gate and by `redeploy`,
+// and consuming it once is also what keeps there being one way to ask.
+const requestedTicket = takeFlag(rest, 'ticket');
 // Assert the name here, at the door, and nowhere else. It used to be an
 // argument each handler passed to `requireTarget`, which meant it held only on
 // the surfaces that write: the read surfaces — exactly where a script puts an
@@ -149,7 +155,7 @@ const COMMAND_HELP: Record<string, string> = {
   reload: `usage: ${commandName} reload <loop|role> [--worker]`,
   service: `usage: ${commandName} service <install|uninstall|start|status>`,
   install: `usage: ${commandName} install remove [--confirm]`,
-  release: `usage: ${commandName} release <status | upgrade <release directory> | rollback | activate>`,
+  release: `usage: ${commandName} release <status | upgrade <release directory> | rollback | activate> [--ticket <id>]`,
   redeploy: `usage: ${commandName} redeploy [--ticket <id>] [--reason "<why>"]`,
   pace: `usage: ${commandName} pace <loop|role> <fraction (0,1] | park | clear> [--worker]`,
   usage: `usage: ${commandName} usage [--poll]`,
@@ -397,7 +403,7 @@ switch (cmd) {
     requestRedeploy({
       by: flag('by') ?? process.env['REV_LOOP'] ?? cliActor().label,
       reason: flag('reason') ?? 'activate committed changes',
-      ticket: flag('ticket'),
+      ticket: requestedTicket || undefined,
       actor: process.env['HELMO_ACTOR'] ? JSON.parse(process.env['HELMO_ACTOR']) as Record<string, unknown> : undefined,
       requested_at: new Date().toISOString(),
     });
@@ -672,8 +678,16 @@ switch (cmd) {
       for (const line of describeRelease(file)) console.log(line);
       break;
     }
-    if (!['upgrade', 'rollback', 'activate'].includes(verb) || (verb === 'upgrade' && !rest[1])) {
+    if (!isReleaseWriteVerb(verb) || (verb === 'upgrade' && !rest[1])) {
       console.error(COMMAND_HELP['release']);
+      process.exit(1);
+    }
+    // Above the three-verb dispatch and above every read of the installation:
+    // a run that cannot say what it is for is refused before it is told
+    // anything about what it would have changed (H-3376, src/release-intent.ts).
+    const refusal = intentRefusal({ verb, ticket: requestedTicket, tty: Boolean(process.stdin.isTTY), env: process.env });
+    if (refusal) {
+      console.error(refusal);
       process.exit(1);
     }
     if (!file) {
@@ -684,6 +698,9 @@ switch (cmd) {
       process.exit(1);
     }
     console.log(targetLine(requireTarget(`${commandName} release ${verb}`, 'unchecked')));
+    // Printed, not merely accepted: the named intent belongs beside the change
+    // in whatever read this command's output.
+    if (requestedTicket) console.log(`intent: ${requestedTicket}`);
     try {
       if (verb === 'activate') {
         const selection = readSelection(file);
@@ -695,7 +712,12 @@ switch (cmd) {
         if (!sup) throw new ReleaseError(`no supervisor is running; use '${runCommand} service start' and verify it before activating a later selection`);
         if (readRedeploy()) throw new ReleaseError('a supervisor redeploy is already pending; wait for it to land before activating a release');
         const record = beginActivation(deploymentFile(file), selection, target('unchecked').label);
-        requestRedeploy({ by: cliActor().label, reason: `activate selected release ${selection.release}`, requested_at: record.updated_at });
+        requestRedeploy({
+          by: cliActor().label,
+          reason: `activate selected release ${selection.release}`,
+          ...(requestedTicket ? { ticket: requestedTicket } : {}),
+          requested_at: record.updated_at,
+        });
         console.log(`activation ${record.attempt}: ${selection.release} is queued. The current fleet drains within the configured bound; replacement sessions start only after the supervisor exits.`);
         break;
       }
@@ -871,7 +893,7 @@ switch (cmd) {
   session-spec <seat>      the composed session as JSON (model, cwd, skills, MCP, env) — reads nothing else
   service <verb>           install|uninstall|start|status — survive reboots (launchd/systemd)
   install remove           delete this installation's records, controls and selection (no undo; --confirm)
-  release <verb>           status|upgrade <dir>|rollback|activate — select, then activate with a bounded drain
+  release <verb>           status|upgrade <dir>|rollback|activate [--ticket <id>] — select, then activate with a bounded drain
   redeploy [--ticket <id>] [--reason "<why>"]
                            activate a committed fix: drain after in-flight iterations, come back on the new code
   tail <loop>              print the path of the loop's event trace

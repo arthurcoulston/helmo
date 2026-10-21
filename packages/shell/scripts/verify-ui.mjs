@@ -139,7 +139,14 @@ for (const [loop, files] of Object.entries({
 const actor = { name: 'fixture', kind: 'orchestrator', model: 'fixture', version: 'fixture' };
 const store = new Store(join(dir, 'work/helmo.db'));
 const create = (title, extra = {}) => store.createTicket(actor, { title, body: `Full record for ${title}`, type: 'build', workstream: 'fixture', labels: ['acct:direction'], ...extra });
-const recordedAt = '2026-10-12T16:00:00.000Z';
+/* Dated, so the incident readings are stable rather than reading "just now" —
+   but taken from the clock rather than written down. A fixed 12 Oct stamp was
+   this fixture's OLDEST event nine days later, which put the beginning of the
+   record before the week view's window and erased the unrecorded band that
+   view asserts on (H-3343). Nothing seeded here may be older than the instant
+   the record begins, `hoursAgo(96)` below, which the seed now checks. */
+const hoursAgo = (hours) => new Date(Date.now() - hours * 3_600_000).toISOString();
+const recordedAt = hoursAgo(90);
 const known = (value, source_ref, at = recordedAt) => ({ state: 'known', value, source_ref, recorded_at: at });
 const ready = create('Ready work with a complete title');
 const blocked = create('Held work must never read ready', { capacity_hold: { reason: 'Waiting for the chosen spending window', provenance: 'Fixture operator', reconsider_when: 'Next fixture cycle' } });
@@ -311,7 +318,6 @@ const sitting = create('A sitting is a conversation', { needs_human: 'Discuss th
    unknown rather than zero. */
 const { default: FixtureDatabase } = await import('better-sqlite3');
 const clock = new FixtureDatabase(join(dir, 'work/helmo.db'));
-const hoursAgo = (hours) => new Date(Date.now() - hours * 3_600_000).toISOString();
 /* Half past a whole hour, n hours back. An offset in bare hours from `now`
    drifts across a bucket boundary depending on the minute the run starts — two
    seeds an hour apart would share a bucket at five past, and the counts below
@@ -325,7 +331,8 @@ const backdate = (id, at) => {
 };
 // Four of these land in four different hours of the past day; three are earlier
 // in the week, and the last of them is where the week's "no record" band ends.
-[pastHour(2), pastHour(6), pastHour(10), pastHour(20), hoursAgo(27), hoursAgo(51), hoursAgo(96)]
+const recordBegins = hoursAgo(96);
+[pastHour(2), pastHour(6), pastHour(10), pastHour(20), hoursAgo(27), hoursAgo(51), recordBegins]
   .forEach((at, i) => backdate(overTime[i].id, at));
 // Reported usage: a figure an agent wrote, a meter's later figure, and the
 // correction that nets the guess out where it was REPORTED.
@@ -337,6 +344,16 @@ for (const [at, tokens] of [[pastHour(2), 412_000], [pastHour(5), 180_000], [pas
 for (const [id, at] of [[choice.id, pastHour(7)], [action.id, pastHour(14)]]) {
   clock.prepare("UPDATE events SET ts = ? WHERE ticket_id = ? AND event_type = 'returned'").run(at, id);
 }
+/* The week view's unrecorded band IS the span before this store's first event,
+   so the seed's own oldest instant is that reading in data form. Checked here
+   because a seed dated earlier than the record's beginning erases the band and
+   reddens the week assertion several hundred lines below with nothing on the
+   failure to say why (H-3343). */
+assert.equal(
+  clock.prepare('SELECT MIN(ts) AS first FROM events').get().first,
+  recordBegins,
+  'a fixture seed is dated before the record begins, so the week view has no unrecorded span left to band',
+);
 clock.close();
 
 const child = spawn(process.execPath, [join(root, 'packages/cli/bin/serve.js')], {

@@ -1416,6 +1416,12 @@ numbers table). The BARS are proved only in `verify-ui.mjs`: the chart
 container measures itself, so a server-rendered proof sees an empty div. That
 run also seeds a record spread over time — the product's own events, moved in
 time on a second connection, because nothing here can write a backdated event.
+The band it asserts on exists only while that seed's OWN record begins inside
+the week: a fixed `2026-10-12` stamp on the fixture's incident became its
+oldest event, put the start of the record before the window, and reddened the
+week assertion nine days after it was written (H-3343). Every dated seed there
+is now relative to `now`, and the seed checks its own oldest instant against
+the instant it means the record to begin.
 
 ## Reading a title (R-42 I4, H-2476)
 

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
+import { formatR46Plan } from '../src/migrate-lib.js';
 import { Store } from '../src/store.js';
 import { Actor } from '../src/types.js';
 
@@ -246,23 +247,23 @@ describe('the go, and the work phase it opens', () => {
   });
 });
 
+// Events are never rewritten, and a row keeps the word it was written with
+// until the one-shot migration writes the new one. Every gate, tier and
+// listing has to read the old vocabulary correctly in the meantime.
+function writeLegacyEvents(events: [string, string, Record<string, unknown>][]): void {
+  const raw = new Database(join(dir, 'test.db'));
+  const insert = raw.prepare('INSERT INTO events (ts, subject_id, event_type, actor, payload) VALUES (?, ?, ?, ?, ?)');
+  events.forEach(([id, type, payload], i) => {
+    insert.run(`2026-09-${String(i + 1).padStart(2, '0')}T00:00:00.000Z`, id, type, JSON.stringify(mason), JSON.stringify(payload));
+  });
+  raw.close();
+  store.rebuild();
+}
+
+const created = (id: string, status: string): [string, string, Record<string, unknown>] =>
+  [id, 'created', { id, title: id, body: 'written in the old words', status }];
+
 describe('a store written before R-46', () => {
-  // Events are never rewritten, and a row keeps the word it was written with
-  // until the one-shot migration writes the new one. Every gate, tier and
-  // listing has to read the old vocabulary correctly in the meantime.
-  function writeLegacyEvents(events: [string, string, Record<string, unknown>][]): void {
-    const raw = new Database(join(dir, 'test.db'));
-    const insert = raw.prepare('INSERT INTO events (ts, subject_id, event_type, actor, payload) VALUES (?, ?, ?, ?, ?)');
-    events.forEach(([id, type, payload], i) => {
-      insert.run(`2026-09-0${i + 1}T00:00:00.000Z`, id, type, JSON.stringify(mason), JSON.stringify(payload));
-    });
-    raw.close();
-    store.rebuild();
-  }
-
-  const created = (id: string, status: string): [string, string, Record<string, unknown>] =>
-    [id, 'created', { id, title: id, body: 'written in the old words', status }];
-
   it('reads every pre-R-46 word in today\'s vocabulary, and replays its events unchanged', () => {
     writeLegacyEvents([
       created('R-90', 'parked'),
@@ -303,6 +304,144 @@ describe('a store written before R-46', () => {
     expect(project).toMatchObject({ status: 'parked', readiness: 'shaped' });
     // And that shaped reading is what the go gate reads.
     expect(store.setShipNext(mason, { project_id: 'R-97', decided_by: 'arthur', reason: 'go' }).project.status).toBe('Planned');
+  });
+});
+
+describe('the R-46 vocabulary migration', () => {
+  // The whole estate as it stood on 2026-10-20, one row per class, plus the
+  // two rows nobody can map by rule: R-32, the only parked row ever
+  // authorized, and an archive with no recorded judgment.
+  function legacyEstate(): void {
+    writeLegacyEvents([
+      created('R-2', 'parked'), // a raw idea, never authorized
+      created('R-4', 'archived'), // shelved: superseded
+      created('R-18', 'archived'), // shelved: closed on instruction
+      created('R-22', 'shaping'),
+      created('R-39', 'archived'), // shelved: delivered through its successors
+      created('R-8', 'shipped_stable'),
+      created('R-11', 'shipped_watching'),
+      created('R-46', 'ship_next'),
+      created('R-50', 'ready'),
+      created('R-60', 'archived'), // no judgment recorded for this one
+      // R-32: a go, then stood down. The status word is `parked` like R-2's,
+      // and only its history says the two are different facts.
+      created('R-32', 'ready'),
+      ['R-32', 'ship_next_set', { decided_by: 'arthur', reason: 'release 2A' }],
+      ['R-32', 'updated', { note: 'paused pending a plan', diffs: { status: { from: 'ship_next', to: 'parked' } } }],
+    ]);
+  }
+
+  it('maps every stored word to the reading it always had, and says why per row', () => {
+    legacyEstate();
+    const plan = store.migrateR46(mason, { apply: true });
+    expect(plan.applied).toBe(true);
+
+    const read = (id: string) => {
+      const p = store.getProject(id);
+      return { status: p.status, readiness: p.readiness, archived: p.archived };
+    };
+    // An idea nobody authorized, and the delivery that was — same old word.
+    expect(read('R-2')).toEqual({ status: 'Proposed', readiness: 'raw idea', archived: 0 });
+    expect(read('R-32')).toEqual({ status: 'Paused', readiness: 'shaped', archived: 0 });
+    // Refinement was a status; it is a field now.
+    expect(read('R-22')).toEqual({ status: 'Proposed', readiness: 'shaped', archived: 0 });
+    expect(read('R-50')).toEqual({ status: 'Proposed', readiness: 'shaped', archived: 0 });
+    // The go, and the two shipped words.
+    expect(read('R-46').status).toBe('Active');
+    expect(read('R-11').status).toBe('Monitoring');
+    expect(read('R-8').status).toBe('Completed');
+    // The three judgment calls: what became of it, then hidden.
+    expect(read('R-39')).toMatchObject({ status: 'Completed', archived: 1 });
+    expect(read('R-4')).toMatchObject({ status: 'Canceled', archived: 1 });
+    expect(read('R-18')).toMatchObject({ status: 'Canceled', archived: 1 });
+
+    const why = (id: string) => store.getEvents(id).at(-1)!.payload['note'] as string;
+    expect(why('R-32')).toContain('the go is on the record and the delivery was stood down');
+    expect(why('R-2')).toContain('no go on the record');
+    expect(why('R-4')).toContain('superseded by R-47');
+    expect(why('R-2')).toContain('no judgment was re-made');
+  });
+
+  it('leaves an archive nobody judged alone, and asks for the call', () => {
+    legacyEstate();
+    const plan = store.migrateR46(mason, { apply: true });
+    expect(plan.undecided.map((u) => u.id)).toEqual(['R-60']);
+    expect(plan.undecided[0]!.reason).toMatch(/archived with no recorded judgment/);
+    // Untouched, and still reading as Canceled until someone decides.
+    expect(store.getProject('R-60').status).toBe('archived');
+    expect(store.getEvents('R-60')).toHaveLength(1);
+  });
+
+  it('writes nothing without --apply, and the plan is the report', () => {
+    legacyEstate();
+    const before = JSON.stringify(store.dumpState());
+    const plan = store.migrateR46(mason, { apply: false });
+    expect(plan.applied).toBe(false);
+    expect(plan.decisions).toHaveLength(10);
+    expect(JSON.stringify(store.dumpState())).toBe(before);
+
+    const report = formatR46Plan(plan);
+    expect(report).toContain('plan only, nothing written: 10 of 11 rows');
+    // Every count states its denominator in the same sentence.
+    expect(report).toContain('10 of 11 rows migrate; 0 already carry a new word; 1 await');
+    expect(report).toContain('parked → Paused: 1');
+    expect(report).toContain('parked → Proposed: 1');
+    expect(report).toContain('Re-run with --apply');
+  });
+
+  it('is a one-shot: a second run has nothing to write', () => {
+    legacyEstate();
+    store.migrateR46(mason, { apply: true });
+    const events = store.dumpState()['projects']!.length;
+
+    const again = store.migrateR46(mason, { apply: true });
+    expect(again.decisions).toHaveLength(0);
+    expect(again.already).toEqual(['R-2', 'R-4', 'R-8', 'R-11', 'R-18', 'R-22', 'R-32', 'R-39', 'R-46', 'R-50'].sort((a, b) => Number(a.slice(2)) - Number(b.slice(2))));
+    // The unjudged archive is neither migrated nor counted as done.
+    expect(again.undecided.map((u) => u.id)).toEqual(['R-60']);
+    expect(store.dumpState()['projects']!.length).toBe(events);
+
+    // And the report for an already-migrated store says that plainly,
+    // instead of printing denominators with no rows under them.
+    const report = formatR46Plan(again);
+    expect(report).toContain('nothing to migrate: 10 of 11 rows already carry a word from the seven');
+    expect(report).toContain('R-60');
+    expect(report).not.toContain('--apply');
+  });
+
+  it('rewrites no event and fabricates no closing date, and replays exactly', () => {
+    legacyEstate();
+    const history = store.getEvents('R-32').map((e) => `${e.event_type}:${JSON.stringify(e.payload)}`);
+    const beforeCount = (['R-2', 'R-4', 'R-32'] as const).map((id) => store.getEvents(id).length);
+
+    store.migrateR46(mason, { apply: true });
+
+    // Every prior event stands exactly as recorded; the migration only appends.
+    expect(store.getEvents('R-32').map((e) => `${e.event_type}:${JSON.stringify(e.payload)}`).slice(0, 3)).toEqual(history);
+    expect((['R-2', 'R-4', 'R-32'] as const).map((id) => store.getEvents(id).length)).toEqual(beforeCount.map((n) => n + 1));
+    // A row that was already closed does not get today's date as its close.
+    expect(store.getProject('R-8').closed_at).toBeNull();
+    expect(store.getProject('R-4').closed_at).toBeNull();
+
+    const after = JSON.stringify(store.dumpState());
+    store.rebuild();
+    expect(JSON.stringify(store.dumpState())).toBe(after);
+  });
+
+  it('a migrated store reads through the same gates as before', () => {
+    legacyEstate();
+    store.migrateR46(mason, { apply: true });
+
+    expect(store.authorizedProjects().map((p) => p.id)).toEqual(['R-46']);
+    // R-39 is Completed AND hidden: after R-46 those are two facts, so the
+    // shipped family includes it and the surfaces apply the hide flag.
+    expect(store.shippedProjects().map((p) => p.id).sort()).toEqual(['R-11', 'R-39', 'R-8']);
+    expect(store.shippedProjects().filter((p) => !p.archived).map((p) => p.id).sort()).toEqual(['R-11', 'R-8']);
+    // A Paused delivery is still a paused delivery: it takes no go without a
+    // readiness verdict of its own, and it is not in the ranked work phase.
+    expect(store.rankProjects().map((r) => r.project.id)).toEqual(['R-46', 'R-22', 'R-50', 'R-2', 'R-32']);
+    // Terminal is still terminal after the rename.
+    expect(() => store.updateProject(mason, { project_id: 'R-4', note: 'reopen', status: 'Proposed' })).toThrow(/terminal/);
   });
 });
 

@@ -38,7 +38,8 @@
   "bin": {
     "roadmap-mcp": "bin/roadmap-mcp.js",
     "roadmap-view": "dist/view.js",
-    "roadmap-recovery": "dist/recovery.js"
+    "roadmap-recovery": "dist/recovery.js",
+    "roadmap-migrate": "dist/migrate.js"
   },
   "repository": {
     "type": "git",

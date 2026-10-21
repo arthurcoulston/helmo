@@ -5,6 +5,7 @@ import {
   Health, Project, ProjectSnapshot, Ranked, Readiness, ReadinessReview, ReadinessVerdict, RoadmapError, RoadmapEvent, SHIPPED, Status, STATUSES, statusReading, StoredStatus, TERMINAL, VALUE_LEVELS,
 } from './types.js';
 import { Installation, namesInstallation } from './install.js';
+import { planR46, R46Facts, R46Plan } from './migrate-lib.js';
 
 export interface CreateInput {
   title: string;
@@ -416,8 +417,14 @@ export class Store {
     return this.db.prepare(`SELECT * FROM projects WHERE status IN (${AUTHORIZED_SQL}) ORDER BY id`).all() as unknown as Project[];
   }
 
-  /** Post-ship projects (watching, then stable) — off the ranked list but
-   *  not out of sight: watching carries loose ends someone still owes. */
+  /** Post-ship projects (Monitoring, then Completed) — off the ranked list
+   *  but not out of sight: Monitoring carries loose ends someone still owes.
+   *
+   *  A hidden row is here too. Before R-46, `archived` was a status, so
+   *  shelving a delivered initiative also took it out of the shipped family;
+   *  now the two are separate facts and this read answers only the status
+   *  one. A caller drawing a list applies `archived` itself — the Roadmap
+   *  view does, which is why a shelved row appears in Archived and not twice. */
   shippedProjects(): Project[] {
     return this.db
       .prepare(`SELECT * FROM projects WHERE status IN (${SHIPPED_SQL}) ORDER BY status, closed_at DESC`)
@@ -886,6 +893,90 @@ export class Store {
       const table = input.shape === 'objective' ? 'objectives' : 'bets';
       return this.db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id) as Objective | Bet;
     }).immediate();
+  }
+
+  // ---------- the R-46 vocabulary migration (one-shot) ----------
+
+  /** Rewrite every stored status word to the reading it always had, once per
+   *  store. See migrate-lib.ts for the per-row rules; this is the writer.
+   *
+   *  It appends its own `updated` events rather than going through
+   *  `updateProject`, deliberately and for every row, not just the awkward
+   *  ones. That path exists to check new DECISIONS: it refuses a terminal
+   *  source (so the three shelved rows could not be mapped at all), it
+   *  refuses a plain write to Planned, it gates Active behind a recorded go,
+   *  and it resets a standing readiness verdict on any write — which would
+   *  undo the very field this migration is here to fill. None of those rules
+   *  is wrong; none of them is about a rename. So the gates stay exactly as
+   *  they are for live callers, the migration writes the word and the reason
+   *  in one event, and `rebuild()` replays it like any other update.
+   *
+   *  Without `apply` nothing is written and the plan is the report. */
+  migrateR46(actor: Actor, input: { apply: boolean }): R46Plan {
+    if (input.apply) validateActor(actor);
+    const facts = this.r46Facts();
+    const plan = planR46(facts);
+    if (!input.apply || !plan.decisions.length) return plan;
+    const before = new Map(facts.map((f) => [f.id, f]));
+    return this.db.transaction(() => {
+      for (const d of plan.decisions) {
+        const was = before.get(d.id)!;
+        const diffs: Record<string, { from: unknown; to: unknown }> = { status: { from: d.from, to: d.status } };
+        if (d.readiness && d.readiness !== was.readiness) diffs['readiness'] = { from: was.readiness, to: d.readiness };
+        if (d.archive && !was.archived) diffs['archived'] = { from: 0, to: 1 };
+        const readiness = diffs['readiness'] ? `, readiness ${d.readiness}` : '';
+        const hidden = diffs['archived'] ? ', and hidden from the surfaces' : '';
+        const payload: Record<string, unknown> = {
+          diffs,
+          note:
+            `R-46 vocabulary: ${d.from} → ${d.status}${readiness}${hidden}. ${d.reason}. ` +
+            'The stored word was renamed to the reading it always had; no judgment was re-made and no event was rewritten.',
+        };
+        const ts = now();
+        this.append(ts, d.id, 'updated', actor, payload);
+        this.applyUpdated(ts, d.id, payload);
+      }
+      return { ...plan, applied: true };
+    }).immediate();
+  }
+
+  /** Every row as the migration planner needs to read it. */
+  private r46Facts(): R46Facts[] {
+    const authorized = this.everAuthorized();
+    const rows = this.db
+      .prepare('SELECT id, title, status, readiness, archived FROM projects ORDER BY CAST(substr(id, 3) AS INTEGER)')
+      .all() as { id: string; title: string; status: StoredStatus; readiness: Readiness; archived: number }[];
+    return rows.map((r) => ({
+      id: r.id, title: r.title, status: r.status, readiness: r.readiness,
+      archived: r.archived === 1, ever_authorized: authorized.has(r.id),
+    }));
+  }
+
+  /** The projects whose history holds the human's go — a `ship_next_set`, or
+   *  a status move into or out of the authorized family. It is the fact that
+   *  separates a never-started idea from a stood-down delivery, which the
+   *  single `parked` word could not. Old and new words both count: the
+   *  events carry whichever vocabulary was current when they were written. */
+  private everAuthorized(): Set<string> {
+    const rows = this.db
+      .prepare(
+        `SELECT subject_id, event_type,
+                json_extract(payload, '$.diffs.status.from') AS from_status,
+                json_extract(payload, '$.diffs.status.to')   AS to_status
+           FROM events WHERE event_type IN ('ship_next_set', 'updated')`,
+      )
+      .all() as { subject_id: string; event_type: string; from_status: string | null; to_status: string | null }[];
+    const authorized = new Set<string>();
+    for (const row of rows) {
+      if (row.event_type === 'ship_next_set') {
+        authorized.add(row.subject_id);
+        continue;
+      }
+      for (const value of [row.from_status, row.to_status]) {
+        if (value && AUTHORIZED.includes(statusReading(value))) authorized.add(row.subject_id);
+      }
+    }
+    return authorized;
   }
 
   // ---------- rebuild (the invariant) ----------

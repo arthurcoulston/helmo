@@ -1,0 +1,37 @@
+#!/usr/bin/env node
+// One-shot store migrations. `r46` is the vocabulary rename (the seven
+// statuses, readiness and the hide flag): it prints a per-row report with
+// each row's reason, and writes nothing unless --apply is passed.
+//
+//   roadmap-migrate r46                    # the plan, nothing written
+//   roadmap-migrate r46 --apply            # write it, then print what was written
+//
+// The actor comes from ROADMAP_ACTOR (or HELMO_ACTOR), as it does for the
+// MCP server: a write this broad still records who made it.
+import { installationLine, requireInstallation, requestedInstallation } from './install.js';
+import { formatR46Plan } from './migrate-lib.js';
+import { Store } from './store.js';
+import { Actor, RoadmapError } from './types.js';
+
+const argv = process.argv.slice(2);
+const command = argv[0];
+const flags = argv.slice(1);
+
+try {
+  if (command !== 'r46') throw new RoadmapError('usage: roadmap-migrate r46 [--apply]');
+  const apply = flags.includes('--apply');
+  const known = (flag: string) => flag === '--apply' || flag === '--installation' || flag.startsWith('--installation=');
+  const unknown = flags.filter((flag) => flag.startsWith('--') && !known(flag));
+  if (unknown.length) throw new RoadmapError(`unknown flag ${unknown[0]} — r46 takes --apply and --installation`);
+
+  const install = requireInstallation(process.env, undefined, requestedInstallation(flags));
+  const store = new Store(install.db, install);
+  const envJson = process.env['ROADMAP_ACTOR'] ?? process.env['HELMO_ACTOR'];
+  const actor = (envJson ? (JSON.parse(envJson) as Actor) : null) ?? ({} as Actor);
+  console.error(installationLine(install, store.installationIdentity()));
+  console.log(formatR46Plan(store.migrateR46(actor, { apply })));
+  store.close();
+} catch (e) {
+  console.error(e instanceof Error ? e.message : String(e));
+  process.exitCode = 1;
+}

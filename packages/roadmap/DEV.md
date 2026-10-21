@@ -56,7 +56,7 @@ append-only event log, materialized state, `.immediate()` write transactions
   **Both vocabularies live in one store.** Events are never rewritten, so
   pre-R-46 words (`parked`, `shaping`, `ready`, `ship_next`,
   `shipped_watching`, `shipped_stable`, `archived`, and the pre-v2
-  `shipping`/`shipped`/`abandoned`) stay on rows the one-shot migration has
+  `shipping`/`shipped`/`abandoned`) stay on rows `roadmap-migrate r46` has
   not yet written and in the log forever. `statusReading` is how every gate,
   tier and listing reads them — never off the raw column — and the SQL family
   filters (`CLOSED_SQL`, `SHIPPED_SQL`, `AUTHORIZED_SQL`) are generated from
@@ -155,6 +155,21 @@ append-only event log, materialized state, `.immediate()` write transactions
   atomic no-clobber link; validation streams through the exclusively created
   destination descriptor, and both refuse a replaced run directory. Permissions
   isolate OS users, not hostile processes under one login.
+- `migrate.ts` / `migrate-lib.ts` — the one-shot `roadmap-migrate r46`, the
+  vocabulary migration: every stored status word rewritten to the reading it
+  always had, with the rule that produced it in the event note. Plan-only
+  unless `--apply`, and a second run writes nothing — a row already carrying
+  one of the seven is reported as `already`, not touched. It appends its own
+  `updated` events through `Store.migrateR46` rather than `updateProject`,
+  deliberately for EVERY row: that path checks new decisions (terminal takes
+  no write, Planned only via the go, Active only from a recorded go, and any
+  write resets a standing readiness verdict), and a rename is not a decision.
+  The gates stay as they are for live callers. The only judgment calls are
+  the three shelved rows, named by id in `R46_SHELVED` from
+  R46-ROADMAP-CLARITY.md; an archived row not named there is reported for a
+  human call and left alone, because its stored word still reads as Canceled
+  until someone decides. `rebuild()` replays the migration like any other
+  update — the suite asserts that.
 - `types.ts` — the vocabulary. Gates and stances are named in PRODUCT.md
   but deliberately absent from v1 behavior; leave the room, don't fill it.
 
@@ -165,6 +180,10 @@ append-only event log, materialized state, `.immediate()` write transactions
   estate design tokens and crew avatar sprite; add `-- --check` to fail on
   drift instead. See below.
 - View: `node dist/view.js`; restart after rebuilding.
+- One-shot: `node dist/migrate.js r46` prints the per-row plan and writes
+  nothing; `--apply` writes it. Identity comes from `ROADMAP_ACTOR` (or
+  `HELMO_ACTOR`) as it does for the MCP server — a write this broad still
+  records who made it.
 - The root `AGENT-INSTALL.md` is the agent-led install path a stranger's agent follows
   (H-1386). It states the two estate drift tests as expected skips — if that
   pair ever changes, it changes there too, or an installer reads a skip we no

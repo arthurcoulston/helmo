@@ -108,14 +108,14 @@ describe('readiness verdicts', () => {
     const p = store.createProject(mason, { title: 'T', body: 'complete plan', status: 'shaping' });
     const revision = store.readinessRevision(p.id);
     store.recordReadinessVerdict(bosun, { project_id: p.id, reviewed_revision: revision, verdict: 'pass', note: 'enough is known' });
-    expect(store.getProject(p.id).status).toBe('ready');
+    expect(store.getProject(p.id).readiness).toBe('shaped');
     store.recordReadinessVerdict({ name: 'proof', kind: 'agent', model: 'claude-fable-5', version: 'test' }, {
       project_id: p.id, reviewed_revision: revision, verdict: 'fail', note: 'the rollback is missing',
     });
     const review = store.readinessReview(p.id)!;
     expect(review.state).toBe('contested');
     expect(review.verdicts.map((v) => v.verdict)).toEqual(['pass', 'fail']);
-    expect(store.getProject(p.id).status).toBe('shaping');
+    expect(store.getProject(p.id).readiness).toBe('raw idea');
   });
 
   it('lets a reviewer correct only their own verdict', () => {
@@ -150,7 +150,20 @@ describe('readiness verdicts', () => {
     store.rebuild();
     expect(JSON.stringify(store.dumpState())).toBe(before);
     expect(store.readinessReview(p.id)).toBeNull();
-    expect(store.getProject(p.id).status).toBe('shaping');
+    expect(store.getProject(p.id).readiness).toBe('raw idea');
+  });
+});
+
+describe('health readings', () => {
+  it('records explained health as its own event and rebuilds it', () => {
+    const p = store.createProject(mason, { title: 'T' });
+    expect(() => store.recordHealth(mason, { project_id: p.id, health: 'At risk', reason: '' })).toThrow(/reason/);
+    store.recordHealth(mason, { project_id: p.id, health: 'At risk', reason: 'The only delivery ticket is held.' });
+    expect(store.getProject(p.id)).toMatchObject({ health: 'At risk', health_reason: 'The only delivery ticket is held.' });
+    expect(store.getEvents(p.id).at(-1)?.event_type).toBe('health_recorded');
+    const before = JSON.stringify(store.dumpState());
+    store.rebuild();
+    expect(JSON.stringify(store.dumpState())).toBe(before);
   });
 });
 

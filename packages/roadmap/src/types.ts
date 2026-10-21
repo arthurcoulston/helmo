@@ -152,7 +152,7 @@ export interface ReadinessReview {
 export type EventType =
   | 'created' | 'updated' | 'claim_recorded' | 'cited' | 'uncited'
   | 'linked' | 'unlinked' | 'ship_next_set' | 'actual_recorded'
-  | 'objective_set' | 'bet_set' | 'readiness_verdict_recorded';
+  | 'objective_set' | 'bet_set' | 'readiness_verdict_recorded' | 'health_recorded';
 
 export interface RoadmapEvent {
   seq: number;

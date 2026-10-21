@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { boundNote, LatestProgress } from '@helmo/core';
 import {
   ACTOR_KINDS, Actor, ActorKind, Bet, Citation, Claim, Dep, DepType, EFFORT_SIZES, Horizon, Objective,
-  Project, ProjectSnapshot, Ranked, ReadinessReview, ReadinessVerdict, RoadmapError, RoadmapEvent, SHIPPED, Status, TERMINAL, VALUE_LEVELS,
+  Health, Project, ProjectSnapshot, Ranked, ReadinessReview, ReadinessVerdict, RoadmapError, RoadmapEvent, SHIPPED, Status, TERMINAL, VALUE_LEVELS,
 } from './types.js';
 import { Installation, namesInstallation } from './install.js';
 
@@ -549,11 +549,12 @@ export class Store {
     }
 
     // A recorded verdict governs exactly the state it reviewed. Any later
-    // project write starts a new round; keeping `ready` would leave a stale
-    // judgment projected as current. An explicit ready write remains the
-    // compatibility path for callers that still make the judgment directly.
-    if (p.status === 'ready' && input.status !== 'ready' && this.readinessReview(p.id)) {
-      diffs['status'] = { from: 'ready', to: 'shaping' };
+    // project write starts a new round; keeping shaped readiness would leave
+    // a stale judgment projected as current. The legacy status projection is
+    // also reset while old callers still write it directly.
+    if (this.readinessReview(p.id)) {
+      if (p.status === 'ready' && input.status !== 'ready') diffs['status'] = { from: 'ready', to: 'shaping' };
+      diffs['readiness'] = { from: p.readiness, to: 'raw idea' };
     }
 
     return this.db.transaction(() => {
@@ -597,8 +598,26 @@ export class Store {
         verdict: input.verdict, note: input.note, reviewed_revision: input.reviewed_revision,
       });
       const readiness = this.readinessReview(p.id)!;
-      this.applyReadinessVerdict(ts, p.id, readiness.state === 'ready' ? 'ready' : 'shaping');
+      this.applyReadinessVerdict(ts, p.id, readiness.state === 'ready' ? 'shaped' : 'raw idea');
       return { project: this.getProject(p.id), readiness };
+    }).immediate();
+  }
+
+  recordHealth(
+    actor: Actor,
+    input: { project_id: string; health: Health | null; reason: string },
+  ): Project {
+    validateActor(actor);
+    const p = this.getProject(input.project_id);
+    if (!input.reason?.trim()) throw new RoadmapError('reason is required: health is a judgment, never an unexplained badge.');
+    rejectSwallowedMarkup({ reason: input.reason });
+    return this.db.transaction(() => {
+      const ts = now();
+      this.append(ts, p.id, 'health_recorded', actor, {
+        health: input.health, reason: input.reason,
+      });
+      this.applyHealth(ts, p.id, input.health, input.reason);
+      return this.getProject(p.id);
     }).immediate();
   }
 
@@ -825,12 +844,13 @@ export class Store {
           case 'linked': this.applyLinked(ev.ts, ev.subject_id, ev.payload['to'] as string, ev.payload['type'] as DepType, true); break;
           case 'unlinked': this.applyLinked(ev.ts, ev.subject_id, ev.payload['to'] as string, ev.payload['type'] as DepType, false); break;
           case 'ship_next_set': this.applyShipNext(ev.ts, ev.subject_id, ev.payload); break;
+          case 'health_recorded': this.applyHealth(ev.ts, ev.subject_id, ev.payload['health'] as Health | null, ev.payload['reason'] as string); break;
           case 'actual_recorded': this.applyActual(ev.subject_id, ev.payload); break;
           case 'objective_set': this.applyCharterItem(ev.ts, 'objective', ev.payload); break;
           case 'bet_set': this.applyCharterItem(ev.ts, 'bet', ev.payload); break;
           case 'readiness_verdict_recorded': {
             const readiness = this.readinessReview(ev.subject_id, ev.seq);
-            if (readiness) this.applyReadinessVerdict(ev.ts, ev.subject_id, readiness.state === 'ready' ? 'ready' : 'shaping');
+            if (readiness) this.applyReadinessVerdict(ev.ts, ev.subject_id, readiness.state === 'ready' ? 'shaped' : 'raw idea');
             break;
           }
         }
@@ -891,7 +911,7 @@ export class Store {
     const sets: string[] = ['updated_at = ?'];
     const params: unknown[] = [ts];
     for (const [field, d] of Object.entries(diffs)) {
-      if (!['title', 'body', 'status', 'parked_reason', 'unpark_condition'].includes(field)) continue;
+      if (!['title', 'body', 'status', 'readiness', 'parked_reason', 'unpark_condition'].includes(field)) continue;
       sets.push(`${field} = ?`);
       params.push(d.to as never);
     }
@@ -909,8 +929,13 @@ export class Store {
     this.db.prepare(`UPDATE projects SET ${sets.join(', ')} WHERE id = ?`).run(...params);
   }
 
-  private applyReadinessVerdict(ts: string, id: string, status: 'ready' | 'shaping'): void {
-    this.db.prepare('UPDATE projects SET status = ?, updated_at = ? WHERE id = ?').run(status, ts, id);
+  private applyReadinessVerdict(ts: string, id: string, readiness: 'raw idea' | 'shaped'): void {
+    this.db.prepare('UPDATE projects SET readiness = ?, updated_at = ? WHERE id = ?').run(readiness, ts, id);
+  }
+
+  private applyHealth(ts: string, id: string, health: Health | null, reason: string): void {
+    this.db.prepare('UPDATE projects SET health = ?, health_reason = ?, updated_at = ? WHERE id = ?')
+      .run(health, reason, ts, id);
   }
 
   private applyClaim(ts: string, id: string, actor: Actor, p: Record<string, unknown>): void {

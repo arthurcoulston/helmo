@@ -53,11 +53,14 @@ append-only event log, materialized state, `.immediate()` write transactions
   `updateProject` takes an optional `if_revision` and compares it inside its
   own write transaction; `projectSnapshot` is the read that token comes from,
   and is one transaction for the same reason — see below.
-  `recordReadinessVerdict` is the independent path from shaping to ready. Its
+  `recordReadinessVerdict` is the independent path to shaped readiness; it
+  materializes the readiness field rather than changing project status. Its
   append-only verdict set is anchored to the latest non-verdict project event,
   so several reviewers can judge identical state without staling one another;
   any other write starts a new round. Each reviewer's latest verdict is their
   own correction, any FAIL governs, and PASS+FAIL is surfaced as contested.
+  `recordHealth` is the separate explained judgment path for On track, At risk,
+  or Off track; the event log and rebuild own both the value and its reason.
 - `tools.ts` — the 11-tool MCP surface, descriptions are
   guidance-as-deployed (Helmo's rule). v1 postures baked into them:
   ship_next is FYI to the fleet, not tasking; the charter is derived from

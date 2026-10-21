@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
@@ -84,4 +84,27 @@ test('every workspace whose suite runs vitest loads the one shared config', asyn
     assert.ok(existsSync(config), `${dir} runs vitest with no vitest.config.mjs, so its suite inherits the live installation`);
     assert.equal((await import(pathToFileURL(config))).default, shared, `${dir}'s config is not the shared one`);
   }
+});
+
+test('the per-test budget is chosen here, and no case declares less room than it', async () => {
+  const floor = (await import('./vitest.shared.mjs')).default.test.testTimeout;
+  assert.ok(floor >= 15_000, `the shared testTimeout is ${floor ?? 'unset'}; dropping to vitest's 5000ms default reds the CLI-spawning cases on a loaded box (H-3354)`);
+
+  // A per-case `{ timeout: … }` is written to buy MORE room than the default.
+  // Raising the floor past one turns it into a tightening nobody intended.
+  let scanned = 0;
+  for (const pkg of readdirSync(join(ROOT, 'packages'))) {
+    const dir = join(ROOT, 'packages', pkg, 'test');
+    if (!existsSync(dir)) continue;
+    for (const file of readdirSync(dir).filter((f) => f.endsWith('.test.ts'))) {
+      scanned++;
+      for (const line of readFileSync(join(dir, file), 'utf8').split('\n')) {
+        const declared = /^\s*(?:it|describe)(?:\.\w+(?:\([^)]*\))?)*\(.*\{ timeout: ([0-9_]+) \}/.exec(line);
+        if (!declared) continue;
+        const ms = Number(declared[1].replaceAll('_', ''));
+        assert.ok(ms >= floor, `packages/${pkg}/test/${file} declares ${ms}ms, below the shared ${floor}ms floor, so it reads as extra room while granting less`);
+      }
+    }
+  }
+  assert.ok(scanned >= 20, `found only ${scanned} test files to scan, so this check is reading the wrong tree`);
 });

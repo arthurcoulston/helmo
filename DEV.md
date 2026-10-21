@@ -414,6 +414,18 @@ after it. `memory_dir` (H-3001) is the first key to make this bite.
   any brief that asks someone else to run this: a reviewer who allowed five
   minutes killed a sound run 33 seconds from the end and recorded a FAIL
   against a clean candidate (H-3019).
+- **The per-test budget is 15s, chosen rather than inherited.**
+  `scripts/vitest.shared.mjs` sets `testTimeout`, because vitest's own 5000ms
+  default was not a number anyone here picked and it is not one this suite can
+  live on: hundreds of cases spawn a real CLI under tsx, which costs 1.4-2.3s
+  per case on a quiet box, and the estate's nightly runs on a box that reaches
+  ten runnable threads per core. There that headroom is gone — CI took work red
+  at load 80 on a case measuring 2032ms when nothing else runs (H-3354) — and
+  the answer had been to hand-declare a timeout on each case as it got bitten.
+  A per-case `{ timeout: … }` is for cases genuinely slower than the floor, so
+  the floor is no higher than the smallest one anyone declared on purpose;
+  `scripts/test-env.test.mjs` fails if the floor is unset or if a declaration
+  falls below it, which would read as extra room while granting less.
 - **One version.** Every package carries the root version and depends on
   `@helmo/core` at exactly that version — in `devDependencies` for the shell,
   which reads core at build time and bundles none of it;

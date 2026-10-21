@@ -9,6 +9,18 @@ import { scrubInPlace, testEnv } from './test-env.mjs';
 
 const SELF = fileURLToPath(new URL('./test-env.mjs', import.meta.url));
 const ROOT = dirname(dirname(SELF));
+
+// How a vitest case declares its own budget. `test` is vitest's own alias for
+// `it` and the keyword most of this repo's cases are written with, so reading
+// only `it` left the floor open to the dominant form (H-3359); and nothing
+// formats this tree, so the padding inside the braces is a convention rather
+// than a guarantee. An options bag handed to a child process is not a case's
+// own budget, which is what the leading keyword tells the two apart.
+const DECLARED_TIMEOUT = /^\s*(?:it|test|describe)(?:\.\w+(?:\([^)]*\))?)*\(.*\{\s*timeout:\s*([0-9_]+)\s*\}/;
+const declaredTimeout = (line) => {
+  const found = DECLARED_TIMEOUT.exec(line);
+  return found ? Number(found[1].replaceAll('_', '')) : null;
+};
 const LEAKED = {
   PATH: '/usr/bin:/bin',
   HOME: homedir(),
@@ -99,12 +111,29 @@ test('the per-test budget is chosen here, and no case declares less room than it
     for (const file of readdirSync(dir).filter((f) => f.endsWith('.test.ts'))) {
       scanned++;
       for (const line of readFileSync(join(dir, file), 'utf8').split('\n')) {
-        const declared = /^\s*(?:it|describe)(?:\.\w+(?:\([^)]*\))?)*\(.*\{ timeout: ([0-9_]+) \}/.exec(line);
-        if (!declared) continue;
-        const ms = Number(declared[1].replaceAll('_', ''));
+        const ms = declaredTimeout(line);
+        if (ms === null) continue;
         assert.ok(ms >= floor, `packages/${pkg}/test/${file} declares ${ms}ms, below the shared ${floor}ms floor, so it reads as extra room while granting less`);
       }
     }
   }
   assert.ok(scanned >= 20, `found only ${scanned} test files to scan, so this check is reading the wrong tree`);
+});
+
+test('the floor scanner reads every form a case declares a budget in', () => {
+  // The hole this closes was invisible because nothing read the matcher back:
+  // the scan stayed green over a sub-floor case it simply could not see.
+  for (const line of [
+    "  it('x', { timeout: 1_000 }, async () => {",
+    "  test('x', { timeout: 1_000 }, async () => {",
+    "describe('x', { timeout: 1_000 }, () => {",
+    "  test.each(CASES)('x', { timeout: 1_000 }, () => {",
+    "  it.skipIf(false)('x', { timeout: 1_000 }, () => {",
+    "  test('x', {timeout:1_000}, () => {",
+  ]) assert.equal(declaredTimeout(line), 1000, `the scanner cannot see: ${line.trim()}`);
+
+  for (const line of [
+    '      timeout: 30_000,',
+    "    expect(connect.mock.calls).toEqual([[endpoint, { timeout: 10000 }]]);",
+  ]) assert.equal(declaredTimeout(line), null, `the scanner wrongly budgets: ${line.trim()}`);
 });

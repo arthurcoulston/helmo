@@ -235,6 +235,26 @@ describe('the go, and the work phase it opens', () => {
     expect(store.authorizedProjects()).toEqual([]);
   });
 
+  it('the human is not gated by the go, but the go is still recorded one way only', () => {
+    // The gate reads the declared actor kind, exactly as the readiness rule
+    // does: a human-kind write is itself the authorization, so it needs no
+    // record of itself. The kind is caller-supplied (an `actor` param or
+    // ROADMAP_ACTOR), so this is a live path, not a dormant branch.
+    const starting = shapedProject('S');
+    store.updateProject(arthur, { project_id: starting, note: 'starting this one myself', status: 'Active' });
+    expect(store.getProject(starting).status).toBe('Active');
+
+    const shipped = shapedProject('T');
+    store.updateProject(arthur, { project_id: shipped, note: 'this shipped before the roadmap knew about it', status: 'Monitoring' });
+    expect(store.getProject(shipped).status).toBe('Monitoring');
+
+    // Planned is the one door closed to everyone: it IS the go, and only
+    // setShipNext records who decided it and why.
+    const authorized = shapedProject('U');
+    expect(() => store.updateProject(arthur, { project_id: authorized, note: 'go', status: 'Planned' as never }))
+      .toThrow(/go-ahead/);
+  });
+
   it('a paused delivery resumes without a second go, and its health is a separate fact', () => {
     const a = shapedProject('A');
     store.setShipNext(mason, { project_id: a, decided_by: 'arthur', reason: 'go' });

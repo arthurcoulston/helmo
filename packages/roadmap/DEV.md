@@ -50,8 +50,10 @@ append-only event log, materialized state, `.immediate()` write transactions
   go — only via `setShipNext` with `decided_by`, several may hold the work
   phase and the returned count is the resistance signal; Active is reachable
   only from a recorded go or a pause of one, and Monitoring/Completed only
-  from Active or within that family, so nothing starts or ships without the
-  human's go; Canceled is the one terminal status and is permanent; actuals
+  from Active or within that family, so no agent starts or ships what the
+  human never declared go on (a human-kind actor passes that gate — the write
+  is itself the authorization — while Planned stays `setShipNext`-only even
+  for them, because that call is what records the go); Canceled is the one terminal status and is permanent; actuals
   are absolute rollups recorded from Helmo's meter, never deltas.
   **Both vocabularies live in one store.** Events are never rewritten, so
   pre-R-46 words (`parked`, `shaping`, `ready`, `ship_next`,

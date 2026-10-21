@@ -976,7 +976,7 @@ try {
   await page.locator('[aria-label="Team now"]').waitFor();
   const overviewCards = await page.evaluate(() => [...document.querySelectorAll('[aria-label="Overview readings"] > [data-slot="card"]')]
     .map((card) => ({ label: card.getAttribute('aria-label'), top: Math.round(card.getBoundingClientRect().top), height: Math.round(card.getBoundingClientRect().height), bottom: Math.round(card.getBoundingClientRect().bottom) })));
-  assert.deepEqual(overviewCards.map((card) => card.label), ['Team now', 'What happens next', 'Team activity', 'Results · Past 24 hours']);
+  assert.deepEqual(overviewCards.map((card) => card.label), ['Team now', 'What happens next', 'Team activity', 'Results · Past 24 hours', 'Roadmap now']);
   assert.ok(overviewCards.slice(0, 4).every((card) => card.top < 800), `one of the established Overview readings starts below the 1280×800 fold: ${JSON.stringify(overviewCards)}`);
   /* The incident band (H-3216). The fixture's incident is unresolved and was
      recorded as still happening, so the band is drawn here — and the four
@@ -1002,7 +1002,18 @@ try {
   console.log(`Overview at 1280×800: ${overviewCards.map((card) => `${card.label} ${card.height}px high, top ${card.top}px, bottom ${card.bottom}px`).join('; ')}`);
   await page.setViewportSize({ width: 390, height: 800 });
   const narrowOverviewCards = await page.locator('[aria-label="Overview readings"] > [data-slot="card"]').evaluateAll((cards) => cards.map((card) => card.getAttribute('aria-label')));
-  assert.deepEqual(narrowOverviewCards, ['Team now', 'What happens next', 'Team activity', 'Results · Past 24 hours'], 'the narrow Overview must preserve the four established readings');
+  assert.deepEqual(narrowOverviewCards, ['Team now', 'What happens next', 'Team activity', 'Results · Past 24 hours', 'Roadmap now'], 'the narrow Overview preserves the established readings and adds the approved roadmap card');
+  const roadmapNow = page.locator('[aria-label="Roadmap now"]');
+  const roadmapReading = (await (await fetch(`${origin}/api/v1/overview`)).json()).data.roadmap_now;
+  const pipeline = await roadmapNow.locator('dl > div').evaluateAll((rows) => rows.map((row) => [row.querySelector('dt').textContent, Number(row.querySelector('dd').textContent)]));
+  assert.deepEqual(Object.fromEntries(pipeline), roadmapReading.counts);
+  assert.ok((await roadmapNow.textContent()).includes('The fixture blocker has not been cleared and no date is held for it.'));
+  assert.ok(!(await roadmapNow.textContent()).includes(hidden.title));
+  await roadmapNow.locator(`a[href="/roadmap#${project.id}"]`).click();
+  await page.getByRole('dialog').waitFor();
+  assert.ok((await page.getByRole('dialog').textContent()).includes(project.title), 'the concern link opens its own roadmap record');
+  await page.goto(`${origin}/overview`);
+  await page.locator('[aria-label="Team now"]').waitFor();
   const teamNow = page.locator('[aria-label="Team now"]');
   await teamNow.getByText('Team now', { exact: true }).waitFor();
   /* Element by element rather than `textContent`: nothing in this card puts a

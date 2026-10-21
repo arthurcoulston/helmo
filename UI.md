@@ -498,6 +498,15 @@ heading counts the results a ticket recorded and no longer calls that count
 "recorded" — on the legacy records every purpose in it is the frozen
 `kind === "url"` guess, and each line underneath already says so.
 
+**Overview includes Roadmap now.** The approved fifth Card follows the four
+established readings, preserving their order and desktop position. It shows
+visible Active, Planned and Proposed counts, followed by each recorded At risk
+or Off track initiative with its reason and a link to its full record. Hidden
+initiatives contribute neither counts nor concerns. Missing health is stated
+explicitly; no concerns recorded is never presented as all projects healthy.
+The composition uses generated Card and Button components and the existing
+StatusBadge health mapping. No generated component or theme file changes.
+
 **Overview opens with what got done.** The first of Arthur's selected widgets
 (R-44) is one wide Card of up to six completed records from a rolling 24-hour
 window, composed from the generated Card, Badge, Button and Separator in

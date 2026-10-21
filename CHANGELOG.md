@@ -13,6 +13,11 @@ longer.
 
 ## Unreleased — 0.13.0
 
+- Overview adds Roadmap now: visible Active, Planned and Proposed counts,
+  recorded At risk and Off track initiatives with their reasons and record
+  links, and an explicit count of initiatives whose health is not recorded.
+  Hidden initiatives are excluded; missing health never implies healthy.
+
 - Runtime can recover one exact diagnosed failure through the supervisor without
   clearing independent STOP, HOLD, PACE, LIMIT or structured block controls.
   Recovery requests expire, bind the observed failure and worker, and are

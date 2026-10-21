@@ -232,6 +232,15 @@ results ledger, so a narrow window reaches all four readings before the ledger.
 Dense readings use document scrolling, never clipped cards or nested scroll
 regions. `verify:ui` records each card's baseline top and content height and
 refuses a reading that begins below the desktop fold (H-3092).
+The approved fifth reading, Roadmap now (R-46 H-3368), follows those four.
+`packages/cli/roadmap-now.mjs` counts visible Active, Planned and Proposed
+initiatives using Roadmap's compatibility vocabulary, carries every recorded
+At risk/Off track initiative and its reason, and counts missing health
+separately. `RoadmapNow.tsx` composes the generated Card and Button with the
+shared StatusBadge; concern links open the existing Roadmap record. No health
+is inferred from status or ticket counts. The existing four cards retain their
+order and desktop-fold checks; the fifth participates in the same responsive,
+theme and accessibility checks.
 The condensed roster
 (`team` on the Overview document, R-44 H-3091) is a join: which sessions are
 running comes from the runtime and what each seat has claimed comes from the

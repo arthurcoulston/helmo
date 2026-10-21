@@ -207,6 +207,20 @@ test('the app answers its own port directly and renders the record a recorded UR
   const overview = await (await fetch(`${origin}/api/v1/overview`)).json();
   assert.ok(overview.data.records.some(record => record.id === ticket), 'Overview API preserves its existing record projection');
   assert.equal(overview.data.check_in, undefined, 'Overview invented a check-in without a reader-supplied instant');
+  assert.deepEqual(overview.data.roadmap_now.counts, { Active: 0, Planned: 0, Proposed: 0 });
+  const planned = seedShipNextProject(homes, 'The authorized next delivery');
+  const roadmapStore = new Store(join(homes.ROADMAP_HOME, 'roadmap.db'));
+  try {
+    roadmapStore.recordHealth(SEED, { project_id: planned, health: 'At risk', reason: 'The fixture delivery needs a supplier.' });
+    const hidden = roadmapStore.createProject(SEED, { title: 'Hidden delivery', status: 'Completed' });
+    roadmapStore.recordHealth(SEED, { project_id: hidden.id, health: 'Off track', reason: 'A hidden concern.' });
+    roadmapStore.updateProject(SEED, { project_id: hidden.id, archived: true, note: 'Hidden by the fixture.' });
+  } finally { roadmapStore.close(); }
+  const roadmapNow = (await (await fetch(`${origin}/api/v1/overview`)).json()).data.roadmap_now;
+  assert.deepEqual(roadmapNow.counts, { Active: 0, Planned: 1, Proposed: 0 });
+  assert.deepEqual(roadmapNow.attention, [{ id: planned, title: 'The authorized next delivery', health: 'At risk', reason: 'The fixture delivery needs a supplier.' }]);
+  assert.equal(roadmapNow.health_unrecorded, 0, 'hidden rows do not count as missing health');
+  assert.ok(Date.parse(roadmapNow.as_of));
 
   /* The condensed roster reaches Overview too, and it is the one document on
      this page that joins both records: the runtime says which sessions are

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { appConfig, startAppServer } from '../app-server.mjs';
+import { roadmapNow } from '../roadmap-now.mjs';
 import { appRequest, shellRequest } from '../../app/server.mjs';
 import { activitySnapshot, checkInSnapshot, historySnapshot, incidentNoticesSnapshot, incidentSnapshot, incidentsSnapshot, issuesSnapshot, runwaySnapshot, workHealth, workListening, workRequest, workSnapshot } from '../../work/dist/view.js';
 import { resultDisplay, seatWork } from '../../work/dist/presentation.js';
@@ -198,6 +199,7 @@ function overviewSnapshot(since) {
   // is the server's to fix, and two readings taken at two instants on one page
   // would disagree about what the past 24 hours held (R-44).
   ], results: work.results,
+  roadmap_now: roadmapNow(roadmap.projects),
   // The condensed roster. This is the one place the two records meet: the
   // runtime knows which sessions are running and the work record knows what
   // each seat has claimed, and neither may read the other (R-47 C1), so the

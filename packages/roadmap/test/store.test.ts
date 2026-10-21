@@ -346,8 +346,10 @@ describe('the R-46 vocabulary migration', () => {
     // Refinement was a status; it is a field now.
     expect(read('R-22')).toEqual({ status: 'Proposed', readiness: 'shaped', archived: 0 });
     expect(read('R-50')).toEqual({ status: 'Proposed', readiness: 'shaped', archived: 0 });
-    // The go, and the two shipped words.
-    expect(read('R-46').status).toBe('Active');
+    // The go, and the two shipped words. An authorized row is shaped by the
+    // gate that authorized it, so the stored default must not survive on it;
+    // on a delivered row readiness is not a reading and is left alone.
+    expect(read('R-46')).toEqual({ status: 'Active', readiness: 'shaped', archived: 0 });
     expect(read('R-11').status).toBe('Monitoring');
     expect(read('R-8').status).toBe('Completed');
     // The three judgment calls: what became of it, then hidden.

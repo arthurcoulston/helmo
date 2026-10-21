@@ -9,8 +9,9 @@
 import { Readiness, Status, StoredStatus } from './types.js';
 
 /** What the migration decides about one row. `readiness` is written only
- *  where the field is read — Proposed and Paused — because readiness is the
- *  refinement of an idea, not a property of something already delivered. */
+ *  where the field is a reading — Proposed, Paused, and the authorized rows
+ *  whose gate required it — because readiness is the refinement of an idea,
+ *  not a property of something already delivered. */
 export interface R46Decision {
   id: string;
   title: string;
@@ -90,7 +91,14 @@ function decide(f: R46Facts): R46Decision | R46Undecided {
       // declared go" and "work is underway". Only the work store can tell
       // the two apart, and the stores do not read each other (R-47 C1), so
       // the migration writes the reading the word already had and says so.
-      return row('Active', 'the go is on the record and work was in flight at the rename; a go with nothing underway is Planned, which only the work store can tell apart');
+      // Readiness IS written here, unlike the delivered rows below, and it is
+      // the word itself that writes it: `ship_next` was reachable only through
+      // the go gate, which required `ready`. An Active row reading "raw idea"
+      // — the column's stored default — therefore contradicts the gate that
+      // put it there, and is a state the live store can no longer produce. On
+      // a delivered row readiness is simply not a reading and the default says
+      // nothing; on this one it would say something false.
+      return row('Active', 'the go is on the record and work was in flight at the rename; a go with nothing underway is Planned, which only the work store can tell apart', 'shaped');
     case 'shipped_watching':
     case 'shipped':
       return row('Monitoring', 'delivered and being watched');

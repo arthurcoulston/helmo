@@ -20,10 +20,10 @@ export type Status = (typeof STATUSES)[number];
  *  reading it always meant. Events are never rewritten, so these words
  *  outlive the rename: a row reads correctly through every gate below before
  *  the migration writes the new word, and old events replay unchanged.
- *  `parked` and `archived` are the two the migration judges per row — only
- *  R-32 was ever authorized, and an archive is Completed or Canceled by what
- *  happened — so these defaults are what an unmigrated row reads AS, never
- *  what the migration writes. */
+ *  `parked` and `archived` are the two the migration judges per row — a
+ *  parked row is Paused only where a go is on its record, and an archive is
+ *  Completed or Canceled by what happened — so these defaults are what an
+ *  unmigrated row reads AS, never what the migration writes. */
 export const LEGACY_STATUSES = [
   'parked', 'shaping', 'ready', 'ship_next', 'shipping', 'shipped', 'shipped_watching', 'shipped_stable', 'archived', 'abandoned',
 ] as const;

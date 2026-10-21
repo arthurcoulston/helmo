@@ -67,7 +67,7 @@ describe('projects', () => {
     expect(() => store.updateProject(mason, { project_id: live.id, note: 'tidy the list', archived: true }))
       .toThrow(/only a Completed or Canceled project can be archived/);
 
-    store.updateProject(bosun, { project_id: live.id, note: 'superseded by R-47', status: 'Canceled' });
+    store.updateProject(bosun, { project_id: live.id, note: 'nothing left to deliver', status: 'Canceled' });
     const { project } = store.updateProject(bosun, { project_id: live.id, note: 'off the surfaces', archived: true });
     expect(project.archived).toBe(1);
     expect(project.status).toBe('Canceled');
@@ -329,39 +329,39 @@ describe('a store written before R-46', () => {
 
 describe('the R-46 vocabulary migration', () => {
   // What became of each shelved row, as the operator running the migration
-  // supplies it. These are this fixture's estate's own calls; the product
-  // carries no row ids of its own, so a judgment arrives here or not at all.
+  // supplies it. The product carries no row ids of its own, so a judgment
+  // arrives here or not at all.
   const SHELVED = {
-    'R-39': { status: 'Completed' as const, reason: 'delivered through its successor initiatives' },
-    'R-4': { status: 'Canceled' as const, reason: 'superseded by R-47, with no remaining deliverable' },
-    'R-18': { status: 'Canceled' as const, reason: 'closed on instruction; its own body records that no outcome was supplied' },
+    'R-75': { status: 'Completed' as const, reason: 'delivered under another initiative' },
+    'R-72': { status: 'Canceled' as const, reason: 'superseded, with no remaining deliverable' },
+    'R-73': { status: 'Canceled' as const, reason: 'dropped with no outcome recorded' },
   };
 
-  // The whole estate as it stood on 2026-10-20, one row per class, plus the
-  // two rows nobody can map by rule: R-32, the only parked row ever
-  // authorized, and an archive with no judgment supplied.
-  function legacyEstate(): void {
+  // One row per legacy word, plus the two kinds nobody can map by rule: a
+  // parked row with a go on its record, and an archive with no judgment
+  // supplied.
+  function legacyRows(): void {
     writeLegacyEvents([
-      created('R-2', 'parked'), // a raw idea, never authorized
-      created('R-4', 'archived'), // shelved: superseded
-      created('R-18', 'archived'), // shelved: closed on instruction
-      created('R-22', 'shaping'),
-      created('R-39', 'archived'), // shelved: delivered through its successors
-      created('R-8', 'shipped_stable'),
-      created('R-11', 'shipped_watching'),
-      created('R-46', 'ship_next'),
-      created('R-50', 'ready'),
-      created('R-60', 'archived'), // no judgment recorded for this one
-      // R-32: a go, then stood down. The status word is `parked` like R-2's,
-      // and only its history says the two are different facts.
-      created('R-32', 'ready'),
-      ['R-32', 'ship_next_set', { decided_by: 'arthur', reason: 'release 2A' }],
-      ['R-32', 'updated', { note: 'paused pending a plan', diffs: { status: { from: 'ship_next', to: 'parked' } } }],
+      created('R-71', 'parked'), // a raw idea, never authorized
+      created('R-72', 'archived'), // shelved: superseded
+      created('R-73', 'archived'), // shelved: dropped
+      created('R-74', 'shaping'),
+      created('R-75', 'archived'), // shelved: delivered elsewhere
+      created('R-76', 'shipped_stable'),
+      created('R-77', 'shipped_watching'),
+      created('R-78', 'ship_next'),
+      created('R-79', 'ready'),
+      created('R-80', 'archived'), // no judgment recorded for this one
+      // A go, then stood down. The status word is `parked` like the raw
+      // idea's, and only its history says the two are different facts.
+      created('R-81', 'ready'),
+      ['R-81', 'ship_next_set', { decided_by: 'arthur', reason: 'go for the next release' }],
+      ['R-81', 'updated', { note: 'paused pending a plan', diffs: { status: { from: 'ship_next', to: 'parked' } } }],
     ]);
   }
 
   it('maps every stored word to the reading it always had, and says why per row', () => {
-    legacyEstate();
+    legacyRows();
     const plan = store.migrateR46(mason, { apply: true, shelved: SHELVED });
     expect(plan.applied).toBe(true);
 
@@ -370,81 +370,81 @@ describe('the R-46 vocabulary migration', () => {
       return { status: p.status, readiness: p.readiness, archived: p.archived };
     };
     // An idea nobody authorized, and the delivery that was — same old word.
-    expect(read('R-2')).toEqual({ status: 'Proposed', readiness: 'raw idea', archived: 0 });
-    expect(read('R-32')).toEqual({ status: 'Paused', readiness: 'shaped', archived: 0 });
+    expect(read('R-71')).toEqual({ status: 'Proposed', readiness: 'raw idea', archived: 0 });
+    expect(read('R-81')).toEqual({ status: 'Paused', readiness: 'shaped', archived: 0 });
     // Refinement was a status; it is a field now.
-    expect(read('R-22')).toEqual({ status: 'Proposed', readiness: 'shaped', archived: 0 });
-    expect(read('R-50')).toEqual({ status: 'Proposed', readiness: 'shaped', archived: 0 });
+    expect(read('R-74')).toEqual({ status: 'Proposed', readiness: 'shaped', archived: 0 });
+    expect(read('R-79')).toEqual({ status: 'Proposed', readiness: 'shaped', archived: 0 });
     // The go, and the two shipped words. An authorized row is shaped by the
     // gate that authorized it, so the stored default must not survive on it;
     // on a delivered row readiness is not a reading and is left alone.
-    expect(read('R-46')).toEqual({ status: 'Active', readiness: 'shaped', archived: 0 });
-    expect(read('R-11').status).toBe('Monitoring');
-    expect(read('R-8').status).toBe('Completed');
+    expect(read('R-78')).toEqual({ status: 'Active', readiness: 'shaped', archived: 0 });
+    expect(read('R-77').status).toBe('Monitoring');
+    expect(read('R-76').status).toBe('Completed');
     // The three judgment calls: what became of it, then hidden.
-    expect(read('R-39')).toMatchObject({ status: 'Completed', archived: 1 });
-    expect(read('R-4')).toMatchObject({ status: 'Canceled', archived: 1 });
-    expect(read('R-18')).toMatchObject({ status: 'Canceled', archived: 1 });
+    expect(read('R-75')).toMatchObject({ status: 'Completed', archived: 1 });
+    expect(read('R-72')).toMatchObject({ status: 'Canceled', archived: 1 });
+    expect(read('R-73')).toMatchObject({ status: 'Canceled', archived: 1 });
 
     const why = (id: string) => store.getEvents(id).at(-1)!.payload['note'] as string;
-    expect(why('R-32')).toContain('the go is on the record and the delivery was stood down');
-    expect(why('R-2')).toContain('no go on the record');
-    expect(why('R-4')).toContain('superseded by R-47');
-    expect(why('R-2')).toContain('no judgment was re-made');
+    expect(why('R-81')).toContain('the go is on the record and the delivery was stood down');
+    expect(why('R-71')).toContain('no go on the record');
+    expect(why('R-72')).toContain('superseded, with no remaining deliverable');
+    expect(why('R-71')).toContain('no judgment was re-made');
   });
 
   it('leaves an archive nobody judged alone, and asks for the call', () => {
-    legacyEstate();
+    legacyRows();
     const plan = store.migrateR46(mason, { apply: true, shelved: SHELVED });
-    expect(plan.undecided.map((u) => u.id)).toEqual(['R-60']);
+    expect(plan.undecided.map((u) => u.id)).toEqual(['R-80']);
     expect(plan.undecided[0]!.reason).toMatch(/archived with no judgment supplied/);
     // Untouched, and still reading as Canceled until someone decides.
-    expect(store.getProject('R-60').status).toBe('archived');
-    expect(store.getEvents('R-60')).toHaveLength(1);
+    expect(store.getProject('R-80').status).toBe('archived');
+    expect(store.getEvents('R-80')).toHaveLength(1);
   });
 
   // The migration ships in a public product and row ids are minted per
   // installation, so a judgment the operator did not supply must never be
-  // supplied by the product: another installation's R-4 is not this one's.
+  // supplied by the product: one installation's row id is not another's.
   it('judges no shelved row by id when no judgment is supplied', () => {
-    legacyEstate();
+    legacyRows();
     const plan = store.migrateR46(mason, { apply: true });
 
-    expect(plan.undecided.map((u) => u.id).sort()).toEqual(['R-18', 'R-39', 'R-4', 'R-60']);
-    expect(plan.decisions.map((d) => d.id)).not.toContain('R-4');
-    for (const id of ['R-4', 'R-18', 'R-39', 'R-60']) {
+    expect(plan.undecided.map((u) => u.id).sort()).toEqual(['R-72', 'R-73', 'R-75', 'R-80']);
+    expect(plan.decisions.map((d) => d.id)).not.toContain('R-72');
+    for (const id of ['R-72', 'R-73', 'R-75', 'R-80']) {
       expect(store.getProject(id).status).toBe('archived');
       expect(store.getProject(id).archived).toBe(0);
       expect(store.getEvents(id)).toHaveLength(1);
     }
     // The rows that map by rule are unaffected: only the shelved ones wait.
-    expect(store.getProject('R-11').status).toBe('Monitoring');
+    expect(store.getProject('R-77').status).toBe('Monitoring');
   });
 
   it('refuses a judgment this store cannot apply, rather than ignoring it', () => {
-    legacyEstate();
+    legacyRows();
     // A mistyped id would otherwise leave the row it meant sitting undecided
     // while the report read as though every call had been made.
-    expect(() => store.migrateR46(mason, { apply: false, shelved: { 'R-999': SHELVED['R-4'] } }))
+    expect(() => store.migrateR46(mason, { apply: false, shelved: { 'R-999': SHELVED['R-72'] } }))
       .toThrow(/R-999 is not a row in this installation/);
     // And a row that maps by rule is not the operator's to re-decide.
-    expect(() => store.migrateR46(mason, { apply: false, shelved: { 'R-11': SHELVED['R-4'] } }))
+    expect(() => store.migrateR46(mason, { apply: false, shelved: { 'R-77': SHELVED['R-72'] } }))
       .toThrow(/stored as "shipped_watching", not archived/);
   });
 
   it('reads an operator judgments file, and says what is wrong with a bad one', () => {
-    expect(parseR46Judgments({ 'R-4': { status: 'Canceled', reason: ' dropped ' } }))
-      .toEqual({ 'R-4': { status: 'Canceled', reason: 'dropped' } });
+    expect(parseR46Judgments({ 'R-72': { status: 'Canceled', reason: ' dropped ' } }))
+      .toEqual({ 'R-72': { status: 'Canceled', reason: 'dropped' } });
     expect(() => parseR46Judgments([])).toThrow(/keyed by row id/);
     expect(() => parseR46Judgments({ 'R4': { status: 'Canceled', reason: 'x' } })).toThrow(/not a row id/);
     // An archived row was finished or dropped; it cannot be revived into the
     // live ladder by a migration that is only renaming words.
-    expect(() => parseR46Judgments({ 'R-4': { status: 'Active', reason: 'x' } })).toThrow(/Completed or Canceled/);
-    expect(() => parseR46Judgments({ 'R-4': { status: 'Canceled', reason: '  ' } })).toThrow(/needs a reason/);
+    expect(() => parseR46Judgments({ 'R-72': { status: 'Active', reason: 'x' } })).toThrow(/Completed or Canceled/);
+    expect(() => parseR46Judgments({ 'R-72': { status: 'Canceled', reason: '  ' } })).toThrow(/needs a reason/);
   });
 
   it('writes nothing without --apply, and the plan is the report', () => {
-    legacyEstate();
+    legacyRows();
     const before = JSON.stringify(store.dumpState());
     const plan = store.migrateR46(mason, { apply: false, shelved: SHELVED });
     expect(plan.applied).toBe(false);
@@ -461,38 +461,38 @@ describe('the R-46 vocabulary migration', () => {
   });
 
   it('is a one-shot: a second run has nothing to write', () => {
-    legacyEstate();
+    legacyRows();
     store.migrateR46(mason, { apply: true, shelved: SHELVED });
     const events = store.dumpState()['projects']!.length;
 
     const again = store.migrateR46(mason, { apply: true, shelved: SHELVED });
     expect(again.decisions).toHaveLength(0);
-    expect(again.already).toEqual(['R-2', 'R-4', 'R-8', 'R-11', 'R-18', 'R-22', 'R-32', 'R-39', 'R-46', 'R-50'].sort((a, b) => Number(a.slice(2)) - Number(b.slice(2))));
+    expect(again.already).toEqual(['R-71', 'R-72', 'R-73', 'R-74', 'R-75', 'R-76', 'R-77', 'R-78', 'R-79', 'R-81'].sort((a, b) => Number(a.slice(2)) - Number(b.slice(2))));
     // The unjudged archive is neither migrated nor counted as done.
-    expect(again.undecided.map((u) => u.id)).toEqual(['R-60']);
+    expect(again.undecided.map((u) => u.id)).toEqual(['R-80']);
     expect(store.dumpState()['projects']!.length).toBe(events);
 
     // And the report for an already-migrated store says that plainly,
     // instead of printing denominators with no rows under them.
     const report = formatR46Plan(again);
     expect(report).toContain('nothing to migrate: 10 of 11 rows already carry a word from the seven');
-    expect(report).toContain('R-60');
+    expect(report).toContain('R-80');
     expect(report).not.toContain('--apply');
   });
 
   it('rewrites no event and fabricates no closing date, and replays exactly', () => {
-    legacyEstate();
-    const history = store.getEvents('R-32').map((e) => `${e.event_type}:${JSON.stringify(e.payload)}`);
-    const beforeCount = (['R-2', 'R-4', 'R-32'] as const).map((id) => store.getEvents(id).length);
+    legacyRows();
+    const history = store.getEvents('R-81').map((e) => `${e.event_type}:${JSON.stringify(e.payload)}`);
+    const beforeCount = (['R-71', 'R-72', 'R-81'] as const).map((id) => store.getEvents(id).length);
 
     store.migrateR46(mason, { apply: true, shelved: SHELVED });
 
     // Every prior event stands exactly as recorded; the migration only appends.
-    expect(store.getEvents('R-32').map((e) => `${e.event_type}:${JSON.stringify(e.payload)}`).slice(0, 3)).toEqual(history);
-    expect((['R-2', 'R-4', 'R-32'] as const).map((id) => store.getEvents(id).length)).toEqual(beforeCount.map((n) => n + 1));
+    expect(store.getEvents('R-81').map((e) => `${e.event_type}:${JSON.stringify(e.payload)}`).slice(0, 3)).toEqual(history);
+    expect((['R-71', 'R-72', 'R-81'] as const).map((id) => store.getEvents(id).length)).toEqual(beforeCount.map((n) => n + 1));
     // A row that was already closed does not get today's date as its close.
-    expect(store.getProject('R-8').closed_at).toBeNull();
-    expect(store.getProject('R-4').closed_at).toBeNull();
+    expect(store.getProject('R-76').closed_at).toBeNull();
+    expect(store.getProject('R-72').closed_at).toBeNull();
 
     const after = JSON.stringify(store.dumpState());
     store.rebuild();
@@ -500,19 +500,19 @@ describe('the R-46 vocabulary migration', () => {
   });
 
   it('a migrated store reads through the same gates as before', () => {
-    legacyEstate();
+    legacyRows();
     store.migrateR46(mason, { apply: true, shelved: SHELVED });
 
-    expect(store.authorizedProjects().map((p) => p.id)).toEqual(['R-46']);
-    // R-39 is Completed AND hidden: after R-46 those are two facts, so the
+    expect(store.authorizedProjects().map((p) => p.id)).toEqual(['R-78']);
+    // R-75 is Completed AND hidden: after R-46 those are two facts, so the
     // shipped family includes it and the surfaces apply the hide flag.
-    expect(store.shippedProjects().map((p) => p.id).sort()).toEqual(['R-11', 'R-39', 'R-8']);
-    expect(store.shippedProjects().filter((p) => !p.archived).map((p) => p.id).sort()).toEqual(['R-11', 'R-8']);
+    expect(store.shippedProjects().map((p) => p.id).sort()).toEqual(['R-75', 'R-76', 'R-77']);
+    expect(store.shippedProjects().filter((p) => !p.archived).map((p) => p.id).sort()).toEqual(['R-76', 'R-77']);
     // A Paused delivery is still a paused delivery: it takes no go without a
     // readiness verdict of its own, and it is not in the ranked work phase.
-    expect(store.rankProjects().map((r) => r.project.id)).toEqual(['R-46', 'R-22', 'R-50', 'R-2', 'R-32']);
+    expect(store.rankProjects().map((r) => r.project.id)).toEqual(['R-78', 'R-74', 'R-79', 'R-71', 'R-81']);
     // Terminal is still terminal after the rename.
-    expect(() => store.updateProject(mason, { project_id: 'R-4', note: 'reopen', status: 'Proposed' })).toThrow(/terminal/);
+    expect(() => store.updateProject(mason, { project_id: 'R-72', note: 'reopen', status: 'Proposed' })).toThrow(/terminal/);
   });
 });
 

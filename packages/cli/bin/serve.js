@@ -88,9 +88,10 @@ function checkInInput(work, roadmap, team) {
 
 // How many shipped milestones the document names per initiative. The rest are
 // counted beside them, never dropped silently — Work's own record does the
-// same with CLOSED_TAIL. R-11 has 95 closed tagged tickets; a list of 95 is a
-// log, and the reading this field exists to answer is "what shipped", which
-// the newest few answer and the count qualifies.
+// same with CLOSED_TAIL. A long-running initiative can carry a hundred closed
+// tagged tickets; a list of a hundred is a log, and the reading this field
+// exists to answer is "what shipped", which the newest few answer and the
+// count qualifies.
 const MILESTONES_NAMED = 5;
 
 const CLOSED = ['done', 'cancelled'];
@@ -102,17 +103,16 @@ const COVERAGE = 'Counted from tickets tagged with the initiative id in this ins
 
 /** What one initiative still has open, and what it has shipped.
  *
- *  Two things that look like outstanding work and are not, both of them real
- *  rows in Arthur's store (R-46 cases 4 and 5):
+ *  Two things that look like outstanding work and are not, both of them read
+ *  off real rows (R-46 cases 4 and 5):
  *
  *  - A recurring TEMPLATE carries `schedule` and is never ready and never
- *    claimed; its spawned instances are the work. R-11's fortnightly pass is
- *    the estate's only one tagged to an initiative, and counting it would
- *    report a delivered initiative as having outstanding work forever.
+ *    claimed; its spawned instances are the work. Counting the template
+ *    would report a delivered initiative as having outstanding work forever.
  *  - A ticket under a CAPACITY HOLD is waiting on a person, and says so in
- *    the hold rather than in `needs_human` — R-32's two held tickets both
- *    carry `needs_human: false`. Both fields are served, because reading
- *    either one alone gets that row wrong.
+ *    the hold rather than in `needs_human`, which it may well carry as
+ *    false. Both fields are served, because reading either one alone gets
+ *    that row wrong.
  */
 function initiativeWork(tickets) {
   const live = tickets.filter((ticket) => !CLOSED.includes(ticket.status));

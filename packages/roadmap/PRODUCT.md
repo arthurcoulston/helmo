@@ -84,50 +84,63 @@ routine work is never forced into a fake one.
 
 ## Status
 
-`parked` · `shaping` · `ready` · `ship_next` · `shipped_watching` ·
-`shipped_stable` · `archived`
+`Proposed` · `Planned` · `Active` · `Monitoring` · `Completed` · `Paused` ·
+`Canceled`
 
-*(Ladder v2, ratified 2026-09-02. v1 had a separate `shipping` status beside a
-singular ship_next flag, and terminal `shipped`/`abandoned`; in practice the
-two work-phase names were used interchangeably, and freshly-shipped projects
-had nowhere to be watched from.)*
+*(Ratified 2026-10-14, delivered in R-46. The previous ladder — `parked` ·
+`shaping` · `ready` · `ship_next` · `shipped_watching` · `shipped_stable` ·
+`archived`, itself v2 of 2026-09-02 — made one value answer four questions:
+`ship_next` said both "the human said go" and "work is underway", `parked` said
+both "never started" and "deliberately on hold", and refinement was a rung
+rather than a field. Every one of those words is still read: events are never
+rewritten, and a row keeps the word it was written with until the migration
+writes the new one.)*
 
-**The first three rungs are The List.** Recorded, refined, scored, and ranked —
-and deliberately not worked: the only labor a listed project takes is sharpening
+**One value answers one question.** How refined an idea is, is `readiness`
+(raw idea / shaped). Whether a delivery is in trouble is `health` (On track /
+At risk / Off track, with a stated reason) — a different fact from being
+Paused, which is a decision, not a diagnosis. Whether a finished row is still
+drawn is the `archived` flag, not a status.
+
+**Proposed is The List.** Recorded, refined, scored, and ranked — and
+deliberately not worked: the only labor a listed project takes is sharpening
 its definition until it can be scored and handed off well.
 
 **Blocked is not a status.** As in Helmo, it is computed from dependencies, not
 remembered by whoever touched the record last.
 
-**Ready supports a commitment decision, not a finished specification.** A
-project is ready when enough is known for the human to make an informed decision
-about committing to it. Details continue to be decided while building; this is
-an agile threshold, not a promise that a builder will have no questions. An
-agent other than the one who shaped the description must make that readiness
-judgment, while retitling alone does not count as shaping.
+**Shaped supports a commitment decision, not a finished specification.** A
+project is shaped when enough is known for the human to make an informed
+decision about committing to it. Details continue to be decided while building;
+this is an agile threshold, not a promise that a builder will have no
+questions. An agent other than the one who shaped the description must make
+that readiness judgment, while retitling alone does not count as shaping.
 
-**Ship next is the work phase, entered only on the human's go-ahead.** Nothing
-is ever being shipped that the human did not declare go on — the store rejects
-any other door in. Several projects may hold it at once, but with resistance:
-the count is surfaced everywhere, a growing work phase is read as a problem,
-and the standing aim is moving projects OFF it the moment they are close. The
-human does not type the go-ahead: an agent records the decision with
-attribution, the way Helmo's answer route already works. The provenance is the
-point.
+**Planned is the go, and only the human gives it.** Nothing is ever started or
+shipped that the human did not declare go on — the store rejects any other door
+in. Several projects may hold the work phase at once, but with resistance: the
+count is surfaced everywhere, a growing work phase is read as a problem, and
+the standing aim is moving projects OFF it the moment they are close. The human
+does not type the go-ahead: an agent records the decision with attribution, the
+way Helmo's answer route already works. The provenance is the point.
 
-**Shipped splits by attention.** `shipped_watching` is newly shipped —
-monitoring, feedback, bug fixes, loose ends. `shipped_stable` records a
-standing human decision that the project's maintenance is worth it. Neither is
-terminal.
+**Active is the go with work in flight.** Separating it from Planned is what
+lets a surface show the initiative that was authorized and never started — the
+state the old vocabulary could not express, and the one R-46 names first.
 
-**Archived is the one terminal state.** The project ran its course and no
+**Delivery splits by attention.** `Monitoring` is newly delivered —
+monitoring, feedback, bug fixes, loose ends. `Completed` records that the
+outcome is verified and a standing human decision that the maintenance is worth
+it. Neither is terminal.
+
+**Canceled is the one terminal state.** The project ran its course and no
 longer earns its maintenance: surfaces closed and taken down, the record kept
 permanently out of the way. Ideas killed before shipping land here too. A
 revived idea is a new project with a `relates` link to its ancestor.
 
-**Parking carries its own exit.** A parked project records why it is parked and
-what would unpark it ("revisit when Helmo has one external user"), so a sweep
-can test the condition instead of the idea rotting silently.
+**A pause carries its own exit.** A paused project records why it is paused and
+what would resume it ("revisit when Helmo has one external user"), so a sweep
+can test the condition instead of the pause rotting silently.
 
 ## Ranking
 
@@ -139,8 +152,8 @@ Rank is derived, never set by hand. The inputs are split by kind:
   and a one-line reason. Never a naked number.
 
 Tiers come from the facts; order within a tier comes from the judgments. Every
-rank must be explainable in one line: *"3rd — ready, no blockers, high value
-(rolo, 08-12), effort L."*
+rank must be explainable in one line: *"3rd — Proposed, shaped, no blockers,
+high value (rolo, 08-12), effort L."*
 
 Lowering a project's value is ordinary maintenance, not a dispute. The crew
 agreeing an idea is low-value is the critique working.

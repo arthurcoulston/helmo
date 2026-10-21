@@ -13,6 +13,12 @@
 export const STATUSES = ['parked', 'shaping', 'ready', 'ship_next', 'shipped_watching', 'shipped_stable', 'archived'] as const;
 export type Status = (typeof STATUSES)[number];
 
+export const READINESS = ['raw idea', 'shaped'] as const;
+export type Readiness = (typeof READINESS)[number];
+
+export const HEALTH = ['On track', 'At risk', 'Off track'] as const;
+export type Health = (typeof HEALTH)[number];
+
 export const TERMINAL: readonly Status[] = ['archived'];
 
 /** The statuses that count as "has shipped": they release blocks-deps and are
@@ -89,6 +95,10 @@ export interface Project {
   title: string;
   body: string;
   status: Status;
+  readiness: Readiness;
+  health: Health | null;
+  health_reason: string | null;
+  archived: number;
   parked_reason: string | null;
   unpark_condition: string | null; // parking carries its own exit
   actual_usd: number; // rolled up from Helmo tickets by the sweep, never self-reported

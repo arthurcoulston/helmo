@@ -47,6 +47,10 @@ CREATE TABLE IF NOT EXISTS projects (
   title            TEXT NOT NULL,
   body             TEXT NOT NULL DEFAULT '',
   status           TEXT NOT NULL DEFAULT 'parked',
+  readiness        TEXT NOT NULL DEFAULT 'raw idea',
+  health           TEXT,
+  health_reason    TEXT,
+  archived         INTEGER NOT NULL DEFAULT 0,
   parked_reason    TEXT,
   unpark_condition TEXT,
   actual_usd       REAL NOT NULL DEFAULT 0,
@@ -145,6 +149,23 @@ export class Store {
     // hit an instant SQLITE_BUSY on the lock upgrade instead of waiting
     // (Helmo's H-134; same engine, same trap).
     this.db.exec(SCHEMA);
+    this.addProjectReadingColumns();
+  }
+
+  /** SQLite's CREATE TABLE does not add columns to an existing table. */
+  private addProjectReadingColumns(): void {
+    const columns = new Set(
+      (this.db.pragma('table_info(projects)') as { name: string }[]).map((column) => column.name),
+    );
+    const additions = [
+      ['readiness', "TEXT NOT NULL DEFAULT 'raw idea'"],
+      ['health', 'TEXT'],
+      ['health_reason', 'TEXT'],
+      ['archived', 'INTEGER NOT NULL DEFAULT 0'],
+    ] as const;
+    for (const [name, definition] of additions) {
+      if (!columns.has(name)) this.db.exec(`ALTER TABLE projects ADD COLUMN ${name} ${definition}`);
+    }
   }
 
   close(): void {

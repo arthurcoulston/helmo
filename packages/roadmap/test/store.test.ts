@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import Database from 'better-sqlite3';
 import { Store } from '../src/store.js';
 import { Actor } from '../src/types.js';
 
@@ -23,6 +24,24 @@ afterEach(() => {
 });
 
 describe('projects', () => {
+  it('adds the R-46 reading columns when an existing store is opened', () => {
+    store.close();
+    const legacyPath = join(dir, 'legacy.db');
+    const legacy = new Database(legacyPath);
+    legacy.exec(`CREATE TABLE projects (
+      id TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'parked', parked_reason TEXT,
+      unpark_condition TEXT, actual_usd REAL NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL, closed_at TEXT
+    )`);
+    legacy.close();
+
+    store = new Store(legacyPath);
+    const check = new Database(legacyPath, { readonly: true });
+    const names = (check.pragma('table_info(projects)') as { name: string }[]).map((column) => column.name);
+    expect(names).toEqual(expect.arrayContaining(['readiness', 'health', 'health_reason', 'archived']));
+    check.close();
+  });
   it('an idea costs a title and nothing else', () => {
     const p = store.createProject(mason, { title: 'Run a hackathon at the co-working space' });
     expect(p.id).toBe('R-1');

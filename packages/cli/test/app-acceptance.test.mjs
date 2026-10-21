@@ -677,3 +677,88 @@ test('decisions and actions work through the unified app with their original pro
   assert.equal((await post('/work/acted', {ticket_id:action.id,done:true,action_fingerprint:asked.fingerprint})).status, 200);
   assert.ok(store.getEvents(action.id).some(event => event.event_type === 'acted'));
 });
+
+
+// The remaining-work and shipped-milestone join (R-46 item 4). It lives in
+// serve.js because the two stores may not read each other (R-47 C1), so this
+// is the only place it can be proved: the roadmap package served on its own
+// has no such field, and the Roadmap view must read that absence as unknown
+// rather than as "nothing is outstanding".
+test('the roadmap list says what remains and what shipped, with every denominator', async (t) => {
+  const homes = installation(t);
+  const roadmap = new Store(join(homes.ROADMAP_HOME, 'roadmap.db'));
+  const worked = roadmap.createProject(SEED, { title: 'Initiative with work against it' }).id;
+  const untouched = roadmap.createProject(SEED, { title: 'Initiative nobody has filed against' }).id;
+  roadmap.close();
+
+  const store = new WorkStore(join(homes.HELMO_HOME, 'helmo.db'));
+  t.after(() => store.close());
+  const file = (title, extra = {}) => store.createTicket(SEED, {
+    title, body: 'Seeded for the remaining-work join', workstream: 'estate-ui', type: 'build', project: worked, ...extra,
+  });
+  const claimed = file('Open and claimed', { priority: 1, assignee: 'mason', status: 'in_progress' });
+  const held = file('Open under a deliberate hold');
+  store.updateTicket(SEED, {
+    ticket_id: held.id, note: 'Held pending the operator’s own authorization',
+    capacity_hold: { reason: 'Paused pending an evidence-backed plan', provenance: 'The operator, on the record', reconsider_when: 'The operator authorizes resumption' },
+  });
+  // The trap this row sets: a hold only the operator can release is NOT the
+  // needs-human marker, so a surface reading `needs_human` alone reports
+  // nobody is waiting (R-46 case 4).
+  assert.equal(store.getTicket(held.id).needs_human, false);
+  const template = file('Fortnightly code-health pass', { schedule: 'every 14d' });
+  const shipped = file('Delivered, with a result on the record');
+  store.updateTicket(SEED, {
+    ticket_id: shipped.id, note: 'Delivered', status: 'done',
+    evidence: [{ kind: 'commit', ref: 'helmo@0123456', role: 'result', note: 'The change itself' }],
+    completion_account: { category: 'feature', summary: 'The initiative gained its first delivered thing.' },
+  });
+  const claimOnly = file('Closed with nothing to show for it');
+  store.updateTicket(SEED, {
+    ticket_id: claimOnly.id, note: 'Closed', status: 'done',
+    completion_account: { category: 'maintenance', summary: 'Closed without recording what it produced.' },
+  });
+  const dropped = file('Abandoned');
+  store.updateTicket(SEED, { ticket_id: dropped.id, note: 'Not worth doing', status: 'cancelled' });
+  // Tagged to nothing on the roadmap: it must not leak into any initiative.
+  store.createTicket(SEED, { title: 'Untagged work', body: 'No initiative', workstream: 'estate-ui', type: 'build' });
+
+  const { origin } = await startApp(t, homes);
+  const data = (await (await fetch(origin + '/api/v1/roadmap')).json()).data;
+  const row = data.projects.find((project) => project.id === worked);
+
+  // Six tagged, two of them open: the template is standing work and the three
+  // closed rows are closed. Every count states what it is out of.
+  assert.equal(row.remaining_work.reading, '2 open of 6 tagged');
+  assert.equal(row.remaining_work.open_count, 2);
+  assert.equal(row.remaining_work.closed_count, 3);
+  assert.deepEqual(row.remaining_work.open.map((ticket) => ticket.id), [claimed.id, held.id]);
+  assert.deepEqual(row.remaining_work.open[0], {
+    id: claimed.id, title: 'Open and claimed', status: 'in_progress', assignee: 'mason', hold: null, needs_human: false,
+  });
+  assert.equal(row.remaining_work.open[1].hold.reconsider_when, 'The operator authorizes resumption');
+  assert.equal(row.remaining_work.open[1].needs_human, false);
+  // The template is named as the mechanism that watches the initiative, and
+  // counted nowhere near the open work (R-46 case 5).
+  assert.deepEqual(row.remaining_work.standing, [{ id: template.id, title: 'Fortnightly code-health pass', schedule: 'every 14d' }]);
+  assert.match(row.remaining_work.coverage, /Recurring templates are standing work/);
+
+  // One of the three closed rows left something behind. The cancelled row and
+  // the evidence-free done stay in the denominator and are not named.
+  assert.deepEqual(row.shipped.milestones.map((milestone) => milestone.id), [shipped.id]);
+  assert.equal(row.shipped.milestones[0].result.ref, 'helmo@0123456');
+  assert.equal(row.shipped.reading, '1 named of 1 closed with a recorded result, from 3 closed of 6 tagged');
+  assert.ok(![claimOnly.id, dropped.id].some((id) => row.shipped.milestones.some((milestone) => milestone.id === id)));
+
+  // Nothing filed against it reads as a real zero with its denominator, not as
+  // an absent field — absence is reserved for "no work store here" (case 1).
+  const empty = data.projects.find((project) => project.id === untouched);
+  assert.equal(empty.remaining_work.reading, '0 open of 0 tagged');
+  assert.deepEqual(empty.shipped.milestones, []);
+
+  // Every other roadmap route is still the roadmap package's own.
+  const detail = (await (await fetch(origin + `/api/v1/roadmap/projects/${worked}`)).json()).data;
+  assert.equal(detail.project.id, worked);
+  assert.equal(detail.project.remaining_work, undefined);
+  assert.equal((await fetch(origin + '/api/v1/roadmap/projects/R-9999')).status, 404);
+});

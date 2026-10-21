@@ -420,6 +420,21 @@ path into Helmo: in v1 Bosun's sweep is the client — it reads metered
 cost from Helmo tickets tagged with the project id and records the rollup
 via `roadmap_record_actual`.
 
+R-46 adds a second client on the same seam, and it is deliberately not in
+this package. `remaining_work` and `shipped` — the open tagged tickets with
+their holds, the standing templates, and the closed work that left a result
+behind — are joined onto the list document in `packages/cli/bin/serve.js`,
+the one process that already holds both views (the Overview check-in is the
+precedent). The stores still do not read each other (R-47 C1), so the Roadmap
+view served on its own answers `/api/v1/roadmap` WITHOUT those fields. That
+absence is the reading: unknown, because nothing here could look. A surface
+that renders it as "nothing outstanding" is wrong, and this package must
+never supply an empty array to make the shape uniform — an empty array is a
+claim to have looked. The join also excludes recurring templates from the
+open count (a `schedule` ticket is the mechanism that watches an initiative,
+never its scope) and names the hold on a held ticket, because a hold only the
+operator can release leaves `needs_human` false.
+
 The notice used to be the half of the seam an agent could not close (H-324):
 a ship_next declared from a loop left a stale notice until a desk session
 corrected it. Retiring it (H-1126) removes that drift entirely — ship_next is

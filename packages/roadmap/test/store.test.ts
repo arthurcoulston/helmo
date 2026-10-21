@@ -787,3 +787,23 @@ describe('the invariant', () => {
     expect(() => store.createProject(mason, { title: 'x </title> <parameter name="body">oops' })).toThrow(/markup/);
   });
 });
+
+describe('the work join is not this store’s to make', () => {
+  // R-47 C1: the roadmap store cannot see tickets, so the remaining-work and
+  // shipped-milestone readings are joined in `packages/cli/bin/serve.js` by
+  // the one process that holds both. The reading a standalone Roadmap view
+  // owes is therefore ABSENT, and a surface must render that as unknown —
+  // never as "nothing is outstanding". An empty array here would be this
+  // store claiming to have looked, which it never can.
+  it('leaves remaining work and shipped milestones off every row it serves', () => {
+    const a = store.createProject(mason, { title: 'Has tickets somewhere else' });
+    const rows = store.dumpState()['projects'] as Record<string, unknown>[];
+    for (const row of rows) {
+      expect(row).not.toHaveProperty('remaining_work');
+      expect(row).not.toHaveProperty('shipped');
+    }
+    const snapshot = store.projectSnapshot(a.id) as unknown as Record<string, unknown>;
+    expect(snapshot).not.toHaveProperty('remaining_work');
+    expect(snapshot.project).not.toHaveProperty('remaining_work');
+  });
+});

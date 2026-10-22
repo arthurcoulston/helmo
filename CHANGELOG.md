@@ -13,6 +13,14 @@ longer.
 
 ## Unreleased — 0.13.0
 
+- An installation can name a leader agent and can turn the self-triage rule
+  off; both are unset by default, so behavior is unchanged. Work's
+  `helmo-cli leader --actor-name A` exempts that agent's own filings from
+  self-triage, and `helmo-cli self-triage --off` lifts the rule for every
+  filer. Roadmap's `ROADMAP_LEADER`, honoured only when it names the server's
+  own pinned actor, lets the leader judge its own shaping and move projects
+  past the go gates; Planned stays `roadmap_set_ship_next`-only.
+
 - Overview adds Roadmap now: visible Active, Planned and Proposed counts,
   recorded At risk and Off track initiatives with their reasons and record
   links, and an explicit count of initiatives whose health is not recorded.

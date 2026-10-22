@@ -28,6 +28,9 @@ const roadmapJson = process.env['ROADMAP_ACTOR'] ?? process.env['HELMO_ACTOR'];
 const roadmapActor: RoadmapActor | null = roadmapJson ? JSON.parse(roadmapJson) as RoadmapActor : null;
 const workStore = prepareServer(workInstall, () => new Store(workInstall.db, workInstall, workActor));
 const roadmapStore = prepareServer(roadmapInstall, () => new RoadmapStore(roadmapInstall.db, roadmapInstall));
+// The installation's roadmap leader (H-2073), honoured only for this server's
+// own pinned actor.
+roadmapStore.pinLeader(process.env['ROADMAP_LEADER'], roadmapActor);
 
 console.error(`Helmo MCP (stdio) — ${installationLine(workInstall, workStore.installationIdentity())}`);
 console.error(`Roadmap — ${roadmapInstallationLine(roadmapInstall, roadmapStore.installationIdentity())}`);

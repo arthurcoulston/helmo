@@ -24,6 +24,8 @@ const cmd = args.shift();
 const COMMAND_FLAGS: Record<string, readonly string[]> = {
   'wake-check': ['since-seq', 'workstream', 'assignee', 'lane', 'no-lane'],
   'seat-check': ['assignee'],
+  leader: ['actor-name', 'off'],
+  'self-triage': ['on', 'off'],
   'launch-admit': ['workstream', 'assignee', 'launch-id'],
   'launch-claim': ['workstream', 'assignee', 'launch-id', 'project', 'tickets', 'exclude-tickets', 'lane'],
   'launch-receipt': ['admission-id', 'launch-id'],
@@ -421,6 +423,26 @@ try {
       } as ReleaseHandoffInput));
       break;
     }
+    case 'leader': {
+      // Which agent directs this installation's backlog (H-2073). Bare, it
+      // reports the leader; --actor-name names one and --off clears it.
+      if (has('off') && flag('actor-name')) throw new HelmoError('leader takes --actor-name or --off, not both.');
+      const leader = has('off') ? store.setLeaderActor(actor(), null)
+        : flag('actor-name') ? store.setLeaderActor(actor(), flag('actor-name')!)
+        : store.leaderActor();
+      out({ leader });
+      break;
+    }
+    case 'self-triage': {
+      // Whether filers wait for a second seat's touch (H-2147). Bare, it
+      // reports; --off lifts the rule installation-wide and --on restores it.
+      if (has('off') && has('on')) throw new HelmoError('self-triage takes --on or --off, not both.');
+      const on = has('off') ? store.setSelfTriage(actor(), false)
+        : has('on') ? store.setSelfTriage(actor(), true)
+        : store.selfTriage();
+      out({ self_triage: on ? 'on' : 'off' });
+      break;
+    }
     case 'launch-admit': {
       out(store.launchAdmission(req('workstream'), req('assignee'), req('launch-id')));
       break;
@@ -532,6 +554,8 @@ try {
       console.error(`usage: helmo-cli <command> [flags]
   wake-check     --workstream W --assignee A --since-seq N [--lane L | --no-lane] (read-only harness poll; a lane narrows it to what launch-claim with that lane could take)
   seat-check     --assignee A                                  (in_progress holds in a name + claiming actor; rev's same-seat guard)
+  leader         [--actor-name A | --off]                      (report, name or clear the installation leader, whose own filings skip self-triage)
+  self-triage    [--on | --off]                                (report or set the installation's self-triage rule; on by default)
   launch-admit   --workstream W --assignee A --launch-id ID     (atomic next-candidate workflow admission; read-only for ordinary tickets)
   launch-claim   --workstream W --assignee A --launch-id ID [--project P] [--tickets H-1,H-2 | --exclude-tickets H-3] [--lane L] (same admission AND an exclusive claim, written by the worker itself; --tickets is an exact allowlist, --exclude-tickets its complement; --lane takes only that lane's tickets, and without it only lane-null ones)
   launch-receipt --admission-id ID --launch-id ID                (read exact immutable launch authority and captured evidence)

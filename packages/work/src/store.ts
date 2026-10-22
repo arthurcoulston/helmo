@@ -525,12 +525,6 @@ function normalizeCompletionAccount(input: CompletionAccountInput): CompletionAc
   return { category: input.category, summary };
 }
 
-/** A worker Runtime launched and supervises: an agent writing with a session
- *  stamp. An attended session or a human writes without one. */
-function supervised(actor: Actor): boolean {
-  return actor.kind === 'agent' && Boolean(actor.session?.trim());
-}
-
 function validateActor(actor: Actor): void {
   if (!actor?.name || !actor?.kind) {
     throw new HelmoError(
@@ -1440,6 +1434,7 @@ export class Store {
       this.endExecution(t.id, `ended_repair:${hold.provenance}`, ts);
       return this.getTicket(t.id);
     }).immediate();
+  }
 
   /** Delivery scope (H-2070): the projects autonomous work may start or
    *  resume in, read from the roadmap's Ship Next at the moment of asking.

@@ -44,6 +44,16 @@ function gated(t: Ticket): boolean {
   return !!t.not_before && t.not_before > new Date().toISOString();
 }
 
+/** The run an open ticket is waiting on, from its `cloud-run:<id>` label.
+ *  A worker that dispatched the ticket's work to a session running elsewhere
+ *  (a cloud or other external runner) puts its claim down so the seat is not
+ *  held, and labels the ticket so the wait reads as live work rather than
+ *  backlog. The label comes off when the run is collected (H-2196). */
+function cloudRun(t: Pick<Ticket, 'labels'>): string | null {
+  const label = (t.labels ?? []).find((l) => /^cloud-run:\S+$/.test(l));
+  return label ? label.slice('cloud-run:'.length) : null;
+}
+
 /** True while a deliberate capacity hold still forbids starting this work
  *  (H-2321). The store's queue and claim path read a hold exactly this way:
  *  only a bounded release that has not expired lifts it. Reading it any other
@@ -85,7 +95,7 @@ function awaitingFamily(all: Ticket[]): { decisions: Ticket[]; actions: Ticket[]
   return {
     actions: awaiting.filter((t) => t.action),
     decisions: awaiting.filter((t) => !t.action),
-    sittings: live.filter((t) => actionableSitting(t) && !impeded(t)),
+    sittings: live.filter((t) => actionableSitting(t) && !impeded(t) && !cloudRun(t)),
   };
 }
 
@@ -376,6 +386,10 @@ export function workSnapshot(options: { whole?: boolean; ticket?: string } = {})
     if (t.status === 'in_progress') return 'motion';
     if (t.status !== 'open') return t.status;
     if (t.schedule) return 'standing';
+    // Released while its run goes on elsewhere, the ticket stays open and
+    // usually gated, so the gate opening is what wakes a worker to collect.
+    // It is still work in motion, so it is drawn there, not as backlog (H-2196).
+    if (cloudRun(t)) return 'motion';
     if (impeded(t)) return 'blocked';
     if (actionableSitting(t)) return 'awaiting';
     return 'ready';
@@ -394,7 +408,7 @@ export function workSnapshot(options: { whole?: boolean; ticket?: string } = {})
       rows: selected.map((t) => {
         const acceptance = store.productAcceptance(t.id);
         return { ...t, usage_disclosure: store.usageDisclosure(t.id), display: {
-          group: group(t), waits_on: blockedBy(t), gated: gated(t), held: held(t),
+          group: group(t), cloud_run: t.status === 'open' && !t.schedule ? cloudRun(t) : null, waits_on: blockedBy(t), gated: gated(t), held: held(t),
           acceptance: { state: acceptance.state, reason: acceptance.reason },
           result: resultDisplay(t.evidence),
           progress: progress.get(t.id) ?? null,

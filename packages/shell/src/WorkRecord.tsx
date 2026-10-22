@@ -30,7 +30,7 @@ type Row = {
   updated_at: string; closed_at?: string; tokens_total: number; cost_usd_total: number
   evidence: Evidence[]
   display: {
-    group: string; waits_on: string[]; gated: boolean; held: boolean; chain: string[]
+    group: string; cloud_run?: string | null; waits_on: string[]; gated: boolean; held: boolean; chain: string[]
     acceptance: { state: string; reason: string }
     result: ResultDisplay
     progress: { at: string; note: string; actor: { name: string } } | null
@@ -229,9 +229,10 @@ function RecordRef({ id }: { id: string }) {
 function Signals({ row }: { row: Row }) {
   const d = row.display
   const signals: { mark: string; status: StatusRole | null }[] = [
+    { mark: d.cloud_run ? `Running in cloud · run ${d.cloud_run}` : "", status: null },
     { mark: d.waits_on.length ? `Waits on ${d.waits_on.join(", ")}` : "", status: null },
     { mark: d.held ? "On hold" : "", status: null },
-    { mark: d.gated ? `Not before ${row.not_before}` : "", status: null },
+    { mark: d.gated && !d.cloud_run ? `Not before ${row.not_before}` : "", status: null },
     { mark: row.release_handoff?.current === false ? "Release handoff stale" : "", status: "attention" },
     { mark: row.confidence && row.confidence !== "routine" ? row.confidence.replaceAll("_", " ") : "", status: row.confidence === "needs_review" ? "attention" : null },
     { mark: d.acceptance.state !== "not_requested" ? `Acceptance ${d.acceptance.reason === "contested" ? "contested" : d.acceptance.state}` : "", status: acceptanceRole(d.acceptance.state, d.acceptance.reason) },
@@ -258,7 +259,7 @@ export function TicketRecord({ row }: { row: Row }) {
   const d = row.display
   const standing = [
     d.held ? `On hold · ${row.capacity_hold?.reason ?? "no reason recorded"}` : "",
-    d.gated ? `Cannot start before ${row.not_before}` : "",
+    d.gated && !d.cloud_run ? `Cannot start before ${row.not_before}` : "",
     d.waits_on.length ? `Waits on ${d.waits_on.join(", ")}` : "",
     row.release_handoff?.current === false ? `Release handoff stale · ${row.release_handoff.stale_reason ?? "readiness changed"}` : "",
   ].filter(Boolean)
@@ -289,6 +290,7 @@ export function TicketRecordContent({ row, standing = [] }: { row: Row; standing
     {standing.length ? <Alert><AlertTitle>Not ready to start</AlertTitle><AlertDescription>
       <div className="flex flex-col gap-1">{standing.map((line) => <span key={line}>{line}</span>)}</div>
     </AlertDescription></Alert> : null}
+    {d.cloud_run ? <p>Running in cloud as run {d.cloud_run}; it leaves motion when the run is collected.</p> : null}
     {d.progress ? <p>Last recorded progress {time(d.progress.at)} by {d.progress.actor.name}: {d.progress.note}</p> : null}
     {row.sitting ? <p>Needs a sitting: {row.sitting}</p> : null}
     {row.status === "done" ? <Results row={row} /> : null}

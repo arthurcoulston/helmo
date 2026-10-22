@@ -13,6 +13,11 @@ longer.
 
 ## Unreleased — 0.13.0
 
+- Work draws an open ticket labelled `cloud-run:<id>`, whose work a worker
+  released while it runs in a cloud or other external session, under In motion
+  with its run named, instead of as gated backlog. It returns to ordinary
+  backlog when the label comes off at collection.
+
 - Overview adds Roadmap now: visible Active, Planned and Proposed counts,
   recorded At risk and Off track initiatives with their reasons and record
   links, and an explicit count of initiatives whose health is not recorded.

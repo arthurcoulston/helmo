@@ -27,6 +27,12 @@ function strict<S extends z.ZodRawShape>(shape: S) {
   return z.object(shape).strict();
 }
 
+const charterIdSchema = z.string().refine((ref) => {
+  const id = ref.split('@', 1)[0]!;
+  const match = /^(OBJ|BET)-(\d+)$/.exec(id);
+  return Boolean(match && Number.isSafeInteger(Number(match[2])));
+}, 'Charter ids must be OBJ-n or BET-n with a safe integer suffix');
+
 function result(data: unknown, warnings: string[] = []): { content: { type: 'text'; text: string }[] } {
   const body: Record<string, unknown> = { result: data };
   if (warnings.length) body['warnings'] = warnings;
@@ -385,7 +391,7 @@ export function buildServer(
         `shape 'objective': statement, horizon near|long|standing, rank (1 = top — the human ranks a dozen objectives once; project rank inherits from this). shape 'bet': statement, stake, falsifier — bets justify projects that advance no objective but cheaply test a written-down belief. Pass id (OBJ-n / BET-n) to update an existing item; omit it to mint one. Gates and stances are recognized shapes for v2 — do not force them into objectives.`,
       inputSchema: strict({
         shape: z.enum(['objective', 'bet']),
-        id: z.string().optional().describe('Update an existing item; omit to create'),
+        id: charterIdSchema.optional().describe('Update an existing item; omit to create'),
         statement: z.string().describe('Short and quotable — citations point at this'),
         source: z.string().describe('Pointer to the authoritative document this was derived from'),
         horizon: z.enum(HORIZONS).optional().describe('objectives'),

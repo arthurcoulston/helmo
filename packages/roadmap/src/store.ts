@@ -162,6 +162,13 @@ function rejectSwallowedMarkup(fields: Record<string, string | undefined | null>
 
 const MINT_TABLES = { R: 'projects', OBJ: 'objectives', BET: 'bets' } as const;
 
+function validateCharterId(id: string): void {
+  const match = /^(OBJ|BET)-(\d+)$/.exec(id);
+  if (!match || !Number.isSafeInteger(Number(match[2]))) {
+    throw new RoadmapError(`"${id}" is not a charter id with a safe integer suffix (OBJ-n or BET-n).`);
+  }
+}
+
 export class Store {
   private db: Database.Database;
   private installation?: Installation;
@@ -907,6 +914,7 @@ export class Store {
       throw new RoadmapError('bets need stake (what rides on this being true) and falsifier (what would show it false).');
     }
     rejectSwallowedMarkup({ statement: input.statement, stake: input.stake, falsifier: input.falsifier });
+    if (input.id) validateCharterId(input.id);
     return this.db.transaction(() => {
       const ts = now();
       const id = input.id ?? this.mintId(input.shape === 'objective' ? 'OBJ' : 'BET');

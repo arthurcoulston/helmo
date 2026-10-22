@@ -77,6 +77,10 @@ append-only event log, materialized state, `.immediate()` write transactions
   own correction, any FAIL governs, and PASS+FAIL is surfaced as contested.
   `recordHealth` is the separate explained judgment path for On track, At risk,
   or Off track; the event log and rebuild own both the value and its reason.
+  Explicit objective and bet ids accept only safe integer `OBJ-n` / `BET-n`
+  suffixes. There is no supported delete or repair command; an installation
+  already containing an unsafe id needs an operator to repair its SQLite store
+  before that prefix can mint again.
 - `tools.ts` — the 12-tool MCP surface, descriptions are
   guidance-as-deployed (Helmo's rule). v1 postures baked into them:
   the go is FYI to the fleet, not tasking; the charter is derived from

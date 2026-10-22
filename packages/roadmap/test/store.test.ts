@@ -646,6 +646,38 @@ describe('charter projection and actuals', () => {
     expect(store.listObjectives().find((x) => x.id === 'OBJ-2')!.statement).toBe('second');
   });
 
+  it('refuses unsafe explicit charter ids without poisoning later mints', () => {
+    expect(() => store.setCharterItem(mason, {
+      shape: 'objective', id: 'OBJ-9007199254740993', statement: 'unsafe', horizon: 'near', rank: 1, source: 'doc',
+    })).toThrow(/safe integer suffix/);
+    expect(() => store.setCharterItem(mason, {
+      shape: 'bet', id: 'BET-99999999999999999999', statement: 'unsafe', stake: 's', falsifier: 'f', source: 'doc',
+    })).toThrow(/safe integer suffix/);
+    expect(() => store.setCharterItem(mason, {
+      shape: 'objective', id: 'OBJ-abc', statement: 'unsafe', horizon: 'near', rank: 1, source: 'doc',
+    })).toThrow(/safe integer suffix/);
+
+    expect(store.setCharterItem(mason, {
+      shape: 'objective', statement: 'safe', horizon: 'near', rank: 1, source: 'doc',
+    }).id).toBe('OBJ-1');
+    expect(store.setCharterItem(mason, {
+      shape: 'bet', statement: 'safe', stake: 's', falsifier: 'f', source: 'doc',
+    }).id).toBe('BET-1');
+  });
+
+  it('refuses a mint that collides with an unsafe id already in the store', () => {
+    store.close();
+    const raw = new Database(join(dir, 'test.db'));
+    raw.prepare(`INSERT INTO objectives (id, statement, horizon, rank, source, derived_at)
+      VALUES ('OBJ-9007199254740992', 'legacy', 'near', 1, 'doc', '2026-01-01T00:00:00.000Z')`).run();
+    raw.close();
+    store = new Store(join(dir, 'test.db'));
+
+    expect(() => store.setCharterItem(mason, {
+      shape: 'objective', statement: 'next', horizon: 'near', rank: 2, source: 'doc',
+    })).toThrow(/refusing to mint OBJ-9007199254740992: it already exists/);
+  });
+
   it('actuals are absolute rollups', () => {
     const p = store.createProject(mason, { title: 'T' });
     store.recordActual(bosun, { project_id: p.id, actual_usd: 12.5, note: '3 tickets tagged r-1' });

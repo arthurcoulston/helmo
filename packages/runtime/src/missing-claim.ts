@@ -8,31 +8,11 @@ import { join } from 'node:path';
 import { stateDir } from './config.js';
 import { sGet, processObservation } from './sentinels.js';
 import { readLaunch, launchGroupFile } from './launch-journal.js';
+import { requireProcessAbsent, requireSessionGroupAbsent } from './liveness-guard.js';
 
 export interface MissingClaimRequest {
   ticket_id: string; session: string; generation: string; expected_updated_at: string;
   expected_event_seq: number; expected_worker_launch_id: string;
-}
-
-/** Unknown/EPERM/reused/live process identities all refuse. */
-function requireAbsent(pid: number): void {
-  if (!Number.isSafeInteger(pid) || pid <= 1) throw new Error('Invalid process identity; repair refused.');
-  try { process.kill(pid, 0); }
-  catch (e) {
-    if ((e as NodeJS.ErrnoException).code === 'ESRCH') return;
-    throw new Error('Process liveness is unknown; repair refused.');
-  }
-  throw new Error('Process is still live; repair refused.');
-}
-
-function absentGroup(group: number) {
-  if (!Number.isSafeInteger(group) || group <= 1) throw new Error('Missing session group; repair refused.');
-  try { process.kill(-group, 0); }
-  catch (e) {
-    if ((e as NodeJS.ErrnoException).code === 'ESRCH') return;
-    throw new Error('Session group liveness unknown; repair refused.');
-  }
-  throw new Error('Session group still live; repair refused.');
 }
 
 function requireNoControl(worker: string, name: string) {
@@ -52,7 +32,7 @@ export function missingClaimEvidence(worker: string, request: MissingClaimReques
   const parts = request.generation.slice(request.session.length + 1).split(':');
   if (parts.length !== 3 || parts.some(x => !/^\d+$/.test(x))) throw new Error('Malformed generation.');
   const [oldPid, iteration] = parts.map(Number);
-  requireAbsent(oldPid!);
+  requireProcessAbsent(oldPid!);
   const idle = sGet(worker, 'IDLE');
   const running = sGet(worker, 'RUNNING');
   if (!idle?.trim() || !running?.includes('\ncmd ') || processObservation(worker).state !== 'alive') throw new Error('Exact live idle worker required.');
@@ -73,7 +53,7 @@ export function missingClaimEvidence(worker: string, request: MissingClaimReques
     snapshot.update(name).update(bytes);
     if (candidate.dispatching_at) {
       const group = readFileSync(launchGroupFile(worker, candidate.launch_id), 'utf8');
-      absentGroup(Number(group.trim())); snapshot.update(group);
+      requireSessionGroupAbsent(Number(group.trim())); snapshot.update(group);
     }
   }
   const events = readFileSync(join(stateDir(worker), 'events.log'), 'utf8');

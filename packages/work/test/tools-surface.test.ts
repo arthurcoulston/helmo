@@ -59,6 +59,27 @@ describe('the explicit test-result input (H-3216)', () => {
   });
 });
 
+describe('project actuals on the ticket list (H-3419)', () => {
+  it('returns the exact whole-project cost independently of pagination', async () => {
+    const store = new Store(':memory:');
+    const first = store.createTicket(orch, { title: 'First delivery', body: 'Delivered.', workstream: 'delivery', project: 'R-27', type: 'build' });
+    const second = store.createTicket(orch, { title: 'Second delivery', body: 'Delivered.', workstream: 'delivery', project: 'R-27', type: 'build' });
+    const other = store.createTicket(orch, { title: 'Other project', body: 'Separate.', workstream: 'delivery', project: 'R-28', type: 'build' });
+    store.recordSpend(orch, first.id, { cost_usd: 1.25, note: 'measured' });
+    store.recordSpend(orch, second.id, { cost_usd: 2.5, note: 'measured' });
+    store.recordSpend(orch, other.id, { cost_usd: 100, note: 'measured' });
+    const client = await connect(store);
+
+    const res = await client.callTool({ name: 'helmo_list_tickets', arguments: { project: 'R-27', limit: 1 } });
+    const result = JSON.parse((res.content as { text: string }[])[0]!.text).result;
+    expect(result.tickets).toHaveLength(1);
+    expect(result.project_actual).toEqual({ project: 'R-27', tickets: 2, cost_usd_total: 3.75 });
+
+    await client.close();
+    store.close();
+  });
+});
+
 describe('mistaken human returns through the MCP boundary (H-391)', () => {
   it('pins the contract and records a non-consent correction only for the inspected ask with an owner', async () => {
     const store = new Store(':memory:');

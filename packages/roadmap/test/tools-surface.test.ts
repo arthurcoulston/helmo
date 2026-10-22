@@ -61,6 +61,27 @@ describe('undeclared MCP arguments (R-41)', () => {
     store.close();
   });
 
+  it('refuses an unsafe explicit charter id at the MCP schema without poisoning later mints', async () => {
+    const store = new Store(':memory:');
+    const client = await connect(store);
+    const refused = await client.callTool({
+      name: 'roadmap_set_charter_item',
+      arguments: {
+        shape: 'objective', id: 'OBJ-9007199254740993', statement: 'unsafe', source: 'doc', horizon: 'near', rank: 1,
+      },
+    });
+    expect(refused.isError).toBe(true);
+    expect((refused.content as { text: string }[])[0]!.text).toContain('safe integer suffix');
+
+    const minted = await client.callTool({
+      name: 'roadmap_set_charter_item',
+      arguments: { shape: 'objective', statement: 'safe', source: 'doc', horizon: 'near', rank: 1 },
+    });
+    expect(JSON.parse((minted.content as { text: string }[])[0]!.text).result.id).toBe('OBJ-1');
+    await client.close();
+    store.close();
+  });
+
   it('publishes every tool as strict, so no new door can silently opt out', async () => {
     const store = new Store(':memory:');
     const client = await connect(store);

@@ -170,7 +170,19 @@ Pinned releases accept both the historical three-component layout and C1's one
   completion. A same-name sibling, a legacy session with no generation, or an
   agent `takeover` gets note-only; humans and orchestrators keep routing.
   Leaving in_progress retires the generation in `retired_generations`, and
-  `append` refuses any write by a retired one. A replayed receipt whose claim
+  `append` refuses any write by a retired one. The owner repeating `status:
+  in_progress` is a checkpoint, not a release, and keeps its claim (H-1646);
+  an explicit handoff (even to the same seat), a release or a real assignee
+  change still retires the writer. Tickets stranded by the earlier behaviour
+  are reopened only by `missing-claim-inspect` / `missing-claim-reconcile`:
+  inspection is read-only and admits just that strand (absent claim, latest
+  launch receipt and retired generation `status:in_progress` for the same
+  generation, a same-owner in_progress-to-in_progress checkpoint event, and no
+  workflow, hold, human, date or dependency gate). Reconcile requires the
+  runtime actor and fresh Runtime proof, recompares ticket version, event
+  sequence and the worker's latest launch in an IMMEDIATE transaction, and
+  appends one OPEN transition keeping the reservation, acceptance and the old
+  retirement. The next normal launch claims it; the old writer stays stale. A replayed receipt whose claim
   is no longer that generation's refuses (`launch_claim_stale`) rather than
   re-authorizing dispatch. A new generation of the same session resumes the
   worker's held ticket first (`resumed: true`), retiring the old generation so

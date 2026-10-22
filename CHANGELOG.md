@@ -13,6 +13,12 @@ longer.
 
 ## Unreleased — 0.13.0
 
+- An owner repeating `status: in_progress` keeps its execution claim instead
+  of retiring its own generation and stranding the ticket; handoff, release
+  and a real owner change still retire the writer. Runtime's
+  `inspect-missing-claim` / `reconcile-missing-claim` reopen a ticket stranded
+  that way, refusing held, gated, workflow-bound, live, moved or changed state.
+
 - Naming this installation's leader now needs an attended session or a human,
   as replacing or clearing one already did. A caller writing as a supervised
   worker could name the first leader of a store that had none; because the

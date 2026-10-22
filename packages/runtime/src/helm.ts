@@ -877,3 +877,11 @@ export function escalateSilentDeclines(g: GlobalConfig, l: LoopConfig, ids: stri
   for (const id of ids) run(g, ['update', '--ticket', id, '--note', `Rev routed disposition of this unchanged ticket through team coordination after three passes by loop '${l.name}'; coordination ${standing}. No human dependency was inferred.`], revActor());
   return standing;
 }
+
+/** Read-only Work eligibility for the exact pre-fix checkpoint strand (H-1646). */
+export function inspectMissingClaim(g: GlobalConfig, ticket: string, session: string, generation: string, installation: string): unknown {
+  return run(g, ['missing-claim-inspect', '--ticket', ticket, '--session', session, '--generation', generation, '--installation', installation], undefined, true);
+}
+export function reconcileMissingClaim(g: GlobalConfig, ticket: string, record: object, installation: string): unknown {
+  return run(g, ['missing-claim-reconcile', '--ticket', ticket, '--record', JSON.stringify(record), '--installation', installation], revActor(), true);
+}

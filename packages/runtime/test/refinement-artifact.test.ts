@@ -16,6 +16,7 @@ const e: PreparationEnvelope = { identity: 'prep_1', orgId: 'org_1', projectId: 
 const product = process.env.REFINEMENT_TEST_PRODUCT;
 const publishing = process.env.REFINEMENT_TEST_PUBLISHING;
 const files = ['booking/scripts/refinement-provider-publication.mjs', 'booking/scripts/refinement-publication-preflight.mjs', 'booking/scripts/admin.mjs', 'booking/src/server/refinement-feedback.js', 'booking/src/server/signup-document.js', 'booking/src/lib/doc.ts',
+  'booking/src/lib/calibration-brief.ts', 'booking/src/lib/guide-brief.ts',
   'docs/voice/agent/build-refinement-prompt.mjs', 'docs/voice/agent/elevenlabs.mjs', 'agents/lead/PROFILE.md', 'agents/lead/FAQ.md', 'skills/directive-review.md', 'docs/REFINEMENT-MEETING-DRAFT.md'];
 
 const hook = `
@@ -45,8 +46,10 @@ globalThis.fetch = async (input, options = {}) => {
 `
 function fixture() {
   const room = mkdtempSync(join(tmpdir(), 'refinement-artifact-'));
-  const source = join(room, 'goodplumb'), remote = join(room, 'remote.git'), workRoot = join(room, 'private');
-  mkdirSync(source);
+  // The company's own publishing tools resolve a repository by its home, so
+  // the synthetic source sits where they look for the product (gp-crew H-1922).
+  const source = join(room, 'good-plumb', 'product'), remote = join(room, 'remote.git'), workRoot = join(room, 'private');
+  mkdirSync(source, { recursive: true });
   const env = { ...process.env, GIT_AUTHOR_NAME: 'Synthetic', GIT_AUTHOR_EMAIL: 'synthetic@example.invalid', GIT_COMMITTER_NAME: 'Synthetic', GIT_COMMITTER_EMAIL: 'synthetic@example.invalid' };
   const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', env, stdio: 'pipe' }).trim();
   for (const f of files) { mkdirSync(dirname(join(source, f)), { recursive: true }); cpSync(join(product!, f), join(source, f)); }

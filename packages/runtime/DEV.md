@@ -741,7 +741,11 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   access. Run `REFINEMENT_TEST_PRODUCT=<exact-product-checkout>` and
   `REFINEMENT_TEST_PUBLISHING=<company-tools/publishing>` with runtime tests
   `test/refinement-artifact.test.ts`; these integration cases are explicitly
-  skipped without both inputs. This proves local composition and recovery,
+  skipped without both inputs. Give both as REAL paths, not a convenience
+  symlink into the company's home: the sync tool only acts when it is the main
+  module, and that check compares the argv path against a symlink-resolved
+  `import.meta.url`, so a linked path makes it exit silently without pushing
+  and the artifacts fail their remote-tip check instead. This proves local composition and recovery,
   **not** live provider, deployed Durable Object, or publication authority.
   Poll wiring, independent reviews/upstream merge and pinned runtime adoption
   remain. No new roster setting, scheduler or live authority scope is enabled.

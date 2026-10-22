@@ -7,6 +7,8 @@ import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync, rmSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { tokenLogPath } from './config.js';
+import { claudeApiConfig, claudeApiSettings, usesClaudeApi } from './claude-api.js';
+import { reserveApiRun, settleApiRun } from './api-allocation.js';
 import { recordCodexUsage } from './usage.js';
 import { loopActor } from './helm.js';
 import { GlobalConfig, LoopConfig, ModelPrice, RunChoice, Runtime, SessionResult } from './types.js';
@@ -53,6 +55,9 @@ export function sessionEnv(l: LoopConfig): NodeJS.ProcessEnv {
 // `generation` is a pool worker's launch id (H-574): the session's Helmo
 // identity carries it, so its writes bind to the claim this launch holds.
 export async function runSession(g: GlobalConfig, l: LoopConfig, iterationPrompt: string, model = l.model, choice?: RunChoice, generation?: string, groupFile?: string): Promise<SessionResult> {
+  // A caller that omits the choice still gets the roster's API limits: an
+  // API provider must never launch without its credential and session bounds.
+  if (!choice && l.choices?.[0] && usesClaudeApi(l.choices[0])) choice = l.choices[0];
   const runtime = choice?.runtime ?? l.runtime;
   // Apparatus pre-flight, fail closed: never launch a half-instructed agent.
   if (runtime !== 'mock') {
@@ -66,7 +71,7 @@ export async function runSession(g: GlobalConfig, l: LoopConfig, iterationPrompt
   const startedAt = Date.now();
   switch (runtime) {
     case 'claude':
-      return runClaude(g, l, iterationPrompt, model, generation, groupFile, startedAt);
+      return runClaude(g, l, iterationPrompt, model, choice, generation, groupFile, startedAt);
     case 'codex':
       return runCodex(g, l, iterationPrompt, model, choice, generation, groupFile, startedAt);
     case 'mock':
@@ -86,6 +91,7 @@ interface ChildOutput {
   error?: NodeJS.ErrnoException;
   overflow?: 'stdout' | 'stderr';
   pid?: number;
+  timedOut?: boolean;
 }
 
 /** Stream a session so Node never applies spawnSync's fixed pipe buffer. The
@@ -95,12 +101,23 @@ interface ChildOutput {
 export function spawnSession(
   command: string,
   args: string[],
-  opts: { cwd: string; env: NodeJS.ProcessEnv; input?: string },
+  opts: { cwd: string; env: NodeJS.ProcessEnv; input?: string; timeoutMs?: number },
 ): Promise<ChildOutput> {
   return new Promise((resolve) => {
     const child = spawn(command, args, { cwd: opts.cwd, env: opts.env, stdio: ['pipe', 'pipe', 'pipe'], ...SESSION_GROUP });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
+    // An optional wall-clock deadline (Claude API sessions): TERM the whole
+    // session group, then KILL it a second later if it ignores TERM.
+    let timedOut = false;
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
+    const timer = opts.timeoutMs === undefined ? undefined : setTimeout(() => {
+      timedOut = true;
+      try { process.kill(-child.pid!, 'SIGTERM'); } catch { /* exited */ }
+      killTimer = setTimeout(() => {
+        try { process.kill(-child.pid!, 'SIGKILL'); } catch { /* exited */ }
+      }, 1000);
+    }, opts.timeoutMs);
     let outBytes = 0;
     let errBytes = 0;
     let overflow: ChildOutput['overflow'];
@@ -118,11 +135,15 @@ export function spawnSession(
     child.stdout.on('data', (b: Buffer) => retain('stdout', b));
     child.stderr.on('data', (b: Buffer) => retain('stderr', b));
     child.on('error', (e: NodeJS.ErrnoException) => { launchError = e; });
-    child.on('close', (status, signal) => resolve({
-      status, signal, overflow, error: launchError, pid: child.pid,
-      stdout: Buffer.concat(out).toString('utf8'),
-      stderr: Buffer.concat(err).toString('utf8'),
-    }));
+    child.on('close', (status, signal) => {
+      clearTimeout(timer);
+      clearTimeout(killTimer);
+      resolve({
+        status, signal, overflow, timedOut, error: launchError, pid: child.pid,
+        stdout: Buffer.concat(out).toString('utf8'),
+        stderr: Buffer.concat(err).toString('utf8'),
+      });
+    });
     if (opts.input !== undefined) child.stdin.end(opts.input); else child.stdin.end();
   });
 }
@@ -320,8 +341,10 @@ export interface SessionSpec {
 }
 
 export function sessionSpec(
-  g: GlobalConfig, l: LoopConfig, opts: { model?: string; session?: string; in_roster?: boolean } = {},
+  g: GlobalConfig, l: LoopConfig, opts: { model?: string; session?: string; in_roster?: boolean; choice?: RunChoice } = {},
 ): SessionSpec {
+  const choice = opts.choice ?? l.choices?.[0];
+  if (choice && usesClaudeApi(choice)) throw new Error('Claude API providers require the Rev launcher; session-spec consumers do not enforce their credential and session limits.');
   const model = opts.model ?? l.model;
   return {
     seat: l.name,
@@ -340,9 +363,32 @@ export function sessionSpec(
   };
 }
 
-async function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string, model: string, generation: string | undefined, groupFile: string | undefined, startedAt: number): Promise<SessionResult> {
+async function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string, model: string, choice: RunChoice | undefined, generation: string | undefined, groupFile: string | undefined, startedAt: number): Promise<SessionResult> {
   const scratch = mkdtempSync(join(tmpdir(), 'rev-'));
   try {
+    // Opt-in Claude API billing: only a provider whose config names an
+    // api_key_helper takes this path; every other claude choice is unchanged.
+    let api;
+    try { api = claudeApiConfig(choice ?? { runtime: 'claude' }); }
+    catch (e) { return { rc: 78, cls: 'apparatus', outputTail: String(e) }; }
+    let key = '';
+    let deadline: number | undefined;
+    const extraArgs: string[] = [];
+    if (api) {
+      deadline = Math.min(startedAt + api.timeout_seconds * 1000, api.stop_at ? Date.parse(api.stop_at) : Infinity);
+      if (deadline <= Date.now()) return { rc: 78, cls: 'apparatus', outputTail: 'Claude API session deadline has passed' };
+      // Resolve once before launch: a failed/empty helper must never fall back
+      // to a logged-in subscription. Never expose helper stdout or stderr.
+      try {
+        key = execFileSync('/bin/sh', ['-c', api.api_key_helper], {
+          cwd: l.cwd, env: sessionEnv(l), encoding: 'utf8',
+          timeout: Math.min(5000, deadline - Date.now()), maxBuffer: 16384, stdio: ['ignore', 'pipe', 'pipe'],
+        }).trim();
+        if (!key || /\s/.test(key)) throw new Error('invalid key');
+      } catch { return { rc: 78, cls: 'apparatus', outputTail: 'Claude API credential helper failed or returned an invalid key; no session launched' }; }
+      extraArgs.push('--settings', JSON.stringify(claudeApiSettings(api)), '--max-budget-usd', String(api.max_budget_usd), '--max-turns', String(api.max_turns));
+    }
+    const redact = (s: string): string => (key ? s.split(key).join('[REDACTED]') : s).replace(/sk-ant-[A-Za-z0-9_-]+/g, '[REDACTED]');
     const mcpConfig = writeMcpConfig(g, l, scratch, model, generation);
     let systemFile = l.constitution;
     if (l.skills?.length) {
@@ -356,9 +402,31 @@ async function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string, model: 
         '--strict-mcp-config', '--mcp-config', mcpConfig,
         '--dangerously-skip-permissions',
         '--output-format', 'json',
+        ...extraArgs,
       ], groupFile);
-    const res = await spawnSession(command, args, { cwd: l.cwd, env: sessionEnv(l) });
+    if (deadline !== undefined && deadline <= Date.now()) return { rc: 78, cls: 'apparatus', outputTail: 'Claude API session deadline has passed' };
+    let admission;
+    if (api?.allocation_file) {
+      try { admission = reserveApiRun(api.allocation_file, l.name, choice!.provider, api); }
+      catch { return { rc: 78, cls: 'apparatus', outputTail: 'Claude API allocation admission refused; inspect allocation receipts before resuming' }; }
+    }
+    // Receipt validation may take time; never dispatch past the absolute window.
+    if (deadline !== undefined && deadline <= Date.now()) return { rc: 78, cls: 'apparatus', outputTail: 'Claude API session deadline has passed; any reservation remains held' };
+    const res = await spawnSession(command, args, { cwd: l.cwd, env: sessionEnv(l), timeoutMs: deadline === undefined ? undefined : deadline - Date.now() });
     endSessionGroup(res.pid);
+    res.stdout = redact(res.stdout);
+    res.stderr = redact(res.stderr);
+    if (res.timedOut) {
+      logTokens(l, model, undefined, undefined, 'claude', startedAt);
+      const interrupted = interruptedBy(res);
+      const ending = interrupted ? ` (${interrupted})` : '';
+      // A session the deadline killed did start and may have done work, so it
+      // is not an apparatus fault: it retries under the failure cap and keeps
+      // its claim. A held allocation reservation still fails closed, because
+      // no further run is admitted until that usage is reconciled.
+      if (admission) return { rc: 78, cls: 'apparatus', outputTail: `Claude API session deadline reached${ending}; usage is unknown and the reservation is held for reconciliation` };
+      return { rc: 1, cls: 'failure', outputTail: `Claude API session deadline reached after ${api!.timeout_seconds}s${ending}; usage is unknown and requires reconciliation` };
+    }
     const claudeUnrunnable = unrunnable(res, groupFile);
     if (claudeUnrunnable !== null) return {
       rc: 78,
@@ -369,6 +437,15 @@ async function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string, model: 
     };
     if (res.overflow) return { rc: 78, cls: 'apparatus', outputTail: `claude output resource limit: ${res.overflow} exceeded ${SESSION_OUTPUT_CAP} bytes` };
     const stdout = res.stdout ?? '';
+    if (admission) {
+      try {
+        const receipt = JSON.parse(stdout);
+        if (res.signal || typeof receipt?.total_cost_usd !== 'number' || !Number.isFinite(receipt.total_cost_usd) || receipt.total_cost_usd < 0) throw new Error('unknown usage');
+        settleApiRun(admission, receipt.total_cost_usd);
+      } catch {
+        return { rc: 78, cls: 'apparatus', outputTail: 'Claude API usage receipt missing, invalid or not durably settled; reservation retained for reconciliation' };
+      }
+    }
     let tokens: number | undefined, cost: number | undefined, tail = stdout, providerSessionId: string | undefined;
     try {
       const j = JSON.parse(stdout) as Record<string, never> & {

@@ -94,6 +94,14 @@ longer.
   filer. Roadmap's `ROADMAP_LEADER`, honoured only when it names the server's
   own pinned actor, lets the leader judge its own shaping and move projects
   past the go gates; Planned stays `roadmap_set_ship_next`-only.
+- Runtime can bill a Claude loop to the Claude API instead of a subscription:
+  an opt-in metered provider names an `api_key_helper` and positive
+  `max_budget_usd`, `max_turns` and `timeout_seconds`. The session selects its
+  key only through that helper, never falls back to a subscription login, is
+  killed at its deadline, and is not parked or ranked by subscription bars.
+  An optional `allocation_file` adds durable, fsynced pre-launch reservations
+  that survive restarts. Rosters without such a provider are unchanged.
+
 - Overview adds Roadmap now: visible Active, Planned and Proposed counts,
   recorded At risk and Off track initiatives with their reasons and record
   links, and an explicit count of initiatives whose health is not recorded.

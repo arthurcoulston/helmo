@@ -575,7 +575,8 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   their OS code, nonzero exits remain child failures, and malformed/truncated
   wire output is named rather than mistaken for a clean run. Rev retries none
   of these automatically because the session may already have acted — except
-  the one case where that same fact argues the other way (H-2071).
+  Claude's signal-ended and API-deadline cases, where that same fact argues the
+  other way (H-2071, H-1773).
   `claude --output-format json` writes its result only at exit, so a session
   group stopped mid-turn leaves no JSON and read as apparatus: the loop
   blocked and the claim went back as if nothing had run. `interruptedBy()`
@@ -1720,6 +1721,67 @@ follow a module imported dynamically much later.
   the same selector for loops and `rev routing`; each headroom decision logs
   its rates or why it used the configured order. Roster/model changes need a
   graceful worker restart; in-flight sessions keep their original model.
+- **Claude API billing is an explicit provider, independent of Max.** Keep
+  the normal `claude` subscription provider and add a second named provider:
+
+  ```toml
+  [providers.claude-api]
+  runtime = "claude"
+  billing = "metered"
+  [providers.claude-api.models]
+  mid = "sonnet"
+  [providers.claude-api.config]
+  api_key_helper = "/path/to/credential-helper"
+  max_budget_usd = 5
+  max_turns = 20
+  timeout_seconds = 900
+  # Optional durable allocation admission (requires stop_at):
+  # allocation_file = "/canonical/private/allocation/allocation.json"
+  # Optional absolute end of an authorized window:
+  # stop_at = "2026-10-14T23:47:00Z"
+  ```
+
+  Select `provider = "claude-api"` and `tier = "mid"` on a loop, or use
+  `claude-api:mid` in its existing rotation/fallback list. The helper is a
+  trusted operator command executed in the loop's cwd with a clean environment;
+  it must print only the key and exit zero within five seconds. Use a credential
+  store, never a literal key in the roster or command. Rev checks it before
+  launch, and Claude Code calls the same helper for authentication. Lookup
+  failure stops before launch; there is no subscription fallback. Rev does not
+  write the key to disk or put it in process arguments or environment. Secrets
+  printed back by the CLI are redacted from Rev's retained output, but this is
+  not a substitute for keeping secrets out of tool output and CLI transcripts.
+
+  This is the normal Claude Code `-p` agent: constitution, skills, hooks, tools,
+  strict MCP and actor/generation binding remain. Explicit command settings
+  select the helper, clear competing credential/cloud-provider settings and
+  select Anthropic's API endpoint. Managed policies retain higher priority;
+  operators must ensure their policy permits this provider. Rev never logs out
+  or edits a subscription login. `session-spec` rejects API providers because
+  external consumers cannot yet enforce this launch contract.
+
+  `max_budget_usd` is Claude Code's **estimated session spend limit**, not a
+  provider invoice cap; a request can overshoot it. `max_turns` bounds agent
+  turns, not every background HTTP request. Rev terminates the session process
+  group at the earlier of `timeout_seconds` and `stop_at`, escalating TERM to
+  KILL after one second. Interrupted usage is unknown, recorded as `?`, and
+  needs reconciliation before another allocation. A deadline-killed session
+  did start, so it is a retryable `failure` that keeps its claim, not an
+  apparatus halt; with an `allocation_file` it still fails closed, because its
+  reservation is held. Provider-side spend limits,
+  aggregate budgets and credential expiry remain the operator's responsibility.
+  Optional `allocation_file` enforces a frozen, durable per-consumer allocation
+  immediately before dispatch, across restarts. Unknown usage keeps its reservation
+  and refuses further admission. [API-ALLOCATION.md](API-ALLOCATION.md) describes
+  provisioning, strict receipts, checkpoints and same-allocation reconciliation.
+  API choices ignore subscription bars and headroom; this does not assert that
+  an API account has credit. API 429/529 responses retain their own transient
+  handling without consulting Max's reset time. Existing metered declarations
+  without `api_key_helper` keep their historical authentication behavior.
+
+  References: [Claude authentication](https://code.claude.com/docs/en/authentication),
+  [CLI session limits](https://code.claude.com/docs/en/cli-reference),
+  [settings precedence](https://code.claude.com/docs/en/settings).
 - **A provider choice is decided fresh each iteration, never sticky** (H-479).
   `choiceDecide` takes the rotation cycle at the iteration's position, skips
   any provider whose cap the fresh snapshot says is out (then fallbacks), and

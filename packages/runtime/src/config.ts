@@ -2,6 +2,7 @@ import { readFileSync, existsSync, mkdirSync, realpathSync, statSync } from 'nod
 import { homedir } from 'node:os';
 import { join, isAbsolute, dirname, basename, resolve, sep } from 'node:path';
 import { parse } from 'smol-toml';
+import { claudeApiConfig } from './claude-api.js';
 import { BillingMode, GlobalConfig, LoopConfig, ModelPrice, ProviderConfig, RunChoice, Runtime } from './types.js';
 
 // All instance data lives under the Rev home (never in the repo):
@@ -124,6 +125,8 @@ function parseProviders(raw: Record<string, unknown>): Record<string, ProviderCo
     if (billing !== 'metered' && billing !== 'subscription') {
       throw new Error(`Provider '${name}': billing must be 'metered' or 'subscription' — it says what the account IS, not what rev should do about it.`);
     }
+    // Validates an opt-in Claude API provider; undefined for every other one.
+    claudeApiConfig({ runtime, billing, config: p['config'] as Record<string, unknown> | undefined });
     providers[name] = {
       name,
       runtime,

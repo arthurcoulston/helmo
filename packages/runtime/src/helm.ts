@@ -135,16 +135,36 @@ export function revActor(): object {
   return { name: 'rev', kind: 'agent', model: 'rev-harness', version: HELMO_VERSION };
 }
 
-/** One visible Builder assignment for an owned intake-preparation attempt.
- *  It carries the configured project: a store with a Ship Next scope refuses
- *  Builder's claim on an untagged ticket, and a waiting client's invite sat
- *  behind that refusal (H-2124). */
+/** The project a client-facing assignment is filed under. A store with a
+ *  Ship Next scope refuses a supervised claim on a ticket outside it, and a
+ *  waiting client's invite sat behind that refusal (H-2124). The roster's
+ *  intake_preparation_project was a hand-set roadmap id that went stale each
+ *  time Ship Next moved, stranding client work with no error (H-2219). So the
+ *  scope is read when the ticket is filed: the configured project while it is
+ *  in Ship Next, otherwise the first Ship Next project. With no scope, or an
+ *  empty or unreadable one, the configured project (if any) is all there is
+ *  to say. */
+export function clientWorkProject(g: GlobalConfig): string | undefined {
+  let projects: string[] = [];
+  try {
+    const scope = (run(g, ['delivery-scope'], undefined, true) as { delivery_scope?: { projects?: unknown } | null }).delivery_scope;
+    if (scope && Array.isArray(scope.projects)) projects = scope.projects.filter((p): p is string => typeof p === 'string' && p !== '');
+  } catch {
+    // An older CLI without delivery-scope has no scope to follow.
+  }
+  if (g.intake_preparation_project && (projects.length === 0 || projects.includes(g.intake_preparation_project))) return g.intake_preparation_project;
+  return projects[0] ?? g.intake_preparation_project;
+}
+
+/** One visible Builder assignment for an owned intake-preparation attempt,
+ *  filed under the live client-work project above. */
 export function createIntakeAssignment(g: GlobalConfig, body: string): string {
+  const project = clientWorkProject(g);
   return (run(g, [
     'create', '--title', 'Prepare the claimed meeting intake', '--body', body,
     '--workstream', 'goodplumb', '--type', 'build', '--priority', '0',
     '--assignee', 'builder',
-    ...(g.intake_preparation_project ? ['--project', g.intake_preparation_project] : []),
+    ...(project ? ['--project', project] : []),
   ], revActor()) as { id: string }).id;
 }
 

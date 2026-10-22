@@ -34,7 +34,7 @@ export interface GlobalConfig {
   probe?: RunChoice;                    // global probe pin ("provider:tier"): every probe pass runs here while its cap stands (H-625)
   intake_preparation_origin?: string;   // opt-in Good Plumb Worker origin; capability remains in Keychain
   intake_preparation_checkout?: string; // checkout receiving the verified signup source
-  intake_preparation_project?: string;  // roadmap item that owns client entry: the assignment's project, so a Ship Next scope admits it (H-2124)
+  intake_preparation_project?: string;  // preferred project for client-facing assignments while it is in Ship Next; otherwise the live Ship Next decides (H-2124, H-2219)
 }
 
 export type Runtime = 'claude' | 'codex' | 'mock';

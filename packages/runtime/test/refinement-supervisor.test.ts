@@ -10,7 +10,7 @@ async function until(check: () => boolean) {
   const start = Date.now();
   while (!check()) { if (Date.now() - start > 8000) throw new Error('supervisor fixture deadline'); await pause(25); }
 }
-function fixture(enabled: boolean, empty = false, delay = 0) {
+function fixture(enabled: boolean, empty = false, delay = 0, researchSeat?: string) {
   const home = mkdtempSync(join(tmpdir(), 'rev-refinement-supervisor-'));
   const journal = join(home, 'requests.jsonl'), dir = join(home, 'state', 'supervisor');
   mkdirSync(dir, { recursive: true }); mkdirSync(join(home, 'state', 'stopped'), { recursive: true });
@@ -23,14 +23,18 @@ const original = cp.execFileSync;
 cp.execFileSync = (file, args, options) => {
   if (file === 'ps' && args[0] === '-o' && args[1] === 'ppid=') return original(file, args, options);
   if (file === '/usr/bin/security' && args.join(' ') === 'find-generic-password -s plumb-intake-executor-secret -w') return 'NOT_A_REAL_SECRET';
+  if (file === 'node' && args[0] === 'fixture-unused' && args.includes('create')) return JSON.stringify({id: args.includes("Begin research on a client's approved directive") ? 'H-1' : 'H-2', installation: {label: 'fixture'}});
   throw new Error('fixture refused command');
 };
 syncBuiltinESMExports();
 globalThis.fetch = async (input, init) => {
   const u = new URL(String(input));
-  if (u.origin !== 'http://localhost:9876' || !/^\\/api\\/(intake-preparation|refinement-commit|refinement-preparation)\\/(claim|result)$/.test(u.pathname)) throw new Error('fixture refused request');
-  appendFileSync(${JSON.stringify(journal)}, JSON.stringify({ path: u.pathname, body: JSON.parse(init.body) }) + '\\n');
+  if (u.origin !== 'http://localhost:9876' || !/^\\/api\\/(intake-preparation|refinement-commit|refinement-preparation|project-start|research-feedback)\\/(claim|result|assigned)$/.test(u.pathname)) throw new Error('fixture refused request');
+  appendFileSync(${JSON.stringify(journal)}, JSON.stringify({ path: u.pathname, body: JSON.parse(init.body), signature: new Headers(init.headers).get('x-gp-signature') }) + '\\n');
   if (u.pathname.endsWith('/result')) { await new Promise(r => setTimeout(r, ${delay})); return new Response('{}', {status:200}); }
+  if (u.pathname === '/api/project-start/claim') return Response.json({startId:'project-start:version_a',orgId:'org_a',orgSlug:'test-org',projectId:'project_a',projectSlug:'test-project',versionId:'version_a',versionNumber:1,contentHash:'${'a'.repeat(64)}',gitRef:'${'b'.repeat(40)}',isTest:true,directivePath:'clients/test-org/projects/test-project/directive.md',approvedAt:'2026-10-22T12:00:00.000Z'});
+  if (u.pathname === '/api/research-feedback/claim') return Response.json({batchId:'batch_a',orgId:'org_a',orgSlug:'test-org',isTest:true,projectId:'project_a',projectSlug:'test-project',remarks:[{kind:'library',id:'remark_a',revision:1,at:'2026-10-22T12:00:00.000Z'}],listCommand:'npm run research-feedback -- list test-org test-project',createdAt:'2026-10-22T12:00:00.000Z'});
+  if (u.pathname.endsWith('/assigned')) return new Response('{}', {status:200});
   return new Response(null, {status:204});
 };`);
   const runner = join(home, 'run.ts');
@@ -44,6 +48,7 @@ poll_seconds = 0.1
 usage_poll_seconds = 0
 intake_preparation_origin = "http://localhost:9876"
 intake_preparation_checkout = "${home}"
+${researchSeat === undefined ? '' : `research_handoff_assignee = "${researchSeat}"`}
 refinement_preparation_enabled = ${enabled}
 refinement_preparation_source = "${join(home, 'source')}"
 refinement_preparation_base_ref = "${'a'.repeat(40)}"
@@ -62,6 +67,37 @@ ${empty ? '' : `[loops.stopped]\nworkstream = "fixture"\ncwd = "${home}"\nruntim
   return { home, dir, start, requests };
 }
 describe('supervisor refinement opt-in lifecycle', () => {
+  it('runs both signed research handoffs only for a configured valid seat', async () => {
+    const f = fixture(false, false, 0, 'research-seat'), p = f.start();
+    try {
+      await until(() => f.requests().filter(r => r.path.endsWith('/assigned')).length === 2);
+      const research = f.requests().filter(r => /project-start|research-feedback/.test(r.path));
+      expect(research.map(r => r.path)).toEqual([
+        '/api/project-start/claim', '/api/research-feedback/claim',
+        '/api/project-start/assigned', '/api/research-feedback/assigned',
+      ]);
+      expect(research.every(r => /^[0-9a-f]{64}$/.test(r.signature))).toBe(true);
+      p.child.kill('SIGTERM'); expect(await p.exit).toBe(0);
+    } finally { p.child.kill('SIGKILL'); }
+  });
+  it('makes neither research handoff without a configured seat', async () => {
+    const f = fixture(false), p = f.start();
+    try {
+      await until(() => f.requests().length >= 4);
+      expect(f.requests().some(r => /project-start|research-feedback/.test(r.path))).toBe(false);
+      p.child.kill('SIGTERM'); expect(await p.exit).toBe(0);
+    } finally { p.child.kill('SIGKILL'); }
+  });
+  it('contains invalid-seat failure and makes neither research handoff', async () => {
+    const f = fixture(false, false, 0, 'INVALID SEAT'), p = f.start();
+    try {
+      const log = join(f.dir, 'events.log');
+      await until(() => existsSync(log) && readFileSync(log, 'utf8').includes('research-handoff-error'));
+      expect(f.requests().some(r => /project-start|research-feedback/.test(r.path))).toBe(false);
+      expect(readFileSync(log, 'utf8')).toContain('must be a seat name');
+      p.child.kill('SIGTERM'); expect(await p.exit).toBe(0);
+    } finally { p.child.kill('SIGKILL'); }
+  });
   it('opt-out runs existing pulls without provider preparation or resuming STOP', async () => {
     const f = fixture(false), p = f.start();
     try {

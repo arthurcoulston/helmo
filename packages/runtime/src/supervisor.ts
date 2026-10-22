@@ -21,12 +21,14 @@ import { rotateOpenFd } from './logretention.js';
 import { logEvent, occupiedPid, pidAlive, runningStamp, sClear, sGet, sHas, sSet, streakReset } from './sentinels.js';
 import { endSessionGroup, sessionGroupsOf } from './shim.js';
 import { REDEPLOY_EXIT, RedeployRequest, armRedeployWatch, readRedeploy, reportRedeployLanded } from './redeploy.js';
-import { agentFalseAlarmDisposition, answeredResumeEscalation, completeAnsweredResume, createIntakeAssignment, failAnsweredResume, recordAgentResumeFailure, recordRelapse, cliError, ticketStatus } from './helm.js';
+import { agentFalseAlarmDisposition, answeredResumeEscalation, completeAnsweredResume, createFeedbackAssignment, createIntakeAssignment, createResearchAssignment, failAnsweredResume, recordAgentResumeFailure, recordRelapse, researchHandoffSeat, cliError, ticketStatus } from './helm.js';
 import { GlobalConfig, LoopConfig } from './types.js';
 import { completeActivation, deploymentFile, recordRestart, refuseStart } from './deployment.js';
 import { readSelection, releasePinProblems, selectionFile } from './release.js';
 import { target } from './install.js';
 import { intakePreparationPass } from './intake-preparation.js';
+import { projectStartPass } from './project-start.js';
+import { researchFeedbackPass } from './research-feedback.js';
 import { commandName } from './command-name.js';
 import { refinementCommitPass } from './refinement-commit.js';
 import { refinementPreparationPass } from './refinement-preparation.js';
@@ -437,6 +439,34 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
       }).then((result) => {
         if (result !== 'idle' && result !== 'heartbeat') logEvent(SUP, 'intake-preparation', `result=${result}`);
       }).catch((error) => logEvent(SUP, 'intake-preparation-error', String(error).replace(/\s+/g, ' ').slice(0, 200)));
+      // The client research handoffs ride the same opt-in, and run only for an
+      // installation that names the seat they file to: an approved project
+      // start (H-2178) and each batch of a client's new research remarks
+      // (H-2184) each become one assignment, with nobody filing it.
+      let researchSeat: string | null = null;
+      try {
+        researchSeat = researchHandoffSeat(g);
+      } catch (error) {
+        logEvent(SUP, 'research-handoff-error', String(error).replace(/\s+/g, ' ').slice(0, 200));
+      }
+      if (researchSeat) {
+        void projectStartPass({
+          origin: g.intake_preparation_origin,
+          stateFile: join(dir, 'project-start.json'),
+          lastRunFile: join(dir, 'project-start-last.json'),
+          assign: (body) => createResearchAssignment(g, body),
+        }).then((result) => {
+          if (result !== 'idle') logEvent(SUP, 'project-start', `result=${result}`);
+        }).catch((error) => logEvent(SUP, 'project-start-error', String(error).replace(/\s+/g, ' ').slice(0, 200)));
+        void researchFeedbackPass({
+          origin: g.intake_preparation_origin,
+          stateFile: join(dir, 'research-feedback.json'),
+          lastRunFile: join(dir, 'research-feedback-last.json'),
+          assign: (body) => createFeedbackAssignment(g, body),
+        }).then((result) => {
+          if (result !== 'idle') logEvent(SUP, 'research-feedback', `result=${result}`);
+        }).catch((error) => logEvent(SUP, 'research-feedback-error', String(error).replace(/\s+/g, ' ').slice(0, 200)));
+      }
       // The same opt-in carries the refinement commit pull: mechanical,
       // so it runs here rather than as a Builder assignment.
       void refinementCommitPass({

@@ -13,6 +13,15 @@ longer.
 
 ## Unreleased — 0.13.0
 
+- Runtime can hand a client's approved project start and each batch of their
+  new research remarks to a configured research seat. Under the intake
+  preparation opt-in, an installation that names `research_handoff_assignee`
+  claims each from the product's signed `/api/project-start` and
+  `/api/research-feedback` routes, files one identifiers-only assignment
+  (the start names the version's `gitRef` and marks a test organization),
+  and reports the ticket ref back, never filing twice. With no seat named,
+  nothing changes.
+
 - Work draws an open ticket labelled `cloud-run:<id>`, whose work a worker
   released while it runs in a cloud or other external session, under In motion
   with its run named, instead of as gated backlog. It returns to ordinary

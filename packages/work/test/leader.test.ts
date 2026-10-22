@@ -66,8 +66,8 @@ describe('installation leader (H-2073)', () => {
     expect(s.leaderActor()).toBeNull();
     expect(s.setLeaderActor(workerLoop, 'lead')).toBe('lead');
     expect(s.setLeaderActor(workerLoop, 'lead')).toBe('lead');
-    expect(() => s.setLeaderActor(workerLoop, 'reviewer')).toThrow(/leader_refused: a supervised worker cannot replace lead/);
-    expect(() => s.setLeaderActor(workerLoop, null)).toThrow(/leader_refused: a supervised worker cannot clear/);
+    expect(() => s.setLeaderActor(workerLoop, 'reviewer')).toThrow(/leader_refused: a caller writing as a supervised worker cannot replace lead/);
+    expect(() => s.setLeaderActor(workerLoop, null)).toThrow(/leader_refused: a caller writing as a supervised worker cannot clear/);
     expect(s.leaderActor()).toBe('lead');
     expect(s.setLeaderActor(worker, 'reviewer')).toBe('reviewer');
     expect(s.setLeaderActor(operator, null)).toBeNull();

@@ -38,7 +38,11 @@ unavailable for your Node/platform pair.
   `ROADMAP_ACTOR` or `HELMO_ACTOR` (JSON), or a per-call `actor` param.
   Optional `ROADMAP_LEADER` names the installation's leader agent; it is
   honoured only when it equals the server's own pinned actor name, and lets
-  that agent judge its own shaping and move projects past the go gates.
+  that agent judge its own shaping and move projects past the go gates. The
+  grant is the launcher's environment, not a verified identity: it is proof
+  against a per-call `actor` param and against the variable copied into
+  another seat's launcher, and nothing more. It has no stored state, so
+  there is nothing to record and nothing to read back.
 - Read-only view: `node dist/view.js` — `http://localhost:4410`
 - Operator recovery: `node dist/recovery.js identity|backup-observed|backup|validate ...`; `identity` reports only the stored installation name and creates nothing. `backup-observed` reads the stored identity and makes a consistent online backup through the same SQLite connection, while backup and validation retain explicit identity assertions. All artifact-producing commands create only fresh owner-only paths and never restore into a live installation. See `DEV.md` for flags and the safety boundary.
   (`ROADMAP_VIEW_PORT`).

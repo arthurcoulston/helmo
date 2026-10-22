@@ -430,7 +430,9 @@ try {
       const leader = has('off') ? store.setLeaderActor(actor(), null)
         : flag('actor-name') ? store.setLeaderActor(actor(), flag('actor-name')!)
         : store.leaderActor();
-      out({ leader });
+      // Who set the standing value, so reading the setting answers the
+      // question an operator actually has about it (H-3402).
+      out({ leader, set_by: store.settingProvenance('leader') });
       break;
     }
     case 'self-triage': {
@@ -440,7 +442,7 @@ try {
       const on = has('off') ? store.setSelfTriage(actor(), false)
         : has('on') ? store.setSelfTriage(actor(), true)
         : store.selfTriage();
-      out({ self_triage: on ? 'on' : 'off' });
+      out({ self_triage: on ? 'on' : 'off', set_by: store.settingProvenance('self_triage') });
       break;
     }
     case 'launch-admit': {

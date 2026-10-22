@@ -400,9 +400,36 @@ Pinned releases accept both the historical three-component layout and C1's one
   filings from the self-triage rule; meta `self_triage = 'off'`
   (`self-triage --off | --on`) lifts the rule for every filer, and tool
   descriptions follow it at server start. Both are unset by default. No
-  agent names itself leader; a supervised worker may name only a store's
-  first leader, and only the leader, an attended session or a human changes
-  the self-triage setting.
+  agent names itself leader; a caller writing as a supervised worker may name
+  only a store's first leader, and the self-triage setting changes only for a
+  caller writing as the leader, an attended session or a human.
+  Say "writing as" and mean it (H-3402): `supervised()` reads `actor.kind` and
+  the `session` stamp, and the caller supplies both — a loop passing
+  `--actor '{"name":"x","kind":"human"}'`, or an env actor with no `session`,
+  satisfies either gate in one step. That is Helmo's standing trust model,
+  where store access IS write authority, not a hole these two settings opened;
+  what the gates buy is that the ordinary path does not lift a check by
+  accident. The claim the docs and the refusals may make is therefore about
+  this code path, never about a boundary the store enforces.
+  Because the gates cannot be the whole answer, the RECORD is (H-3402). Both
+  setters append an event — `leader_set` and `self_triage_set`, under the
+  pseudo-ids `installation:leader` and `installation:self_triage`, carrying
+  actor, instant, `from`/`to` and the caller's asserted `supervised` flag —
+  where before they wrote `meta` alone and left zero events, so nothing could
+  say who lifted a guard or when. Re-asserting the standing value records
+  nothing. Going through `append` also fences these settings behind the
+  retired-generation check every other write path already sits behind.
+  `settingProvenance('leader' | 'self_triage')` reads the latest of those
+  events — actor, `writing_as`, instant, `from`/`to` — and both `leader` and
+  `self-triage` print it as `set_by`, so reading a setting answers who set it;
+  it is null where the standing value never went through Helmo, which is
+  reported as unattributable rather than guessed at.
+  Hygiene then reports `self_triage_off` and `leader_named` for as long as
+  each state stands, naming the actor that set it, so the operator sees a
+  removed check on the dashboard instead of having to run the CLI. Both are
+  installation-level findings carrying no `ticket_id`, and
+  `hygiene-dispose` refuses them by name: they clear by restoring the rule or
+  clearing the leader, not by acknowledgement.
   Seat holds (H-558): `seatHolds`/`seat-check`
   reports each in_progress ticket in a name with the actor that claimed it —
   the claiming actor's `session` stamp is how rev's same-seat guard tells a

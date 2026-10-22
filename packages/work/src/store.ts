@@ -149,7 +149,24 @@ export interface UpdateResult {
 export const HYGIENE_CHECKS = [
   'stale_claim', 'done_without_evidence', 'phantom_block', 'aging_question',
   'spend_anomaly', 'priority_inversion', 'budget_pressure', 'silent_assignee',
-  'orphan_ticket', 'unseated_pool', 'awaiting_second_eyes', 'unaccounted_work',] as const;
+  'orphan_ticket', 'unseated_pool', 'awaiting_second_eyes', 'unaccounted_work',
+  'self_triage_off', 'leader_named',] as const;
+
+/** Installation-level settings are not a ticket, so their events are recorded
+ *  under a namespaced pseudo-id, as `issue:`, `ws:` and `test:` already are
+ *  (H-3402). Before this the two settings wrote only `meta`, and the record
+ *  could not say who named a leader or lifted the self-triage rule, or when. */
+const LEADER_RECORD = 'installation:leader';
+const SELF_TRIAGE_RECORD = 'installation:self_triage';
+
+export interface SettingProvenance {
+  actor: Actor;
+  /** What that caller stated itself as, in the words the findings use. */
+  writing_as: string;
+  at: string;
+  from: string | boolean | null;
+  to: string | boolean | null;
+}
 
 export interface HygieneFinding {
   check: (typeof HYGIENE_CHECKS)[number];
@@ -1448,24 +1465,35 @@ export class Store {
   }
 
   /** Name the leader, or clear it. No agent can name itself — the grant comes
-   *  from someone else. A supervised worker may name the first leader of a
-   *  store that has none; replacing or clearing a named leader takes an
-   *  attended session or a human. */
+   *  from someone else. A caller writing as a supervised worker may name the
+   *  first leader of a store that has none; replacing or clearing a named
+   *  leader needs a caller writing as an attended session or a human.
+   *
+   *  What that check verifies is the actor THIS CALL states: `supervised` reads
+   *  `kind` and the `session` stamp, both supplied by the caller, so the gate
+   *  binds this code path and not a boundary the store can enforce (H-3402,
+   *  ward's R2 on H-3401). Store access is write authority in Helmo; the record
+   *  below is what makes a grant answerable afterwards. */
   setLeaderActor(actor: Actor, name: string | null): string | null {
     validateActor(actor);
     const current = this.leaderActor();
     if (supervised(actor) && (name === null || (current !== null && current !== name))) {
-      throw new HelmoError(`leader_refused: a supervised worker cannot ${name === null ? 'clear' : `replace ${current} as`} the installation leader. An attended session or a human can. Nothing was written.`);
+      throw new HelmoError(`leader_refused: a caller writing as a supervised worker cannot ${name === null ? 'clear' : `replace ${current} as`} the installation leader. A caller writing as an attended session or a human can. Nothing was written.`);
     }
-    if (name === null) {
-      this.db.prepare("DELETE FROM meta WHERE key = 'leader_actor'").run();
-      return null;
+    if (name !== null) {
+      if (!name.trim() || name !== name.trim()) throw new HelmoError('leader --actor-name needs the exact agent name, with no surrounding whitespace.');
+      if (actor.kind === 'agent' && actor.name === name) {
+        throw new HelmoError(`leader_refused: ${name} cannot name itself leader; another seat or a human grants it. Nothing was written.`);
+      }
     }
-    if (!name.trim() || name !== name.trim()) throw new HelmoError('leader --actor-name needs the exact agent name, with no surrounding whitespace.');
-    if (actor.kind === 'agent' && actor.name === name) {
-      throw new HelmoError(`leader_refused: ${name} cannot name itself leader; another seat or a human grants it. Nothing was written.`);
-    }
-    this.db.prepare("INSERT INTO meta (key, value) VALUES ('leader_actor', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(name);
+    // Re-asserting the standing leader changes nothing; recording it would
+    // only pad the log the operator reads to find the grant that matters.
+    if (current === name) return name;
+    this.db.transaction(() => {
+      if (name === null) this.db.prepare("DELETE FROM meta WHERE key = 'leader_actor'").run();
+      else this.db.prepare("INSERT INTO meta (key, value) VALUES ('leader_actor', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(name);
+      this.append(now(), LEADER_RECORD, 'leader_set', actor, { from: current, to: name, supervised: supervised(actor) });
+    })();
     return name;
   }
 
@@ -1479,17 +1507,49 @@ export class Store {
     return row?.value !== 'off';
   }
 
+  /** Who last changed one of the two installation settings, and from what to
+   *  what (H-3402). Null when the standing value never went through Helmo — a
+   *  store older than this record, or a hand-written `meta` row — which is
+   *  reported as unattributable rather than guessed at. The actor is as that
+   *  caller stated itself; `setLeaderActor` says what that does and does not
+   *  verify. */
+  settingProvenance(which: 'leader' | 'self_triage'): SettingProvenance | null {
+    const row = this.db
+      .prepare('SELECT actor, ts, payload FROM events WHERE ticket_id = ? ORDER BY seq DESC LIMIT 1')
+      .get(which === 'leader' ? LEADER_RECORD : SELF_TRIAGE_RECORD) as { actor: string; ts: string; payload: string } | undefined;
+    if (!row) return null;
+    const payload = JSON.parse(row.payload) as { from: string | boolean | null; to: string | boolean | null };
+    const actor = JSON.parse(row.actor) as Actor;
+    // 'writing as': kind and the session stamp are the caller's own assertion,
+    // so this says who claimed to write, not who provably did.
+    const writing_as = actor.kind === 'human' ? 'a human' : supervised(actor) ? 'a supervised worker' : 'an attended session';
+    return { actor, writing_as, at: row.ts, from: payload.from, to: payload.to };
+  }
+
   /** Turn the self-triage rule on or off. Removing a check is the leader's
-   *  call: a human, an attended session or the named leader may change it; a
-   *  supervised worker that is not the leader cannot, so no loop lifts the
-   *  rule over its own filings. */
+   *  call: a caller writing as a human, an attended session or the named
+   *  leader may change it; one writing as a supervised worker that is not the
+   *  leader cannot, so an ordinary loop does not lift the rule over its own
+   *  filings.
+   *
+   *  As with `setLeaderActor`, the distinction is the actor this call states,
+   *  not one the store can verify, and `leaderActor()` itself can be set by a
+   *  caller writing as a supervised worker when no leader stands yet. So the
+   *  honest claim is about this code path; the event below and the
+   *  `self_triage_off` hygiene check are what keep a lifted guard visible
+   *  (H-3402). */
   setSelfTriage(actor: Actor, on: boolean): boolean {
     validateActor(actor);
     if (supervised(actor) && actor.name !== this.leaderActor()) {
-      throw new HelmoError(`self_triage_refused: a supervised worker other than the installation leader cannot turn the self-triage rule ${on ? 'on' : 'off'}. The leader, an attended session or a human can. Nothing was written.`);
+      throw new HelmoError(`self_triage_refused: a caller writing as a supervised worker other than the installation leader cannot turn the self-triage rule ${on ? 'on' : 'off'}. The leader, an attended session or a human can. Nothing was written.`);
     }
-    if (on) this.db.prepare("DELETE FROM meta WHERE key = 'self_triage'").run();
-    else this.db.prepare("INSERT INTO meta (key, value) VALUES ('self_triage', 'off') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+    const from = this.selfTriage();
+    if (from === on) return on;
+    this.db.transaction(() => {
+      if (on) this.db.prepare("DELETE FROM meta WHERE key = 'self_triage'").run();
+      else this.db.prepare("INSERT INTO meta (key, value) VALUES ('self_triage', 'off') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+      this.append(now(), SELF_TRIAGE_RECORD, 'self_triage_set', actor, { from, to: on, supervised: supervised(actor) });
+    })();
     return on;
   }
 
@@ -2390,6 +2450,36 @@ export class Store {
         check: 'awaiting_second_eyes',
         ticket_id: r.id,
         detail: `filed by ${creator}, reserved to ${r.assignee ?? 'the unassigned pool'}; untouched by anyone else since ${r.created_at}`,
+      });
+    }
+
+    // The two standing exemptions from that same second-eyes check, reported
+    // because nothing else showed them (H-3402). A named leader and a lifted
+    // self-triage rule lived in `meta` alone: the dashboard said nothing, and
+    // only `helmo-cli leader` / `helmo-cli self-triage` revealed either. Both
+    // are legitimate settings, so these read as disclosure and name the actor
+    // that set them — the composition ward flagged on H-3401 (one loop names
+    // a second leader, the leader then lifts the rule for everyone) leaves a
+    // trail here instead of none. Neither is disposable: each clears by
+    // restoring the rule or clearing the leader, which is the right end state
+    // for a check somebody removed.
+    const setBy = (which: 'leader' | 'self_triage'): string => {
+      const p = this.settingProvenance(which);
+      return p ? `set by ${p.actor.name}, writing as ${p.writing_as}, at ${p.at}`
+        : 'set before Helmo recorded these changes, by an actor the record cannot name';
+    };
+
+    if (!this.selfTriage()) {
+      findings.push({
+        check: 'self_triage_off',
+        detail: `the self-triage rule is off installation-wide (${setBy('self_triage')}) — every filer can claim its own findings, so no second seat judges one before it is worked. 'helmo-cli self-triage --on' restores it`,
+      });
+    }
+    const namedLeader = this.leaderActor();
+    if (namedLeader) {
+      findings.push({
+        check: 'leader_named',
+        detail: `${namedLeader} is this installation's leader (${setBy('leader')}) — its own filings skip the self-triage rule, and it is the one agent that can turn that rule off for every filer. 'helmo-cli leader --off' clears it`,
       });
     }
 
@@ -3885,6 +3975,9 @@ export class Store {
     validateActor(actor);
     if (!(HYGIENE_CHECKS as readonly string[]).includes(input.check)) {
       throw new HelmoError(`Unknown hygiene check "${input.check}". Checks: ${HYGIENE_CHECKS.join(', ')}.`);
+    }
+    if (input.check === 'self_triage_off' || input.check === 'leader_named') {
+      throw new HelmoError(`'${input.check}' is not a finding on a ticket — it reports an installation setting, and it clears by changing the setting: 'helmo-cli ${input.check === 'self_triage_off' ? 'self-triage --on' : 'leader --off'}'. Nothing was written.`);
     }
     if (!input.reason?.trim()) {
       throw new HelmoError('reason is required on hygiene-dispose: say why this finding is dealt with, for the next sweep to read.');

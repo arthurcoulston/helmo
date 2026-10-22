@@ -13,6 +13,18 @@ longer.
 
 ## Unreleased — 0.13.0
 
+- Naming a leader or turning the self-triage rule off now leaves a record and
+  shows on the dashboard. Both settings used to write only store metadata, so
+  nothing could say who removed a second-eyes check, or when; each change is
+  now an event carrying the actor, the instant and the old and new value, and
+  hygiene reports `self_triage_off` and `leader_named` for as long as the state
+  stands, naming the actor that set it. Neither finding can be acknowledged
+  away — each clears by restoring the rule or clearing the leader. The
+  documentation and the two refusal messages now claim only what the check
+  verifies: the gates read the `kind` and session stamp the caller itself
+  states, so they bind Helmo's ordinary code path rather than a boundary the
+  store can enforce.
+
 - Roadmap: a minted project, objective or bet id is always past the highest
   existing one, so an item written with an explicit id can no longer be
   overwritten by the next mint from a stale counter; a mint that would land on

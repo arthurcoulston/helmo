@@ -308,7 +308,7 @@ export function buildServer(store: Store, envActor: Actor | null, server = new M
     'helmo_hygiene',
     {
       description:
-        `Run Helmo's deterministic record checks. Returns current findings only; it changes nothing and makes no judgment about them. Use this for cultivation sweeps instead of reading the store directly. Most live-ticket findings clear by acting on the ticket. A finding on a terminal ticket that has been examined and needs no further work — and a spend_anomaly you have accounted for on live work — is recorded with helmo_dispose_hygiene_finding, which is what stops the next sweep re-reporting it. Writing the same conclusion as a fresh note each sweep does not: the note is not read by this check, and the reading itself is metered onto the ticket.`,
+        `Run Helmo's deterministic record checks. Returns current findings only; it changes nothing and makes no judgment about them. Use this for cultivation sweeps instead of reading the store directly. Most live-ticket findings clear by acting on the ticket. A finding on a terminal ticket that has been examined and needs no further work — and a spend_anomaly you have accounted for on live work — is recorded with helmo_dispose_hygiene_finding, which is what stops the next sweep re-reporting it. Writing the same conclusion as a fresh note each sweep does not: the note is not read by this check, and the reading itself is metered onto the ticket. Two findings name no ticket and cannot be disposed at all: 'self_triage_off' and 'leader_named' report installation settings that lift the second-eyes check, and each clears only by restoring the rule or clearing the leader.`,
       inputSchema: strict({}),
     },
     async () => {

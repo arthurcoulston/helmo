@@ -44,6 +44,19 @@ describe('exact missing-claim recovery', () => {
       expect(() => s.inspectMissingClaim(id, worker.session!, 'rev:copy:456:2:456')).toThrow(/conflict/);
     } finally { s.close(); }
   });
+  it('refuses recovery while the session is executing another ticket', () => {
+    const { s, id, proof } = fixture();
+    try {
+      const inspected = s.inspectMissingClaim(id, worker.session!, worker.generation!);
+      const other = s.createTicket(planner, { title: 'Other useful work', body: 'Independent synthetic work.', workstream: 'fixture', type: 'build', assignee: 'builder', lane: 'copy' });
+      const next = { ...worker, generation: 'rev:copy:456:2:456' };
+      expect(s.launchClaim(next, 'fixture', 'builder', next.generation!, undefined, undefined, undefined, 'copy').ticket_id).toBe(other.id);
+      const input = { ...inspected, expected_worker_launch_id: next.generation!, proof };
+      const before = s.getTicket(id), events = s.getEvents(id);
+      expect(() => s.reconcileMissingClaim(runtime, input)).toThrow(/conflict/);
+      expect(s.getTicket(id)).toEqual(before); expect(s.getEvents(id)).toEqual(events);
+    } finally { s.close(); }
+  });
   for (const change of ['note', 'held', 'human', 'gated', 'lane', 'owner', 'blocked', 'workflow', 'concurrent', 'ended_otherwise']) it(`refuses ${change} without changing records`, () => {
     const { s, id, proof } = fixture();
     try {

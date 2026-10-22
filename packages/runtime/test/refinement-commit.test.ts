@@ -230,4 +230,73 @@ describe('refinement commit executor', () => {
     expect(await refinementCommitPass(options(down.request, gone))).toBe('failed');
     expect(down.calls[1]).toMatchObject({ action: 'failure', body: { retryable: true, diagnostic: expect.stringMatching(/git fetch failed/) } });
   });
+
+  // H-2190: the Worker's envelope can carry the project's library schema beside the directive.
+  const SCHEMA = 'clients/test-org/projects/test-project/library/schema.yaml';
+  const schemaText = 'schema: goodplumb-library-schema/1\nversion: 1\ntypes: {}\n';
+  const withSchema = (overrides: Record<string, unknown> = {}) =>
+    envelope(undefined, { files: [{ path: SCHEMA, text: schemaText, sha256: hash(schemaText) }], ...overrides });
+
+  it('commits the library schema beside the directive and proves both blobs (H-2190)', async () => {
+    const r = repos();
+    const h = harness([[200, withSchema()], [200, { state: 'committed' }]]);
+    expect(await refinementCommitPass(options(h.request, r))).toBe('committed');
+    const pushed = git(r.origin, 'rev-parse', `refs/heads/${BRANCH}`);
+    expect(git(r.origin, 'show', `${pushed}:${SCHEMA}`) + '\n').toBe(schemaText);
+    expect(git(r.origin, 'show', `${pushed}:${PATH}`) + '\n').toBe(envelope().markdown);
+    expect(git(r.origin, 'diff', '--name-only', `${pushed}^`, pushed).split('\n').sort()).toEqual([PATH, SCHEMA].sort());
+    const proof = (h.calls[1]!.body as { artifactProof: { schema: string; directive: string; trees: Record<string, string> } }).artifactProof;
+    expect(Buffer.from(proof.schema, 'base64').toString()).toBe(schemaText);
+    // root, clients, org, projects, project, library
+    expect(Object.keys(proof.trees)).toHaveLength(6);
+    for (const [id, bytes] of Object.entries(proof.trees)) expect(objectId('tree', Buffer.from(bytes, 'base64'))).toBe(id);
+    expect(git(r.origin, 'rev-parse', `${pushed}:clients/test-org/projects/test-project/library`)).toBeOneOf(Object.keys(proof.trees));
+  });
+
+  it('a claim without files proves no schema, as before (H-2190)', async () => {
+    const r = repos();
+    const h = harness([[200, envelope(undefined, { files: [] })], [200, { state: 'committed' }]]);
+    expect(await refinementCommitPass(options(h.request, r))).toBe('committed');
+    expect(h.calls[1]!.body.artifactProof).not.toHaveProperty('schema');
+  });
+
+  it('refuses any file but the project library schema, or words that miss their hash (H-2190)', () => {
+    expect(() => validateRefinement(withSchema())).not.toThrow();
+    for (const path of ['clients/test-org/projects/test-project/library/other.yaml', 'clients/other-org/projects/test-project/library/schema.yaml',
+      'booking/src/server.ts', 'clients/test-org/projects/test-project/library/../directive.md']) {
+      expect(() => validateRefinement(withSchema({ files: [{ path, text: schemaText, sha256: hash(schemaText) }] })), path).toThrow(/library schema/);
+    }
+    expect(() => validateRefinement(withSchema({ files: [{ path: SCHEMA, text: 'tampered', sha256: hash(schemaText) }] }))).toThrow(/sha256/);
+    const one = { path: SCHEMA, text: schemaText, sha256: hash(schemaText) };
+    expect(() => validateRefinement(withSchema({ files: [one, one] }))).toThrow(/one library schema/);
+    expect(() => validateRefinement(withSchema({ files: 'x' }))).toThrow(/one library schema/);
+  });
+
+  it('keeps the schema path, never its words, across a refused result (H-2190)', async () => {
+    const r = repos();
+    const h = harness([[200, withSchema()], [422, { error: 'commit not reachable' }], [200, {}], [200, { state: 'committed' }]]);
+    const o = options(h.request, r);
+    expect(await refinementCommitPass(o)).toBe('pending');
+    const state = readFileSync(r.stateFile, 'utf8');
+    expect(state).not.toContain('goodplumb-library-schema');
+    expect(JSON.parse(state)).toMatchObject({ schemaPath: SCHEMA });
+    expect(await refinementCommitPass(o)).toBe('committed');
+    expect(Buffer.from((h.calls[3]!.body as { artifactProof: { schema: string } }).artifactProof.schema, 'base64').toString()).toBe(schemaText);
+  });
+
+  it('reuses an earlier pushed branch only when it holds the same directive and schema (H-2190)', async () => {
+    const r = repos();
+    const first = harness([[200, withSchema()], [503, { error: 'resolver down' }]]);
+    await expect(refinementCommitPass(options(first.request, r))).rejects.toThrow(/503/);
+    const pushed = git(r.origin, 'rev-parse', `refs/heads/${BRANCH}`);
+    execFileSync('rm', ['-f', r.stateFile]);
+    const replay = harness([[200, withSchema()], [200, { state: 'committed' }]]);
+    expect(await refinementCommitPass(options(replay.request, r))).toBe('committed');
+    expect(replay.calls[1]!.body.artifactRef).toBe(`goodplumb@${pushed}`);
+    execFileSync('rm', ['-f', r.stateFile]);
+    const other = 'schema: goodplumb-library-schema/1\nversion: 2\ntypes: {}\n';
+    const changed = harness([[200, withSchema({ files: [{ path: SCHEMA, text: other, sha256: hash(other) }] })], [200, { state: 'failed' }]]);
+    expect(await refinementCommitPass(options(changed.request, r))).toBe('failed');
+    expect(changed.calls[1]!.body).toMatchObject({ retryable: false, diagnostic: expect.stringMatching(/other than these words/) });
+  });
 });

@@ -13,6 +13,12 @@ longer.
 
 ## Unreleased — 0.13.0
 
+- Runtime's refinement commit executor commits the project's
+  `library/schema.yaml` beside the directive when the claim carries it, and
+  proves its blob and trees to the Worker. A claim may carry only that one
+  file, with words matching their sha256; a pushed branch is reused only when
+  both files match. Claims without files commit exactly as before.
+
 - Overview adds Roadmap now: visible Active, Planned and Proposed counts,
   recorded At risk and Off track initiatives with their reasons and record
   links, and an explicit count of initiatives whose health is not recorded.

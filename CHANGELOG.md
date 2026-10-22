@@ -13,6 +13,11 @@ longer.
 
 ## Unreleased — 0.13.0
 
+- Roadmap: a minted project, objective or bet id is always past the highest
+  existing one, so an item written with an explicit id can no longer be
+  overwritten by the next mint from a stale counter; a mint that would land on
+  an existing id refuses.
+
 - Overview adds Roadmap now: visible Active, Planned and Proposed counts,
   recorded At risk and Off track initiatives with their reasons and record
   links, and an explicit count of initiatives whose health is not recorded.

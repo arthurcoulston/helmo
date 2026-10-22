@@ -615,6 +615,37 @@ describe('charter projection and actuals', () => {
     expect(() => store.setCharterItem(mason, { shape: 'bet', statement: 's', source: 'doc' })).toThrow(/stake/);
   });
 
+  it('a minted id never replaces an item written with an explicit id', () => {
+    // H-2220: explicit ids never advanced the counter, so the next mint handed
+    // out OBJ-2 while OBJ-1..OBJ-6 existed and silently overwrote it.
+    for (let n = 1; n <= 6; n++) {
+      store.setCharterItem(mason, { shape: 'objective', id: `OBJ-${n}`, statement: `O${n}`, horizon: 'near', rank: n, source: 'doc' });
+    }
+    store.setCharterItem(mason, { shape: 'bet', id: 'BET-4', statement: 'b', stake: 's', falsifier: 'f', source: 'doc' });
+    const before = store.listObjectives().map((o) => [o.id, o.statement, o.rank]);
+    const minted = store.setCharterItem(mason, { shape: 'objective', statement: 'new', horizon: 'near', rank: 7, source: 'doc' });
+    expect(minted.id).toBe('OBJ-7');
+    expect(store.listObjectives().filter((o) => o.id !== 'OBJ-7').map((o) => [o.id, o.statement, o.rank])).toEqual(before);
+    expect(store.setCharterItem(mason, { shape: 'bet', statement: 'b2', stake: 's', falsifier: 'f', source: 'doc' }).id).toBe('BET-5');
+    expect(store.setCharterItem(mason, { shape: 'objective', statement: 'next', horizon: 'near', rank: 8, source: 'doc' }).id).toBe('OBJ-8');
+  });
+
+  it('a stale counter in an existing store mints past the highest id instead of overwriting', () => {
+    const o = store.setCharterItem(mason, { shape: 'objective', statement: 'first', horizon: 'near', rank: 1, source: 'doc' });
+    store.setCharterItem(mason, { shape: 'objective', id: 'OBJ-2', statement: 'second', horizon: 'near', rank: 2, source: 'doc' });
+    store.createProject(mason, { title: 'one' });
+    store.close();
+    // A store as found in the field: the counters point at live ids.
+    const raw = new Database(join(dir, 'test.db'));
+    raw.prepare("UPDATE meta SET value = '1' WHERE key IN ('next_OBJ', 'next_R')").run();
+    raw.close();
+    store = new Store(join(dir, 'test.db'));
+    expect(store.setCharterItem(mason, { shape: 'objective', statement: 'third', horizon: 'near', rank: 3, source: 'doc' }).id).toBe('OBJ-3');
+    expect(store.createProject(mason, { title: 'two' }).id).toBe('R-2');
+    expect(store.listObjectives().find((x) => x.id === o.id)!.statement).toBe('first');
+    expect(store.listObjectives().find((x) => x.id === 'OBJ-2')!.statement).toBe('second');
+  });
+
   it('actuals are absolute rollups', () => {
     const p = store.createProject(mason, { title: 'T' });
     store.recordActual(bosun, { project_id: p.id, actual_usd: 12.5, note: '3 tickets tagged r-1' });

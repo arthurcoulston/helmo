@@ -134,7 +134,8 @@ console.error('synthetic-api-key');
   it('reports unknown usage if the deadline kills an active session', async () => {
     fakeClaude(`setInterval(()=>{},1000)`);
     const result = await runSession(g, loop, 'prompt', api.model, choice({ timeout_seconds: 0.1 }));
-    expect(result).toMatchObject({ rc: 78, cls: 'apparatus' });
+    // Retryable under the failure cap, not a fail-closed apparatus fault (H-1773).
+    expect(result).toMatchObject({ rc: 1, cls: 'failure' });
     expect(result.outputTail).toMatch(/usage is unknown/);
     expect(result.cost_usd).toBeUndefined();
   });
@@ -170,17 +171,22 @@ describe('API capacity is independent of subscription telemetry', () => {
 
 
 describe('allocation guard at native dispatch', () => {
-  function allocated(): RunChoice {
+  function allocated(timeout_seconds = 30): RunChoice {
     const file = join(home, 'allocation.json');
     const stop_at = '2099-01-01T00:00:00Z';
     const plan = JSON.stringify({ version: 1, id: 'native-test', consumer: loop.name, provider: api.provider,
       helper_sha256: createHash('sha256').update(api.config!.api_key_helper as string).digest('hex'),
       stop_at, reserve_usd: 150, stop_estimate_usd: 25, estimate_multiplier: 5,
-      max_budget_usd: 2, max_turns: 8, timeout_seconds: 30 });
+      max_budget_usd: 2, max_turns: 8, timeout_seconds });
     writeFileSync(file, plan, { mode: 0o600 });
     writeFileSync(join(home, 'runs.jsonl'), JSON.stringify({ kind: 'allocation', sha256: createHash('sha256').update(plan).digest('hex') })+'\n', { mode: 0o600 });
-    return choice({ allocation_file: file, stop_at });
+    return choice({ allocation_file: file, stop_at, timeout_seconds });
   }
+  it('fails closed when the deadline kills a session holding a reservation (H-1773)', async () => {
+    const c = allocated(0.1); fakeClaude(`setInterval(()=>{},1000)`);
+    expect(await runSession(g, loop, 'prompt', api.model, c)).toMatchObject({ rc: 78, cls: 'apparatus' });
+    expect((await runSession(g, loop, 'prompt', api.model, c)).outputTail).toMatch(/admission refused/);
+  });
   it('settles a native receipt and carries accumulation into the next launch', async () => {
     const c = allocated();
     fakeClaude("console.log(JSON.stringify({total_cost_usd:25,result:'ok'}))");

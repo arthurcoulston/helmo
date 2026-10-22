@@ -1679,7 +1679,10 @@ follow a module imported dynamically much later.
   turns, not every background HTTP request. Rev terminates the session process
   group at the earlier of `timeout_seconds` and `stop_at`, escalating TERM to
   KILL after one second. Interrupted usage is unknown, recorded as `?`, and
-  needs reconciliation before another allocation. Provider-side spend limits,
+  needs reconciliation before another allocation. A deadline-killed session
+  did start, so it is a retryable `failure` that keeps its claim, not an
+  apparatus halt; with an `allocation_file` it still fails closed, because its
+  reservation is held. Provider-side spend limits,
   aggregate budgets and credential expiry remain the operator's responsibility.
   Optional `allocation_file` enforces a frozen, durable per-consumer allocation
   immediately before dispatch, across restarts. Unknown usage keeps its reservation

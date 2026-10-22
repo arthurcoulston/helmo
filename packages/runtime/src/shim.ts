@@ -414,7 +414,12 @@ async function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string, model: 
     res.stderr = redact(res.stderr);
     if (res.timedOut) {
       logTokens(l, model, undefined, undefined, 'claude', startedAt);
-      return { rc: 78, cls: 'apparatus', outputTail: 'Claude API session deadline reached; usage is unknown and requires reconciliation' };
+      // A session the deadline killed did start and may have done work, so it
+      // is not an apparatus fault: it retries under the failure cap and keeps
+      // its claim. A held allocation reservation still fails closed, because
+      // no further run is admitted until that usage is reconciled.
+      if (admission) return { rc: 78, cls: 'apparatus', outputTail: 'Claude API session deadline reached; usage is unknown and the reservation is held for reconciliation' };
+      return { rc: 1, cls: 'failure', outputTail: `Claude API session deadline reached after ${api!.timeout_seconds}s; usage is unknown and requires reconciliation` };
     }
     const claudeUnrunnable = unrunnable(res, groupFile);
     if (claudeUnrunnable !== null) return {

@@ -3715,7 +3715,10 @@ export class Store {
       const seq = this.append(ts, t.id, 'updated', actor, payload);
       this.applyUpdated(ts, t.id, payload, seq);
       const after = this.getTicket(t.id);
-      if (after.status !== 'in_progress' || (diffs['assignee'] && t.status === 'in_progress')) {
+      // Repeating an owner's checkpoint emits a same-value assignee diff.
+      // Only a real owner change or explicit handoff ends that execution.
+      if (after.status !== 'in_progress' || (t.status === 'in_progress'
+          && (after.assignee !== t.assignee || input.handoff_to !== undefined))) {
         this.endExecution(t.id, input.handoff_to !== undefined ? 'handoff' : `status:${after.status}`, ts);
       }
       if (after.status === 'in_progress' && t.status !== 'in_progress' && actor.generation && actor.session) {

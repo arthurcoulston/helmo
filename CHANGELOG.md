@@ -13,6 +13,11 @@ longer.
 
 ## Unreleased — 0.13.0
 
+- Runtime treats a Claude session ended by a signal (or reported by a wrapping
+  shell as exit 143 or 137) before it wrote its JSON result as an interrupted
+  failure under the retry cap, not an apparatus fault that blocks the loop: the
+  session started and may already have done work.
+
 - Opted-in refinement preparation now produces and verifies the voice-agent
   binding for one prepared meeting. The supervisor's existing intake poll runs
   it only with `refinement_preparation_enabled = true` and all five explicit

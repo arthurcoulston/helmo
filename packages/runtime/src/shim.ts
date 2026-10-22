@@ -271,6 +271,10 @@ export function endSessionGroup(pid: number | undefined): void {
 function sessionArgv(cmd: string, args: string[], groupFile?: string): [string, string[]] {
   return groupFile ? ['/bin/sh', ['-c', 'echo $$ > "$0" && exec "$@"', groupFile, cmd, ...args]] : [cmd, args];
 }
+/** The signal that ended a session, whether it reached the CLI directly or a
+ *  wrapping shell reported it as 128+n (143 SIGTERM, 137 SIGKILL). */
+export const interruptedBy = (res: { signal: NodeJS.Signals | null; status: number | null }): string | null =>
+  res.signal ?? (res.status === 143 ? 'SIGTERM' : res.status === 137 ? 'SIGKILL' : null);
 const unrunnable = (res: { error?: Error; status: number | null; stderr?: string | null }, groupFile?: string): string | null =>
   res.error ? res.error.message : groupFile && (res.status === 126 || res.status === 127) ? (res.stderr ?? '').trim().slice(0, 300) : null;
 
@@ -401,6 +405,12 @@ async function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string, model: 
       }
     } catch (e) {
       logTokens(l, model, tokens, cost, 'claude', startedAt);
+      // `--output-format json` writes only at exit, so a session group ended
+      // mid-turn leaves no JSON. It started and may have done work, so like
+      // the deadline kill (H-1773) it is a failure under the retry cap, never
+      // an apparatus fault that blocks the loop and says it never started (H-2071).
+      const interrupted = interruptedBy(res);
+      if (interrupted) return { rc: 1, cls: 'failure', outputTail: `claude session interrupted by ${interrupted} before it wrote its result; it may already have done work\n${`${stdout}\n${res.stderr ?? ''}`.slice(-3500)}` };
       return { rc: 78, cls: 'apparatus', outputTail: `claude returned malformed or truncated JSON: ${String(e).slice(0, 500)}\n${stdout.slice(-3500)}` };
     }
     logTokens(l, model, tokens, cost, 'claude', startedAt);

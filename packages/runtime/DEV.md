@@ -573,8 +573,18 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   they run (H-387). Retention is capped at 128 MiB per stream: crossing that
   bound terminates and reports a resource failure, while launch errors retain
   their OS code, nonzero exits remain child failures, and malformed/truncated
-  wire output is named rather than mistaken for a clean run. Rev never retries
-  any of these automatically because the session may already have acted.
+  wire output is named rather than mistaken for a clean run. Rev retries none
+  of these automatically because the session may already have acted — except
+  the one case where that same fact argues the other way (H-2071).
+  `claude --output-format json` writes its result only at exit, so a session
+  group stopped mid-turn leaves no JSON and read as apparatus: the loop
+  blocked and the claim went back as if nothing had run. `interruptedBy()`
+  separates a signal — direct, or a wrapping shell's 143/137 — from genuine
+  malformation and makes it a `failure` under the retry cap, so the claim
+  stays with the worker whose session may already have done the work.
+  Truncation with no signal is still apparatus. codex and mock never had this:
+  neither parses one JSON blob, so a signal there already reaches
+  `res.status ?? 1` and classes as a failure.
   **Every session is its own process group** (`SESSION_GROUP`, H-467). Without
   it the agent CLI shares the group of the loop and the supervisor above it, so
   anything that signals that group — launchd stopping the job, systemd killing

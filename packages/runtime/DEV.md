@@ -1802,6 +1802,25 @@ identical 185 specifiers from all 37 of them — the case is proven by
 front of it, which the old scan passed and the new one refuses. What it still
 cannot see is a specifier assembled at runtime, and the inside of a template
 literal's `${...}`.
+# Recover a ticket stranded by a repeated owner checkpoint
+
+Before H-1646 an owner repeating `status: in_progress` retired its own
+generation and dropped its claim while the ticket stayed in_progress, so no
+later launch could resume it. `inspect-missing-claim|reconcile-missing-claim
+--worker NAME --record FILE --installation NAME` recovers exactly that strand.
+The first record names `ticket_id`, `session` and the old `generation`;
+inspection prints Work's comparison record, which is saved and supplied to
+reconciliation. Neither changes worker controls.
+
+Runtime refuses unless the worker is a registered journaled pool worker, live
+and idle with no halt or recovery control, the original driver pid is gone,
+the launch journal holds that exact completed claimed launch with a clean
+historical run-end, every dispatched session group is absent and no launch is
+unsettled. Two evidence snapshots surround Work's read-only check, and the
+original receipt scope must still match the worker's roster scope. Work then
+reopens the ticket atomically (see Work DEV.md); it creates no claim and never
+revives the old generation. Verify through the worker's next normal launch.
+
 # Recover one diagnosed runtime failure
 
 `recover-runtime <exact worker> --record <JSON file> --installation <name>`

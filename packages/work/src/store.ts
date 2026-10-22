@@ -1227,6 +1227,66 @@ export class Store {
     return receipt;
   }
 
+  /** Read-only eligibility for the specific pre-fix same-owner checkpoint
+   * defect (H-1646). No arbitrary abandoned ticket or ended generation qualifies. */
+  inspectMissingClaim(ticketId: string, session: string, generation: string) {
+    const conflict = () => { throw new HelmoError('missing_claim_repair conflict: exact checkpoint strand required; nothing was written.'); };
+    if (!/^rev:[a-zA-Z0-9_-]+$/.test(session) || !generation.startsWith(`${session}:`)) conflict();
+    const t = this.getTicket(ticketId);
+    if (t.status !== 'in_progress' || this.executionClaim(t.id) || t.workflow_attempt_id || t.capacity_hold || t.needs_human
+        || (t.not_before && t.not_before > now()) || this.getDeps(t.id).outgoing.some(d => d.type === 'blocks' && !['done', 'cancelled'].includes(this.getTicket(d.to_id).status))) conflict();
+    const receiptRow = this.db.prepare('SELECT launch_id, claim FROM launch_claims WHERE ticket_id = ? ORDER BY rowid DESC LIMIT 1').get(t.id) as { launch_id: string; claim: string } | undefined;
+    if (!receiptRow || receiptRow.launch_id !== generation) conflict();
+    const receipt = JSON.parse(receiptRow!.claim) as { scope: { session: string; assignee: string; lane?: string; workstream: string; project: string | null; tickets?: string[]; exclude_tickets?: string[] } };
+    const scope = receipt.scope;
+    if (scope.session !== session || scope.assignee !== t.assignee || (scope.lane ?? null) !== t.lane
+        || (scope.project !== null && scope.project !== t.project) || (scope.tickets && !scope.tickets.includes(t.id)) || scope.exclude_tickets?.includes(t.id)) conflict();
+    const retired = this.db.prepare('SELECT generation, reason FROM retired_generations WHERE ticket_id = ? ORDER BY rowid DESC LIMIT 1').get(t.id) as { generation: string; reason: string } | undefined;
+    if (retired?.generation !== generation || retired.reason !== 'status:in_progress') conflict();
+    const checkpoint = this.db.prepare(`SELECT actor, payload FROM events WHERE ticket_id = ? AND event_type = 'updated'
+      AND json_extract(payload, '$.diffs.status.to') = 'in_progress' ORDER BY seq DESC LIMIT 1`).get(t.id) as { actor: string; payload: string } | undefined;
+    if (!checkpoint) conflict();
+    const owner = JSON.parse(checkpoint!.actor) as Actor;
+    const diffs = (JSON.parse(checkpoint!.payload) as { diffs: Record<string, { from: unknown; to: unknown }> }).diffs;
+    if (owner.session !== session || owner.generation !== generation || owner.name !== t.assignee
+        || diffs.status?.from !== 'in_progress' || diffs.assignee?.from !== t.assignee || diffs.assignee?.to !== t.assignee
+        || this.claimActor(t.id)?.generation !== generation) conflict();
+    // A worker executing another ticket must finish first. A fresh launch
+    // between inspection and recovery also invalidates the operation token.
+    if (this.db.prepare('SELECT 1 FROM execution_claims WHERE session = ?').get(session)) conflict();
+    const latest = this.db.prepare("SELECT launch_id FROM launch_claims WHERE json_extract(claim, '$.scope.session') = ? ORDER BY rowid DESC LIMIT 1").get(session) as { launch_id: string } | undefined;
+    return { ticket_id: t.id, session, generation, expected_updated_at: t.updated_at,
+      expected_event_seq: (this.db.prepare('SELECT MAX(seq) AS seq FROM events WHERE ticket_id = ?').get(t.id) as { seq: number }).seq,
+      expected_worker_launch_id: latest!.launch_id, scope };
+  }
+
+  /** Runtime proves the historical session ended. Only reopen the exact
+   * missing-claim defect; keep the retirement and all product gates. */
+  reconcileMissingClaim(actor: Actor, input: {
+    ticket_id: string; session: string; generation: string; expected_updated_at: string; expected_event_seq: number; expected_worker_launch_id: string;
+    proof: { worker: string; observed_at: string; completed_at: string; run_end_at: string; idle: string; snapshot: string };
+  }): Ticket {
+    validateActor(actor);
+    if (actor.name !== 'rev' || actor.kind !== 'agent' || actor.generation || actor.session) throw new HelmoError('missing_claim_repair requires the runtime actor.');
+    const p = input.proof;
+    if (!p || input.session !== `rev:${p.worker}` || !p.idle?.trim() || !/^[a-f0-9]{64}$/.test(p.snapshot)) throw new HelmoError('missing_claim_repair requires exact ended-owner and idle evidence.');
+    const times = [p.completed_at, p.run_end_at, p.observed_at].map(Date.parse);
+    if (times.some(t => !Number.isFinite(t)) || times[0]! > times[1]! || times[1]! > times[2]!
+        || times[2]! > Date.now() || Date.now() - times[2]! > 30_000) throw new HelmoError('missing_claim_repair evidence is stale or inconsistent.');
+    return this.db.transaction(() => {
+      const current = this.inspectMissingClaim(input.ticket_id, input.session, input.generation);
+      if (current.expected_updated_at !== input.expected_updated_at || current.expected_event_seq !== input.expected_event_seq
+          || current.expected_worker_launch_id !== input.expected_worker_launch_id) throw new HelmoError('missing_claim_repair conflict: ticket or worker launch changed; nothing was written.');
+      const ts = now();
+      const payload = { diffs: { status: { from: 'in_progress', to: 'open' } },
+        note: `Runtime reopened the exact missing-claim checkpoint strand from ${input.generation}; reservation retained, retired generation remains fenced. A fresh normal supervised launch must claim it.`,
+        missing_claim: { session: input.session, generation: input.generation, proof: p } };
+      const seq = this.append(ts, input.ticket_id, 'updated', actor, payload);
+      this.applyUpdated(ts, input.ticket_id, payload, seq);
+      return this.getTicket(input.ticket_id);
+    }).immediate();
+  }
+
   private executionClaim(ticketId: string): { session: string; generation: string } | undefined {
     return this.db.prepare('SELECT session, generation FROM execution_claims WHERE ticket_id = ?').get(ticketId) as
       { session: string; generation: string } | undefined;

@@ -9,7 +9,8 @@ import { sessionSpec } from './shim.js';
 import { LoopConfig } from './types.js';
 import { pollUsage, readCodexUsage, readUsage, refreshCodexUsage, usageLine, usagePath } from './usage.js';
 import { selectRun } from './routing.js';
-import { eligibleSeatBacklog, selfTriageWork, unavailableSeatWork, unservedLaneWork } from './helm.js';
+import { eligibleSeatBacklog, inspectMissingClaim, reconcileMissingClaim, selfTriageWork, unavailableSeatWork, unservedLaneWork } from './helm.js';
+import { missingClaimEvidence, type MissingClaimRequest } from './missing-claim.js';
 import { runLoop } from './loop.js';
 import { serviceFile, serviceInstall, serviceStart, serviceStatusLine, serviceUninstall, stalePinnedService } from './service.js';
 import { assertInstallation, requireTarget, target, targetLine } from './install.js';
@@ -152,6 +153,8 @@ const COMMAND_HELP: Record<string, string> = {
   stop: `usage: ${commandName} stop [<loop|role> [--worker]]`,
   resume: `usage: ${commandName} resume <loop|role> [--worker]`,
   'recover-runtime': `usage: ${commandName} recover-runtime <exact worker> --record <JSON file> --installation <name>`,
+  'inspect-missing-claim': `usage: ${commandName} inspect-missing-claim --worker <exact worker> --record <JSON file> --installation <name>`,
+  'reconcile-missing-claim': `usage: ${commandName} reconcile-missing-claim --worker <exact worker> --record <JSON file> --installation <name>`,
   reload: `usage: ${commandName} reload <loop|role> [--worker]`,
   service: `usage: ${commandName} service <install|uninstall|start|status>`,
   install: `usage: ${commandName} install remove [--confirm]`,
@@ -576,6 +579,32 @@ switch (cmd) {
     }
     break;
   }
+  // Recover a ticket stranded by the pre-fix same-owner in_progress
+  // checkpoint (H-1646). Runtime proves the historical session ended and the
+  // worker is idle; Work alone checks eligibility and reopens it atomically.
+  case 'inspect-missing-claim':
+  case 'reconcile-missing-claim': {
+    const allowed = new Set(['--worker', '--record']);
+    if (rest.length !== 4 || rest.some((x, i) => i % 2 === 0 && !allowed.has(x)) || new Set([rest[0], rest[2]]).size !== 2) throw new Error(COMMAND_HELP[cmd]);
+    if (!requestedInstall) throw new Error('An explicit installation is required for missing-claim repair.');
+    const name = flag('worker'), file = flag('record');
+    if (!name || !file || !loops[name]) throw new Error('Exact registered worker and record required.');
+    const l = loops[name]!;
+    if (l.peer_sessions.length <= 1) throw new Error('Missing-claim recovery requires a journaled pool worker.');
+    const installation = requireTarget('missing claim repair').label;
+    const request = JSON.parse(readFileSync(file, 'utf8')) as MissingClaimRequest;
+    const first = missingClaimEvidence(name, request);
+    const inspected = inspectMissingClaim(g, request.ticket_id, request.session, request.generation, installation) as MissingClaimRequest & { scope: { assignee: string; workstream: string; project: string | null; lane?: string; tickets?: string[]; exclude_tickets?: string[] } };
+    if (inspected.scope.assignee !== l.seat || inspected.scope.workstream !== l.workstream
+        || (inspected.scope.project ?? undefined) !== l.project || inspected.scope.lane !== l.lane
+        || JSON.stringify(inspected.scope.tickets) !== JSON.stringify(l.tickets && [...l.tickets].sort())
+        || JSON.stringify(inspected.scope.exclude_tickets) !== JSON.stringify(l.exclude_tickets && [...l.exclude_tickets].sort())) throw new Error('Worker scope changed; repair refused.');
+    const second = missingClaimEvidence(name, request);
+    if (first.snapshot !== second.snapshot) throw new Error('Worker evidence changed; repair refused.');
+    if (cmd === 'inspect-missing-claim') console.log(JSON.stringify(inspected));
+    else console.log(JSON.stringify(reconcileMissingClaim(g, request.ticket_id, { ...request, proof: { ...second.proof, snapshot: second.snapshot } }, installation)));
+    break;
+  }
   // Reload one worker's roster without a fleet drain and without touching a
   // halt (H-891). `resume` cannot do this safely: it clears STOP/HOLD/BLOCKED
   // unconditionally, so a hold that someone else set, even mid-operation,
@@ -884,6 +913,8 @@ switch (cmd) {
                            role reaches every worker of its seat, --worker only that loop
   resume <loop|role>       clear STOP/HOLD/BLOCKED; a running supervisor picks the loop back up
   recover-runtime <worker> queue one exact runtime-trip recovery for the supervisor; preserves independent controls
+  inspect-missing-claim|reconcile-missing-claim --worker <exact worker> --record <JSON file> --installation <name>
+                           reopen one ticket stranded by the pre-fix same-owner checkpoint (H-1646)
   reload <loop|role>       respawn after the in-flight iteration on the current roster; never
                            clears a halt (a STOP/HOLD/BLOCKED present then keeps it down)
   pace <loop|role> <v>     velocity: fraction (0,1], 'park', or 'clear'

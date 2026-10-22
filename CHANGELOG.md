@@ -13,6 +13,12 @@ longer.
 
 ## Unreleased — 0.13.0
 
+- An owner repeating `status: in_progress` keeps its execution claim instead
+  of retiring its own generation and stranding the ticket; handoff, release
+  and a real owner change still retire the writer. Runtime's
+  `inspect-missing-claim` / `reconcile-missing-claim` reopen a ticket stranded
+  that way, refusing held, gated, workflow-bound, live, moved or changed state.
+
 - Overview adds Roadmap now: visible Active, Planned and Proposed counts,
   recorded At risk and Off track initiatives with their reasons and record
   links, and an explicit count of initiatives whose health is not recorded.

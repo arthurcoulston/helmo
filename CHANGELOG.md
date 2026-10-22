@@ -13,6 +13,12 @@ longer.
 
 ## Unreleased — 0.13.0
 
+- Runtime's refinement commit executor commits the project's
+  `library/schema.yaml` beside the directive when the claim carries it, and
+  proves its blob and trees to the Worker. A claim may carry only that one
+  file, with words matching their sha256; a pushed branch is reused only when
+  both files match. Claims without files commit exactly as before.
+
 - Runtime treats a Claude session ended by a signal (or reported by a wrapping
   shell as exit 143 or 137) before it wrote its JSON result as an interrupted
   failure under the retry cap, not an apparatus fault that blocks the loop: the

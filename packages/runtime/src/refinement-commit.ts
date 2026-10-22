@@ -23,12 +23,18 @@ export interface RefinementEnvelope {
   identity: string; version: number; attemptId: string; leaseExpiresAt: string; attemptCount: number;
   orgSlug: string; projectSlug: string; meetingId: string; baseVersionId: string;
   path: string; branch: string; markdown: string; markdownSha256: string; changeSummary: string;
+  /** H-2190: files committed beside the directive; only the project's library/schema.yaml. */
+  files?: RefinementFile[];
 }
+
+export interface RefinementFile { path: string; text: string; sha256: string }
 
 /** What survives a pass: identifiers and the pushed commit, never the words. */
 interface Pending {
   identity: string; version: number; attemptId: string;
   path: string; commit: string; markdownSha256: string; refusals: number;
+  /** H-2190: the schema path proven beside the directive, when the claim carried one. */
+  schemaPath?: string;
 }
 
 /** A claim this executor must never commit; reported as not retryable. */
@@ -56,6 +62,18 @@ export function validateRefinement(value: unknown): RefinementEnvelope {
     throw new Refused('claim branch is not this job\'s proposal branch');
   }
   if (sha256(e.markdown) !== e.markdownSha256) throw new Refused('claim markdown does not match markdownSha256');
+  // H-2190: the one file a claim may add beside the directive is that project's
+  // library schema, and only with words that match their hash.
+  if (e.files !== undefined) {
+    const schema = `clients/${e.orgSlug}/projects/${e.projectSlug}/library/schema.yaml`;
+    if (!Array.isArray(e.files) || e.files.length > 1) throw new Refused('claim files are not one library schema');
+    for (const f of e.files as Partial<RefinementFile>[]) {
+      if (!f || f.path !== schema) throw new Refused('claim file is not the project library schema');
+      if (typeof f.text !== 'string' || !f.text || !SHA256.test(f.sha256 ?? '') || sha256(f.text) !== f.sha256) {
+        throw new Refused('claim file does not match its sha256');
+      }
+    }
+  }
   return e as RefinementEnvelope;
 }
 
@@ -78,13 +96,13 @@ async function blobSha256(checkout: string, commit: string, path: string): Promi
   return sha256(await git(checkout, ['cat-file', 'blob', `${commit}:${path}`]));
 }
 
-/** The tree of `base` with only `path` set to `blob`, built in a private index. */
-async function treeWith(checkout: string, base: string, blob: string, path: string): Promise<string> {
+/** The tree of `base` with only the given paths set to their blobs, built in a private index. */
+async function treeWith(checkout: string, base: string, entries: { blob: string; path: string }[]): Promise<string> {
   const scratch = mkdtempSync(join(tmpdir(), 'rev-refinement-'));
   try {
     const env = { ...process.env, GIT_INDEX_FILE: join(scratch, 'index') };
     await git(checkout, ['read-tree', base], { env });
-    await git(checkout, ['update-index', '--add', '--cacheinfo', `100644,${blob},${path}`], { env });
+    for (const { blob, path } of entries) await git(checkout, ['update-index', '--add', '--cacheinfo', `100644,${blob},${path}`], { env });
     return await text(checkout, ['write-tree'], { env });
   } finally {
     rmSync(scratch, { recursive: true, force: true });
@@ -95,7 +113,9 @@ async function treeWith(checkout: string, base: string, blob: string, path: stri
 export async function commitRefinement(checkout: string, e: RefinementEnvelope): Promise<string> {
   await git(checkout, ['fetch', '--quiet', 'origin', 'refs/heads/main:refs/remotes/origin/main']);
   const base = await text(checkout, ['rev-parse', '--verify', 'refs/remotes/origin/main^{commit}']);
-  const blob = await text(checkout, ['hash-object', '-w', '--no-filters', '--stdin'], { input: Buffer.from(e.markdown, 'utf8') });
+  const write = (words: string) => text(checkout, ['hash-object', '-w', '--no-filters', '--stdin'], { input: Buffer.from(words, 'utf8') });
+  const entries = [{ blob: await write(e.markdown), path: e.path }];
+  for (const f of e.files ?? []) entries.push({ blob: await write(f.text), path: f.path });
   // A pushed branch from an earlier attempt is reused only if it is exactly one
   // commit on main's history that changes nothing but these words: descent alone
   // would still let a matching-named branch carry unrelated files into the proof.
@@ -106,12 +126,12 @@ export async function commitRefinement(checkout: string, e: RefinementEnvelope):
     const [, ...parents] = (await text(checkout, ['rev-list', '--parents', '-n', '1', existing])).split(' ');
     const parent = parents.length === 1 ? parents[0]! : '';
     const onMain = parent && await git(checkout, ['merge-base', '--is-ancestor', parent, base]).then(() => true, () => false);
-    if (!onMain || await text(checkout, ['rev-parse', `${existing}^{tree}`]) !== await treeWith(checkout, parent, blob, e.path)) {
+    if (!onMain || await text(checkout, ['rev-parse', `${existing}^{tree}`]) !== await treeWith(checkout, parent, entries)) {
       throw new Refused('the proposal branch already holds something other than these words on main');
     }
     return existing;
   }
-  const tree = await treeWith(checkout, base, blob, e.path);
+  const tree = await treeWith(checkout, base, entries);
   const summary = e.changeSummary.trim().slice(0, 2000);
   const message = `Propose the ${e.orgSlug}/${e.projectSlug} directive revision from meeting ${e.meetingId}\n\n`
     + (summary ? `${summary}\n\n` : '')
@@ -119,22 +139,28 @@ export async function commitRefinement(checkout: string, e: RefinementEnvelope):
     + 'Committed mechanically by the Rev supervisor; the branch is the proposal and is never merged here.\n';
   const commit = await text(checkout, ['commit-tree', tree, '-p', base, '-F', '-'], { input: message });
   if (await blobSha256(checkout, commit, e.path) !== e.markdownSha256) throw new Refused('the built commit does not hold the claimed words');
+  for (const f of e.files ?? []) if (await blobSha256(checkout, commit, f.path) !== f.sha256) throw new Refused('the built commit does not hold the claimed file');
   await git(checkout, ['push', '--quiet', 'origin', `${commit}:refs/heads/${e.branch}`]);
   return commit;
 }
 
-/** The Worker's proof: the raw commit, the directive blob and every tree on its path. */
-export async function refinementProof(checkout: string, commit: string, path: string) {
+/** The Worker's proof: the raw commit, the directive blob (and schema blob, H-2190) and every tree on their paths. */
+export async function refinementProof(checkout: string, commit: string, path: string, schemaPath?: string) {
   if (!COMMIT.test(commit)) throw new Error('refinement proof needs a full lowercase commit');
-  const parts = path.split('/').slice(0, -1);
+  const dirs = new Set(['']);
+  for (const file of schemaPath ? [path, schemaPath] : [path]) {
+    const parts = file.split('/').slice(0, -1);
+    parts.forEach((_, i) => dirs.add(parts.slice(0, i + 1).join('/')));
+  }
   const trees: Record<string, string> = {};
-  for (const dir of ['', ...parts.map((_, i) => parts.slice(0, i + 1).join('/'))]) {
+  for (const dir of dirs) {
     const oid = await text(checkout, ['rev-parse', dir ? `${commit}:${dir}` : `${commit}^{tree}`]);
     trees[oid] = (await git(checkout, ['cat-file', 'tree', oid])).toString('base64');
   }
   return {
     commit: (await git(checkout, ['cat-file', 'commit', commit])).toString('base64'),
     directive: (await git(checkout, ['cat-file', 'blob', `${commit}:${path}`])).toString('base64'),
+    ...(schemaPath ? { schema: (await git(checkout, ['cat-file', 'blob', `${commit}:${schemaPath}`])).toString('base64') } : {}),
     trees,
   };
 }
@@ -185,7 +211,8 @@ async function runPass(options: RefinementCommitOptions, seen: { claim?: number 
   try {
     const e = validateRefinement(candidate);
     const commit = await commitRefinement(options.checkout, e);
-    pending = { identity: e.identity, version: e.version, attemptId: e.attemptId, path: e.path, commit, markdownSha256: e.markdownSha256, refusals: 0 };
+    pending = { identity: e.identity, version: e.version, attemptId: e.attemptId, path: e.path, commit, markdownSha256: e.markdownSha256, refusals: 0,
+      ...(e.files?.length ? { schemaPath: e.files[0]!.path } : {}) };
   } catch (error) {
     if (candidate?.identity && Number.isInteger(candidate.version) && candidate.attemptId) {
       await post('failure', { identity: candidate.identity, version: candidate.version, attemptId: candidate.attemptId,
@@ -202,7 +229,7 @@ async function deliver(options: RefinementCommitOptions, post: (action: string, 
   pending: Pending): Promise<RefinementPassResult> {
   const owned = { identity: pending.identity, version: pending.version, attemptId: pending.attemptId };
   const response = await post('result', { ...owned, artifactRef: `goodplumb@${pending.commit}`, markdownSha256: pending.markdownSha256,
-    artifactProof: await refinementProof(options.checkout, pending.commit, pending.path) });
+    artifactProof: await refinementProof(options.checkout, pending.commit, pending.path, pending.schemaPath) });
   if (response.ok || response.status === 409) {
     rmSync(options.stateFile, { force: true });
     return response.ok ? 'committed' : 'superseded';

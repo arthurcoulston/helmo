@@ -682,9 +682,14 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   pushed without force, so the operator's checkout and main are never
   touched. A branch already pushed by an earlier attempt is reused only if it
   is one commit whose parent is on origin/main and whose tree is that
-  parent's with only the directive set to these words; anything else on a
-  matching name is refused, never overwritten. The result carries the raw commit, directive blob and
-  path trees. State under state/supervisor holds identifiers and the commit,
+  parent's with only these words set; anything else on a matching name is
+  refused, never overwritten. A claim may also carry `files`: at most one, and
+  only that project's `library/schema.yaml`, with words matching their own
+  sha256. It is committed in the same tree as the directive, a pushed branch is
+  reused only when both files match, and the built commit is checked to hold
+  both before the push. The result carries the raw commit, the
+  directive blob (and the schema blob when the claim carried one) and the trees
+  on their paths. State under state/supervisor holds identifiers and the commit,
   never the words; a 422 keeps the lease and retries, and the fifth hands the
   attempt back as retryable. Refused claims fail as not retryable; Git or
   network errors as retryable. Each non-idle pass is a `refinement-commit`

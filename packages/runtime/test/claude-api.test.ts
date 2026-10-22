@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, realpathSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { claudeApiConfig } from '../src/claude-api.js';
 import { loadRoster } from '../src/config.js';
 import { runSession, sessionSpec, spawnSession } from '../src/shim.js';
@@ -18,7 +19,7 @@ let loop: LoopConfig;
 let oldEnv: NodeJS.ProcessEnv;
 beforeEach(() => {
   oldEnv = { ...process.env };
-  home = mkdtempSync(join(tmpdir(), 'rev-api-test-'));
+  home = realpathSync(mkdtempSync(join(tmpdir(), 'rev-api-test-')));
   process.env.REV_HOME = home;
   process.env.PATH = `${home}:${oldEnv.PATH}`;
   writeFileSync(join(home, 'PROFILE.md'), 'test constitution');
@@ -164,5 +165,49 @@ describe('API capacity is independent of subscription telemetry', () => {
   it('the secondary capacity gate switches to API without requesting plan telemetry', () => {
     const result = capacityDecide({ choices: [{ choice: max, snapshot: usage.claude, refreshed: true }, { choice: api, snapshot: null, refreshed: false }], isLoopRun: true, staleIterations: 0, thresholds: { exhaustedPercent: 95, sharedReservePercent: 5, blockHorizonSeconds: 7200, exhaustionCeilingSeconds: 691200, staleGraceIterations: 6, staleWaitSeconds: 900 } });
     expect(result).toMatchObject({ act: 'switch', on: api });
+  });
+});
+
+
+describe('allocation guard at native dispatch', () => {
+  function allocated(): RunChoice {
+    const file = join(home, 'allocation.json');
+    const stop_at = '2099-01-01T00:00:00Z';
+    const plan = JSON.stringify({ version: 1, id: 'native-test', consumer: loop.name, provider: api.provider,
+      helper_sha256: createHash('sha256').update(api.config!.api_key_helper as string).digest('hex'),
+      stop_at, reserve_usd: 150, stop_estimate_usd: 25, estimate_multiplier: 5,
+      max_budget_usd: 2, max_turns: 8, timeout_seconds: 30 });
+    writeFileSync(file, plan, { mode: 0o600 });
+    writeFileSync(join(home, 'runs.jsonl'), JSON.stringify({ kind: 'allocation', sha256: createHash('sha256').update(plan).digest('hex') })+'\n', { mode: 0o600 });
+    return choice({ allocation_file: file, stop_at });
+  }
+  it('settles a native receipt and carries accumulation into the next launch', async () => {
+    const c = allocated();
+    fakeClaude("console.log(JSON.stringify({total_cost_usd:25,result:'ok'}))");
+    expect((await runSession(g, loop, 'prompt', api.model, c)).rc).toBe(0);
+    expect((await runSession(g, loop, 'prompt', api.model, c)).outputTail).toMatch(/admission refused/);
+    const entries = readFileSync(join(home, 'runs.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    expect(entries.map(e => e.kind)).toEqual(['allocation','reserve','settle']);
+    expect(entries[2].cost_usd).toBe(25);
+  });
+  it.each(['console.log("{}");', 'console.log("broken");', 'console.log(JSON.stringify({total_cost_usd:-1}));', 'process.kill(process.pid,"SIGTERM");'])('retains unknown usage and refuses the next launch: %s', async body => {
+    const c = allocated(); fakeClaude(body);
+    expect((await runSession(g, loop, 'prompt', api.model, c)).rc).toBe(78);
+    expect((await runSession(g, loop, 'prompt', api.model, c)).outputTail).toMatch(/admission refused/);
+    expect(readFileSync(join(home, 'runs.jsonl'), 'utf8').trim().split('\n')).toHaveLength(2);
+  });
+  it('missing allocation or ledger cannot start a funded CLI', async () => {
+    const c = allocated(); rmSync(join(home, 'runs.jsonl'));
+    fakeClaude("require('node:fs').writeFileSync('launched','yes')");
+    expect((await runSession(g, loop, 'prompt', api.model, c)).rc).toBe(78);
+    expect(existsSync(join(home, 'launched'))).toBe(false);
+  });
+  it('refuses an overlapping native dispatch while its first reservation is live', async () => {
+    const c = allocated();
+    fakeClaude("require('node:fs').writeFileSync('launched','yes');setTimeout(()=>console.log(JSON.stringify({total_cost_usd:1,result:'ok'})),200)");
+    const first = runSession(g, loop, 'prompt', api.model, c);
+    const second = await runSession(g, loop, 'prompt', api.model, c);
+    expect(second.outputTail).toMatch(/admission refused/);
+    expect((await first).rc).toBe(0);
   });
 });

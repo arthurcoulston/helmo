@@ -18,7 +18,8 @@ longer.
   `max_budget_usd`, `max_turns` and `timeout_seconds`. The session selects its
   key only through that helper, never falls back to a subscription login, is
   killed at its deadline, and is not parked or ranked by subscription bars.
-  Rosters without such a provider are unchanged.
+  An optional `allocation_file` adds durable, fsynced pre-launch reservations
+  that survive restarts. Rosters without such a provider are unchanged.
 
 - Overview adds Roadmap now: visible Active, Planned and Proposed counts,
   recorded At risk and Off track initiatives with their reasons and record

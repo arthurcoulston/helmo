@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { tokenLogPath } from './config.js';
 import { claudeApiConfig, claudeApiSettings, usesClaudeApi } from './claude-api.js';
+import { reserveApiRun, settleApiRun } from './api-allocation.js';
 import { recordCodexUsage } from './usage.js';
 import { loopActor } from './helm.js';
 import { GlobalConfig, LoopConfig, ModelPrice, RunChoice, Runtime, SessionResult } from './types.js';
@@ -400,6 +401,13 @@ async function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string, model: 
         ...extraArgs,
       ], groupFile);
     if (deadline !== undefined && deadline <= Date.now()) return { rc: 78, cls: 'apparatus', outputTail: 'Claude API session deadline has passed' };
+    let admission;
+    if (api?.allocation_file) {
+      try { admission = reserveApiRun(api.allocation_file, l.name, choice!.provider, api); }
+      catch { return { rc: 78, cls: 'apparatus', outputTail: 'Claude API allocation admission refused; inspect allocation receipts before resuming' }; }
+    }
+    // Receipt validation may take time; never dispatch past the absolute window.
+    if (deadline !== undefined && deadline <= Date.now()) return { rc: 78, cls: 'apparatus', outputTail: 'Claude API session deadline has passed; any reservation remains held' };
     const res = await spawnSession(command, args, { cwd: l.cwd, env: sessionEnv(l), timeoutMs: deadline === undefined ? undefined : deadline - Date.now() });
     endSessionGroup(res.pid);
     res.stdout = redact(res.stdout);
@@ -418,6 +426,15 @@ async function runClaude(g: GlobalConfig, l: LoopConfig, prompt: string, model: 
     };
     if (res.overflow) return { rc: 78, cls: 'apparatus', outputTail: `claude output resource limit: ${res.overflow} exceeded ${SESSION_OUTPUT_CAP} bytes` };
     const stdout = res.stdout ?? '';
+    if (admission) {
+      try {
+        const receipt = JSON.parse(stdout);
+        if (res.signal || typeof receipt?.total_cost_usd !== 'number' || !Number.isFinite(receipt.total_cost_usd) || receipt.total_cost_usd < 0) throw new Error('unknown usage');
+        settleApiRun(admission, receipt.total_cost_usd);
+      } catch {
+        return { rc: 78, cls: 'apparatus', outputTail: 'Claude API usage receipt missing, invalid or not durably settled; reservation retained for reconciliation' };
+      }
+    }
     let tokens: number | undefined, cost: number | undefined, tail = stdout, providerSessionId: string | undefined;
     try {
       const j = JSON.parse(stdout) as Record<string, never> & {

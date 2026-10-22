@@ -1649,6 +1649,8 @@ follow a module imported dynamically much later.
   max_budget_usd = 5
   max_turns = 20
   timeout_seconds = 900
+  # Optional durable allocation admission (requires stop_at):
+  # allocation_file = "/canonical/private/allocation/allocation.json"
   # Optional absolute end of an authorized window:
   # stop_at = "2026-10-14T23:47:00Z"
   ```
@@ -1679,6 +1681,10 @@ follow a module imported dynamically much later.
   KILL after one second. Interrupted usage is unknown, recorded as `?`, and
   needs reconciliation before another allocation. Provider-side spend limits,
   aggregate budgets and credential expiry remain the operator's responsibility.
+  Optional `allocation_file` enforces a frozen, durable per-consumer allocation
+  immediately before dispatch, across restarts. Unknown usage keeps its reservation
+  and refuses further admission. [API-ALLOCATION.md](API-ALLOCATION.md) describes
+  provisioning, strict receipts, checkpoints and same-allocation reconciliation.
   API choices ignore subscription bars and headroom; this does not assert that
   an API account has credit. API 429/529 responses retain their own transient
   handling without consulting Max's reset time. Existing metered declarations

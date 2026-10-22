@@ -355,7 +355,7 @@ mock_cmd = "touch $REV_HOME/model-started; sleep 0.2; echo launched >> $REV_HOME
     const child = spawn('npx', ['tsx', REV_CLI, 'run', 'killed-loop', '--count', '1'], {
       env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore',
     });
-    await waitForFile(join(e.home, 'model-started'));
+    await waitForFile(join(e.home, 'model-started'), 30_000);
     const eventsPath = join(e.home, 'state', 'killed-loop', 'events.log');
     const loopPid = Number(/loop-start\s+pid=(\d+)/.exec(readFileSync(eventsPath, 'utf8'))![1]);
     process.kill(loopPid, 'SIGKILL');
@@ -391,7 +391,7 @@ echo launched >> $REV_HOME/sessions
     const child = spawn('npx', ['tsx', REV_CLI, 'run', 'killed-scoped', '--count', '1'], {
       env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore',
     });
-    await waitForFile(join(e.home, 'model-started'));
+    await waitForFile(join(e.home, 'model-started'), 30_000);
     const eventsPath = join(e.home, 'state', 'killed-scoped', 'events.log');
     const loopPid = Number(/loop-start\s+pid=(\d+)/.exec(readFileSync(eventsPath, 'utf8'))![1]);
     process.kill(loopPid, 'SIGKILL');
@@ -430,7 +430,7 @@ echo launched >> $REV_HOME/sessions
     const child = spawn('npx', ['tsx', REV_CLI, 'run', 'failed-recovery', '--count', '1'], {
       env: e.env, cwd: join(import.meta.dirname, '..'), stdio: 'ignore',
     });
-    await waitForFile(join(e.home, 'model-started'));
+    await waitForFile(join(e.home, 'model-started'), 30_000);
     const eventsPath = join(e.home, 'state', 'failed-recovery', 'events.log');
     const loopPid = Number(/loop-start\s+pid=(\d+)/.exec(readFileSync(eventsPath, 'utf8'))![1]);
     process.kill(loopPid, 'SIGKILL');

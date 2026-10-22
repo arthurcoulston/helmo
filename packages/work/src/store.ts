@@ -370,12 +370,18 @@ function supervised(actor: Actor): boolean {
   return actor.kind === 'agent' && Boolean(actor.session?.trim());
 }
 
+/** The roadmap statuses that hold the human's go: Planned (nothing underway
+ *  yet) and Active, plus the pre-R-46 words a store may still carry for them
+ *  (`ship_next`, `shipping`). The roadmap's own AUTHORIZED set, read raw so
+ *  the Work store needs no roadmap code to bound by it. */
+const SHIP_NEXT_STATUSES = "'Planned', 'Active', 'ship_next', 'shipping'";
+
 /** The roadmap's current Ship Next project ids, read-only. Throws when the
  *  roadmap is missing or is not a roadmap, so the caller can fail closed. */
 function readShipNext(path: string): string[] {
   const db = new Database(path, { readonly: true, fileMustExist: true });
   try {
-    return (db.prepare("SELECT id FROM projects WHERE status = 'ship_next' ORDER BY id").all() as { id: string }[]).map((r) => r.id);
+    return (db.prepare(`SELECT id FROM projects WHERE status IN (${SHIP_NEXT_STATUSES}) ORDER BY id`).all() as { id: string }[]).map((r) => r.id);
   } finally {
     db.close();
   }
@@ -384,15 +390,23 @@ function readShipNext(path: string): string[] {
 /** When each current Ship Next project last entered Ship Next, read-only
  *  from the roadmap's own event log (H-2102). Entering Ship Next writes no
  *  Work event, so this is the only record of the moment a ticket came into a
- *  seat's scope. Throws like readShipNext; wake callers treat that as no edge. */
+ *  seat's scope. Entry is the human's go (`ship_next_set`) or a status move
+ *  from outside the work phase into it, as a paused delivery resuming;
+ *  Planned to Active stays inside it and is no entry. Throws like
+ *  readShipNext; wake callers treat that as no edge. */
 function readShipNextEntered(path: string): Map<string, string> {
   const db = new Database(path, { readonly: true, fileMustExist: true });
   try {
     const rows = db
       .prepare(
         `SELECT p.id AS id, MAX(e.ts) AS ts FROM projects p
-         JOIN events e ON e.subject_id = p.id AND e.event_type = 'ship_next_set'
-         WHERE p.status = 'ship_next' GROUP BY p.id`,
+         JOIN events e ON e.subject_id = p.id AND (
+           e.event_type = 'ship_next_set'
+           OR (e.event_type = 'updated'
+               AND json_extract(e.payload, '$.diffs.status.to') IN (${SHIP_NEXT_STATUSES})
+               AND COALESCE(json_extract(e.payload, '$.diffs.status.from'), '') NOT IN (${SHIP_NEXT_STATUSES}))
+         )
+         WHERE p.status IN (${SHIP_NEXT_STATUSES}) GROUP BY p.id`,
       )
       .all() as { id: string; ts: string }[];
     return new Map(rows.map((r) => [r.id, r.ts]));

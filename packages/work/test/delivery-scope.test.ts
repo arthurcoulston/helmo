@@ -10,14 +10,14 @@ import { Store } from '../src/store.js';
 import { buildServer } from '../src/tools.js';
 import { Actor } from '../src/types.js';
 
-// H-2070. Arthur: "One item in ship next should mean only tickets connected
-// it get worked." The roster's project filter was a per-worker list someone
+// H-2070. One item in Ship Next should mean only tickets connected to it get
+// worked. The roster's project filter was a per-worker list someone
 // had to edit; the roadmap already says what is being shipped. A store that
 // names its roadmap admits autonomous work only on tickets whose project is in
 // Ship Next, on every entry path, and reads that list each time it is asked.
 
 const orch: Actor = { name: 'helmo-orchestrator', kind: 'orchestrator', model: 'claude-fable-5', version: '0.1' };
-const arthur: Actor = { name: 'arthur', kind: 'human' };
+const operator: Actor = { name: 'operator', kind: 'human' };
 const pool: Actor = { name: 'builder', kind: 'agent', model: 'claude-opus-5', version: '1.0', session: 'rev:builder' };
 const single: Actor = { name: 'reviewer', kind: 'agent', model: 'claude-opus-5', version: '1.0', session: 'rev:reviewer' };
 const attended: Actor = { name: 'builder', kind: 'agent', model: 'claude-opus-5', version: '1.0' };
@@ -36,15 +36,15 @@ function initiative(title: string): string {
   roadmap.updateProject(bosun, { project_id: p.id, note: 'ready', status: 'ready' });
   return p.id;
 }
-const shipNext = (id: string) => roadmap.setShipNext(mason, { project_id: id, decided_by: 'arthur', reason: 'go' });
+const shipNext = (id: string) => roadmap.setShipNext(mason, { project_id: id, decided_by: 'operator', reason: 'go' });
 const shipOut = (id: string) => roadmap.updateProject(mason, { project_id: id, note: 'out of the work phase', status: 'shipped_watching' });
 
 function file(over: Record<string, unknown> = {}) {
   return s.createTicket(orch, {
-    title: 'Build the thing', body: 'Goal: build it. State: not started.', workstream: 'goodplumb', type: 'build', assignee: 'builder', ...over,
+    title: 'Build the thing', body: 'Goal: build it. State: not started.', workstream: 'product', type: 'build', assignee: 'builder', ...over,
   });
 }
-const claim = (id: string, project?: string) => s.launchClaim(pool, 'goodplumb', 'builder', id, project);
+const claim = (id: string, project?: string) => s.launchClaim(pool, 'product', 'builder', id, project);
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'helmo-delivery-'));
@@ -66,13 +66,13 @@ describe('Ship Next bounds autonomous work (H-2070)', () => {
 
     // Higher-priority Beta and unlinked work stay queued; Alpha runs.
     expect(claim('l-1')).toMatchObject({ claimed: true, ticket_id: a.id });
-    s.updateTicket({ ...pool, generation: 'l-1' }, { ticket_id: a.id, note: 'built', status: 'done', evidence: [{ kind: 'other', ref: 'x' }] });
+    s.updateTicket({ ...pool, generation: 'l-1' }, { ticket_id: a.id, note: 'built', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, evidence: [{ kind: 'other', ref: 'x' }] });
     expect(claim('l-2')).toEqual({ admitted: false, launch_id: 'l-2', delivery_scope: { roadmap_db: roadmapPath, projects: [alpha] } });
 
     // Changing Ship Next changes the next selection; the call is the same.
     shipNext(beta);
     expect(claim('l-3')).toMatchObject({ claimed: true, ticket_id: b.id });
-    s.updateTicket({ ...pool, generation: 'l-3' }, { ticket_id: b.id, note: 'built', status: 'done', evidence: [{ kind: 'other', ref: 'x' }] });
+    s.updateTicket({ ...pool, generation: 'l-3' }, { ticket_id: b.id, note: 'built', status: 'done', completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' }, evidence: [{ kind: 'other', ref: 'x' }] });
 
     shipOut(alpha);
     shipOut(beta);
@@ -85,7 +85,7 @@ describe('Ship Next bounds autonomous work (H-2070)', () => {
   it('lets a newly linked ticket in on the next ask and keeps human holds and blockers', () => {
     shipNext(alpha);
     s.setDeliveryScope(orch, roadmapPath);
-    const research = file({ project: alpha, type: 'research', needs_human: 'Sit with Arthur on the findings', priority: 0 });
+    const research = file({ project: alpha, type: 'research', needs_human: 'Sit with the operator on the findings', priority: 0 });
     const blocker = file({ priority: 3, assignee: 'someone-else' });
     const blocked = file({ project: alpha, priority: 0, deps: [{ to: blocker.id, type: 'blocks' }] });
     const t = file({ priority: 1 });
@@ -119,13 +119,13 @@ describe('Ship Next bounds autonomous work (H-2070)', () => {
     s.setDeliveryScope(orch, roadmapPath);
     const inScope = file({ project: alpha, assignee: 'reviewer', priority: 1 });
     const outScope = file({ project: beta, assignee: 'reviewer', priority: 0 });
-    expect(s.launchAdmission('goodplumb', 'reviewer', 'a-1')).toMatchObject({ admitted: true, ticket_id: inScope.id });
+    expect(s.launchAdmission('product', 'reviewer', 'a-1')).toMatchObject({ admitted: true, ticket_id: inScope.id });
     // A single-seat session claims for itself: out-of-scope is refused.
     expect(() => s.updateTicket(single, { ticket_id: outScope.id, note: 'start', status: 'in_progress' })).toThrow(/delivery_scope_refused/);
     s.updateTicket(single, { ticket_id: inScope.id, note: 'start', status: 'in_progress' });
     // Its project leaves Ship Next: the next launch puts the claim down.
     shipOut(alpha);
-    expect(s.launchAdmission('goodplumb', 'reviewer', 'a-2')).toMatchObject({ admitted: false, released: [inScope.id] });
+    expect(s.launchAdmission('product', 'reviewer', 'a-2')).toMatchObject({ admitted: false, released: [inScope.id] });
     expect(s.getTicket(inScope.id)).toMatchObject({ status: 'open', assignee: 'reviewer' });
   });
 
@@ -134,15 +134,15 @@ describe('Ship Next bounds autonomous work (H-2070)', () => {
     s.setDeliveryScope(orch, roadmapPath);
     const a = file({ project: alpha });
     const b = file({ project: beta });
-    const idle = s.wakeCheck(0, 'goodplumb', 'builder');
+    const idle = s.wakeCheck(0, 'product', 'builder');
     expect(idle.ready_ids).toEqual([a.id]);
     // The seat worked what it had and went idle at this cursor.
-    const cursor = s.wakeCheck(idle.max_seq, 'goodplumb', 'builder');
+    const cursor = s.wakeCheck(idle.max_seq, 'product', 'builder');
     expect(cursor.newly_ready_ids).toEqual([]);
 
     await new Promise((r) => setTimeout(r, 5));
     shipNext(beta);
-    const after = s.wakeCheck(cursor.max_seq, 'goodplumb', 'builder');
+    const after = s.wakeCheck(cursor.max_seq, 'product', 'builder');
     expect(after.max_seq).toBe(cursor.max_seq);
     expect(after.ready_ids).toEqual([a.id, b.id]);
     // Only the ticket that came into scope wakes it, not the one already there.
@@ -150,13 +150,13 @@ describe('Ship Next bounds autonomous work (H-2070)', () => {
 
     // Once the seat writes past the change, the entry is old news.
     s.updateTicket(pool, { ticket_id: a.id, note: 'looked at it' });
-    expect(s.wakeCheck(s.maxSeq(), 'goodplumb', 'builder').newly_ready_ids).toEqual([]);
+    expect(s.wakeCheck(s.maxSeq(), 'product', 'builder').newly_ready_ids).toEqual([]);
 
     // Leaving Ship Next stays H-2070's: no wake, the ticket just drops out.
     await new Promise((r) => setTimeout(r, 5));
     const before = s.maxSeq();
     shipOut(beta);
-    const out = s.wakeCheck(before, 'goodplumb', 'builder');
+    const out = s.wakeCheck(before, 'product', 'builder');
     expect(out.ready_ids).toEqual([a.id]);
     expect(out.newly_ready_ids).toEqual([]);
   });
@@ -166,11 +166,11 @@ describe('Ship Next bounds autonomous work (H-2070)', () => {
     s.setDeliveryScope(orch, roadmapPath);
     // Rev's intake assignment arrived untagged: reserved, P0, and out of scope.
     const t = file();
-    const idle = s.wakeCheck(s.maxSeq(), 'goodplumb', 'builder');
+    const idle = s.wakeCheck(s.maxSeq(), 'product', 'builder');
     expect(idle.ready_ids).toEqual([]);
 
     s.updateTicket(orch, { ticket_id: t.id, note: 'placed under the entry item', project: alpha });
-    const after = s.wakeCheck(idle.max_seq, 'goodplumb', 'builder');
+    const after = s.wakeCheck(idle.max_seq, 'product', 'builder');
     expect(after.ready_ids).toEqual([t.id]);
     expect(after.newly_ready_ids).toEqual([t.id]);
   });
@@ -181,7 +181,7 @@ describe('Ship Next bounds autonomous work (H-2070)', () => {
     file({ project: alpha });
     const seq = s.maxSeq();
     rmSync(roadmapPath);
-    const w = s.wakeCheck(seq, 'goodplumb', 'builder');
+    const w = s.wakeCheck(seq, 'product', 'builder');
     expect(w.ready_ids).toEqual([]);
     expect(w.newly_ready_ids).toEqual([]);
   });
@@ -191,17 +191,17 @@ describe('Ship Next bounds autonomous work (H-2070)', () => {
     s.setDeliveryScope(orch, roadmapPath);
     const a = file({ project: alpha });
     const loose = file();
-    const w = s.wakeCheck(0, 'goodplumb', 'builder');
+    const w = s.wakeCheck(0, 'product', 'builder');
     expect(w.ready_ids).toEqual([a.id]);
     expect(w.delivery_scope).toEqual({ roadmap_db: roadmapPath, projects: [alpha] });
     // A store-wide loop still sees the whole queue to coordinate it.
     expect(s.wakeCheck(0).delivery_scope).toBeUndefined();
-    expect(() => s.createTicket(pool, { title: 'New', body: 'Goal: x. State: y.', workstream: 'goodplumb', type: 'build', status: 'in_progress' }))
+    expect(() => s.createTicket(pool, { title: 'New', body: 'Goal: x. State: y.', workstream: 'product', type: 'build', status: 'in_progress' }))
       .toThrow(/delivery_scope_refused/);
-    s.createTicket(pool, { title: 'New', body: 'Goal: x. State: y.', workstream: 'goodplumb', type: 'build', status: 'in_progress', project: alpha });
+    s.createTicket(pool, { title: 'New', body: 'Goal: x. State: y.', workstream: 'product', type: 'build', status: 'in_progress', project: alpha });
 
     // Attended sessions and humans keep explicit work possible.
-    s.updateTicket(attended, { ticket_id: loose.id, note: 'Arthur asked for this in the sitting', status: 'in_progress' });
+    s.updateTicket(attended, { ticket_id: loose.id, note: 'the operator asked for this in the sitting', status: 'in_progress' });
     expect(s.getTicket(loose.id).status).toBe('in_progress');
 
     const [ct, st] = InMemoryTransport.createLinkedPair();
@@ -226,7 +226,7 @@ describe('Ship Next bounds autonomous work (H-2070)', () => {
     expect((r as { delivery_scope: { error?: string } }).delivery_scope.error).toBeTruthy();
     expect(() => s.setDeliveryScope(orch, join(dir, 'missing.db'))).toThrow();
     expect(() => s.setDeliveryScope(pool, null)).toThrow(/delivery_scope_refused/);
-    expect(s.setDeliveryScope(arthur, null)).toBeNull();
+    expect(s.setDeliveryScope(operator, null)).toBeNull();
     expect(claim('f-2')).toMatchObject({ claimed: true });
   });
 
@@ -238,7 +238,7 @@ describe('Ship Next bounds autonomous work (H-2070)', () => {
     expect(s.setDeliveryScope(pool, roadmapPath)).toMatchObject({ projects: [alpha] });
     expect(() => s.setDeliveryScope(pool, other)).toThrow(/delivery_scope_refused.*repoint/);
     expect(s.setDeliveryScope(attended, other)).toMatchObject({ projects: [] });
-    s.setDeliveryScope(arthur, roadmapPath);
+    s.setDeliveryScope(operator, roadmapPath);
 
     // Out-of-scope work someone else holds cannot be taken over by a loop.
     const held = file({ project: beta, assignee: 'reviewer' });
@@ -251,17 +251,17 @@ describe('Ship Next bounds autonomous work (H-2070)', () => {
     s.setDeliveryScope(orch, roadmapPath);
     const meeting: Actor = { ...single, session: 'meeting:m-1' };
     const t = file({ project: beta, assignee: 'reviewer' });
-    s.setDeliveryScope(arthur, null);
+    s.setDeliveryScope(operator, null);
     s.updateTicket(meeting, { ticket_id: t.id, note: 'start', status: 'in_progress' });
-    s.setDeliveryScope(arthur, roadmapPath);
-    expect(s.launchAdmission('goodplumb', 'reviewer', 'm-1')).not.toHaveProperty('released');
+    s.setDeliveryScope(operator, roadmapPath);
+    expect(s.launchAdmission('product', 'reviewer', 'm-1')).not.toHaveProperty('released');
     expect(s.getTicket(t.id).status).toBe('in_progress');
   });
 
   it('gives recurring instances their template\'s project, so scheduled work under Ship Next runs', () => {
     shipNext(alpha);
     s.setDeliveryScope(orch, roadmapPath);
-    const tpl = s.createTicket(orch, { title: 'Weekly check', body: 'Goal: check. State: standing.', workstream: 'goodplumb', type: 'ops', assignee: 'builder', project: alpha, schedule: 'every 1d' });
+    const tpl = s.createTicket(orch, { title: 'Weekly check', body: 'Goal: check. State: standing.', workstream: 'product', type: 'ops', assignee: 'builder', project: alpha, schedule: 'every 1d' });
     const spawned = s.materializeDue(new Date(Date.now() + 2 * 86_400_000));
     expect(spawned.length).toBeGreaterThan(0);
     expect(s.getTicket(spawned[0]!).project).toBe(alpha);
@@ -298,13 +298,47 @@ describe('Ship Next bounds autonomous work (H-2070)', () => {
     expect([found, related].map((t) => s.getTicket(t.id).project)).toEqual([null, null]);
     expect([own, explicit].map((t) => s.getTicket(t.id).project)).toEqual([beta, beta]);
 
-    const ready = [...s.wakeCheck(0, 'goodplumb', 'builder').ready_ids].sort();
+    const ready = [...s.wakeCheck(0, 'product', 'builder').ready_ids].sort();
     expect(ready).toEqual([sub.id, unblock.id, later.id].sort());
 
     // Derived state is still the event log's.
     const before = [sub, unblock, later].map((t) => s.getTicket(t.id).project);
     s.rebuild();
     expect([sub, unblock, later].map((t) => s.getTicket(t.id).project)).toEqual(before);
+  });
+
+  it('reads the roadmap\'s whole work phase: Planned and Active are in, Paused is out (R-46 statuses)', () => {
+    shipNext(alpha);
+    s.setDeliveryScope(orch, roadmapPath);
+    expect(roadmap.getProject(alpha).status).toBe('Planned');
+    const a = file({ project: alpha });
+    expect(s.deliveryScope()?.projects).toEqual([alpha]);
+    roadmap.updateProject(mason, { project_id: alpha, note: 'work underway', status: 'Active' });
+    expect(s.deliveryScope()?.projects).toEqual([alpha]);
+    expect(s.wakeCheck(0, 'product', 'builder').ready_ids).toEqual([a.id]);
+    roadmap.updateProject(mason, { project_id: alpha, note: 'on hold', status: 'Paused' });
+    expect(s.deliveryScope()?.projects).toEqual([]);
+    expect(s.wakeCheck(0, 'product', 'builder').ready_ids).toEqual([]);
+  });
+
+  it('does not wake a seat for a held claim outside Ship Next', async () => {
+    shipNext(alpha);
+    shipNext(beta);
+    s.setDeliveryScope(orch, roadmapPath);
+    const blocker = file({ assignee: 'someone-else' });
+    const a = file({ project: alpha, priority: 0 });
+    expect(claim('h-1')).toMatchObject({ claimed: true, ticket_id: a.id });
+    s.linkTickets(orch, a.id, blocker.id, 'blocks', 'add');
+    const cursor = s.maxSeq();
+    // The blocker closes: the held claim's gate opens, which wakes its seat
+    // only while its project is in Ship Next.
+    roadmap.updateProject(mason, { project_id: alpha, note: 'on hold', status: 'Paused', unpark_condition: 'resumed' });
+    s.updateTicket(orch, { ticket_id: blocker.id, note: 'no longer needed', status: 'cancelled' });
+    expect(s.wakeCheck(cursor, 'product', 'builder').newly_ready_ids).toEqual([]);
+    // Resuming the delivery is an entry into Ship Next, so it wakes the seat.
+    await new Promise((r) => setTimeout(r, 5));
+    roadmap.updateProject(mason, { project_id: alpha, note: 'resumed', status: 'Active' });
+    expect(s.wakeCheck(s.maxSeq(), 'product', 'builder').newly_ready_ids).toEqual([a.id]);
   });
 
   it('leaves a store that names no roadmap exactly as before', () => {
@@ -319,7 +353,7 @@ describe('Ship Next bounds autonomous work (H-2070)', () => {
     new Store(db).close();
     const run = (...args: string[]) => spawnSync(process.execPath, ['--import', 'tsx', 'src/cli.ts', ...args], {
       cwd: new URL('..', import.meta.url).pathname,
-      env: { ...process.env, HELMO_DB: db, HELMO_ACTOR: JSON.stringify(arthur) }, encoding: 'utf8',
+      env: { ...process.env, HELMO_DB: db, HELMO_ACTOR: JSON.stringify(operator) }, encoding: 'utf8',
     });
     const set = run('delivery-scope', '--roadmap-db', roadmapPath);
     expect(set.status, set.stderr).toBe(0);

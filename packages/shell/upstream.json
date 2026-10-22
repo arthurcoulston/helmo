@@ -71,6 +71,7 @@
       "src/RecentResults.tsx",
       "src/Runway.tsx",
       "src/TeamNow.tsx",
+      "src/RoadmapNow.tsx",
       "src/TeamActivity.tsx",
       "src/IncidentsView.tsx"
     ],

@@ -906,6 +906,12 @@ Pinned releases accept both the historical three-component layout and C1's one
   policies can close the user's other windows even on a headless launch.
   `test/browser-launch.test.ts` proves the missing-browser path cannot retry
   against a desktop browser and keeps all three entrypoints on this launcher.
+  Setting `MANAGED_BROWSER_WS_ENDPOINT` connects to a browser the session
+  owner already runs instead of launching one: the value must be a loopback
+  `ws://127.0.0.1:<port>/<token>` capability, and an invalid endpoint or a
+  failed connection raises a sanitized error rather than falling back to a
+  local launch. That is for a sandboxed client whose browser lives on its
+  owner's host; the owner keeps the host, its policy and its cleanup.
   `npm run screenshot -- <url> <output.png>` replaces direct Chrome commands.
   Two things it taught, both of which made an earlier control useless: every
   row is a collapsed `<details>`, so a browser that only loads the page lays
@@ -1410,6 +1416,12 @@ numbers table). The BARS are proved only in `verify-ui.mjs`: the chart
 container measures itself, so a server-rendered proof sees an empty div. That
 run also seeds a record spread over time — the product's own events, moved in
 time on a second connection, because nothing here can write a backdated event.
+The band it asserts on exists only while that seed's OWN record begins inside
+the week: a fixed `2026-10-12` stamp on the fixture's incident became its
+oldest event, put the start of the record before the window, and reddened the
+week assertion nine days after it was written (H-3343). Every dated seed there
+is now relative to `now`, and the seed checks its own oldest instant against
+the instant it means the record to begin.
 
 ## Reading a title (R-42 I4, H-2476)
 

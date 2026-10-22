@@ -139,10 +139,24 @@ for (const [loop, files] of Object.entries({
 const actor = { name: 'fixture', kind: 'orchestrator', model: 'fixture', version: 'fixture' };
 const store = new Store(join(dir, 'work/helmo.db'));
 const create = (title, extra = {}) => store.createTicket(actor, { title, body: `Full record for ${title}`, type: 'build', workstream: 'fixture', labels: ['acct:direction'], ...extra });
-const recordedAt = '2026-10-12T16:00:00.000Z';
+/* Dated, so the incident readings are stable rather than reading "just now" —
+   but taken from the clock rather than written down. A fixed 12 Oct stamp was
+   this fixture's OLDEST event nine days later, which put the beginning of the
+   record before the week view's window and erased the unrecorded band that
+   view asserts on (H-3343). Nothing seeded here may be older than the instant
+   the record begins, `hoursAgo(96)` below, which the seed now checks. */
+const hoursAgo = (hours) => new Date(Date.now() - hours * 3_600_000).toISOString();
+const recordedAt = hoursAgo(90);
 const known = (value, source_ref, at = recordedAt) => ({ state: 'known', value, source_ref, recorded_at: at });
+/* The initiative these tickets belong to, named before the roadmap store
+   exists. A CLOSED ticket cannot be re-tagged — `updateTicket` refuses
+   `project` on a terminal record, and rightly — so the two closed rows in the
+   work join below have to carry the tag from birth, and the roadmap ids are not
+   minted until further down. `R-1` is the first project this fixture creates,
+   and the assertion beside that creation is what keeps this honest. */
+const INITIATIVE = 'R-1';
 const ready = create('Ready work with a complete title');
-const blocked = create('Held work must never read ready', { capacity_hold: { reason: 'Waiting for the chosen spending window', provenance: 'Fixture operator', reconsider_when: 'Next fixture cycle' } });
+const blocked = create('Held work must never read ready', { project: INITIATIVE, capacity_hold: { reason: 'Waiting for the chosen spending window', provenance: 'Fixture operator', reconsider_when: 'Next fixture cycle' } });
 // createTicket takes no capacity hold; set it through the same update path.
 store.updateTicket(actor, { ticket_id: blocked.id, capacity_hold: { reason: 'Waiting for the chosen spending window', provenance: 'Fixture operator', reconsider_when: 'Next fixture cycle' }, note: 'Held by the fixture operator.' });
 const incident = create('A sourced incident', { type: 'incident' });
@@ -236,8 +250,8 @@ store.updateTicket(actor, { ticket_id: notRunway.id, note: 'Held while the commi
   reconsider_when: 'The current tranche is reconciled and this phase is selected.',
 } });
 const reviewer = { name: 'fixture-reviewer', kind: 'agent', model: 'fixture', version: 'fixture' };
-const reviewed = (title, verdict) => {
-  const t = create(title);
+const reviewed = (title, verdict, extra = {}) => {
+  const t = create(title, extra);
   /* An immutable ref: the store refuses anything short of a full sha, which
      is the point of the completion record. */
   const ref = `helmo@${createHash('sha1').update(t.id).digest('hex')}`;
@@ -246,9 +260,9 @@ const reviewed = (title, verdict) => {
   store.recordAcceptanceVerdict(reviewer, { ticket_id: t.id, refs: [ref], verdict, note: `The review ${verdict === 'pass' ? 'confirmed' : 'refused'} this exact ref.` });
   return t;
 };
-const accepted = reviewed('An accepted release review says so', 'pass');
+const accepted = reviewed('An accepted release review says so', 'pass', { project: INITIATIVE });
 const refused = reviewed('A refused release review says so', 'fail');
-const unproved = create('A closed ticket with nothing to show');
+const unproved = create('A closed ticket with nothing to show', { project: INITIATIVE });
 store.updateTicket(actor, { ticket_id: unproved.id, status: 'done', note: 'Closed without recording what it produced.', completion_account: { category: 'maintenance', summary: 'The fixture obligation is discharged; nothing was produced that can be linked.' }, confidence: 'needs_review' });
 
 /* A done record with NO completion account, reached the one way that is still
@@ -262,23 +276,62 @@ store.returnToHuman(actor, humanClosed.id, { situation: 'The fixture needs a dec
 store.answerTicket({ name: 'Fixture Operator', kind: 'human' }, humanClosed.id, { answer: 'Already covered elsewhere; nothing more to do.', resolution: 'done' });
 
 const roadmap = new RoadmapStore(join(dir, 'roadmap/roadmap.db'));
-const project = roadmap.createProject(actor, { title: 'The complete standard UI foundation', status: 'ready', body: 'Preserve the full project record while using standard components.' });
+const project = roadmap.createProject(actor, { title: 'The complete standard UI foundation', status: 'Proposed', body: 'Preserve the full project record while using standard components.' });
+roadmap.recordReadinessVerdict({ name: 'fixture-reviewer', kind: 'agent', model: 'fixture', version: '0' }, {
+  project_id: project.id, reviewed_revision: roadmap.readinessRevision(project.id), verdict: 'pass', note: 'Enough is known to commit.',
+});
 const objective = roadmap.setCharterItem(actor, { shape: 'objective', statement: 'A clear foundation', source: 'Fixture charter', horizon: 'near', rank: 1 });
 roadmap.cite(actor, { project_id: project.id, objective_id: objective.id, claim: 'A consistent interface makes the work legible.' });
 roadmap.recordClaim(actor, { project_id: project.id, kind: 'value', level: 'high', reason: 'Every operator reading benefits.' });
 roadmap.recordClaim(actor, { project_id: project.id, kind: 'effort', size: 'M', predicted_usd: 20, reason: 'A finite set of existing screens.' });
+assert.equal(project.id, INITIATIVE, 'the two closed tickets in the work join were tagged before this id was minted; they must be the same initiative');
 roadmap.setShipNext(actor, { project_id: project.id, decided_by: 'Fixture operator', reason: 'The foundation is the next work.' });
+/* The go alone is Planned; this one is underway, which is the in-motion
+   reading the palette has to carry (R-46). */
+roadmap.updateProject(actor, { project_id: project.id, status: 'Active', note: 'Work is in flight.' });
 /* Three more projects, so the compact reading is proved on what it has to
    survive: a record far longer than a row can carry whose opening is filing
    prose rather than meaning, a second ranked row to compare the order
    against, and an unranked shipped one. */
-const unruly = roadmap.createProject(actor, { title: 'An unruly record whose opening is not the project', status: 'shaping', body: `${'Filing provenance recorded when this project was last reconciled, which is context rather than the project itself. '.repeat(5)}\n\nOutcome: the thing a reader actually wants from this record.` });
-roadmap.updateProject(actor, { project_id: unruly.id, status: 'parked', parked_reason: 'Another project is the current focus.', unpark_condition: 'The current focus ships.', note: 'Parked by the fixture operator.' });
-const shaping = roadmap.createProject(actor, { title: 'A shaping project with no stated objective', status: 'shaping', body: 'Still being shaped.' });
-const watching = roadmap.createProject(actor, { title: 'A shipped project under observation', status: 'shipped_watching', body: 'Shipped and watched.' });
+const unruly = roadmap.createProject(actor, { title: 'An unruly record whose opening is not the project', status: 'Proposed', body: `${'Filing provenance recorded when this project was last reconciled, which is context rather than the project itself. '.repeat(5)}\n\nOutcome: the thing a reader actually wants from this record.` });
+roadmap.updateProject(actor, { project_id: unruly.id, parked_reason: 'Another project is the current focus.', unpark_condition: 'The current focus ships.', note: 'Reconciled by the fixture operator.' });
+const shaping = roadmap.createProject(actor, { title: 'A shaping project with no stated objective', status: 'Proposed', body: 'Still being shaped.' });
+const watching = roadmap.createProject(actor, { title: 'A shipped project under observation', status: 'Monitoring', body: 'Shipped and watched.' });
 /* And one that came through observation, so Roadmap carries the healthy role
    as well as the in-motion one. */
-roadmap.createProject(actor, { title: 'A shipped project that settled', status: 'shipped_stable', body: 'Shipped and stable.' });
+roadmap.createProject(actor, { title: 'A shipped project that settled', status: 'Completed', body: 'Shipped and stable.' });
+/* HEALTH, which no status can carry (R-46). It is owner-set, so a store can
+   easily carry none at all; without these two the health reading draws nowhere
+   and every assertion about it would pass by being absent — the same trap the
+   Team seats above were seeded against. One on a ranked row in flight and one on an
+   unranked delivered row, because they take different roles and sit in
+   different sections: a reader must not be able to confuse them. */
+roadmap.recordHealth(actor, { project_id: project.id, health: 'Off track', reason: 'The fixture blocker has not been cleared and no date is held for it.' });
+roadmap.recordHealth(actor, { project_id: watching.id, health: 'On track', reason: 'Nothing is outstanding against it.' });
+/* A HIDDEN record: `archived` is a hide flag over a status, never a status, so
+   this row keeps Completed and must be absent from every section while staying
+   reachable by its own reference. Before R-46 it would have drawn under an
+   "Archived" heading, which is how a finished record read as a sixth state
+   (H-3341). */
+const hidden = roadmap.createProject(actor, { title: 'A finished record hidden from the list', status: 'Completed', body: 'Delivered through its successor initiatives.' });
+roadmap.updateProject(actor, { project_id: hidden.id, archived: true, note: 'Hidden from the surfaces; the record itself stays.' });
+/* The work join. Tickets this fixture already holds are TAGGED to the
+   initiative rather than new ones created, so the Work and Overview readings
+   below keep the counts they assert — and so that the four readings are each
+   carried by a row that already earns its place:
+
+   - `blocked` is open and under a capacity hold. A held ticket is waiting on a
+     person and says so in the hold, not in `needs_human`, which it carries as
+     false; reading either field alone gets that row wrong (R-46 case 4).
+   - `accepted` is done and left a commit behind: a milestone.
+   - `unproved` is done and recorded nothing: a claim rather than a record, so
+     it stays in the closed denominator and is named nowhere. That is why the
+     shipped reading carries two different numbers.
+
+   A recurring template — the fourth reading — is not seeded here: a template
+   spawns a due instance on the next queue read, which would add a row to the
+   Work counts this same run asserts. `verify-roadmap.mjs` asserts it against a
+   running installation that has one. */
 
 const choice = create('Choose between the stored options');
 store.returnToHuman(actor, choice.id, { situation: 'Both options are valid.', question: 'Which option should be used?', recommendation: 'First', options: [{ label: 'First', consequence: 'Use the first path.' }, { label: 'Second', consequence: 'Use the second path.' }] });
@@ -305,7 +358,6 @@ const sitting = create('A sitting is a conversation', { needs_human: 'Discuss th
    unknown rather than zero. */
 const { default: FixtureDatabase } = await import('better-sqlite3');
 const clock = new FixtureDatabase(join(dir, 'work/helmo.db'));
-const hoursAgo = (hours) => new Date(Date.now() - hours * 3_600_000).toISOString();
 /* Half past a whole hour, n hours back. An offset in bare hours from `now`
    drifts across a bucket boundary depending on the minute the run starts — two
    seeds an hour apart would share a bucket at five past, and the counts below
@@ -319,7 +371,8 @@ const backdate = (id, at) => {
 };
 // Four of these land in four different hours of the past day; three are earlier
 // in the week, and the last of them is where the week's "no record" band ends.
-[pastHour(2), pastHour(6), pastHour(10), pastHour(20), hoursAgo(27), hoursAgo(51), hoursAgo(96)]
+const recordBegins = hoursAgo(96);
+[pastHour(2), pastHour(6), pastHour(10), pastHour(20), hoursAgo(27), hoursAgo(51), recordBegins]
   .forEach((at, i) => backdate(overTime[i].id, at));
 // Reported usage: a figure an agent wrote, a meter's later figure, and the
 // correction that nets the guess out where it was REPORTED.
@@ -331,6 +384,16 @@ for (const [at, tokens] of [[pastHour(2), 412_000], [pastHour(5), 180_000], [pas
 for (const [id, at] of [[choice.id, pastHour(7)], [action.id, pastHour(14)]]) {
   clock.prepare("UPDATE events SET ts = ? WHERE ticket_id = ? AND event_type = 'returned'").run(at, id);
 }
+/* The week view's unrecorded band IS the span before this store's first event,
+   so the seed's own oldest instant is that reading in data form. Checked here
+   because a seed dated earlier than the record's beginning erases the band and
+   reddens the week assertion several hundred lines below with nothing on the
+   failure to say why (H-3343). */
+assert.equal(
+  clock.prepare('SELECT MIN(ts) AS first FROM events').get().first,
+  recordBegins,
+  'a fixture seed is dated before the record begins, so the week view has no unrecorded span left to band',
+);
 clock.close();
 
 const child = spawn(process.execPath, [join(root, 'packages/cli/bin/serve.js')], {
@@ -656,22 +719,55 @@ try {
   // Roadmap is a compact table: a collapsed row carries no record body, and
   // the groups and the server's ranked order are what the rows are.
   await page.goto(`${origin}/roadmap`);
-  const list = page.getByRole('table', { name: 'The list', exact: true });
+  const list = page.getByRole('table', { name: 'Proposed', exact: true });
   await list.locator(`tr#${unruly.id}`).waitFor();
   assert.equal(await page.getByText(project.body, { exact: true }).count(), 0, 'a collapsed row must not carry the record body');
   const ranking = (await (await page.request.get(`${origin}/api/v1/roadmap`)).json()).data.ranked;
   assert.deepEqual(
     await list.locator('tbody tr[id]').evaluateAll((rows) => rows.map((row) => row.id)),
-    ranking.filter((r) => r.project.status !== 'ship_next').map((r) => r.project.id),
+    ranking.filter((r) => r.project.status === 'Proposed').map((r) => r.project.id),
     'the table must keep the order the server ranked',
   );
+  /* The seven statuses are the sections, in the order a reader asks about them,
+     and the first three draw whether or not they hold anything — PLANNED
+     especially, because a go-ahead with nothing underway is the state that had
+     no home on this screen at all (R-46). The empty sections past the third are
+     absent rather than drawn, so the page is the vocabulary and not a form. */
   assert.deepEqual(
-    await page.getByRole('table', { name: 'Ship next', exact: true }).locator('tbody tr[id]').evaluateAll((rows) => rows.map((row) => row.id)),
+    await page.locator('section[aria-label] h2').evaluateAll((heads) => heads.map((h) => h.textContent)),
+    ['Active · 1', 'Planned · 0', 'Proposed · 2', 'Monitoring · 1', 'Completed · 1'],
+    'the roadmap sections must be the seven statuses in order, with the first three drawn empty',
+  );
+  assert.deepEqual(
+    await page.getByRole('table', { name: 'Active', exact: true }).locator('tbody tr[id]').evaluateAll((rows) => rows.map((row) => row.id)),
     [project.id],
   );
-  await page.getByRole('table', { name: 'Shipped — watching', exact: true }).locator(`tr#${watching.id}`).getByText('—', { exact: true }).waitFor();
+  await page.getByRole('table', { name: 'Planned', exact: true }).getByText('Nothing is waiting to start — everything with the go-ahead is underway.', { exact: true }).waitFor();
+  await page.getByRole('table', { name: 'Monitoring', exact: true }).locator(`tr#${watching.id}`).getByText('—', { exact: true }).waitFor();
+  /* A hidden record is in no section, and is still reachable: the flag says
+     whether to draw the row, never what became of it, so the footnote names it
+     with the status it kept. */
+  assert.equal(await page.locator(`tr#${hidden.id}`).count(), 0, 'a hidden record must be absent from every section, not moved to one of its own');
+  const footnote = page.getByText(/hidden record/);
+  await footnote.waitFor();
+  assert.match(await footnote.innerText(), /^1 hidden record is not listed above\./, `the footnote must count the hidden records: ${await footnote.innerText()}`);
+  await footnote.getByRole('link', { name: hidden.id, exact: true }).click();
+  await page.getByRole('dialog').getByText('Delivered through its successor initiatives.', { exact: true }).waitFor();
+  await page.keyboard.press('Escape');
+  await page.getByRole('dialog').waitFor({ state: 'detached' });
+  /* Health, which the status cannot carry: an initiative can be Paused
+     deliberately and Off track at the same time, and one field saying both was
+     the conflation R-46 set out to end. Asserted through `data-status-role` for the reason the
+     palette does — the role is what a reader sees, and a word with the wrong
+     one is a sound page that misreads. */
+  const unhealthy = page.locator(`tr#${project.id}`).locator('[data-status-role="failure"]');
+  await unhealthy.getByText('Off track', { exact: true }).waitFor();
+  await page.locator(`tr#${project.id}`).getByText('The fixture blocker has not been cleared and no date is held for it.', { exact: true }).waitFor();
+  await page.locator(`tr#${watching.id}`).locator('[data-status-role="success"]').getByText('On track', { exact: true }).waitFor();
+  /* And nothing claims a health nobody recorded. */
+  assert.equal(await page.locator(`tr#${unruly.id}`).getByText(/On track|At risk|Off track/).count(), 0, 'a row with no recorded health must claim none');
   // The server's own explanation is the only place a row says these things.
-  await page.locator(`tr#${shaping.id}`).getByText('shaping, advances nothing stated', { exact: true }).waitFor();
+  await page.locator(`tr#${shaping.id}`).getByText('Proposed, advances nothing stated', { exact: true }).waitFor();
   assert.equal(
     (await page.locator(`tr#${shaping.id}`).innerText()).match(/advances nothing stated/g).length,
     1,
@@ -684,7 +780,7 @@ try {
   const summary = page.locator(`[data-expanded-for="${unruly.id}"]`);
   await summary.getByText('Where it stands', { exact: true }).waitFor();
   await summary.getByText('The record opens', { exact: true }).waitFor();
-  assert.match(await summary.locator('p').first().innerText(), /^Parked by the fixture operator\. — fixture, /);
+  assert.match(await summary.locator('p').first().innerText(), /^Reconciled by the fixture operator\. — fixture, /);
   const preview = await summary.locator('p').nth(1).innerText();
   assert.ok(preview.startsWith('Filing provenance recorded when'), `the second reading is not the record's opening: ${preview.slice(0, 40)}`);
   assert.ok(preview.length <= 321 && preview.endsWith('…'), `the opening is not bounded: ${preview.length} characters`);
@@ -733,7 +829,34 @@ try {
   // The parked reason and its exit are in the record, not in the row.
   assert.equal(await page.locator(`tr#${unruly.id}`).getByText('Another project is the current focus.').count(), 0);
   await page.goto(`${origin}/roadmap#${unruly.id}`);
-  await page.getByRole('dialog').getByText('Another project is the current focus. · Unparks when: The current focus ships.', { exact: true }).waitFor();
+  await page.getByRole('dialog').getByText('Another project is the current focus. · Resumes when: The current focus ships.', { exact: true }).waitFor();
+  /* What remains and what shipped, in the record. Three readings that look
+     alike and are not, each with its denominator in the same sentence and the
+     server's coverage printed verbatim — no percentage is derived from either,
+     because tickets are filed as work is discovered and the denominator grows
+     (R-46). */
+  await page.goto(`${origin}/roadmap#${project.id}`);
+  const initiative = page.getByRole('dialog');
+  await initiative.getByText('What remains · 1 open of 3 tagged', { exact: true }).waitFor();
+  /* The held row says WHY it is held, which is the field a reader would
+     otherwise have to open the ticket to find. */
+  await initiative.getByText(new RegExp(`${blocked.id} Held work must never read ready — open, unassigned · on hold: Waiting for the chosen spending window`)).waitFor();
+  await initiative.getByText(/Recurring templates are standing work, listed apart from the open count/).first().waitFor();
+  /* Two numbers, because they are two facts: one closed ticket left a commit
+     behind and one closed with nothing to show, and naming the second would be
+     reporting a claim as a milestone. */
+  await initiative.getByText('What has shipped · 1 named of 1 closed with a recorded result, from 2 closed of 3 tagged', { exact: true }).waitFor();
+  await initiative.getByText(new RegExp(`${accepted.id} An accepted release review says so`)).waitFor();
+  assert.equal(await initiative.getByText(new RegExp(unproved.id)).count(), 0, 'a closed ticket with nothing to show is not a milestone');
+  /* The record's own health, with the reason the store requires beside it. */
+  await initiative.locator('[data-status-role="failure"]').getByText('Off track', { exact: true }).waitFor();
+  /* The two new readings come BEFORE the body: a record can carry five
+     thousand characters of filing history, and a reading under it is one
+     nobody scrolls to. */
+  assert.ok(
+    (await initiative.innerText()).indexOf('What remains') < (await initiative.innerText()).indexOf(project.body.slice(0, 40)),
+    'what remains must be read before the record body, not under it',
+  );
   await page.goto(`${origin}/run`);
   await page.getByRole('table', { name: 'Loop status', exact: true }).waitFor();
   await page.getByText('BLOCKED', { exact: true }).waitFor();
@@ -853,7 +976,7 @@ try {
   await page.locator('[aria-label="Team now"]').waitFor();
   const overviewCards = await page.evaluate(() => [...document.querySelectorAll('[aria-label="Overview readings"] > [data-slot="card"]')]
     .map((card) => ({ label: card.getAttribute('aria-label'), top: Math.round(card.getBoundingClientRect().top), height: Math.round(card.getBoundingClientRect().height), bottom: Math.round(card.getBoundingClientRect().bottom) })));
-  assert.deepEqual(overviewCards.map((card) => card.label), ['Team now', 'What happens next', 'Team activity', 'Results · Past 24 hours']);
+  assert.deepEqual(overviewCards.map((card) => card.label), ['Team now', 'What happens next', 'Team activity', 'Results · Past 24 hours', 'Roadmap now']);
   assert.ok(overviewCards.slice(0, 4).every((card) => card.top < 800), `one of the established Overview readings starts below the 1280×800 fold: ${JSON.stringify(overviewCards)}`);
   /* The incident band (H-3216). The fixture's incident is unresolved and was
      recorded as still happening, so the band is drawn here — and the four
@@ -879,7 +1002,18 @@ try {
   console.log(`Overview at 1280×800: ${overviewCards.map((card) => `${card.label} ${card.height}px high, top ${card.top}px, bottom ${card.bottom}px`).join('; ')}`);
   await page.setViewportSize({ width: 390, height: 800 });
   const narrowOverviewCards = await page.locator('[aria-label="Overview readings"] > [data-slot="card"]').evaluateAll((cards) => cards.map((card) => card.getAttribute('aria-label')));
-  assert.deepEqual(narrowOverviewCards, ['Team now', 'What happens next', 'Team activity', 'Results · Past 24 hours'], 'the narrow Overview must preserve the four established readings');
+  assert.deepEqual(narrowOverviewCards, ['Team now', 'What happens next', 'Team activity', 'Results · Past 24 hours', 'Roadmap now'], 'the narrow Overview preserves the established readings and adds the approved roadmap card');
+  const roadmapNow = page.locator('[aria-label="Roadmap now"]');
+  const roadmapReading = (await (await fetch(`${origin}/api/v1/overview`)).json()).data.roadmap_now;
+  const pipeline = await roadmapNow.locator('dl > div').evaluateAll((rows) => rows.map((row) => [row.querySelector('dt').textContent, Number(row.querySelector('dd').textContent)]));
+  assert.deepEqual(Object.fromEntries(pipeline), roadmapReading.counts);
+  assert.ok((await roadmapNow.textContent()).includes('The fixture blocker has not been cleared and no date is held for it.'));
+  assert.ok(!(await roadmapNow.textContent()).includes(hidden.title));
+  await roadmapNow.locator(`a[href="/roadmap#${project.id}"]`).click();
+  await page.getByRole('dialog').waitFor();
+  assert.ok((await page.getByRole('dialog').textContent()).includes(project.title), 'the concern link opens its own roadmap record');
+  await page.goto(`${origin}/overview`);
+  await page.locator('[aria-label="Team now"]').waitFor();
   const teamNow = page.locator('[aria-label="Team now"]');
   await teamNow.getByText('Team now', { exact: true }).waitFor();
   /* Element by element rather than `textContent`: nothing in this card puts a

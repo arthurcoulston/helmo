@@ -198,8 +198,8 @@ test('a runtime group stands in for its verb, and the verb it stands for is reac
 test('a runtime refusal names the command the caller actually typed', (t) => {
   const home = revHome(t);
   const release = join(home, 'release.json');
-  const underHelmo = run('helmo', ['release', 'rollback'], { REV_HOME: home, INSTALLATION_RELEASE: release });
-  const underRev = spawnSync(process.execPath, [join(ROOT, 'packages', 'runtime', 'dist', 'cli.js'), 'release', 'rollback'], {
+  const underHelmo = run('helmo', ['release', 'rollback', '--ticket', 'H-1'], { REV_HOME: home, INSTALLATION_RELEASE: release });
+  const underRev = spawnSync(process.execPath, [join(ROOT, 'packages', 'runtime', 'dist', 'cli.js'), 'release', 'rollback', '--ticket', 'H-1'], {
     encoding: 'utf8',
     env: env({ REV_HOME: home, INSTALLATION_RELEASE: release }),
   });

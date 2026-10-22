@@ -31,6 +31,7 @@ import { commandName } from './command-name.js';
 import { refinementCommitPass } from './refinement-commit.js';
 import { refinementPreparationPass } from './refinement-preparation.js';
 import { isolatedRefinementCallbacks } from './refinement-artifact.js';
+import { consumeRuntimeRecovery } from './runtime-recovery.js';
 
 const SUP = 'supervisor';
 
@@ -369,6 +370,9 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
         }
         if (s.child || shuttingDown) continue;
         const name = s.cfg.name;
+        try { consumeRuntimeRecovery(name); } catch (e) {
+          logEvent(name, 'runtime-recovery-check-failed', String(e).slice(0, 200));
+        }
         const resumeAt = scheduledResumeAt(name);
         if (resumeAt !== null) {
           if (Date.now() < resumeAt) continue;

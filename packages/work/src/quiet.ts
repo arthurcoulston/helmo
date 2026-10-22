@@ -34,7 +34,8 @@ export interface QuietInput {
   tickets: Ticket[];
   exclusions: RunwayDocument['excluded'];
   activity: ActivityEvents;
-  /** `ship_next` projects with no open Work ticket carrying their project id. */
+  /** Initiatives in the work phase (Planned or Active) with no open Work
+   *  ticket carrying their project id. */
   continuations: ContinuationGap[];
   onsets: CauseOnset[];
   since: string;

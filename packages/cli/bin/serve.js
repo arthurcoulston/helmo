@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 import { appConfig, startAppServer } from '../app-server.mjs';
+import { roadmapNow } from '../roadmap-now.mjs';
 import { appRequest, shellRequest } from '../../app/server.mjs';
 import { activitySnapshot, checkInSnapshot, historySnapshot, incidentNoticesSnapshot, incidentSnapshot, incidentsSnapshot, issuesSnapshot, runwaySnapshot, workHealth, workListening, workRequest, workSnapshot } from '../../work/dist/view.js';
-import { seatWork } from '../../work/dist/presentation.js';
+import { resultDisplay, seatWork } from '../../work/dist/presentation.js';
 import { roadmapHealth, roadmapRequest, roadmapSnapshot } from '../../roadmap/dist/view.js';
+import { AUTHORIZED, statusReading } from '../../roadmap/dist/types.js';
 import { runtimeRequest, runtimeSnapshot, teamFile, teamMember, teamNowSnapshot, teamPeriod, teamSnapshot } from '../../runtime/dist/view.js';
 import { loadRoster } from '../../runtime/dist/config.js';
 import { apiJson, JSON_HEADERS } from '../../core/dist/index.js';
@@ -67,8 +69,10 @@ function checkInInput(work, roadmap, team) {
   // Roadmap and Runtime's views. It is existing practice, not an import rule:
   // Work remains independently testable, while the unified document can say
   // which selected initiatives have no open ticket carrying their project id.
+  // The work phase is Planned and Active alike: an authorized initiative with
+  // nothing underway is exactly the gap this reading exists to show (R-46).
   const continuations = roadmap.projects
-    .filter((project) => project.status === 'ship_next' && !continuing.has(project.id))
+    .filter((project) => AUTHORIZED.includes(statusReading(project.status)) && !continuing.has(project.id))
     .map((project) => ({
       id: project.id,
       title: project.title,
@@ -79,6 +83,107 @@ function checkInInput(work, roadmap, team) {
     seats: team.unavailable ? null : team.agents.map((agent) => ({ agent: agent.agent, state: agent.state })),
     continuations,
   };
+}
+
+// ---------- what remains and what shipped, per initiative (R-46) ----------
+
+// How many shipped milestones the document names per initiative. The rest are
+// counted beside them, never dropped silently — Work's own record does the
+// same with CLOSED_TAIL. A long-running initiative can carry a hundred closed
+// tagged tickets; a list of a hundred is a log, and the reading this field
+// exists to answer is "what shipped", which the newest few answer and the
+// count qualifies.
+const MILESTONES_NAMED = 5;
+
+const CLOSED = ['done', 'cancelled'];
+
+// Counted from tickets, so it says which tickets and what it leaves out. The
+// surface prints this verbatim: a count whose denominator and coverage live
+// somewhere else is a count a reader has to take on trust (R-46).
+const COVERAGE = 'Counted from tickets tagged with the initiative id in this installation\'s work store. Recurring templates are standing work, listed apart from the open count; tickets nobody tagged are invisible to it.';
+
+/** What one initiative still has open, and what it has shipped.
+ *
+ *  Two things that look like outstanding work and are not, both of them read
+ *  off real rows (R-46 cases 4 and 5):
+ *
+ *  - A recurring TEMPLATE carries `schedule` and is never ready and never
+ *    claimed; its spawned instances are the work. Counting the template
+ *    would report a delivered initiative as having outstanding work forever.
+ *  - A ticket under a CAPACITY HOLD is waiting on a person, and says so in
+ *    the hold rather than in `needs_human`, which it may well carry as
+ *    false. Both fields are served, because reading either one alone gets
+ *    that row wrong.
+ */
+function initiativeWork(tickets) {
+  const live = tickets.filter((ticket) => !CLOSED.includes(ticket.status));
+  const open = live.filter((ticket) => !ticket.schedule);
+  const standing = live.filter((ticket) => ticket.schedule);
+  const closed = tickets.filter((ticket) => CLOSED.includes(ticket.status));
+  // A milestone is work that finished and left something behind: `done` with
+  // a recorded result. Cancelled work shipped nothing, and a done with no
+  // evidence is a claim rather than a record, so neither is named here —
+  // both stay in the `closed` count, which is the denominator.
+  const delivered = closed
+    .filter((ticket) => ticket.status === 'done')
+    .map((ticket) => ({ ticket, result: resultDisplay(ticket.evidence).primary }))
+    .filter((row) => row.result)
+    .sort((a, b) => String(b.ticket.closed_at ?? '').localeCompare(String(a.ticket.closed_at ?? '')));
+  const named = delivered.slice(0, MILESTONES_NAMED);
+  return {
+    remaining_work: {
+      open: open
+        .slice()
+        .sort((a, b) => a.priority - b.priority || String(a.created_at).localeCompare(String(b.created_at)))
+        .map((ticket) => ({
+          id: ticket.id,
+          title: ticket.title,
+          status: ticket.status,
+          assignee: ticket.assignee,
+          hold: ticket.capacity_hold,
+          needs_human: ticket.needs_human,
+        })),
+      standing: standing.map((ticket) => ({ id: ticket.id, title: ticket.title, schedule: ticket.schedule })),
+      open_count: open.length,
+      standing_count: standing.length,
+      closed_count: closed.length,
+      tagged: tickets.length,
+      reading: `${open.length} open of ${tickets.length} tagged`,
+      coverage: COVERAGE,
+    },
+    shipped: {
+      milestones: named.map(({ ticket, result }) => ({
+        id: ticket.id,
+        title: ticket.title,
+        closed_at: ticket.closed_at,
+        result: ticket.evidence[result.at] ?? null,
+      })),
+      named_count: named.length,
+      with_result_count: delivered.length,
+      closed_count: closed.length,
+      reading: `${named.length} named of ${delivered.length} closed with a recorded result, from ${closed.length} closed of ${tickets.length} tagged`,
+      coverage: COVERAGE,
+    },
+  };
+}
+
+/** The roadmap list document with the work store joined in.
+ *
+ *  The join lives here for the same reason the Overview check-in's does: this
+ *  process holds both views and the two stores may not read each other
+ *  (R-47 C1). The consequence is that the Roadmap view served standalone has
+ *  no such field at all — and a reader must take its absence as *unknown*,
+ *  never as "nothing is outstanding", which is why the fields are added here
+ *  rather than defaulted to empty in the roadmap package (R-46).
+ */
+function roadmapDocument() {
+  const snapshot = roadmapSnapshot();
+  const tagged = new Map(snapshot.projects.map((project) => [project.id, []]));
+  for (const ticket of workSnapshot().records) tagged.get(ticket.project)?.push(ticket);
+  // Only `projects` is enriched. `ranked` carries its own copy of each row and
+  // the shell already resolves those back through `projects`, so writing the
+  // join twice would be two readings of one fact that could disagree.
+  return { ...snapshot, projects: snapshot.projects.map((project) => ({ ...project, ...initiativeWork(tagged.get(project.id) ?? []) })) };
 }
 
 function overviewSnapshot(since) {
@@ -94,6 +199,7 @@ function overviewSnapshot(since) {
   // is the server's to fix, and two readings taken at two instants on one page
   // would disagree about what the past 24 hours held (R-44).
   ], results: work.results,
+  roadmap_now: roadmapNow(roadmap.projects),
   // The condensed roster. This is the one place the two records meet: the
   // runtime knows which sessions are running and the work record knows what
   // each seat has claimed, and neither may read the other (R-47 C1), so the
@@ -163,7 +269,17 @@ const running = await startAppServer(appConfig(), (request, response) => {
       response.writeHead(document_ ? 200 : 404, JSON_HEADERS);
       response.end(document_ ? apiJson('incidents', document_) : JSON.stringify({ error: 'Incident not found' })); return;
     }
-    if (/^\/api\/v1\/roadmap(?:[/?]|$)/.test(request.url ?? '')) return roadmapRequest(request, response);
+    if (/^\/api\/v1\/roadmap(?:[/?]|$)/.test(request.url ?? '')) {
+      // The list document is built here because it carries the work join; every
+      // other roadmap route is still the roadmap package's own.
+      if (new URL(request.url ?? '/', 'http://localhost').pathname === '/api/v1/roadmap') {
+        const document_ = apiJson('roadmap', roadmapDocument());
+        response.writeHead(200, JSON_HEADERS);
+        response.end(document_);
+        return;
+      }
+      return roadmapRequest(request, response);
+    }
     if (request.url === '/api/v1/runtime') return runtimeRequest(request, response);
     const file = /^\/api\/v1\/team\/members\/([^/?]+)\/files\/([^/?]+)$/.exec(request.url ?? '');
     if (file) return answer(response, 'team', () => teamFile(decodeURIComponent(file[1]), decodeURIComponent(file[2])));

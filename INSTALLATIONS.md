@@ -244,6 +244,20 @@ selected release and directory, when it was selected, each component's commit,
 the data-compatibility declaration, and whether there is anything to roll back
 to. An unpinned installation says so plainly rather than pretending to a version.
 
+A **release write has to say what it is for.** `upgrade`, `rollback` and
+`activate` change the code the installation runs next, so a run that nothing is
+reading — stdin is not a terminal, or `REV_LOOP` names a supervised loop
+session — is refused unless it names a ticket:
+
+```bash
+rev release upgrade /srv/releases/2026.09-1 --ticket H-1234
+```
+
+Typed at a terminal, no flag is needed: being there is the answer. The id is
+checked for shape and against no store, so this still works when the
+installation is too broken to ask anything. `rev release status` reads and is
+never gated.
+
 Beside the selection, `activation.json` is the deployment record. Selection
 writes it as `selected`; rollback writes `rolled_back`; the activation driver
 then owns `activating`, `running`, and `failed`. A running record is evidence,

@@ -102,14 +102,22 @@ function seedProject(homes, title) {
   }
 }
 
+// Authorized with nothing underway — the state the continuation reading
+// exists to show, and the one the pre-R-46 vocabulary could not express.
 function seedShipNextProject(homes, title) {
   const store = new Store(join(homes.ROADMAP_HOME, 'roadmap.db'));
   try {
-    const project = store.createProject(SEED, { title, status: 'shaping' });
-    store.updateProject({ ...SEED, name: 'readiness-reviewer' }, {
+    const project = store.createProject(SEED, { title });
+    store.updateProject(SEED, {
       project_id: project.id,
       note: 'Ready for the check-in continuation fixture.',
-      status: 'ready',
+      body: 'Shaped for the check-in continuation fixture.',
+    });
+    store.recordReadinessVerdict({ ...SEED, name: 'readiness-reviewer' }, {
+      project_id: project.id,
+      reviewed_revision: store.readinessRevision(project.id),
+      verdict: 'pass',
+      note: 'Ready for the check-in continuation: enough is known to commit.',
     });
     store.setShipNext(SEED, { project_id: project.id, decided_by: 'arthur', reason: 'Exercise the selected-project reading.' });
     return project.id;
@@ -199,6 +207,20 @@ test('the app answers its own port directly and renders the record a recorded UR
   const overview = await (await fetch(`${origin}/api/v1/overview`)).json();
   assert.ok(overview.data.records.some(record => record.id === ticket), 'Overview API preserves its existing record projection');
   assert.equal(overview.data.check_in, undefined, 'Overview invented a check-in without a reader-supplied instant');
+  assert.deepEqual(overview.data.roadmap_now.counts, { Active: 0, Planned: 0, Proposed: 0 });
+  const planned = seedShipNextProject(homes, 'The authorized next delivery');
+  const roadmapStore = new Store(join(homes.ROADMAP_HOME, 'roadmap.db'));
+  try {
+    roadmapStore.recordHealth(SEED, { project_id: planned, health: 'At risk', reason: 'The fixture delivery needs a supplier.' });
+    const hidden = roadmapStore.createProject(SEED, { title: 'Hidden delivery', status: 'Completed' });
+    roadmapStore.recordHealth(SEED, { project_id: hidden.id, health: 'Off track', reason: 'A hidden concern.' });
+    roadmapStore.updateProject(SEED, { project_id: hidden.id, archived: true, note: 'Hidden by the fixture.' });
+  } finally { roadmapStore.close(); }
+  const roadmapNow = (await (await fetch(`${origin}/api/v1/overview`)).json()).data.roadmap_now;
+  assert.deepEqual(roadmapNow.counts, { Active: 0, Planned: 1, Proposed: 0 });
+  assert.deepEqual(roadmapNow.attention, [{ id: planned, title: 'The authorized next delivery', health: 'At risk', reason: 'The fixture delivery needs a supplier.' }]);
+  assert.equal(roadmapNow.health_unrecorded, 0, 'hidden rows do not count as missing health');
+  assert.ok(Date.parse(roadmapNow.as_of));
 
   /* The condensed roster reaches Overview too, and it is the one document on
      this page that joins both records: the runtime says which sessions are
@@ -583,8 +605,10 @@ test('unified routes retain the established product workflows and common navigat
   const ticket = seedTicket(homes, 'Preserved work disclosure');
   seedProject(homes, 'Preserved roadmap disclosure');
   const roadmap = new Store(join(homes.ROADMAP_HOME, 'roadmap.db'));
-  const next = roadmap.createProject(SEED, {title:'Prioritized fixture initiative',status:'ready'}).id;
+  const next = roadmap.createProject(SEED, {title:'Prioritized fixture initiative',status:'Proposed',body:'A description worth judging.'}).id;
+  roadmap.recordReadinessVerdict({name:'fixture-reviewer',kind:'agent',model:'fixture',version:'0'}, {project_id:next,reviewed_revision:roadmap.readinessRevision(next),verdict:'pass',note:'Enough is known to commit.'});
   roadmap.setShipNext(SEED, {project_id:next,decided_by:'fixture-operator',reason:'Synthetic priority decision'});
+  roadmap.updateProject(SEED, {project_id:next,status:'Active',note:'Work is in flight.'});
   roadmap.close();
   const { origin } = await startApp(t, homes);
   for (const path of ['/', '/?whole=1', '/?section=awaiting', '/overview', '/team', '/work', '/work/', '/roadmap', '/roadmap/', '/run', '/run/']) {
@@ -597,7 +621,7 @@ test('unified routes retain the established product workflows and common navigat
   const work = (await (await fetch(origin + '/api/v1/work')).json()).data;
   assert.ok(work.record.rows.some((row) => row.id === ticket));
   const projects = (await (await fetch(origin + '/api/v1/roadmap')).json()).data;
-  assert.ok(projects.ranked.some((row) => row.project.id === next && row.project.status === 'ship_next'));
+  assert.ok(projects.ranked.some((row) => row.project.id === next && row.project.status === 'Active'));
   const detail = (await (await fetch(origin + `/api/v1/roadmap/projects/${next}`)).json()).data;
   assert.ok(detail.events.some((event) => event.event_type === 'ship_next_set'));
   const runtime = (await (await fetch(origin + '/api/v1/runtime')).json()).data;
@@ -666,4 +690,89 @@ test('decisions and actions work through the unified app with their original pro
   // relative post resolves to.
   assert.equal((await post('/work/acted', {ticket_id:action.id,done:true,action_fingerprint:asked.fingerprint})).status, 200);
   assert.ok(store.getEvents(action.id).some(event => event.event_type === 'acted'));
+});
+
+
+// The remaining-work and shipped-milestone join (R-46 item 4). It lives in
+// serve.js because the two stores may not read each other (R-47 C1), so this
+// is the only place it can be proved: the roadmap package served on its own
+// has no such field, and the Roadmap view must read that absence as unknown
+// rather than as "nothing is outstanding".
+test('the roadmap list says what remains and what shipped, with every denominator', async (t) => {
+  const homes = installation(t);
+  const roadmap = new Store(join(homes.ROADMAP_HOME, 'roadmap.db'));
+  const worked = roadmap.createProject(SEED, { title: 'Initiative with work against it' }).id;
+  const untouched = roadmap.createProject(SEED, { title: 'Initiative nobody has filed against' }).id;
+  roadmap.close();
+
+  const store = new WorkStore(join(homes.HELMO_HOME, 'helmo.db'));
+  t.after(() => store.close());
+  const file = (title, extra = {}) => store.createTicket(SEED, {
+    title, body: 'Seeded for the remaining-work join', workstream: 'estate-ui', type: 'build', project: worked, ...extra,
+  });
+  const claimed = file('Open and claimed', { priority: 1, assignee: 'mason', status: 'in_progress' });
+  const held = file('Open under a deliberate hold');
+  store.updateTicket(SEED, {
+    ticket_id: held.id, note: 'Held pending the operator’s own authorization',
+    capacity_hold: { reason: 'Paused pending an evidence-backed plan', provenance: 'The operator, on the record', reconsider_when: 'The operator authorizes resumption' },
+  });
+  // The trap this row sets: a hold only the operator can release is NOT the
+  // needs-human marker, so a surface reading `needs_human` alone reports
+  // nobody is waiting (R-46 case 4).
+  assert.equal(store.getTicket(held.id).needs_human, false);
+  const template = file('Fortnightly code-health pass', { schedule: 'every 14d' });
+  const shipped = file('Delivered, with a result on the record');
+  store.updateTicket(SEED, {
+    ticket_id: shipped.id, note: 'Delivered', status: 'done',
+    evidence: [{ kind: 'commit', ref: 'helmo@0123456', role: 'result', note: 'The change itself' }],
+    completion_account: { category: 'feature', summary: 'The initiative gained its first delivered thing.' },
+  });
+  const claimOnly = file('Closed with nothing to show for it');
+  store.updateTicket(SEED, {
+    ticket_id: claimOnly.id, note: 'Closed', status: 'done',
+    completion_account: { category: 'maintenance', summary: 'Closed without recording what it produced.' },
+  });
+  const dropped = file('Abandoned');
+  store.updateTicket(SEED, { ticket_id: dropped.id, note: 'Not worth doing', status: 'cancelled' });
+  // Tagged to nothing on the roadmap: it must not leak into any initiative.
+  store.createTicket(SEED, { title: 'Untagged work', body: 'No initiative', workstream: 'estate-ui', type: 'build' });
+
+  const { origin } = await startApp(t, homes);
+  const data = (await (await fetch(origin + '/api/v1/roadmap')).json()).data;
+  const row = data.projects.find((project) => project.id === worked);
+
+  // Six tagged, two of them open: the template is standing work and the three
+  // closed rows are closed. Every count states what it is out of.
+  assert.equal(row.remaining_work.reading, '2 open of 6 tagged');
+  assert.equal(row.remaining_work.open_count, 2);
+  assert.equal(row.remaining_work.closed_count, 3);
+  assert.deepEqual(row.remaining_work.open.map((ticket) => ticket.id), [claimed.id, held.id]);
+  assert.deepEqual(row.remaining_work.open[0], {
+    id: claimed.id, title: 'Open and claimed', status: 'in_progress', assignee: 'mason', hold: null, needs_human: false,
+  });
+  assert.equal(row.remaining_work.open[1].hold.reconsider_when, 'The operator authorizes resumption');
+  assert.equal(row.remaining_work.open[1].needs_human, false);
+  // The template is named as the mechanism that watches the initiative, and
+  // counted nowhere near the open work (R-46 case 5).
+  assert.deepEqual(row.remaining_work.standing, [{ id: template.id, title: 'Fortnightly code-health pass', schedule: 'every 14d' }]);
+  assert.match(row.remaining_work.coverage, /Recurring templates are standing work/);
+
+  // One of the three closed rows left something behind. The cancelled row and
+  // the evidence-free done stay in the denominator and are not named.
+  assert.deepEqual(row.shipped.milestones.map((milestone) => milestone.id), [shipped.id]);
+  assert.equal(row.shipped.milestones[0].result.ref, 'helmo@0123456');
+  assert.equal(row.shipped.reading, '1 named of 1 closed with a recorded result, from 3 closed of 6 tagged');
+  assert.ok(![claimOnly.id, dropped.id].some((id) => row.shipped.milestones.some((milestone) => milestone.id === id)));
+
+  // Nothing filed against it reads as a real zero with its denominator, not as
+  // an absent field — absence is reserved for "no work store here" (case 1).
+  const empty = data.projects.find((project) => project.id === untouched);
+  assert.equal(empty.remaining_work.reading, '0 open of 0 tagged');
+  assert.deepEqual(empty.shipped.milestones, []);
+
+  // Every other roadmap route is still the roadmap package's own.
+  const detail = (await (await fetch(origin + `/api/v1/roadmap/projects/${worked}`)).json()).data;
+  assert.equal(detail.project.id, worked);
+  assert.equal(detail.project.remaining_work, undefined);
+  assert.equal((await fetch(origin + '/api/v1/roadmap/projects/R-9999')).status, 404);
 });

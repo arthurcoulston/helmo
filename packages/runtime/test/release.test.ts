@@ -8,6 +8,7 @@ import { Migration, ReleaseError, describe as describeRelease, readSelection, re
 import { beginActivation, completeActivation, deploymentFile, failActivation, loadedFromRelease, readDeployment, recordRestart, refuseStart, writeDeployment } from '../src/deployment.js';
 import { markerLines, snapshot } from '../src/build.js';
 import { runCommand } from '../src/command-name.js';
+import { RELEASE_WRITE_VERBS, intentRefusal, isReleaseWriteVerb } from '../src/release-intent.js';
 
 const REV_CLI = join(import.meta.dirname, '..', 'src', 'cli.ts');
 const ROOT = join(import.meta.dirname, '..');
@@ -802,7 +803,7 @@ describe('the release commands (H-2493)', () => {
 
   it('drives activate through the CLI, bounded drain, and replacement supervisor readback', () => {
     const i = activatableInstallation('activation-success');
-    const activated = rev(i.home, ['release', 'activate'], i.env);
+    const activated = rev(i.home, ['release', 'activate', '--ticket', 'H-1'], i.env);
     expect(activated.status, activated.stderr).toBe(0);
     expect(readDeployment(deploymentFile(i.file))).toMatchObject({ phase: 'activating', installation: i.env.REV_LABEL });
     expect(readFileSync(join(i.supervisor, 'REDEPLOY'), 'utf8')).toContain('activate selected release activation-success');
@@ -836,7 +837,7 @@ describe('the release commands (H-2493)', () => {
       helmo_mcp_server: join(outgoing, 'helmo', 'dist', 'server.js'),
     };
 
-    expect(rev(i.home, ['release', 'activate'], i.env, stale).status).toBe(0);
+    expect(rev(i.home, ['release', 'activate', '--ticket', 'H-1'], i.env, stale).status).toBe(0);
     expect(readDeployment(deploymentFile(i.file))?.phase).toBe('activating');
 
     unlinkSync(join(i.supervisor, 'RUNNING'));
@@ -861,7 +862,7 @@ describe('the release commands (H-2493)', () => {
     // installation then activates and reports running with no other change.
     const good = { helmo_cli: join(i.release, 'helmo', 'dist', 'cli.js'), helmo_mcp_server: join(i.release, 'helmo', 'dist', 'server.js') };
     i.markOldSupervisor();
-    const repaired = rev(i.home, ['release', 'activate'], i.env, good);
+    const repaired = rev(i.home, ['release', 'activate', '--ticket', 'H-1'], i.env, good);
     expect(repaired.status, `${repaired.stdout}${repaired.stderr}`).toBe(0);
     unlinkSync(join(i.supervisor, 'RUNNING'));
     expect(rev(i.home, ['run'], i.env, good).status).toBe(0);
@@ -870,7 +871,7 @@ describe('the release commands (H-2493)', () => {
 
   it('leaves a running record alone when a returning supervisor cannot certify what it loaded', () => {
     const i = activatableInstallation('activation-restart');
-    expect(rev(i.home, ['release', 'activate'], i.env).status).toBe(0);
+    expect(rev(i.home, ['release', 'activate', '--ticket', 'H-1'], i.env).status).toBe(0);
     unlinkSync(join(i.supervisor, 'RUNNING'));
     expect(rev(i.home, ['run'], i.env).status).toBe(0);
     const activated = readDeployment(deploymentFile(i.file));
@@ -885,7 +886,7 @@ describe('the release commands (H-2493)', () => {
 
   it('records watch expiry and recovers only through a fresh activation attempt', () => {
     const i = activatableInstallation('activation-recovery');
-    expect(rev(i.home, ['release', 'activate'], i.env).status).toBe(0);
+    expect(rev(i.home, ['release', 'activate', '--ticket', 'H-1'], i.env).status).toBe(0);
 
     const bin = join(i.dir, 'bin');
     mkdirSync(bin);
@@ -902,7 +903,7 @@ describe('the release commands (H-2493)', () => {
     expect(readDeployment(deploymentFile(i.file))?.phase).toBe('failed');
 
     i.markOldSupervisor();
-    expect(rev(i.home, ['release', 'activate'], i.env).status).toBe(0);
+    expect(rev(i.home, ['release', 'activate', '--ticket', 'H-1'], i.env).status).toBe(0);
     unlinkSync(join(i.supervisor, 'RUNNING'));
     expect(rev(i.home, ['run'], i.env).status).toBe(0);
     expect(readDeployment(deploymentFile(i.file))).toMatchObject({ phase: 'running', release: 'activation-recovery' });
@@ -916,9 +917,9 @@ describe('the release commands (H-2493)', () => {
     const current = makeRelease(dir, 'current');
     const next = makeRelease(dir, 'next');
 
-    const first = rev(home, ['release', 'upgrade', current], { INSTALLATION_RELEASE: file });
+    const first = rev(home, ['release', 'upgrade', current, '--ticket', 'H-1'], { INSTALLATION_RELEASE: file });
     expect(first.status, first.stderr).toBe(0);
-    const up = rev(home, ['release', 'upgrade', next], { INSTALLATION_RELEASE: file });
+    const up = rev(home, ['release', 'upgrade', next, '--ticket', 'H-1'], { INSTALLATION_RELEASE: file });
     expect(up.status, up.stderr).toBe(0);
     expect(up.stdout).toContain('release: current -> next');
     expect(up.stdout).toContain('rollback supported');
@@ -928,7 +929,7 @@ describe('the release commands (H-2493)', () => {
     expect(up.stdout).not.toContain('rev service start');
     expect(readSelection(file)!.release).toBe('next');
 
-    const back = rev(home, ['release', 'rollback'], { INSTALLATION_RELEASE: file });
+    const back = rev(home, ['release', 'rollback', '--ticket', 'H-1'], { INSTALLATION_RELEASE: file });
     expect(back.status, back.stderr).toBe(0);
     expect(back.stdout).toContain('release: next -> current');
     expect(readSelection(file)!.release).toBe('current');
@@ -985,7 +986,7 @@ describe('the release commands (H-2493)', () => {
     expect(removal.stdout).toContain('Nothing was removed');
     expect(existsSync(file)).toBe(true);
 
-    const repaired = rev(home, ['release', 'upgrade', makeRelease(dir, 'good')], { INSTALLATION_RELEASE: file });
+    const repaired = rev(home, ['release', 'upgrade', makeRelease(dir, 'good'), '--ticket', 'H-1'], { INSTALLATION_RELEASE: file });
     expect(repaired.status, repaired.stderr).toBe(0);
     expect(readSelection(file)!.release).toBe('good');
   }, 15_000);
@@ -996,7 +997,7 @@ describe('the release commands (H-2493)', () => {
     mkdirSync(home, { recursive: true });
     const file = selectionAt(dir);
 
-    const res = rev(home, ['release', 'upgrade', makeRelease(dir, 'next'), '--installation', join(dir, 'somewhere-else')], { INSTALLATION_RELEASE: file });
+    const res = rev(home, ['release', 'upgrade', makeRelease(dir, 'next'), '--installation', join(dir, 'somewhere-else'), '--ticket', 'H-1'], { INSTALLATION_RELEASE: file });
     expect(res.status).not.toBe(0);
     expect(res.stderr).toContain('--installation named');
     expect(existsSync(file)).toBe(false);
@@ -1006,7 +1007,7 @@ describe('the release commands (H-2493)', () => {
     const dir = root();
     const home = join(dir, '.rev');
     mkdirSync(home, { recursive: true });
-    const res = rev(home, ['release', 'upgrade', makeRelease(dir, 'next')]);
+    const res = rev(home, ['release', 'upgrade', makeRelease(dir, 'next'), '--ticket', 'H-1']);
     expect(res.status).not.toBe(0);
     expect(res.stderr).toContain('not pinned');
     expect(readdirSync(dir)).not.toContain('ADOPTED.json');
@@ -1023,7 +1024,7 @@ describe('the release commands (H-2493)', () => {
     vi.stubEnv('INSTALLATION_RELEASE', file);
     vi.stubEnv('REV_LABEL', 'dev.rev.parent');
     try {
-      const res = rev(home, ['release', 'upgrade', makeRelease(dir, 'next')]);
+      const res = rev(home, ['release', 'upgrade', makeRelease(dir, 'next'), '--ticket', 'H-1']);
       expect(readFileSync(file, 'utf8')).toBe(before);
       expect(res.status).not.toBe(0);
       expect(res.stderr).toContain('not pinned');
@@ -1031,6 +1032,82 @@ describe('the release commands (H-2493)', () => {
     } finally {
       vi.unstubAllEnvs();
     }
+  });
+
+  // A release write that names no intent (H-3376). The accident this closes
+  // ran `release rollback` twice against the live selection from an
+  // autonomous session, so the assertions are: nothing was written, and
+  // stdout is EMPTY — a command that ran and then complained is
+  // indistinguishable from a refusal if only the exit code is read (H-2526).
+  describe('refusing a release write that names no intent (H-3376)', () => {
+    const pinned = () => {
+      const dir = root();
+      const home = join(dir, '.rev');
+      mkdirSync(home, { recursive: true });
+      const file = selectionAt(dir);
+      upgrade(file, makeRelease(dir, 'current'));
+      return { dir, home, file, before: readFileSync(file, 'utf8') };
+    };
+
+    // Driven off the exported list, so a fourth write verb cannot reach the
+    // dispatch without reaching the gate.
+    it.each(RELEASE_WRITE_VERBS.map((verb) => [verb] as const))(
+      'refuses %s from a session with nothing reading it, writing nothing and saying nothing on stdout',
+      (verb) => {
+        const i = pinned();
+        const args = verb === 'upgrade' ? ['release', verb, makeRelease(i.dir, 'next')] : ['release', verb];
+        const res = rev(i.home, args, { INSTALLATION_RELEASE: i.file, REV_LOOP: '' });
+        expect(res.status).not.toBe(0);
+        expect(res.stdout).toBe('');
+        expect(res.stderr).toContain('names no intent');
+        expect(res.stderr).toContain('--ticket <id>');
+        expect(readFileSync(i.file, 'utf8')).toBe(i.before);
+      },
+    );
+
+    it('names the loop when REV_LOOP says one is running, rather than blaming the stdio', () => {
+      const i = pinned();
+      const res = rev(i.home, ['release', 'rollback'], { INSTALLATION_RELEASE: i.file, REV_LOOP: 'mason' });
+      expect(res.status).not.toBe(0);
+      expect(res.stderr).toContain("loop session 'mason'");
+      expect(readFileSync(i.file, 'utf8')).toBe(i.before);
+    });
+
+    it('refuses a --ticket that is not a ticket id, so a stray word cannot be absorbed as one', () => {
+      const i = pinned();
+      for (const value of ['rollback', 'yes', 'H-', 'because Arthur asked']) {
+        const res = rev(i.home, ['release', 'rollback', '--ticket', value], { INSTALLATION_RELEASE: i.file, REV_LOOP: '' });
+        expect(res.status, `--ticket ${value}`).not.toBe(0);
+        expect(res.stdout).toBe('');
+        expect(res.stderr).toContain('is not a ticket id');
+      }
+      expect(readFileSync(i.file, 'utf8')).toBe(i.before);
+    });
+
+    // The flag is consumed at the door, before any verb sees its own
+    // positionals — otherwise this spelling hands '--ticket' to `upgrade` as
+    // the release directory (the H-2526 absorption, one flag over).
+    it('takes the intent before the positionals, in both spellings', () => {
+      const i = pinned();
+      const next = makeRelease(i.dir, 'next');
+      const before = rev(i.home, ['release', 'upgrade', '--ticket', 'H-1', next], { INSTALLATION_RELEASE: i.file, REV_LOOP: '' });
+      expect(before.status, before.stderr).toBe(0);
+      expect(before.stdout).toContain('intent: H-1');
+      expect(before.stdout).toContain('release: current -> next');
+      const joined = rev(i.home, ['release', 'rollback', '--ticket=H-1@dev.rev'], { INSTALLATION_RELEASE: i.file, REV_LOOP: '' });
+      expect(joined.status, joined.stderr).toBe(0);
+      expect(joined.stdout).toContain('intent: H-1@dev.rev');
+      expect(readSelection(i.file)!.release).toBe('current');
+    });
+
+    // `status` is a read, and a read is where a consumer puts an assertion:
+    // gating it would be the H-2526 shape in reverse.
+    it('leaves the read alone', () => {
+      const i = pinned();
+      const res = rev(i.home, ['release', 'status'], { INSTALLATION_RELEASE: i.file, REV_LOOP: 'mason' });
+      expect(res.status, res.stderr).toBe(0);
+      expect(res.stdout).toContain('current');
+    });
   });
 });
 
@@ -1051,5 +1128,68 @@ describe("the declaration this release ships (H-2459)", () => {
       expect.stringContaining("declares release 'v0.1.0' but sits in '2026.09-1'"),
     ]);
     expect('release' in shipped()).toBe(false);
+  });
+});
+
+// The gate itself, away from the CLI: which runs count as naming their intent
+// (H-3376, src/release-intent.ts). The CLI block above proves the three verbs
+// are wired to it; this proves what it decides.
+describe('naming the intent of a release write (H-3376)', () => {
+  const run = (over: Partial<Parameters<typeof intentRefusal>[0]> = {}) => intentRefusal(
+    { verb: 'rollback', ticket: undefined, tty: false, env: {}, ...over },
+    'rev',
+  );
+
+  it('lets an attended run through: someone typed it and is reading the output', () => {
+    for (const verb of RELEASE_WRITE_VERBS) {
+      expect(run({ verb, tty: true }), verb).toBeNull();
+    }
+  });
+
+  it('refuses every write verb when nothing is reading, and says what to do instead', () => {
+    for (const verb of RELEASE_WRITE_VERBS) {
+      const refusal = run({ verb });
+      expect(refusal, verb).toContain('stdin is not a terminal');
+      expect(refusal, verb).toContain(`rev release ${verb}`);
+      expect(refusal, verb).toContain('--ticket <id>');
+    }
+    // The directory is part of the way out it offers, or the reader has to
+    // reconstruct the command they were already running.
+    expect(run({ verb: 'upgrade' })).toContain('release upgrade <release directory> --ticket <id>');
+  });
+
+  // A loop is unattended by definition, whatever stdio it was handed: a pty
+  // is allocatable, and the incident came from exactly this population.
+  it('refuses a loop session even with a terminal on stdin', () => {
+    expect(run({ tty: true, env: { REV_LOOP: 'mason' } })).toContain("loop session 'mason'");
+    expect(run({ tty: true, env: { REV_LOOP: '  ' } })).toBeNull();
+  });
+
+  it('takes a ticket id as the intent, in either spelling, however unattended the run is', () => {
+    for (const ticket of ['H-1', 'H-3376', 'H-3376@dev.rev', 'OBJ-12@dev.rev.two']) {
+      expect(run({ ticket, env: { REV_LOOP: 'mason' } }), ticket).toBeNull();
+    }
+  });
+
+  // A flag spelling that is absorbed rather than refused is how an assertion
+  // goes silent, so a malformed id is refused even from a terminal.
+  it('refuses a --ticket that is not a ticket id, attended or not', () => {
+    for (const ticket of ['rollback', 'yes', 'H-', '-1', 'h-1', 'H1', 'H-1 ; rm -rf /']) {
+      expect(run({ ticket, tty: true }), ticket).toContain('is not a ticket id');
+    }
+    expect(run({ ticket: '', tty: true })).toContain('--ticket was given with no value');
+  });
+
+  it('is not the gate for reads, nor for a verb the dispatch will reject anyway', () => {
+    expect(isReleaseWriteVerb('status')).toBe(false);
+    for (const verb of ['status', 'adopt', '']) {
+      expect(run({ verb }), verb).toBeNull();
+    }
+  });
+
+  // The refusal has to hold when the installation is too broken to ask
+  // anything: these three verbs are its only way out (H-2493).
+  it('promises, in the refusal, that the id is checked against no store', () => {
+    expect(run()).toContain('checked against no store');
   });
 });

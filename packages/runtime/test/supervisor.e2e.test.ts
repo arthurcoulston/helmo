@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { HELMO_CLI as HELM_CLI, HELMO_SERVER, HELMO_STORE } from './helmo.js';
+import { createHash } from 'node:crypto';
 
 // Loaded by path rather than by specifier so it follows REV_TEST_HELMO like
 // the rest of this suite's Helmo references. A written-out sibling path is
@@ -133,6 +134,50 @@ fi
 '''`;
 
 describe('rev fleet e2e (supervisor over mock loops, real helm store)', () => {
+  it('consumes an exact runtime recovery through the CLI and starts only the covered worker', async () => {
+    const e=setup(`[loops.recovery]
+workstream = "ws-recovery"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = "true"
+
+[loops.held]
+workstream = "ws-held"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = "true"
+`);
+    e.env.REV_LABEL='test.runtime.recovery';
+    const dir=join(e.home,'state','recovery');
+    mkdirSync(dir,{recursive:true});
+    mkdirSync(join(e.home,'state','held'),{recursive:true});
+    writeFileSync(join(e.home,'state','held','HOLD'),'independent-owner');
+    const reason='runtime failed 3 consecutive iterations (cap 2)';
+    const at=new Date().toISOString();
+    const block=`reason=${reason}\nat=${at}\n`;
+    writeFileSync(join(dir,'BLOCKED'),block);
+    writeFileSync(join(dir,'.fail_streak'),'3');
+    const record=join(e.home,'request.json');
+    writeFileSync(record,JSON.stringify({installation:'test.runtime.recovery',worker:'recovery',ticket:'H-42',reason,at,
+      sha256:createHash('sha256').update(block).digest('hex'),expires_at:new Date(Date.now()+60_000).toISOString()}));
+    // CLI queues only, even before a supervisor is running.
+    expect(rev(e,['recover-runtime','recovery','--record',record,'--installation','test.runtime.recovery'])).toContain('queued once');
+    expect(readFileSync(join(dir,'BLOCKED'),'utf8')).toBe(block);
+    const {proc,out}=startFleet(e);
+    try {
+      await waitFor(()=>loopPid(e,'recovery')!==null,'covered worker start',15000);
+      expect(existsSync(join(dir,'BLOCKED'))).toBe(false);
+      expect(existsSync(join(dir,'RUNTIME_RECOVERY.json'))).toBe(false);
+      expect(JSON.parse(readFileSync(join(dir,'RUNTIME_RECOVERY.last.json'),'utf8')).decision).toBe('release');
+      expect(readFileSync(join(dir,'events.log'),'utf8')).toContain('runtime-recovery-release');
+      expect(loopPid(e,'held')).toBeNull();
+      expect(readFileSync(join(e.home,'state','held','HOLD'),'utf8')).toBe('independent-owner');
+      expect(out()).not.toContain('runtime-recovery-check-failed');
+    } finally {
+      proc.kill('SIGTERM');
+      await waitFor(()=>proc.exitCode!==null,'recovery supervisor drain',15000);
+    }
+  },30000);
   it('keeps a scheduled-capacity loop down until its resume time', async () => {
     const e = setup(`[loops.scheduled]
 workstream = "ws-scheduled"

@@ -987,6 +987,42 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   - It changes one file and restarts nothing: a running process keeps the code
     it loaded. The command sends the operator to `release activate`, never to
     the outgoing CLI's ordinary redeploy or service-start paths.
+- `release-intent.ts` — **a release write has to say what it is for** (H-3376).
+  `upgrade`, `rollback` and `activate` move the code an installation runs next,
+  and until now nothing in the product asked why. On 2026-10-21 two stray words
+  in a doctrine sentence became shell command substitutions inside an
+  autonomous loop iteration, and `rev release rollback` ran twice against the
+  live selection (H-3374). The two cancelled and nothing was damaged; a lone
+  `activate` would not have cancelled, and the substitution swallowed stdout so
+  no transcript showed any of it. H-3374 closed the quoting ACCIDENT with a
+  harness hook — which is config a session can be launched without. This closes
+  the CAPABILITY, in the product.
+  - **An attended run answers the question by being attended**; every other run
+    must pass `--ticket <id>`. Attended is measured twice because either
+    measurement alone is wrong: stdin is a terminal (the one thing separating a
+    person at a prompt from a spawned child — every tool call, script and
+    launchd job gets a pipe) AND `REV_LOOP` is unset (a supervised loop is
+    unattended by definition whatever its stdio, it is the population the
+    incident came from, and the shim writes the variable so a prompt cannot).
+  - **It refuses the accident and the unnamed act, not an adversary.** A session
+    with shell access can clear `REV_LOOP` or allocate a pty, and both are
+    deliberate acts that name themselves in a transcript. What happened here
+    was named nowhere, which is the whole defect.
+  - **The ticket is checked for shape and against no store.** Verifying it would
+    put the repair behind the fault (H-2493): these three verbs are the only way
+    out of a broken selection, so the gate has to hold when everything else in
+    the installation is down. The refusal says so, because an operator mid-repair
+    needs to know the flag is not another thing that can fail.
+  - **One list, above the dispatch, once.** `RELEASE_WRITE_VERBS` is both what
+    cli.ts dispatches and what the gate reads, and the call sits above the
+    three-verb branch and above every read of the installation — so the refusal
+    cannot tell a run what it would have changed, and a verb added later cannot
+    be dispatched without being gated. The guard class this replaces lived as an
+    argument each handler passed, and held only where its author remembered
+    (H-2526). `--ticket` is consumed at the cli.ts door beside
+    `--installation`, so `release upgrade --ticket H-1 <dir>` cannot hand the
+    flag to the verb as its release directory, and `redeploy` reads the same
+    one value. `status` is a read and is never gated.
 - `deployment.ts` — **the durable activation record** (H-2572), stored as
   `activation.json` beside the release selection. Built, published, selected,
   activating, running, failed, and rolled-back are distinct; every record
@@ -1832,6 +1868,34 @@ identical 185 specifiers from all 37 of them — the case is proven by
 front of it, which the old scan passed and the new one refuses. What it still
 cannot see is a specifier assembled at runtime, and the inside of a template
 literal's `${...}`.
+# Recover one diagnosed runtime failure
+
+`recover-runtime <exact worker> --record <JSON file> --installation <name>`
+queues one request for the owning supervisor. The immutable record contains
+`installation`, `worker`, `ticket`, the exact plain runtime-trip `reason` and
+`at`, SHA256 of the complete BLOCKED bytes as `sha256`, and `expires_at` no
+more than fifteen minutes ahead. It does not claim or complete a work ticket.
+Diagnose and verify current startup through issued provider access first.
+
+The supervisor consumes the request once with no child, rechecks the trip and
+refuses a live/unknown worker, structured block, STOP, HOLD, PACE, pending PACE
+writer or LIMIT. Release clears only the matching BLOCKED and fail streak.
+All supported BLOCKED writers share an exclusive per-worker `.blocked-lock`;
+contention or an interrupted lock fails closed and needs operator diagnosis,
+never automatic stale-lock removal. This is the existing local filesystem
+trust boundary, not protection from hostile direct file edits or old binaries.
+Deploy a coherent accepted runtime before using the command.
+
+`RUNTIME_RECOVERY.last.json`, retained per-request decision files, and
+`events.log` record release/refusal. A consumed manifest cannot be replayed;
+a new failure needs diagnosis and a fresh manifest. A crash during consumption
+can leave a consumed request with the old block still present; inspect the
+decision and controls before any new request. No hold or provider policy is
+changed, and no worker health or useful-work verdict is invented. Verify new
+worker PID/startup and actual admitted useful work separately. `stop <worker>
+--worker --installation <name>` contains the recovered worker; there is no
+one-step undo restoring the old incident state.
+
 # Prime team control
 
 `gp-rev team stop|resume <loop|all>` is the Good Plumb leadership surface. It

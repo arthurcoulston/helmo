@@ -1,15 +1,18 @@
 import Database from 'better-sqlite3';
 import { boundNote, LatestProgress } from '@helmo/core';
 import {
-  ACTOR_KINDS, Actor, ActorKind, Bet, Citation, Claim, Dep, DepType, EFFORT_SIZES, Horizon, Objective,
-  Project, ProjectSnapshot, Ranked, ReadinessReview, ReadinessVerdict, RoadmapError, RoadmapEvent, SHIPPED, Status, TERMINAL, VALUE_LEVELS,
+  ACTOR_KINDS, Actor, ActorKind, AUTHORIZED, Bet, Citation, Claim, Dep, DepType, EFFORT_SIZES, Horizon, LEGACY_STATUSES, Objective,
+  Health, Project, ProjectSnapshot, Ranked, Readiness, ReadinessReview, ReadinessVerdict, RoadmapError, RoadmapEvent, SHIPPED, Status, STATUSES, statusReading, StoredStatus, TERMINAL, VALUE_LEVELS,
 } from './types.js';
 import { Installation, namesInstallation } from './install.js';
+import { planR46, R46Facts, R46Judgments, R46Plan } from './migrate-lib.js';
 
 export interface CreateInput {
   title: string;
   body?: string; // a title and a sentence — any required field would strangle the backlog at birth
-  status?: 'parked' | 'shaping';
+  // A new project is Proposed; how refined it is, is `readiness`. The two
+  // pre-R-46 words stay accepted for callers still mid-migration.
+  status?: 'Proposed' | 'parked' | 'shaping';
 }
 
 export interface UpdateInput {
@@ -19,12 +22,34 @@ export interface UpdateInput {
   // omitting it keeps the pre-existing last-write-wins behavior; passing it
   // makes the write conditional — see `assertRevision`.
   if_revision?: number;
-  status?: Exclude<Status, 'ship_next'>; // ship_next only via setShipNext — it is the human's call
+  status?: Exclude<Status, 'Planned'>; // Planned only via setShipNext — it is the human's call
+  archived?: boolean; // hide a Completed or Canceled row from the surfaces
   title?: string;
   body?: string;
   parked_reason?: string;
   unpark_condition?: string;
 }
+
+/** The stored words — today's and every pre-R-46 one — whose reading falls in
+ *  a family. SQL reads the status column raw, and rows carry the old word
+ *  until the migration runs, so a family filter has to name both vocabularies.
+ *  Every value comes from our own constants; nothing here is caller input. */
+const storedIn = (family: readonly Status[]): string =>
+  [...STATUSES, ...LEGACY_STATUSES]
+    .filter((stored) => family.includes(statusReading(stored)))
+    .map((stored) => `'${stored}'`)
+    .join(', ');
+
+const CLOSED_SQL = storedIn([...SHIPPED, ...TERMINAL]);
+const SHIPPED_SQL = storedIn(SHIPPED);
+const AUTHORIZED_SQL = storedIn(AUTHORIZED);
+
+/** Pre-R-46 rows carry their refinement in the status word rather than the
+ *  field: `shaping` and `ready` were both descriptions someone had worked on,
+ *  and the migration maps both to shaped. Read it either way so The List keeps
+ *  its order in the window before the migration writes the field. */
+const readinessOf = (p: Project): Readiness =>
+  p.readiness === 'shaped' || p.status === 'shaping' || p.status === 'ready' ? 'shaped' : 'raw idea';
 
 export interface UpdateResult {
   project: Project;
@@ -46,7 +71,11 @@ CREATE TABLE IF NOT EXISTS projects (
   id               TEXT PRIMARY KEY,
   title            TEXT NOT NULL,
   body             TEXT NOT NULL DEFAULT '',
-  status           TEXT NOT NULL DEFAULT 'parked',
+  status           TEXT NOT NULL DEFAULT 'Proposed',
+  readiness        TEXT NOT NULL DEFAULT 'raw idea',
+  health           TEXT,
+  health_reason    TEXT,
+  archived         INTEGER NOT NULL DEFAULT 0,
   parked_reason    TEXT,
   unpark_condition TEXT,
   actual_usd       REAL NOT NULL DEFAULT 0,
@@ -145,6 +174,23 @@ export class Store {
     // hit an instant SQLITE_BUSY on the lock upgrade instead of waiting
     // (Helmo's H-134; same engine, same trap).
     this.db.exec(SCHEMA);
+    this.addProjectReadingColumns();
+  }
+
+  /** SQLite's CREATE TABLE does not add columns to an existing table. */
+  private addProjectReadingColumns(): void {
+    const columns = new Set(
+      (this.db.pragma('table_info(projects)') as { name: string }[]).map((column) => column.name),
+    );
+    const additions = [
+      ['readiness', "TEXT NOT NULL DEFAULT 'raw idea'"],
+      ['health', 'TEXT'],
+      ['health_reason', 'TEXT'],
+      ['archived', 'INTEGER NOT NULL DEFAULT 0'],
+    ] as const;
+    for (const [name, definition] of additions) {
+      if (!columns.has(name)) this.db.exec(`ALTER TABLE projects ADD COLUMN ${name} ${definition}`);
+    }
   }
 
   close(): void {
@@ -352,40 +398,48 @@ export class Store {
   }
 
   /** Blocked is computed from dependencies, never remembered. A blocker
-   *  releases its hold by shipping (or being archived). */
+   *  releases its hold by shipping (or being canceled). */
   blockedBy(id: string): string[] {
     return (
       this.db
         .prepare(
           `SELECT d.to_id FROM deps d JOIN projects p ON p.id = d.to_id
-           WHERE d.from_id = ? AND d.type = 'blocks' AND p.status NOT IN ('shipped_watching','shipped_stable','archived')`,
+           WHERE d.from_id = ? AND d.type = 'blocks' AND p.status NOT IN (${CLOSED_SQL})`,
         )
         .all(id) as { to_id: string }[]
     ).map((r) => r.to_id);
   }
 
-  /** The current work phase — every project the human has declared go on.
-   *  Several may hold it; the count itself is a signal the surfaces show. */
-  shipNextProjects(): Project[] {
-    return this.db.prepare("SELECT * FROM projects WHERE status = 'ship_next' ORDER BY id").all() as unknown as Project[];
+  /** The current work phase — every project the human has declared go on,
+   *  Planned (nothing underway yet) and Active alike. Several may hold it;
+   *  the count itself is a signal the surfaces show. */
+  authorizedProjects(): Project[] {
+    return this.db.prepare(`SELECT * FROM projects WHERE status IN (${AUTHORIZED_SQL}) ORDER BY id`).all() as unknown as Project[];
   }
 
-  /** Post-ship projects (watching, then stable) — off the ranked list but
-   *  not out of sight: watching carries loose ends someone still owes. */
+  /** Post-ship projects (Monitoring, then Completed) — off the ranked list
+   *  but not out of sight: Monitoring carries loose ends someone still owes.
+   *
+   *  A hidden row is here too. Before R-46, `archived` was a status, so
+   *  shelving a delivered initiative also took it out of the shipped family;
+   *  now the two are separate facts and this read answers only the status
+   *  one. A caller drawing a list applies `archived` itself — the Roadmap
+   *  view does, which is why a shelved row appears in Archived and not twice. */
   shippedProjects(): Project[] {
     return this.db
-      .prepare("SELECT * FROM projects WHERE status IN ('shipped_watching','shipped_stable') ORDER BY status, closed_at DESC")
+      .prepare(`SELECT * FROM projects WHERE status IN (${SHIPPED_SQL}) ORDER BY status, closed_at DESC`)
       .all() as unknown as Project[];
   }
 
   /** The derived order (PRODUCT.md): facts the store knows set the tier —
-   *  ship_next, ready, shaping, blocked, parked — and judgments order within
-   *  it. Rank is never set by hand, and every position carries its one-line
-   *  explanation. Shipped and archived projects are not ranked: the list is
-   *  the competition for what gets worked, and they are past it. */
+   *  Active, Planned, shaped, blocked, raw or Paused — and judgments order
+   *  within it. Rank is never set by hand, and every position carries its
+   *  one-line explanation. Shipped, completed and canceled projects are not
+   *  ranked: the list is the competition for what gets worked, and they are
+   *  past it. */
   rankProjects(): Ranked[] {
     const rows = this.db
-      .prepare("SELECT * FROM projects WHERE status NOT IN ('shipped_watching','shipped_stable','archived')")
+      .prepare(`SELECT * FROM projects WHERE status NOT IN (${CLOSED_SQL})`)
       .all() as unknown as Project[];
 
     const entries = rows.map((p) => {
@@ -393,15 +447,17 @@ export class Store {
       const citations = this.getCitations(p.id);
       const value = this.latestClaim(p.id, 'value');
       const effort = this.latestClaim(p.id, 'effort');
-      // Parked outranks blocked-ness: parking is the human's own statement of
-      // inactivity, and a blocker must not float a parked project above the
-      // unblocked prerequisite it waits on (H-441).
+      // Inactivity outranks blocked-ness, and reads from two facts now that
+      // `parked` has split: a pause is the human's own statement of it, and a
+      // raw idea is nobody's next move either. A blocker must not float
+      // either one above the unblocked prerequisite it waits on (H-441).
+      const reading = statusReading(p.status);
       const tier =
-        p.status === 'ship_next' ? 0 :
-        p.status === 'parked' ? 4 :
+        reading === 'Active' ? 0 :
+        reading === 'Paused' ? 4 :
+        readinessOf(p) === 'raw idea' ? 4 :
         blocked.length ? 3 :
-        p.status === 'ready' ? 1 :
-        p.status === 'shaping' ? 2 : 4;
+        reading === 'Planned' ? 1 : 2;
       // Project rank inherits from objective rank: the human orders a dozen
       // objectives once; the best-ranked citation carries that hand down here.
       const objRanks = citations
@@ -426,10 +482,14 @@ export class Store {
     );
 
     return entries.map((e, i) => {
+      // The stored word is what the explanation says, so a row not yet
+      // migrated reads in the vocabulary it was actually written with.
+      const reading = statusReading(e.p.status);
       const tierWord =
-        e.p.status === 'ship_next' ? 'SHIP NEXT' :
+        reading === 'Active' ? 'ACTIVE' :
         e.blocked.length ? `${e.p.status}, waits on ${e.blocked.join(', ')}` :
-        e.p.status === 'ready' ? 'ready, no blockers' : e.p.status;
+        reading === 'Planned' ? `${e.p.status}, nothing underway` :
+        readinessOf(e.p) === 'shaped' ? `${e.p.status}, shaped, no blockers` : e.p.status;
       const parts = [tierWord];
       const topCite = e.citations.length
         ? e.citations.reduce((best, c) => {
@@ -462,7 +522,7 @@ export class Store {
     return this.db.transaction(() => {
       const id = this.mintId('R');
       const ts = now();
-      const payload: Record<string, unknown> = { id, title: input.title, body: input.body ?? '', status: input.status ?? 'parked' };
+      const payload: Record<string, unknown> = { id, title: input.title, body: input.body ?? '', status: input.status ?? 'Proposed' };
       this.append(ts, id, 'created', actor, payload);
       this.applyCreated(ts, payload);
       return this.getProject(id);
@@ -484,40 +544,50 @@ export class Store {
     const warnings: string[] = [];
     const diffs: Record<string, { from: unknown; to: unknown }> = {};
 
-    if (TERMINAL.includes(p.status)) {
-      throw new RoadmapError(`${p.id} is ${p.status} — terminal. The record is permanent; a revived idea is a new project with a 'relates' link.`);
+    const was = statusReading(p.status);
+    // Terminal takes no new judgments. Hiding is the one exception: `archived`
+    // says whether a surface draws the row, not what became of it, and the
+    // migration has to be able to shelve a record it just canceled.
+    if (TERMINAL.includes(was) && !this.hidingOnly(p, input)) {
+      throw new RoadmapError(`${p.id} is ${p.status} — terminal. The record is permanent; a revived idea is a new project with a 'relates' link. Only 'archived' (hide the row) may still be set.`);
     }
 
     if (input.status && input.status !== p.status) {
-      if ((input.status as string) === 'ship_next') {
-        throw new RoadmapError('ship_next is entered only through the human\'s recorded go-ahead — roadmap_set_ship_next, never a plain status write.');
+      if (input.status === ('Planned' as string)) {
+        throw new RoadmapError('Planned is entered only through the human\'s recorded go-ahead — roadmap_set_ship_next, never a plain status write.');
       }
-      // Nothing ships that the human never declared go on: the shipped
-      // statuses are reachable only from ship_next (or from each other).
-      // Legacy pre-ladder-v2 statuses migrate through the same door.
-      if (
-        SHIPPED.includes(input.status) &&
-        actor.kind !== 'human' &&
-        !['ship_next', 'shipped_watching', 'shipped_stable', 'shipping', 'shipped'].includes(p.status)
-      ) {
-        throw new RoadmapError(
-          `${p.id} is ${p.status} — only a ship_next project can move to ${input.status}. Shipping starts with the human's go-ahead (roadmap_set_ship_next); work the list, don't skip the gate.`,
-        );
-      }
-      // Ready is an independent commitment-readiness judgment: the actor
-      // declaring it must not be the last one who shaped the description.
-      if (input.status === 'ready' && actor.kind === 'agent') {
-        const shaper = input.body !== undefined && input.body !== p.body ? actor.name : this.lastShaper(p.id);
-        if (shaper === actor.name) {
+      // Nothing ships that the human never declared go on. Active is reachable
+      // only from a recorded go (or a pause of one), and the shipped family
+      // only from Active or from within itself — so no row reaches Monitoring
+      // without passing the gate. Pre-R-46 words come through the same doors:
+      // `ship_next` and `shipping` read as Active, `shipped*` as the family.
+      if (actor.kind !== 'human') {
+        if (input.status === 'Active' && !AUTHORIZED.includes(was) && was !== 'Paused') {
           throw new RoadmapError(
-            `${p.id} was last shaped by you — deciding that enough is known to make an informed commitment needs an agent other than the description's shaper. Leave it shaping; another agent or the human can declare it ready.`,
+            `${p.id} is ${p.status} — work starts on a project the human has declared go on. Record the go first (roadmap_set_ship_next), then move it to Active.`,
+          );
+        }
+        if (SHIPPED.includes(input.status) && was !== 'Active' && !SHIPPED.includes(was)) {
+          throw new RoadmapError(
+            `${p.id} is ${p.status} — only an Active project can move to ${input.status}. Shipping starts with the human's go-ahead (roadmap_set_ship_next); work the list, don't skip the gate.`,
           );
         }
       }
-      if (input.status === 'parked' && !input.unpark_condition && !p.unpark_condition) {
-        warnings.push('parked with no unpark_condition — a parked project should record what would unpark it, or the idea rots silently instead of being retested.');
+      if (input.status === 'Paused' && !input.unpark_condition && !p.unpark_condition) {
+        warnings.push('Paused with no unpark_condition — a paused project should record what would resume it, or the pause rots silently instead of being retested.');
       }
       diffs['status'] = { from: p.status, to: input.status };
+    }
+
+    if (input.archived !== undefined && input.archived !== (p.archived === 1)) {
+      // The flag hides a finished record; it is not a way to retire a live one.
+      const to = statusReading((input.status as StoredStatus | undefined) ?? p.status);
+      if (input.archived && to !== 'Completed' && to !== 'Canceled') {
+        throw new RoadmapError(
+          `${p.id} reads ${to} — only a Completed or Canceled project can be archived. Archiving is hiding a finished record, not a status: say what became of it first.`,
+        );
+      }
+      diffs['archived'] = { from: p.archived, to: input.archived ? 1 : 0 };
     }
 
     for (const field of ['title', 'body', 'parked_reason', 'unpark_condition'] as const) {
@@ -528,11 +598,14 @@ export class Store {
     }
 
     // A recorded verdict governs exactly the state it reviewed. Any later
-    // project write starts a new round; keeping `ready` would leave a stale
-    // judgment projected as current. An explicit ready write remains the
-    // compatibility path for callers that still make the judgment directly.
-    if (p.status === 'ready' && input.status !== 'ready' && this.readinessReview(p.id)) {
-      diffs['status'] = { from: 'ready', to: 'shaping' };
+    // project write starts a new round; keeping shaped readiness would leave
+    // a stale judgment projected as current. The legacy status projection is
+    // also reset while old callers still write it directly.
+    if (this.readinessReview(p.id)) {
+      // A row still stored as `ready` carries its verdict in the status word;
+      // reset that projection too, unless this write sets the status itself.
+      if (p.status === 'ready' && diffs['status'] === undefined) diffs['status'] = { from: 'ready', to: 'shaping' };
+      diffs['readiness'] = { from: p.readiness, to: 'raw idea' };
     }
 
     return this.db.transaction(() => {
@@ -560,7 +633,8 @@ export class Store {
     }
     rejectSwallowedMarkup({ note: input.note });
     const p = this.getProject(input.project_id);
-    if (TERMINAL.includes(p.status) || SHIPPED.includes(p.status) || p.status === 'ship_next') {
+    const was = statusReading(p.status);
+    if (was !== 'Proposed' && was !== 'Paused') {
       throw new RoadmapError(`${p.id} is ${p.status} — readiness is judged before the human declares work, not after it ships.`);
     }
     if (actor.kind === 'agent' && this.lastShaper(p.id) === actor.name) {
@@ -576,9 +650,37 @@ export class Store {
         verdict: input.verdict, note: input.note, reviewed_revision: input.reviewed_revision,
       });
       const readiness = this.readinessReview(p.id)!;
-      this.applyReadinessVerdict(ts, p.id, readiness.state === 'ready' ? 'ready' : 'shaping');
+      this.applyReadinessVerdict(ts, p.id, readiness.state === 'ready' ? 'shaped' : 'raw idea');
       return { project: this.getProject(p.id), readiness };
     }).immediate();
+  }
+
+  recordHealth(
+    actor: Actor,
+    input: { project_id: string; health: Health | null; reason: string },
+  ): Project {
+    validateActor(actor);
+    const p = this.getProject(input.project_id);
+    if (!input.reason?.trim()) throw new RoadmapError('reason is required: health is a judgment, never an unexplained badge.');
+    rejectSwallowedMarkup({ reason: input.reason });
+    return this.db.transaction(() => {
+      const ts = now();
+      this.append(ts, p.id, 'health_recorded', actor, {
+        health: input.health, reason: input.reason,
+      });
+      this.applyHealth(ts, p.id, input.health, input.reason);
+      return this.getProject(p.id);
+    }).immediate();
+  }
+
+  /** True when the only thing an update changes about a terminal project is
+   *  whether the surfaces draw it. A note is still required: hiding a record
+   *  is a decision someone has to be able to read later. */
+  private hidingOnly(p: Project, input: UpdateInput): boolean {
+    if (input.archived === undefined || input.archived === (p.archived === 1)) return false;
+    const touches = (['status', 'title', 'body', 'parked_reason', 'unpark_condition'] as const)
+      .some((f) => input[f] !== undefined && input[f] !== (p as unknown as Record<string, unknown>)[f]);
+    return !touches;
   }
 
   /** Refuse a write whose project moved after the caller read it.
@@ -633,7 +735,7 @@ export class Store {
   ): Claim {
     validateActor(actor);
     const p = this.getProject(input.project_id);
-    if (TERMINAL.includes(p.status)) throw new RoadmapError(`${p.id} is ${p.status} — terminal projects take no new judgments.`);
+    if (TERMINAL.includes(statusReading(p.status))) throw new RoadmapError(`${p.id} is ${p.status} — terminal projects take no new judgments.`);
     if (!input.reason?.trim()) {
       throw new RoadmapError('reason is required — a judgment without its one-line why is a naked number, and naked numbers decay into decoration.');
     }
@@ -708,18 +810,26 @@ export class Store {
     const p = this.getProject(input.project_id);
     if (!input.decided_by?.trim()) throw new RoadmapError('decided_by is required: the human who made the call. Entering the work phase is never an agent\'s own judgment.');
     if (!input.reason?.trim()) throw new RoadmapError('reason is required: the human\'s one-line why, so the fleet reads a decision, not a flag.');
-    // 'shipping' is the pre-v2 name for the work phase; those rows re-enter
-    // through this same human-gated door during migration (H-672).
-    if (p.status !== 'ready' && (p.status as string) !== 'shipping') {
-      throw new RoadmapError(`${p.id} is ${p.status} — only a ready project can be declared ship_next. Ready means enough is known for the human to make an informed commitment.`);
+    // A go needs a shaped description: enough is known for an informed
+    // commitment. 'shipping' is the pre-v2 name for the work phase, and those
+    // rows re-enter through this same human-gated door during migration
+    // (H-672); 'ready' and 'shaping' are the pre-R-46 words for shaped.
+    const was = statusReading(p.status);
+    if ((p.status as string) !== 'shipping' && !(was === 'Proposed' && readinessOf(p) === 'shaped')) {
+      throw new RoadmapError(
+        `${p.id} is ${p.status}, readiness ${readinessOf(p)} — only a shaped project can be declared Planned. Shaped means an independent reviewer judged that enough is known for the human to make an informed commitment (roadmap_record_readiness_verdict).`,
+      );
     }
     rejectSwallowedMarkup({ reason: input.reason });
     return this.db.transaction(() => {
       const ts = now();
-      const payload: Record<string, unknown> = { decided_by: input.decided_by, reason: input.reason };
+      // The status rides in the payload so replay stays faithful on both
+      // sides of the rename: a pre-R-46 event has no `status` and still
+      // materializes `ship_next`, exactly as it did when it was written.
+      const payload: Record<string, unknown> = { decided_by: input.decided_by, reason: input.reason, status: 'Planned' };
       this.append(ts, p.id, 'ship_next_set', actor, payload);
       this.applyShipNext(ts, p.id, payload);
-      return { project: this.getProject(p.id), ship_next_count: this.shipNextProjects().length };
+      return { project: this.getProject(p.id), ship_next_count: this.authorizedProjects().length };
     }).immediate();
   }
 
@@ -785,6 +895,90 @@ export class Store {
     }).immediate();
   }
 
+  // ---------- the R-46 vocabulary migration (one-shot) ----------
+
+  /** Rewrite every stored status word to the reading it always had, once per
+   *  store. See migrate-lib.ts for the per-row rules; this is the writer.
+   *
+   *  It appends its own `updated` events rather than going through
+   *  `updateProject`, deliberately and for every row, not just the awkward
+   *  ones. That path exists to check new DECISIONS: it refuses a terminal
+   *  source (so a shelved row could not be mapped at all), it
+   *  refuses a plain write to Planned, it gates Active behind a recorded go,
+   *  and it resets a standing readiness verdict on any write — which would
+   *  undo the very field this migration is here to fill. None of those rules
+   *  is wrong; none of them is about a rename. So the gates stay exactly as
+   *  they are for live callers, the migration writes the word and the reason
+   *  in one event, and `rebuild()` replays it like any other update.
+   *
+   *  Without `apply` nothing is written and the plan is the report. */
+  migrateR46(actor: Actor, input: { apply: boolean; shelved?: R46Judgments }): R46Plan {
+    if (input.apply) validateActor(actor);
+    const facts = this.r46Facts();
+    const plan = planR46(facts, input.shelved);
+    if (!input.apply || !plan.decisions.length) return plan;
+    const before = new Map(facts.map((f) => [f.id, f]));
+    return this.db.transaction(() => {
+      for (const d of plan.decisions) {
+        const was = before.get(d.id)!;
+        const diffs: Record<string, { from: unknown; to: unknown }> = { status: { from: d.from, to: d.status } };
+        if (d.readiness && d.readiness !== was.readiness) diffs['readiness'] = { from: was.readiness, to: d.readiness };
+        if (d.archive && !was.archived) diffs['archived'] = { from: 0, to: 1 };
+        const readiness = diffs['readiness'] ? `, readiness ${d.readiness}` : '';
+        const hidden = diffs['archived'] ? ', and hidden from the surfaces' : '';
+        const payload: Record<string, unknown> = {
+          diffs,
+          note:
+            `R-46 vocabulary: ${d.from} → ${d.status}${readiness}${hidden}. ${d.reason}. ` +
+            'The stored word was renamed to the reading it always had; no judgment was re-made and no event was rewritten.',
+        };
+        const ts = now();
+        this.append(ts, d.id, 'updated', actor, payload);
+        this.applyUpdated(ts, d.id, payload);
+      }
+      return { ...plan, applied: true };
+    }).immediate();
+  }
+
+  /** Every row as the migration planner needs to read it. */
+  private r46Facts(): R46Facts[] {
+    const authorized = this.everAuthorized();
+    const rows = this.db
+      .prepare('SELECT id, title, status, readiness, archived FROM projects ORDER BY CAST(substr(id, 3) AS INTEGER)')
+      .all() as { id: string; title: string; status: StoredStatus; readiness: Readiness; archived: number }[];
+    return rows.map((r) => ({
+      id: r.id, title: r.title, status: r.status, readiness: r.readiness,
+      archived: r.archived === 1, ever_authorized: authorized.has(r.id),
+    }));
+  }
+
+  /** The projects whose history holds the human's go — a `ship_next_set`, or
+   *  a status move into or out of the authorized family. It is the fact that
+   *  separates a never-started idea from a stood-down delivery, which the
+   *  single `parked` word could not. Old and new words both count: the
+   *  events carry whichever vocabulary was current when they were written. */
+  private everAuthorized(): Set<string> {
+    const rows = this.db
+      .prepare(
+        `SELECT subject_id, event_type,
+                json_extract(payload, '$.diffs.status.from') AS from_status,
+                json_extract(payload, '$.diffs.status.to')   AS to_status
+           FROM events WHERE event_type IN ('ship_next_set', 'updated')`,
+      )
+      .all() as { subject_id: string; event_type: string; from_status: string | null; to_status: string | null }[];
+    const authorized = new Set<string>();
+    for (const row of rows) {
+      if (row.event_type === 'ship_next_set') {
+        authorized.add(row.subject_id);
+        continue;
+      }
+      for (const value of [row.from_status, row.to_status]) {
+        if (value && AUTHORIZED.includes(statusReading(value))) authorized.add(row.subject_id);
+      }
+    }
+    return authorized;
+  }
+
   // ---------- rebuild (the invariant) ----------
 
   /** Reconstruct all materialized state purely from the event log. Tests
@@ -804,12 +998,13 @@ export class Store {
           case 'linked': this.applyLinked(ev.ts, ev.subject_id, ev.payload['to'] as string, ev.payload['type'] as DepType, true); break;
           case 'unlinked': this.applyLinked(ev.ts, ev.subject_id, ev.payload['to'] as string, ev.payload['type'] as DepType, false); break;
           case 'ship_next_set': this.applyShipNext(ev.ts, ev.subject_id, ev.payload); break;
+          case 'health_recorded': this.applyHealth(ev.ts, ev.subject_id, ev.payload['health'] as Health | null, ev.payload['reason'] as string); break;
           case 'actual_recorded': this.applyActual(ev.subject_id, ev.payload); break;
           case 'objective_set': this.applyCharterItem(ev.ts, 'objective', ev.payload); break;
           case 'bet_set': this.applyCharterItem(ev.ts, 'bet', ev.payload); break;
           case 'readiness_verdict_recorded': {
             const readiness = this.readinessReview(ev.subject_id, ev.seq);
-            if (readiness) this.applyReadinessVerdict(ev.ts, ev.subject_id, readiness.state === 'ready' ? 'ready' : 'shaping');
+            if (readiness) this.applyReadinessVerdict(ev.ts, ev.subject_id, readiness.state === 'ready' ? 'shaped' : 'raw idea');
             break;
           }
         }
@@ -862,6 +1057,8 @@ export class Store {
   private applyCreated(ts: string, p: Record<string, unknown>): void {
     this.db
       .prepare('INSERT INTO projects (id, title, body, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+      // The fallback is replay fidelity, not a default: a created event with
+      // no status is pre-R-46 and materialized 'parked' when it was written.
       .run(p['id'], p['title'], p['body'] ?? '', p['status'] ?? 'parked', ts, ts);
   }
 
@@ -870,7 +1067,7 @@ export class Store {
     const sets: string[] = ['updated_at = ?'];
     const params: unknown[] = [ts];
     for (const [field, d] of Object.entries(diffs)) {
-      if (!['title', 'body', 'status', 'parked_reason', 'unpark_condition'].includes(field)) continue;
+      if (!['title', 'body', 'status', 'readiness', 'archived', 'parked_reason', 'unpark_condition'].includes(field)) continue;
       sets.push(`${field} = ?`);
       params.push(d.to as never);
     }
@@ -879,8 +1076,8 @@ export class Store {
     // kept on moves within it.
     const status = diffs['status']?.to as string | undefined;
     const from = diffs['status']?.from as string | undefined;
-    const closedFamily = [...SHIPPED, ...TERMINAL, 'shipped', 'abandoned'] as string[];
-    if (status && closedFamily.includes(status) && !(from && closedFamily.includes(from))) {
+    const closed = (v: string | undefined) => v !== undefined && [...SHIPPED, ...TERMINAL].includes(statusReading(v));
+    if (closed(status) && !closed(from)) {
       sets.push('closed_at = ?');
       params.push(ts);
     }
@@ -888,8 +1085,13 @@ export class Store {
     this.db.prepare(`UPDATE projects SET ${sets.join(', ')} WHERE id = ?`).run(...params);
   }
 
-  private applyReadinessVerdict(ts: string, id: string, status: 'ready' | 'shaping'): void {
-    this.db.prepare('UPDATE projects SET status = ?, updated_at = ? WHERE id = ?').run(status, ts, id);
+  private applyReadinessVerdict(ts: string, id: string, readiness: 'raw idea' | 'shaped'): void {
+    this.db.prepare('UPDATE projects SET readiness = ?, updated_at = ? WHERE id = ?').run(readiness, ts, id);
+  }
+
+  private applyHealth(ts: string, id: string, health: Health | null, reason: string): void {
+    this.db.prepare('UPDATE projects SET health = ?, health_reason = ?, updated_at = ? WHERE id = ?')
+      .run(health, reason, ts, id);
   }
 
   private applyClaim(ts: string, id: string, actor: Actor, p: Record<string, unknown>): void {
@@ -927,7 +1129,10 @@ export class Store {
     // could hold ship_next; replaying them must reproduce the old effect.
     const demoted = payload['demoted'] as string | null | undefined;
     if (demoted) this.db.prepare("UPDATE projects SET status = 'ready', updated_at = ? WHERE id = ?").run(ts, demoted);
-    this.db.prepare("UPDATE projects SET status = 'ship_next', updated_at = ? WHERE id = ?").run(ts, id);
+    // Pre-R-46 events carry no status: they moved the project to `ship_next`,
+    // and replaying them must still say exactly that.
+    const status = (payload['status'] as string | undefined) ?? 'ship_next';
+    this.db.prepare('UPDATE projects SET status = ?, updated_at = ? WHERE id = ?').run(status, ts, id);
   }
 
   private applyActual(id: string, payload: Record<string, unknown>): void {

@@ -164,6 +164,34 @@ describe('a journaled session names its process group (H-685)', () => {
   });
 });
 
+describe('a session ended by signal is interrupted, not apparatus (H-2071)', () => {
+  it.each([
+    ['killed directly', 'kill -TERM $$', { rc: 1, cls: 'failure' }, /interrupted by SIGTERM/],
+    ['reported by a wrapping shell', 'exit 143', { rc: 1, cls: 'failure' }, /interrupted by SIGTERM/],
+    ['truncated with no signal', 'printf "{"; exit 1', { rc: 78, cls: 'apparatus' }, /malformed or truncated JSON/],
+  ])('%s', async (_case, end, expected, tail) => {
+    const home = mkdtempSync(join(tmpdir(), 'rev-signal-'));
+    const bin = join(home, 'bin');
+    const constitution = join(home, 'PROFILE.md');
+    execFileSync('mkdir', ['-p', bin]);
+    writeFileSync(constitution, 'test constitution');
+    writeFileSync(join(bin, 'claude'), `#!/bin/sh\necho work > "$REV_HOME/did-work"\n${end}\n`);
+    chmodSync(join(bin, 'claude'), 0o755);
+    const before = { PATH: process.env['PATH'], REV_HOME: process.env['REV_HOME'] };
+    process.env['PATH'] = `${bin}:${before.PATH}`;
+    process.env['REV_HOME'] = home;
+    try {
+      const loop = { name: 'w1', seat: 'builder', runtime: 'claude', model: 'm', version: '0', cwd: home, constitution } as LoopConfig;
+      const res = await runSession({ helmo_mcp_server: '/tmp/helmo.mjs' } as GlobalConfig, loop, 'prompt', 'm', undefined, 'rev:w1:1:1:1', join(home, 'launch.group'));
+      expect(readFileSync(join(home, 'did-work'), 'utf8')).toBe('work\n');
+      expect(res).toMatchObject(expected);
+      expect(res.outputTail).toMatch(tail);
+    } finally {
+      for (const [k, v] of Object.entries(before)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+  });
+});
+
 describe('pool worker launch generation (H-574)', () => {
   // The Helmo MCP server is the session's only write path, so the generation
   // must reach the config the model CLI is actually handed, not just the mock.

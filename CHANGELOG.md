@@ -13,6 +13,11 @@ longer.
 
 ## Unreleased — 0.13.0
 
+- Runtime treats a Claude session ended by a signal (or reported by a wrapping
+  shell as exit 143 or 137) before it wrote its JSON result as an interrupted
+  failure under the retry cap, not an apparatus fault that blocks the loop: the
+  session started and may already have done work.
+
 - Overview adds Roadmap now: visible Active, Planned and Proposed counts,
   recorded At risk and Off track initiatives with their reasons and record
   links, and an explicit count of initiatives whose health is not recorded.

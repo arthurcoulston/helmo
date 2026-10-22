@@ -18,6 +18,7 @@
 // is ever converted to a percent. The bars are plan allowance; that is all they
 // are. `headroomRate` in usage.ts already holds this line and nothing new may
 // cross it.
+import { usesClaudeApi } from './claude-api.js';
 import { BillingMode, RunChoice } from './types.js';
 import { hasSpendableCredits, lastGoodReadUsable, usageLimitExhausted, UsageSnapshot, USAGE_MAX_AGE_MS } from './usage.js';
 
@@ -124,7 +125,9 @@ export function capacityDecide(c: {
   const available: ChoiceCapacity[] = [];
   const out: ChoiceCapacity[] = [];
   for (const cc of c.choices) {
-    if (snapshotStale(cc.snapshot, now)) stale.push(cc);
+    // A Claude API choice is metered per request, not by subscription bars.
+    if (usesClaudeApi(cc.choice)) available.push(cc);
+    else if (snapshotStale(cc.snapshot, now)) stale.push(cc);
     else if (outBars(cc.snapshot!, pct).length && !hasSpendableCredits(cc.snapshot)) {
       // A last good read kept across a failed poll may let a loop run, never
       // park it: out bars the latest poll could not confirm take the grace path.

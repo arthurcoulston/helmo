@@ -9,6 +9,7 @@ import { burnWindow, markBurnFloor, recentCosts } from './burn.js';
 import { exhaustedLimit, pollUsage, readCodexUsage, readUsage, refreshCodexUsage, refreshFor, usageForModel } from './usage.js';
 import { anomalyDecide, capacityDecide, planPointsConsumed } from './capacity.js';
 import { choiceExhausted, selectRun } from './routing.js';
+import { usesClaudeApi } from './claude-api.js';
 import { raiseWedgeAlarm, wedgeDecide } from './health.js';
 import { breakerDecide, declineDecide, ladderDecide, routedDeclines, limitDecide, probeDecide, rollingMean, foreignHolds, foreignHoldsReason, velocityToPause, wakeDecide, type ForeignHold } from './ladder.js';
 import { logEvent, occupiedPid, paceAutoRelease, pidAlive, runningStamp, sClear, sGet, sHas, sOwner, sReleaseOwned, sSet, sSetOwned, sValue, streak, streakMap, streakMapSet, streakReset } from './sentinels.js';
@@ -1014,7 +1015,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     // 2026-08-26 became 34-42 hours of silence.
     if (res.cls === 'transient') {
       const snap =
-        run.runtime === 'codex' ? readCodexUsage() : g.usage_poll_seconds > 0 ? await pollUsage() : readUsage();
+        usesClaudeApi(run) ? null : run.runtime === 'codex' ? readCodexUsage() : g.usage_poll_seconds > 0 ? await pollUsage() : readUsage();
       const ex = exhaustedLimit(usageForModel(snap, model), g.limit_exhausted_percent);
       if (ex) logEvent(l.name, 'limit-identified', `cap="${ex.label}" percent=${ex.percent} resets=${ex.resets_at ?? '-'}`);
       action = limitDecide({

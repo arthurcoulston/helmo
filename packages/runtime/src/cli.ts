@@ -852,12 +852,19 @@ switch (cmd) {
     // codex/frontier, and the room wants claude/high (H-1152).
     const tier = flag('tier');
     const provider = flag('provider') ?? 'claude';
+    let specChoice = base?.choices?.[0];
     let runtime = base?.runtime ?? 'claude';
     let model = flag('model') ?? base?.model;
     if (tier) {
       const choice = resolveRef(`${provider}:${tier}`, providers, {}, 'rev session-spec');
+      specChoice = choice;
       runtime = choice.runtime;
       if (!flag('model')) model = choice.model;
+    } else if (flag('provider')) {
+      const p = providers[provider];
+      if (!p) throw new Error(`Unknown provider '${provider}'`);
+      runtime = p.runtime;
+      specChoice = { provider, runtime, model: model ?? '', billing: p.billing, config: p.config };
     }
     if (!model) {
       console.error(`'${name}' has no roster model — name one with --model, or a --tier to resolve from [providers.${provider}.models].`);
@@ -872,7 +879,7 @@ switch (cmd) {
       model,
       version: flag('version') ?? base?.version ?? '0.1',
     } as LoopConfig;
-    console.log(JSON.stringify(sessionSpec(g, l, { model, session, in_roster: Boolean(base) }), null, 2));
+    console.log(JSON.stringify(sessionSpec(g, l, { model, session, in_roster: Boolean(base), choice: specChoice }), null, 2));
     break;
   }
   default:

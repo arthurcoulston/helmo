@@ -5,33 +5,12 @@ import { join } from 'node:path';
 import { stateDir } from './config.js';
 import { processObservation, sGet } from './sentinels.js';
 import { readLaunch, launchGroupFile } from './launch-journal.js';
+import { requireProcessAbsent, requireSessionGroupAbsent } from './liveness-guard.js';
 
 export interface EndedClaimRequest {
   ticket_id: string; session: string; generation: string; expected_updated_at: string; expected_event_seq: number;
   hold: { reason: string; provenance: string; reconsider_when: string };
   body_patch: { old: string; new: string };
-}
-
-/** Unknown/EPERM/reused/live process identities all refuse. A completed
- * journal alone does not prove the detached session group is gone. */
-export function requireAbsent(pid: number): void {
-  if (!Number.isSafeInteger(pid) || pid <= 1) throw new Error('Invalid process identity; repair refused.');
-  try { process.kill(pid, 0); }
-  catch (e) {
-    if ((e as NodeJS.ErrnoException).code === 'ESRCH') return;
-    throw new Error('Process liveness is unknown; repair refused.');
-  }
-  throw new Error('Process is still live; repair refused.');
-}
-
-function requireGroupAbsent(group: number): void {
-  if (!Number.isSafeInteger(group) || group <= 1) throw new Error('Missing session group; repair refused.');
-  try { process.kill(-group, 0); }
-  catch (e) {
-    if ((e as NodeJS.ErrnoException).code === 'ESRCH') return;
-    throw new Error('Session group liveness is unknown; repair refused.');
-  }
-  throw new Error('Session group is still live; repair refused.');
 }
 
 export function endedClaimEvidence(worker: string, request: EndedClaimRequest) {
@@ -44,8 +23,8 @@ export function endedClaimEvidence(worker: string, request: EndedClaimRequest) {
   const stop = sGet(worker, 'STOP');
   if (!stop?.trim() || processObservation(worker).state !== 'dead') throw new Error('Worker must be STOP and confirmed dead.');
   const running = sGet(worker, 'RUNNING');
-  if (running) requireAbsent(Number(running.split('\n')[0]));
-  requireAbsent(pid!);
+  if (running) requireProcessAbsent(Number(running.split('\n')[0]));
+  requireProcessAbsent(pid!);
   const entry = readLaunch(worker, request.generation);
   if (!entry || entry.phase !== 'complete' || entry.claim !== true || entry.ticket_id !== request.ticket_id || !entry.completed_at || !entry.dispatching_at) {
     throw new Error('Exact completed claimed launch required.');
@@ -53,7 +32,7 @@ export function endedClaimEvidence(worker: string, request: EndedClaimRequest) {
   const groupFile = launchGroupFile(worker, request.generation);
   if (!existsSync(groupFile)) throw new Error('Session group evidence missing.');
   const groupBytes = readFileSync(groupFile, 'utf8');
-  requireGroupAbsent(Number(groupBytes.trim()));
+  requireSessionGroupAbsent(Number(groupBytes.trim()));
   const events = readFileSync(join(stateDir(worker), 'events.log'), 'utf8');
   const lines = events.trim().split('\n');
   let start = -1;

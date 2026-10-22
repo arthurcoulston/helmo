@@ -1,17 +1,13 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { endedClaimEvidence, requireAbsent } from '../src/ended-claim.js';
+import { endedClaimEvidence } from '../src/ended-claim.js';
 import { recordLaunchIntent, recordLaunchClaim, recordLaunchDispatch, settleLaunch, launchGroupFile } from '../src/launch-journal.js';
 import { stateDir } from '../src/config.js';
 describe('ended owner evidence', () => {
-  it('refuses unverifiable process identity', () => {
-    const check = vi.spyOn(process, 'kill').mockImplementation(() => { throw Object.assign(new Error('fixture'), { code: 'EPERM' }); });
-    try { expect(() => requireAbsent(12345)).toThrow(/unknown/); } finally { check.mockRestore(); }
-  });
   it('admits a reaped synthetic owner and refuses live, missing, failed or later launches', async () => {
     const home = mkdtempSync(join(tmpdir(), 'ended-claim-')); const prior = process.env.REV_HOME; process.env.REV_HOME = home;
     const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { detached: true, stdio: 'ignore' });

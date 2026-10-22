@@ -168,6 +168,41 @@ export function createIntakeAssignment(g: GlobalConfig, body: string): string {
   ], revActor()) as { id: string }).id;
 }
 
+/** The seat client research handoffs file to (H-2178, H-2184), or null when
+ *  this installation has not named one. There is no default seat: an unset
+ *  `research_handoff_assignee` leaves both handoff passes off. */
+export function researchHandoffSeat(g: GlobalConfig): string | null {
+  const seat = g.research_handoff_assignee;
+  if (seat === undefined || seat === '') return null;
+  if (typeof seat !== 'string' || !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(seat)) {
+    throw new Error('research_handoff_assignee must be a seat name (lowercase letters, digits, ".", "_" or "-")');
+  }
+  return seat;
+}
+
+/** Files one research ticket for the configured seat and returns the
+ *  installation-qualified ref the product keeps. */
+function createResearchTicket(g: GlobalConfig, title: string, priority: string, body: string): string {
+  const seat = researchHandoffSeat(g);
+  if (!seat) throw new Error('no research_handoff_assignee is configured');
+  const created = run(g, [
+    'create', '--title', title, '--body', body,
+    '--workstream', g.research_handoff_workstream || 'goodplumb', '--type', 'research', '--priority', priority,
+    '--assignee', seat,
+  ], revActor()) as { id: string; installation?: { label?: string } };
+  return created.installation?.label ? `${created.id}@${created.installation.label}` : created.id;
+}
+
+/** One research assignment for a client's approved project start (H-2178). */
+export function createResearchAssignment(g: GlobalConfig, body: string): string {
+  return createResearchTicket(g, 'Begin research on a client\'s approved directive', '0', body);
+}
+
+/** One research assignment for a batch of a client's new research remarks (H-2184). */
+export function createFeedbackAssignment(g: GlobalConfig, body: string): string {
+  return createResearchTicket(g, 'Respond to a client\'s research feedback', '1', body);
+}
+
 /** Why a helmo-cli call failed, in the store's own words. execFileSync's
  *  message is the command line and nothing else, so a caller that logs
  *  String(e) records what it ran and never what Helm said back — which is how

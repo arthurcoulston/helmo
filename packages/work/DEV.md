@@ -1098,13 +1098,16 @@ Pinned releases accept both the historical three-component layout and C1's one
 
 ## The roadmap seam (H-172)
 
-Three additions carried for helmo-roadmap (the sibling layer-above-the-ticket
+Four additions carried for helmo-roadmap (the sibling layer-above-the-ticket
 at ~/projects/helmo-roadmap), each independently useful to a Helmo-only user
 and together a public API commitment — resist widening past them:
 
 - an optional `project` tag on tickets (create/update; '' clears), another
   grouping string alongside workstream and the join key for cost rollups;
 - a `project` filter on the ticket query;
+- an exact `project_actual` on project-filtered ticket queries: ticket count
+  and stored cost total for the whole project, independent of pagination, so
+  a rollup never needs one full-record read per ticket (H-3419);
 - the standing notice — RETIRED (H-1126). It carried one hand-maintained line
   of current priority to every queue read; Arthur's ruling at the Monday
   retrospective 2026-09-07 is that the charter and the roadmap already say

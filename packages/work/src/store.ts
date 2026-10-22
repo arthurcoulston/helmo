@@ -3659,6 +3659,14 @@ export class Store {
     return [...names].sort().map((n) => this.getWorkstreamInfo(n));
   }
 
+  /** Exact stored usage for a roadmap project, independent of list pagination. */
+  getProjectActual(project: string): { project: string; tickets: number; cost_usd_total: number } {
+    const row = this.db
+      .prepare('SELECT COUNT(*) AS tickets, COALESCE(SUM(cost_usd_total), 0) AS cost_usd_total FROM tickets WHERE project = ?')
+      .get(project) as { tickets: number; cost_usd_total: number };
+    return { project, tickets: row.tickets, cost_usd_total: row.cost_usd_total };
+  }
+
   // ---------- writes (every write = append event + materialize, atomically) ----------
 
   /** Record the exact source snapshots a builder says are complete. This is

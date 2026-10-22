@@ -4193,7 +4193,8 @@ export class Store {
           && (after.assignee !== t.assignee || input.handoff_to !== undefined))) {
         this.endExecution(t.id, input.handoff_to !== undefined ? 'handoff' : `status:${after.status}`, ts);
       }
-      if (after.status === 'in_progress' && t.status !== 'in_progress' && actor.generation && actor.session) {
+      if (after.status === 'in_progress' && (t.status !== 'in_progress' || after.assignee !== t.assignee)
+          && actor.generation && actor.session) {
         this.db.prepare('INSERT OR REPLACE INTO execution_claims (ticket_id, session, generation, created_at) VALUES (?, ?, ?, ?)').run(t.id, actor.session, actor.generation, ts);
       }
       return { ticket: after, warnings };

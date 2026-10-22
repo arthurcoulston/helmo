@@ -38,4 +38,16 @@ describe('owner checkpoints retain execution', () => {
       expect(() => store.updateTicket(worker, { ticket_id: id, note: 'Prior writer' })).toThrow(/stale_generation/);
     } finally { store.close(); }
   });
+  it('records the replacement execution when a worker takes over an untracked claim', () => {
+    const store = new Store(':memory:');
+    const prior = { ...planner, name: 'prior' };
+    const replacement = { ...worker, name: 'replacement', session: 'rev:replacement', generation: 'rev:replacement:456:1:789' };
+    const ticket = store.createTicket(planner, { title: 'Recover stale work', body: 'Exact continuation', workstream: 'fixture', type: 'build', assignee: prior.name, lane: 'copy' });
+    try {
+      store.updateTicket(prior, { ticket_id: ticket.id, status: 'in_progress', note: 'Attended claim has no supervised execution.' });
+      store.updateTicket(replacement, { ticket_id: ticket.id, status: 'in_progress', takeover: true, note: 'Take over the abandoned claim.' });
+      expect(store.getTicket(ticket.id).assignee).toBe('replacement');
+      expect(() => store.updateTicket(replacement, { ticket_id: ticket.id, note: 'Move active work.', lane: 'other' })).toThrow(/running execution/);
+    } finally { store.close(); }
+  });
 });

@@ -18,6 +18,9 @@ console.error(`Roadmap MCP (stdio) — ${installationLine(install, store.install
 // identity for Helmo loops needs no second variable.
 const envJson = process.env['ROADMAP_ACTOR'] ?? process.env['HELMO_ACTOR'];
 const envActor: Actor | null = envJson ? (JSON.parse(envJson) as Actor) : null;
+// The installation's leader (H-2073), honoured only for this server's own
+// pinned actor.
+store.pinLeader(process.env['ROADMAP_LEADER'], envActor);
 
 const server = buildServer(store, envActor, install);
 const transport = new StdioServerTransport();

@@ -164,6 +164,30 @@ export class Store {
   private db: Database.Database;
   private installation?: Installation;
 
+  /** The agent this process serves as the installation's leader (H-2073), or
+   *  null. The leader directs the roadmap: it may judge its own shaping ready
+   *  and move a project into work or the shipped family without passing
+   *  through the human's go. Planned itself is still entered only through
+   *  roadmap_set_ship_next, and every write still records the true actor. Set
+   *  by the server only for its own pinned identity, so no other seat's
+   *  process carries it. Unset by default. */
+  private leader: string | null = null;
+
+  setLeader(name: string | null): void {
+    this.leader = name?.trim() ? name : null;
+  }
+
+  /** Honour a configured leader (ROADMAP_LEADER) only in the leader's own
+   *  process: it must name the actor this server is pinned to, so a variable
+   *  copied into another seat's launcher grants that seat nothing. */
+  pinLeader(configured: string | undefined, pinned: Actor | null): void {
+    this.setLeader(configured && pinned?.kind === 'agent' && pinned.name === configured ? configured : null);
+  }
+
+  private isLeader(actor: Actor): boolean {
+    return this.leader !== null && actor.kind === 'agent' && actor.name === this.leader;
+  }
+
   constructor(path: string, installation?: Installation) {
     this.installation = installation;
     this.db = new Database(path);
@@ -561,7 +585,9 @@ export class Store {
       // only from Active or from within itself — so no row reaches Monitoring
       // without passing the gate. Pre-R-46 words come through the same doors:
       // `ship_next` and `shipping` read as Active, `shipped*` as the family.
-      if (actor.kind !== 'human') {
+      // The installation's leader (H-2073) directs the roadmap and passes these
+      // two gates as the human does.
+      if (actor.kind !== 'human' && !this.isLeader(actor)) {
         if (input.status === 'Active' && !AUTHORIZED.includes(was) && was !== 'Paused') {
           throw new RoadmapError(
             `${p.id} is ${p.status} — work starts on a project the human has declared go on. Record the go first (roadmap_set_ship_next), then move it to Active.`,
@@ -637,7 +663,7 @@ export class Store {
     if (was !== 'Proposed' && was !== 'Paused') {
       throw new RoadmapError(`${p.id} is ${p.status} — readiness is judged before the human declares work, not after it ships.`);
     }
-    if (actor.kind === 'agent' && this.lastShaper(p.id) === actor.name) {
+    if (actor.kind === 'agent' && !this.isLeader(actor) && this.lastShaper(p.id) === actor.name) {
       throw new RoadmapError(`${p.id} was last shaped by you — its readiness verdict needs a reviewer other than the description's shaper.`);
     }
     return this.db.transaction(() => {

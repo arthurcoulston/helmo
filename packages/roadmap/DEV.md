@@ -137,6 +137,11 @@ append-only event log, materialized state, `.immediate()` write transactions
   (`ROADMAP_HOME` or `ROADMAP_DB` overrides, and setting both to disagree is
   refused); identity from `ROADMAP_ACTOR`, falling back to
   `HELMO_ACTOR` so estates provisioned for Helmo need no second variable.
+  `ROADMAP_LEADER` (H-2073, unset by default) names the installation's
+  leader; `Store.pinLeader` honours it only when it equals the pinned actor's
+  name, in this entry and in Work's unified entry alike. The leader skips the
+  shaper-cannot-judge-its-own-readiness rule and the non-human gates into
+  Active and the shipped family; Planned stays set_ship_next-only.
 - `view.ts` — read-only dashboard at :4410 (`ROADMAP_VIEW_PORT`). Ship-next
   expanded on top, charter strip, everything else collapsed in derived rank
   order. No write routes at all — unlike Helmo's view there is no answer

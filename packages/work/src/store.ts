@@ -450,6 +450,12 @@ function normalizeCompletionAccount(input: CompletionAccountInput): CompletionAc
   return { category: input.category, summary };
 }
 
+/** A worker Runtime launched and supervises: an agent writing with a session
+ *  stamp. An attended session or a human writes without one. */
+function supervised(actor: Actor): boolean {
+  return actor.kind === 'agent' && Boolean(actor.session?.trim());
+}
+
 function validateActor(actor: Actor): void {
   if (!actor?.name || !actor?.kind) {
     throw new HelmoError(
@@ -1432,6 +1438,61 @@ export class Store {
     return this.installation;
   }
 
+  /** The agent this installation names as its leader (H-2073), or null. The
+   *  leader's own filings skip the self-triage rule: it is the seat that sets
+   *  direction, so what it files is already judged. Every write still records
+   *  its true actor; only that one refusal changes. Unset by default. */
+  leaderActor(): string | null {
+    const row = this.db.prepare("SELECT value FROM meta WHERE key = 'leader_actor'").get() as { value: string } | undefined;
+    return row?.value ?? null;
+  }
+
+  /** Name the leader, or clear it. No agent can name itself — the grant comes
+   *  from someone else. A supervised worker may name the first leader of a
+   *  store that has none; replacing or clearing a named leader takes an
+   *  attended session or a human. */
+  setLeaderActor(actor: Actor, name: string | null): string | null {
+    validateActor(actor);
+    const current = this.leaderActor();
+    if (supervised(actor) && (name === null || (current !== null && current !== name))) {
+      throw new HelmoError(`leader_refused: a supervised worker cannot ${name === null ? 'clear' : `replace ${current} as`} the installation leader. An attended session or a human can. Nothing was written.`);
+    }
+    if (name === null) {
+      this.db.prepare("DELETE FROM meta WHERE key = 'leader_actor'").run();
+      return null;
+    }
+    if (!name.trim() || name !== name.trim()) throw new HelmoError('leader --actor-name needs the exact agent name, with no surrounding whitespace.');
+    if (actor.kind === 'agent' && actor.name === name) {
+      throw new HelmoError(`leader_refused: ${name} cannot name itself leader; another seat or a human grants it. Nothing was written.`);
+    }
+    this.db.prepare("INSERT INTO meta (key, value) VALUES ('leader_actor', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(name);
+    return name;
+  }
+
+  /** Whether this installation runs the self-triage rule (H-2147). On by
+   *  default; meta self_triage = 'off' turns it off for every filer, so a seat
+   *  that files a finding sees it in its own ready queue and may claim it at
+   *  once. For an installation with no seat giving second eyes, the rule only
+   *  stalls work until someone touches it by hand. */
+  selfTriage(): boolean {
+    const row = this.db.prepare("SELECT value FROM meta WHERE key = 'self_triage'").get() as { value: string } | undefined;
+    return row?.value !== 'off';
+  }
+
+  /** Turn the self-triage rule on or off. Removing a check is the leader's
+   *  call: a human, an attended session or the named leader may change it; a
+   *  supervised worker that is not the leader cannot, so no loop lifts the
+   *  rule over its own filings. */
+  setSelfTriage(actor: Actor, on: boolean): boolean {
+    validateActor(actor);
+    if (supervised(actor) && actor.name !== this.leaderActor()) {
+      throw new HelmoError(`self_triage_refused: a supervised worker other than the installation leader cannot turn the self-triage rule ${on ? 'on' : 'off'}. The leader, an attended session or a human can. Nothing was written.`);
+    }
+    if (on) this.db.prepare("DELETE FROM meta WHERE key = 'self_triage'").run();
+    else this.db.prepare("INSERT INTO meta (key, value) VALUES ('self_triage', 'off') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+    return on;
+  }
+
   installationIdentity(): { process: string | null; stored: string | null; clear: boolean } {
     const row = this.db.prepare("SELECT value FROM meta WHERE key = 'installation_name'").get() as { value: string } | undefined;
     const processName = this.installation?.label ?? null;
@@ -2166,6 +2227,11 @@ export class Store {
    *  judged by their template: standing work an agent set up for itself is
    *  still self-filed. */
   private selfFiledUntouched(id: string, caller: string): boolean {
+    // The installation's named leader directs the backlog; its filings are
+    // that direction, not a discovery awaiting a second pair of eyes (H-2073).
+    if (caller === this.leaderActor()) return false;
+    // An installation that turned the rule off (H-2147) has no gate to hold.
+    if (!this.selfTriage()) return false;
     const created = this.db
       .prepare(
         `SELECT json_extract(actor, '$.name') AS creator, json_extract(payload, '$.spawned_from') AS template

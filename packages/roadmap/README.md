@@ -36,6 +36,9 @@ unavailable for your Node/platform pair.
 - MCP server (stdio): `node dist/server.js` — store at
   `~/.helmo-roadmap/roadmap.db` (`ROADMAP_DB` overrides); writer identity from
   `ROADMAP_ACTOR` or `HELMO_ACTOR` (JSON), or a per-call `actor` param.
+  Optional `ROADMAP_LEADER` names the installation's leader agent; it is
+  honoured only when it equals the server's own pinned actor name, and lets
+  that agent judge its own shaping and move projects past the go gates.
 - Read-only view: `node dist/view.js` — `http://localhost:4410`
 - Operator recovery: `node dist/recovery.js identity|backup-observed|backup|validate ...`; `identity` reports only the stored installation name and creates nothing. `backup-observed` reads the stored identity and makes a consistent online backup through the same SQLite connection, while backup and validation retain explicit identity assertions. All artifact-producing commands create only fresh owner-only paths and never restore into a live installation. See `DEV.md` for flags and the safety boundary.
   (`ROADMAP_VIEW_PORT`).

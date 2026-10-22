@@ -395,6 +395,14 @@ Pinned releases accept both the historical three-component layout and C1's one
   disclosed, `remaining_usd` is null because no finite remainder exists, and
   pressure checks leave runnable work runnable. Positive budgets retain finite
   remaining arithmetic and exhaustion guidance.
+  Installation leader and self-triage setting (H-2073, H-2147): store meta
+  `leader_actor` (`leader --actor-name A | --off`) exempts that agent's own
+  filings from the self-triage rule; meta `self_triage = 'off'`
+  (`self-triage --off | --on`) lifts the rule for every filer, and tool
+  descriptions follow it at server start. Both are unset by default. No
+  agent names itself leader; a supervised worker may name only a store's
+  first leader, and only the leader, an attended session or a human changes
+  the self-triage setting.
   Seat holds (H-558): `seatHolds`/`seat-check`
   reports each in_progress ticket in a name with the actor that claimed it —
   the claiming actor's `session` stamp is how rev's same-seat guard tells a

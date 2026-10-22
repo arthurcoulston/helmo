@@ -885,3 +885,8 @@ export function inspectMissingClaim(g: GlobalConfig, ticket: string, session: st
 export function reconcileMissingClaim(g: GlobalConfig, ticket: string, record: object, installation: string): unknown {
   return run(g, ['missing-claim-reconcile', '--ticket', ticket, '--record', JSON.stringify(record), '--installation', installation], revActor(), true);
 }
+
+/** Hold-only ended-generation repair, through Work's public CLI boundary. */
+export function reconcileEndedClaim(g: GlobalConfig, ticket: string, record: object, installation: string): unknown {
+  return run(g, ['ended-claim-reconcile', '--ticket', ticket, '--record', JSON.stringify(record), '--installation', installation], revActor(), true);
+}

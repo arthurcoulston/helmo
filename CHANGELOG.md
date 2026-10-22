@@ -13,6 +13,18 @@ longer.
 
 ## Unreleased — 0.13.0
 
+- A worker that stopped cleanly still held its ticket's execution claim, so
+  the work it had paused could not be picked up again by anyone. Runtime's
+  `reconcile-ended-claim` now releases exactly that claim into a deliberate
+  hold: it proves the worker is STOPped and dead, its launch completed and its
+  detached session group is gone, and Work then retires the generation, writes
+  the hold and corrects the ticket's continuation line in one transaction. The
+  reservation, the recorded evidence and the STOP all survive it; a replacement
+  claim, a concurrent ticket event, a workflow-bound claim or a hold already in
+  place refuses the repair without writing. It never resumes a worker, and it
+  is not the same repair as `reconcile-missing-claim`, which needs a live idle
+  worker with no control hold and cannot be used on this strand.
+
 - An owner repeating `status: in_progress` keeps its execution claim instead
   of retiring its own generation and stranding the ticket; handoff, release
   and a real owner change still retire the writer. Runtime's

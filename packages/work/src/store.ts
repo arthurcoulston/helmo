@@ -1310,6 +1310,54 @@ export class Store {
     }).immediate();
   }
 
+  /** Runtime's supported ended-owner repair. Runtime establishes OS/journal
+   * facts; Work compares the exact claim and ticket under its write lock.
+   * This is a hold-only release, never takeover or workflow recovery. */
+  reconcileEndedClaim(actor: Actor, input: {
+    ticket_id: string; session: string; generation: string; expected_updated_at: string; expected_event_seq: number;
+    hold: CapacityHold; body_patch: { old: string; new: string };
+    proof: { worker: string; observed_at: string; completed_at: string; run_end_at: string; stop: string };
+  }): Ticket {
+    validateActor(actor);
+    if (actor.name !== 'rev' || actor.kind !== 'agent' || actor.generation || actor.session) {
+      throw new HelmoError('ended_claim_repair requires the runtime actor, not an execution attempt.');
+    }
+    const { proof, hold, body_patch: patch } = input;
+    if (!proof || !/^[a-zA-Z0-9_-]+$/.test(proof.worker) || input.session !== `rev:${proof.worker}`
+        || !input.generation.startsWith(`${input.session}:`) || !proof.stop?.trim()) {
+      throw new HelmoError('ended_claim_repair requires exact worker, session, generation and STOP evidence.');
+    }
+    const observed = Date.parse(proof.observed_at), completed = Date.parse(proof.completed_at), ended = Date.parse(proof.run_end_at);
+    if (![observed, completed, ended].every(Number.isFinite) || observed > Date.now() || Date.now() - observed > 30_000
+        || completed > ended || ended > observed) throw new HelmoError('ended_claim_repair evidence is stale or inconsistent.');
+    if (!hold || hold.release || !['reason', 'provenance', 'reconsider_when'].every(k => typeof hold[k as keyof CapacityHold] === 'string' && String(hold[k as keyof CapacityHold]).trim())) {
+      throw new HelmoError('ended_claim_repair requires a deliberate hold without a release.');
+    }
+    if (!patch || !patch.old?.trim() || !patch.new?.trim()) throw new HelmoError('ended_claim_repair requires a concrete continuation correction.');
+    rejectSwallowedMarkup({ reason: hold.reason, provenance: hold.provenance, reconsider_when: hold.reconsider_when, body: patch.new });
+    return this.db.transaction(() => {
+      this.refuseRetiredGeneration(actor);
+      const t = this.getTicket(input.ticket_id), claim = this.executionClaim(t.id);
+      if (!claim || claim.session !== input.session || claim.generation !== input.generation || t.status !== 'in_progress'
+          || t.updated_at !== input.expected_updated_at || !Number.isSafeInteger(input.expected_event_seq)
+          || (this.db.prepare('SELECT MAX(seq) AS seq FROM events WHERE ticket_id = ?').get(t.id) as { seq: number }).seq !== input.expected_event_seq || t.workflow_attempt_id || t.capacity_hold) {
+        throw new HelmoError('ended_claim_repair conflict: claim/ticket changed, already held, or workflow-bound; nothing was written.');
+      }
+      if (t.body.split(patch.old).length !== 2) throw new HelmoError('ended_claim_repair continuation anchor must occur exactly once.');
+      const ts = now();
+      const payload = {
+        diffs: { status: { from: t.status, to: 'open' }, capacity_hold: { from: null, to: hold },
+          body: { from: t.body, to: t.body.replace(patch.old, patch.new) } },
+        note: `Runtime reconciled ended generation ${input.generation}; preserved reservation and applied pause from ${hold.provenance}.`,
+        ended_claim: { session: input.session, generation: input.generation, proof },
+      };
+      const seq = this.append(ts, t.id, 'updated', actor, payload);
+      this.applyUpdated(ts, t.id, payload, seq);
+      this.endExecution(t.id, `ended_repair:${hold.provenance}`, ts);
+      return this.getTicket(t.id);
+    }).immediate();
+  }
+
   private executionClaim(ticketId: string): { session: string; generation: string } | undefined {
     return this.db.prepare('SELECT session, generation FROM execution_claims WHERE ticket_id = ?').get(ticketId) as
       { session: string; generation: string } | undefined;

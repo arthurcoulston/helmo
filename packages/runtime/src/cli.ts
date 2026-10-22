@@ -9,7 +9,7 @@ import { sessionSpec } from './shim.js';
 import { LoopConfig } from './types.js';
 import { pollUsage, readCodexUsage, readUsage, refreshCodexUsage, usageLine, usagePath } from './usage.js';
 import { selectRun } from './routing.js';
-import { eligibleSeatBacklog, inspectMissingClaim, reconcileMissingClaim, selfTriageWork, unavailableSeatWork, unservedLaneWork } from './helm.js';
+import { eligibleSeatBacklog, inspectMissingClaim, reconcileEndedClaim, reconcileMissingClaim, selfTriageWork, unavailableSeatWork, unservedLaneWork } from './helm.js';
 import { missingClaimEvidence, type MissingClaimRequest } from './missing-claim.js';
 import { runLoop } from './loop.js';
 import { serviceFile, serviceInstall, serviceStart, serviceStatusLine, serviceUninstall, stalePinnedService } from './service.js';
@@ -28,6 +28,7 @@ import { assertTicketIdentity, readTicketLaunches, sessionTrace } from './sessio
 import { ticketHistory } from './helm.js';
 import { recordStallEpisodes } from './stalled-work.js';
 import { requestRuntimeRecovery, type RuntimeRecoveryRequest } from './runtime-recovery.js';
+import { endedClaimEvidence, type EndedClaimRequest } from './ended-claim.js';
 
 const [cmd, ...rest] = process.argv.slice(2);
 const TRACE_REFUSAL = 'trace refused: diagnostic unavailable';
@@ -155,6 +156,7 @@ const COMMAND_HELP: Record<string, string> = {
   'recover-runtime': `usage: ${commandName} recover-runtime <exact worker> --record <JSON file> --installation <name>`,
   'inspect-missing-claim': `usage: ${commandName} inspect-missing-claim --worker <exact worker> --record <JSON file> --installation <name>`,
   'reconcile-missing-claim': `usage: ${commandName} reconcile-missing-claim --worker <exact worker> --record <JSON file> --installation <name>`,
+  'reconcile-ended-claim': `usage: ${commandName} reconcile-ended-claim --worker <exact worker> --record <JSON file> --installation <name>`,
   reload: `usage: ${commandName} reload <loop|role> [--worker]`,
   service: `usage: ${commandName} service <install|uninstall|start|status>`,
   install: `usage: ${commandName} install remove [--confirm]`,
@@ -605,6 +607,25 @@ switch (cmd) {
     else console.log(JSON.stringify(reconcileMissingClaim(g, request.ticket_id, { ...request, proof: { ...second.proof, snapshot: second.snapshot } }, installation)));
     break;
   }
+  // The other strand: a worker that ended cleanly and is STOPped still holds
+  // its claim. Runtime proves the worker is dead and the launch completed;
+  // Work releases the claim into a deliberate hold. The two commands cannot be
+  // crossed — this one requires STOP and a dead worker, that one a live idle
+  // worker with no control hold.
+  case 'reconcile-ended-claim': {
+    const allowed = new Set(['--worker', '--record']);
+    if (rest.length !== 4 || rest.some((x, i) => i % 2 === 0 && !allowed.has(x))) throw new Error(COMMAND_HELP[cmd]!);
+    if (!requestedInstall) throw new Error('An explicit installation is required for ended-claim repair.');
+    const name = flag('worker'), file = flag('record');
+    if (!name || !file || !loops[name]) throw new Error('Exact registered worker and record file required.');
+    const installation = requireTarget('reconcile ended claim').label;
+    const request = JSON.parse(readFileSync(file, 'utf8')) as EndedClaimRequest;
+    const first = endedClaimEvidence(name, request);
+    const second = endedClaimEvidence(name, request);
+    if (first.snapshot !== second.snapshot) throw new Error('Worker evidence changed; repair refused.');
+    console.log(JSON.stringify(reconcileEndedClaim(g, request.ticket_id, { ...request, proof: second.proof }, installation)));
+    break;
+  }
   // Reload one worker's roster without a fleet drain and without touching a
   // halt (H-891). `resume` cannot do this safely: it clears STOP/HOLD/BLOCKED
   // unconditionally, so a hold that someone else set, even mid-operation,
@@ -915,6 +936,8 @@ switch (cmd) {
   recover-runtime <worker> queue one exact runtime-trip recovery for the supervisor; preserves independent controls
   inspect-missing-claim|reconcile-missing-claim --worker <exact worker> --record <JSON file> --installation <name>
                            reopen one ticket stranded by the pre-fix same-owner checkpoint (H-1646)
+  reconcile-ended-claim --worker <exact worker> --record <JSON file> --installation <name>
+                           release a STOPped, cleanly ended worker's claim into a deliberate hold
   reload <loop|role>       respawn after the in-flight iteration on the current roster; never
                            clears a halt (a STOP/HOLD/BLOCKED present then keeps it down)
   pace <loop|role> <v>     velocity: fraction (0,1], 'park', or 'clear'

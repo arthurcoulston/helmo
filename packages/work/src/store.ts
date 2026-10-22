@@ -1401,6 +1401,10 @@ export class Store {
       throw new HelmoError('ended_claim_repair requires the runtime actor, not an execution attempt.');
     }
     const { proof, hold, body_patch: patch } = input;
+    if (!hold || Object.keys(hold).some((key) => !['reason', 'provenance', 'reconsider_when', 'release'].includes(key))
+        || !proof || Object.keys(proof).some((key) => !['worker', 'observed_at', 'completed_at', 'run_end_at', 'stop'].includes(key))) {
+      throw new HelmoError('ended_claim_repair hold and proof use closed schemas; unknown fields are refused.');
+    }
     if (!proof || !/^[a-zA-Z0-9_-]+$/.test(proof.worker) || input.session !== `rev:${proof.worker}`
         || !input.generation.startsWith(`${input.session}:`) || !proof.stop?.trim()) {
       throw new HelmoError('ended_claim_repair requires exact worker, session, generation and STOP evidence.');
@@ -1423,9 +1427,10 @@ export class Store {
       }
       if (t.body.split(patch.old).length !== 2) throw new HelmoError('ended_claim_repair continuation anchor must occur exactly once.');
       const ts = now();
+      const anchor = t.body.indexOf(patch.old);
       const payload = {
         diffs: { status: { from: t.status, to: 'open' }, capacity_hold: { from: null, to: hold },
-          body: { from: t.body, to: t.body.replace(patch.old, patch.new) } },
+          body: { from: t.body, to: t.body.slice(0, anchor) + patch.new + t.body.slice(anchor + patch.old.length) } },
         note: `Runtime reconciled ended generation ${input.generation}; preserved reservation and applied pause from ${hold.provenance}.`,
         ended_claim: { session: input.session, generation: input.generation, proof },
       };

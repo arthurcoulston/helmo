@@ -26,6 +26,12 @@ describe('hold-only ended-generation repair', () => {
     expect(() => s.reconcileEndedClaim(runtime, input)).toThrow(/conflict/);
     s.rebuild(); expect(s.getTicket(after.id)).toEqual(after); s.close();
   });
+  it('treats replacement dollar sequences literally', () => {
+    const { s, input } = fixture();
+    input.body_patch.new = 'PAUSED: preserve $& literally.';
+    expect(s.reconcileEndedClaim(runtime, input).body).toBe('Evidence retained. PAUSED: preserve $& literally.');
+    s.close();
+  });
   it('refuses a replacement generation or a concurrent ticket edit without writing', () => {
     for (const replacement of [true, false]) {
       const { s, input } = fixture();
@@ -46,5 +52,15 @@ describe('hold-only ended-generation repair', () => {
     s.updateTicket(worker, { ticket_id: input.ticket_id, note: 'Owner recorded a material event.' });
     expect(() => s.reconcileEndedClaim(runtime, input)).toThrow(/conflict/);
     expect(s.getTicket(input.ticket_id).status).toBe('in_progress'); s.close();
+  });
+  it('refuses unknown hold and proof fields without recording them', () => {
+    for (const inputField of ['hold', 'proof'] as const) {
+      const { s, input } = fixture();
+      const before = s.getEvents(input.ticket_id);
+      const malformed = { ...input, [inputField]: { ...input[inputField], hidden: 'not part of the record schema' } };
+      expect(() => s.reconcileEndedClaim(runtime, malformed)).toThrow(/closed schemas/);
+      expect(s.getEvents(input.ticket_id)).toEqual(before);
+      s.close();
+    }
   });
 });

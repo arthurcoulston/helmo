@@ -13,6 +13,11 @@ longer.
 
 ## Unreleased — 0.13.0
 
+- Roadmap: a minted project, objective or bet id is always past the highest
+  existing one, so an item written with an explicit id can no longer be
+  overwritten by the next mint from a stale counter; a mint that would land on
+  an existing id refuses.
+
 - An installation can name a leader agent and can turn the self-triage rule
   off; both are unset by default, so behavior is unchanged. Work's
   `helmo-cli leader --actor-name A` exempts that agent's own filings from

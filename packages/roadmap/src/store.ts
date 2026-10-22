@@ -160,6 +160,8 @@ function rejectSwallowedMarkup(fields: Record<string, string | undefined | null>
   }
 }
 
+const MINT_TABLES = { R: 'projects', OBJ: 'objectives', BET: 'bets' } as const;
+
 export class Store {
   private db: Database.Database;
   private installation?: Installation;
@@ -1052,12 +1054,24 @@ export class Store {
 
   // ---------- internals ----------
 
-  private mintId(prefix: string): string {
+  /** The next free id: past both the counter and the highest id already in
+   *  the table, because items written with explicit ids never advance the
+   *  counter, and a stale counter would otherwise hand out a live id that the
+   *  upsert then overwrites (H-2220). */
+  private mintId(prefix: keyof typeof MINT_TABLES): string {
+    const table = MINT_TABLES[prefix];
     const key = `next_${prefix}`;
     const row = this.db.prepare('SELECT value FROM meta WHERE key = ?').get(key) as { value: string } | undefined;
-    const n = row ? parseInt(row.value, 10) : 1;
+    const highest = this.db
+      .prepare(`SELECT MAX(CAST(substr(id, ?) AS INTEGER)) AS n FROM ${table} WHERE id LIKE ?`)
+      .get(prefix.length + 2, `${prefix}-%`) as { n: number | null };
+    const n = Math.max(row ? parseInt(row.value, 10) : 1, (highest.n ?? 0) + 1);
+    const id = `${prefix}-${n}`;
+    if (this.db.prepare(`SELECT 1 FROM ${table} WHERE id = ?`).get(id)) {
+      throw new RoadmapError(`refusing to mint ${id}: it already exists, and a minted id must never replace one. Pass an explicit id.`);
+    }
     this.db.prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, String(n + 1));
-    return `${prefix}-${n}`;
+    return id;
   }
 
   private append(ts: string, subjectId: string, type: string, actor: Actor, payload: Record<string, unknown>): void {

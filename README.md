@@ -1,26 +1,24 @@
 # Helmo
 
-**Agents write, humans read and meet.** Helmo is a self-hosted work record for
-AI agent teams, the roadmap above it, and the supervisor that keeps the agents
-turning — one product, three areas, one version.
+**Agents write. Humans steer.**
+
+Helmo is self-hosted software for people running their own AI agent teams. It
+keeps the roadmap, work, evidence and human decisions together—and keeps
+unattended agent loops running.
+
+Helmo exists for the moment your agents can do more work than you can reread.
+What needs you rises to the top. Work closed without evidence stays visibly
+unproven.
 
 ![The Helmo view: the questions awaiting the human sit at the top of the board, each with the agent's recommendation and with options where the choice is genuinely open, under a row counting what awaits you, what is in motion, and what has been spent](packages/work/docs/dashboard.png)
 
-That view is the whole interface. Helmo exists for the moment your agents
-outrun your ability to re-read everything they did: what needs you is at the
-top, "done" without an evidence link surfaces as a flagged claim, and every
-line traces to who wrote it — which agent, which model, at what cost.
+Helmo has three areas in one product:
 
-| Area | What it is | Entry points | Store |
-| --- | --- | --- | --- |
-| [Work](packages/work/README.md) | Tickets agents write and the human reads; questions batched into meetings | `helmo-cli`, `helmo-mcp`, `helmo-view` (`:4400`) | `~/.helmo/helmo.db` |
-| [Roadmap](packages/roadmap/README.md) | The layer above the ticket: parked, shaped, ranked, declared go | `roadmap-mcp`, `roadmap-view` (`:4410`) | `~/.helmo-roadmap/roadmap.db` |
-| [Runtime](packages/runtime/README.md) | Process supervision for autonomous loops drawing work from Work | `rev`, `gp-rev`, the loop view (`:4500`) | sentinels under `~/.rev/` |
-| [Core](packages/core) | Installation identity, install, qualified references, release selection, build stamps | — | — |
+- **Work** records what agents are doing and batches the decisions only a human can make.
+- **Roadmap** shapes and ranks what the team should do next.
+- **Runtime** keeps autonomous agent loops working the queue.
 
-The two stores stay separate and unmigrated: together they read as one system,
-apart each stands alone. Nothing a configuration file, a plist, a bookmark or a
-loaded tool schema names changed when the three products became one.
+**Get started:** [Agent-led installation](AGENT-INSTALL.md).
 
 ## Status
 
@@ -71,6 +69,19 @@ otherwise it compiles from source, which needs a C toolchain and Python ≥ 3.8
 (node-gyp). If install fails in `node-gyp rebuild`, an old `python3` on your
 PATH is the usual culprit — on macOS, `PYTHON=/usr/bin/python3 npm install`
 fixes it.
+
+## Product areas
+
+| Area | What it is | Entry points | Store |
+| --- | --- | --- | --- |
+| [Work](packages/work/README.md) | Tickets agents write and the human reads; questions batched into meetings | `helmo-cli`, `helmo-mcp`, `helmo-view` (`:4400`) | `~/.helmo/helmo.db` |
+| [Roadmap](packages/roadmap/README.md) | The layer above the ticket: parked, shaped, ranked, declared go | `roadmap-mcp`, `roadmap-view` (`:4410`) | `~/.helmo-roadmap/roadmap.db` |
+| [Runtime](packages/runtime/README.md) | Process supervision for autonomous loops drawing work from Work | `rev`, `gp-rev`, the loop view (`:4500`) | sentinels under `~/.rev/` |
+| [Core](packages/core) | Installation identity, install, qualified references, release selection, build stamps | — | — |
+
+The two stores stay separate and unmigrated: together they read as one system,
+apart each stands alone. Nothing a configuration file, a plist, a bookmark or a
+loaded tool schema names changed when the three products became one.
 
 ## The one command
 

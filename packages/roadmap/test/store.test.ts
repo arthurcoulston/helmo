@@ -2,6 +2,8 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import Database from 'better-sqlite3';
+import { formatR46Plan, parseR46Judgments } from '../src/migrate-lib.js';
 import { Store } from '../src/store.js';
 import { Actor } from '../src/types.js';
 
@@ -23,10 +25,29 @@ afterEach(() => {
 });
 
 describe('projects', () => {
+  it('adds the R-46 reading columns when an existing store is opened', () => {
+    store.close();
+    const legacyPath = join(dir, 'legacy.db');
+    const legacy = new Database(legacyPath);
+    legacy.exec(`CREATE TABLE projects (
+      id TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'parked', parked_reason TEXT,
+      unpark_condition TEXT, actual_usd REAL NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL, closed_at TEXT
+    )`);
+    legacy.close();
+
+    store = new Store(legacyPath);
+    const check = new Database(legacyPath, { readonly: true });
+    const names = (check.pragma('table_info(projects)') as { name: string }[]).map((column) => column.name);
+    expect(names).toEqual(expect.arrayContaining(['readiness', 'health', 'health_reason', 'archived']));
+    check.close();
+  });
   it('an idea costs a title and nothing else', () => {
     const p = store.createProject(mason, { title: 'Run a hackathon at the co-working space' });
     expect(p.id).toBe('R-1');
-    expect(p.status).toBe('parked');
+    expect(p.status).toBe('Proposed');
+    expect(p.readiness).toBe('raw idea');
     expect(p.body).toBe('');
   });
 
@@ -34,53 +55,65 @@ describe('projects', () => {
     expect(() => store.createProject({ name: 'x', kind: 'agent' }, { title: 't' })).toThrow(/model/);
   });
 
-  it('updates require a note and archived projects are permanent', () => {
-    const p = store.createProject(mason, { title: 'T', status: 'shaping' });
-    expect(() => store.updateProject(mason, { project_id: p.id, note: '', status: 'ready' })).toThrow(/note/);
-    store.updateProject(bosun, { project_id: p.id, note: 'ran its course', status: 'archived' });
-    expect(() => store.updateProject(mason, { project_id: p.id, note: 'reopen', status: 'shaping' })).toThrow(/terminal/);
+  it('updates require a note and canceled projects are permanent', () => {
+    const p = store.createProject(mason, { title: 'T' });
+    expect(() => store.updateProject(mason, { project_id: p.id, note: '', title: 'T2' })).toThrow(/note/);
+    store.updateProject(bosun, { project_id: p.id, note: 'ran its course', status: 'Canceled' });
+    expect(() => store.updateProject(mason, { project_id: p.id, note: 'reopen', status: 'Proposed' })).toThrow(/terminal/);
   });
 
-  it('parking without an exit warns', () => {
-    const p = store.createProject(mason, { title: 'T', status: 'shaping' });
-    const { warnings } = store.updateProject(mason, { project_id: p.id, note: 'not now', status: 'parked' });
+  it('archiving hides a finished record, and is the one write a canceled one still takes', () => {
+    const live = store.createProject(mason, { title: 'live' });
+    expect(() => store.updateProject(mason, { project_id: live.id, note: 'tidy the list', archived: true }))
+      .toThrow(/only a Completed or Canceled project can be archived/);
+
+    store.updateProject(bosun, { project_id: live.id, note: 'nothing left to deliver', status: 'Canceled' });
+    const { project } = store.updateProject(bosun, { project_id: live.id, note: 'off the surfaces', archived: true });
+    expect(project.archived).toBe(1);
+    expect(project.status).toBe('Canceled');
+    // Hiding is a display fact; the judgment behind it stays refused.
+    expect(() => store.updateProject(bosun, { project_id: live.id, note: 'and reword it', archived: false, title: 'new' })).toThrow(/terminal/);
+    expect(store.updateProject(bosun, { project_id: live.id, note: 'back on the surfaces', archived: false }).project.archived).toBe(0);
+  });
+
+  it('pausing without an exit warns', () => {
+    const p = store.createProject(mason, { title: 'T' });
+    const { warnings } = store.updateProject(mason, { project_id: p.id, note: 'not now', status: 'Paused' });
     expect(warnings.some((w) => w.includes('unpark_condition'))).toBe(true);
   });
 });
 
-describe('the ready gate', () => {
+describe('the readiness gate', () => {
+  const judge = (actor: Actor, id: string, note: string) =>
+    store.recordReadinessVerdict(actor, { project_id: id, reviewed_revision: store.readinessRevision(id), verdict: 'pass', note });
+
   it('the description shaper cannot make their own commitment-readiness judgment', () => {
-    const p = store.createProject(mason, { title: 'T', body: 'the full plan', status: 'shaping' });
-    expect(() => store.updateProject(mason, { project_id: p.id, note: 'done shaping', status: 'ready' })).toThrow(/second pair of eyes|other than the shaper|shaped by you/);
-    const { project } = store.updateProject(bosun, { project_id: p.id, note: 'enough is known to decide whether to commit', status: 'ready' });
-    expect(project.status).toBe('ready');
+    const p = store.createProject(mason, { title: 'T', body: 'the full plan' });
+    expect(() => judge(mason, p.id, 'done shaping')).toThrow(/other than the description's shaper|shaped by you/);
+    const { project } = judge(bosun, p.id, 'enough is known to decide whether to commit');
+    expect(project.readiness).toBe('shaped');
+    expect(project.status).toBe('Proposed'); // readiness is a field, never the status
   });
 
   it('retitling is not shaping the description', () => {
-    const p = store.createProject(mason, { title: 'Working title', body: 'first sketch', status: 'shaping' });
+    const p = store.createProject(mason, { title: 'Working title', body: 'first sketch' });
     store.updateProject(bosun, { project_id: p.id, note: 'shaped the proposition', body: 'enough evidence and scope to decide whether to commit' });
     store.updateProject(mason, { project_id: p.id, note: 'settled the name', title: 'Final title' });
 
-    const { project } = store.updateProject(mason, { project_id: p.id, note: 'independently judged ready to commit', status: 'ready' });
-    expect(project.status).toBe('ready');
+    expect(judge(mason, p.id, 'independently judged ready to commit').project.readiness).toBe('shaped');
   });
 
-  it('an agent cannot reshape and declare ready in one update', () => {
-    const p = store.createProject(mason, { title: 'T', body: 'first sketch', status: 'shaping' });
-    expect(() => store.updateProject(bosun, {
-      project_id: p.id,
-      note: 'expanded it and called it ready',
-      body: 'a newly complete description',
-      status: 'ready',
-    })).toThrow(/shaped by you|description's shaper/);
-    expect(store.getProject(p.id).body).toBe('first sketch');
-    expect(store.getProject(p.id).status).toBe('shaping');
+  it('a reshape by the reviewer themselves is still their own work', () => {
+    const p = store.createProject(mason, { title: 'T', body: 'first sketch' });
+    store.updateProject(bosun, { project_id: p.id, note: 'expanded it', body: 'a newly complete description' });
+    expect(() => judge(bosun, p.id, 'and it reads ready to me')).toThrow(/shaped by you|description's shaper/);
+    expect(store.getProject(p.id).readiness).toBe('raw idea');
   });
 
   it('the human is never gated', () => {
-    const p = store.createProject(mason, { title: 'T', body: 'plan', status: 'shaping' });
-    const { project } = store.updateProject(arthur, { project_id: p.id, note: 'good enough', status: 'ready' });
-    expect(project.status).toBe('ready');
+    const p = store.createProject(mason, { title: 'T', body: 'plan' });
+    store.updateProject(arthur, { project_id: p.id, note: 'rewrote it myself', body: 'the plan, in my words' });
+    expect(judge(arthur, p.id, 'good enough').project.readiness).toBe('shaped');
   });
 });
 
@@ -89,14 +122,14 @@ describe('readiness verdicts', () => {
     const p = store.createProject(mason, { title: 'T', body: 'complete plan', status: 'shaping' });
     const revision = store.readinessRevision(p.id);
     store.recordReadinessVerdict(bosun, { project_id: p.id, reviewed_revision: revision, verdict: 'pass', note: 'enough is known' });
-    expect(store.getProject(p.id).status).toBe('ready');
+    expect(store.getProject(p.id).readiness).toBe('shaped');
     store.recordReadinessVerdict({ name: 'proof', kind: 'agent', model: 'claude-fable-5', version: 'test' }, {
       project_id: p.id, reviewed_revision: revision, verdict: 'fail', note: 'the rollback is missing',
     });
     const review = store.readinessReview(p.id)!;
     expect(review.state).toBe('contested');
     expect(review.verdicts.map((v) => v.verdict)).toEqual(['pass', 'fail']);
-    expect(store.getProject(p.id).status).toBe('shaping');
+    expect(store.getProject(p.id).readiness).toBe('raw idea');
   });
 
   it('lets a reviewer correct only their own verdict', () => {
@@ -131,51 +164,355 @@ describe('readiness verdicts', () => {
     store.rebuild();
     expect(JSON.stringify(store.dumpState())).toBe(before);
     expect(store.readinessReview(p.id)).toBeNull();
-    expect(store.getProject(p.id).status).toBe('shaping');
+    expect(store.getProject(p.id).readiness).toBe('raw idea');
   });
 });
 
-describe('ship next — the work phase', () => {
-  function readyProject(title: string): string {
-    const p = store.createProject(mason, { title, status: 'shaping' });
-    store.updateProject(bosun, { project_id: p.id, note: 'ready', status: 'ready' });
+describe('health readings', () => {
+  it('records explained health as its own event and rebuilds it', () => {
+    const p = store.createProject(mason, { title: 'T' });
+    expect(() => store.recordHealth(mason, { project_id: p.id, health: 'At risk', reason: '' })).toThrow(/reason/);
+    store.recordHealth(mason, { project_id: p.id, health: 'At risk', reason: 'The only delivery ticket is held.' });
+    expect(store.getProject(p.id)).toMatchObject({ health: 'At risk', health_reason: 'The only delivery ticket is held.' });
+    expect(store.getEvents(p.id).at(-1)?.event_type).toBe('health_recorded');
+    const before = JSON.stringify(store.dumpState());
+    store.rebuild();
+    expect(JSON.stringify(store.dumpState())).toBe(before);
+  });
+});
+
+describe('the go, and the work phase it opens', () => {
+  function shapedProject(title: string): string {
+    const p = store.createProject(mason, { title, body: 'a description worth judging' });
+    store.recordReadinessVerdict(bosun, { project_id: p.id, reviewed_revision: store.readinessRevision(p.id), verdict: 'pass', note: 'enough is known' });
     return p.id;
   }
 
-  it('only a ready project, only via the recorded human decision', () => {
-    const a = readyProject('A');
-    const parked = store.createProject(mason, { title: 'C' });
+  it('only a shaped project, only via the recorded human decision', () => {
+    const a = shapedProject('A');
+    const raw = store.createProject(mason, { title: 'C' });
 
-    expect(() => store.updateProject(mason, { project_id: a, note: 'go', status: 'ship_next' as never })).toThrow(/ship_next/);
-    expect(() => store.setShipNext(mason, { project_id: parked.id, decided_by: 'arthur', reason: 'r' })).toThrow(/ready/);
+    expect(() => store.updateProject(mason, { project_id: a, note: 'go', status: 'Planned' as never })).toThrow(/go-ahead/);
+    expect(() => store.setShipNext(mason, { project_id: raw.id, decided_by: 'arthur', reason: 'r' })).toThrow(/shaped/);
     expect(() => store.setShipNext(mason, { project_id: a, decided_by: '', reason: 'r' })).toThrow(/decided_by/);
 
-    const { ship_next_count } = store.setShipNext(mason, { project_id: a, decided_by: 'arthur', reason: 'unblocks the fleet' });
+    const { project, ship_next_count } = store.setShipNext(mason, { project_id: a, decided_by: 'arthur', reason: 'unblocks the fleet' });
+    expect(project.status).toBe('Planned'); // authorized, and nothing underway yet
     expect(ship_next_count).toBe(1);
-    expect(store.shipNextProjects().map((p) => p.id)).toEqual([a]);
+    expect(store.authorizedProjects().map((p) => p.id)).toEqual([a]);
   });
 
-  it('several may hold it at once — the count is the resistance signal', () => {
-    const a = readyProject('A');
-    const b = readyProject('B');
+  it('the work phase holds the authorized and the underway together', () => {
+    const a = shapedProject('A');
+    const b = shapedProject('B');
     store.setShipNext(mason, { project_id: a, decided_by: 'arthur', reason: 'go' });
+    store.updateProject(mason, { project_id: a, note: 'claimed its first ticket', status: 'Active' });
     const { ship_next_count } = store.setShipNext(mason, { project_id: b, decided_by: 'arthur', reason: 'also go' });
-    expect(ship_next_count).toBe(2);
-    expect(store.getProject(a).status).toBe('ship_next'); // no demotion
+    expect(ship_next_count).toBe(2); // no demotion: one Active, one Planned
+    expect(store.getProject(a).status).toBe('Active');
+    expect(store.authorizedProjects().map((p) => p.id)).toEqual([a, b]);
   });
 
-  it('nothing ships that the human never declared go on', () => {
-    const shaped = store.createProject(mason, { title: 'S', status: 'shaping' });
-    expect(() => store.updateProject(mason, { project_id: shaped.id, note: 'shipped it', status: 'shipped_watching' })).toThrow(/go-ahead|ship_next/);
-    // The human is not gated; agents move a project only out of ship_next.
-    const a = readyProject('A');
+  it('nothing starts or ships that the human never declared go on', () => {
+    const shaped = shapedProject('S');
+    expect(() => store.updateProject(mason, { project_id: shaped, note: 'started it', status: 'Active' }))
+      .toThrow(/declared go on/);
+    expect(() => store.updateProject(mason, { project_id: shaped, note: 'shipped it', status: 'Monitoring' }))
+      .toThrow(/only an Active project/);
+
+    const a = shapedProject('A');
     store.setShipNext(mason, { project_id: a, decided_by: 'arthur', reason: 'go' });
-    store.updateProject(mason, { project_id: a, note: 'built, watching', status: 'shipped_watching' });
-    expect(store.getProject(a).status).toBe('shipped_watching');
+    // Authorized is not underway: a go alone does not reach the shipped family.
+    expect(() => store.updateProject(mason, { project_id: a, note: 'straight to watching', status: 'Monitoring' }))
+      .toThrow(/only an Active project/);
+    store.updateProject(mason, { project_id: a, note: 'work in flight', status: 'Active' });
+    store.updateProject(mason, { project_id: a, note: 'built, watching', status: 'Monitoring' });
+    expect(store.getProject(a).status).toBe('Monitoring');
     expect(store.getProject(a).closed_at).toBeTruthy();
-    // watching → stable stays open (records the human's maintenance call).
-    store.updateProject(mason, { project_id: a, note: 'quiet for weeks; Arthur calls it worth keeping', status: 'shipped_stable' });
-    expect(store.getProject(a).status).toBe('shipped_stable');
+    // Monitoring → Completed stays open (records the human's maintenance call).
+    store.updateProject(mason, { project_id: a, note: 'quiet for weeks; Arthur calls the outcome verified', status: 'Completed' });
+    expect(store.getProject(a).status).toBe('Completed');
+    expect(store.authorizedProjects()).toEqual([]);
+  });
+
+  it('the human is not gated by the go, but the go is still recorded one way only', () => {
+    // The gate reads the declared actor kind, exactly as the readiness rule
+    // does: a human-kind write is itself the authorization, so it needs no
+    // record of itself. The kind is caller-supplied (an `actor` param or
+    // ROADMAP_ACTOR), so this is a live path, not a dormant branch.
+    const starting = shapedProject('S');
+    store.updateProject(arthur, { project_id: starting, note: 'starting this one myself', status: 'Active' });
+    expect(store.getProject(starting).status).toBe('Active');
+
+    const shipped = shapedProject('T');
+    store.updateProject(arthur, { project_id: shipped, note: 'this shipped before the roadmap knew about it', status: 'Monitoring' });
+    expect(store.getProject(shipped).status).toBe('Monitoring');
+
+    // Planned is the one door closed to everyone: it IS the go, and only
+    // setShipNext records who decided it and why.
+    const authorized = shapedProject('U');
+    expect(() => store.updateProject(arthur, { project_id: authorized, note: 'go', status: 'Planned' as never }))
+      .toThrow(/go-ahead/);
+  });
+
+  it('a paused delivery resumes without a second go, and its health is a separate fact', () => {
+    const a = shapedProject('A');
+    store.setShipNext(mason, { project_id: a, decided_by: 'arthur', reason: 'go' });
+    store.updateProject(mason, { project_id: a, note: 'work in flight', status: 'Active' });
+    store.updateProject(arthur, { project_id: a, note: 'pending an evidence-backed plan', status: 'Paused', unpark_condition: 'Arthur authorizes resumption' });
+    store.recordHealth(mason, { project_id: a, health: 'Off track', reason: 'Both delivery tickets carry a capacity hold only Arthur can release.' });
+    expect(store.getProject(a)).toMatchObject({ status: 'Paused', health: 'Off track' });
+    store.updateProject(mason, { project_id: a, note: 'Arthur released the hold', status: 'Active' });
+    expect(store.getProject(a).status).toBe('Active');
+  });
+});
+
+// Events are never rewritten, and a row keeps the word it was written with
+// until the one-shot migration writes the new one. Every gate, tier and
+// listing has to read the old vocabulary correctly in the meantime.
+function writeLegacyEvents(events: [string, string, Record<string, unknown>][]): void {
+  const raw = new Database(join(dir, 'test.db'));
+  const insert = raw.prepare('INSERT INTO events (ts, subject_id, event_type, actor, payload) VALUES (?, ?, ?, ?, ?)');
+  events.forEach(([id, type, payload], i) => {
+    insert.run(`2026-09-${String(i + 1).padStart(2, '0')}T00:00:00.000Z`, id, type, JSON.stringify(mason), JSON.stringify(payload));
+  });
+  raw.close();
+  store.rebuild();
+}
+
+const created = (id: string, status: string): [string, string, Record<string, unknown>] =>
+  [id, 'created', { id, title: id, body: 'written in the old words', status }];
+
+describe('a store written before R-46', () => {
+  it('reads every pre-R-46 word in today\'s vocabulary, and replays its events unchanged', () => {
+    writeLegacyEvents([
+      created('R-90', 'parked'),
+      created('R-91', 'shaping'),
+      created('R-92', 'ready'),
+      created('R-93', 'shipped_watching'),
+      created('R-94', 'shipped_stable'),
+      created('R-95', 'archived'),
+      created('R-96', 'ready'),
+      // A pre-R-46 go carries no status in its payload: replaying it must
+      // still materialize 'ship_next', the word it wrote when it happened.
+      ['R-96', 'ship_next_set', { decided_by: 'arthur', reason: 'the 2026-09 go' }],
+    ]);
+
+    expect(store.getProject('R-96').status).toBe('ship_next');
+    expect(store.authorizedProjects().map((p) => p.id)).toEqual(['R-96']);
+    expect(store.shippedProjects().map((p) => p.id).sort()).toEqual(['R-93', 'R-94']);
+    // The ranked list drops the shipped and terminal families whatever word
+    // they carry, and tiers the rest by what those words always meant.
+    expect(store.rankProjects().map((r) => r.project.id)).toEqual(['R-96', 'R-91', 'R-92', 'R-90']);
+    expect(store.rankProjects()[0]!.explanation).toContain('ACTIVE');
+
+    // The shipped door admits the legacy source: a go is a go.
+    store.updateProject(mason, { project_id: 'R-96', note: 'built, watching', status: 'Monitoring' });
+    expect(store.getProject('R-96')).toMatchObject({ status: 'Monitoring', closed_at: expect.any(String) });
+
+    // A legacy archive is still terminal, and hiding it does not reopen it.
+    expect(() => store.updateProject(mason, { project_id: 'R-95', note: 'reopen', status: 'Proposed' })).toThrow(/terminal/);
+    expect(store.updateProject(mason, { project_id: 'R-95', note: 'off the surfaces', archived: true }).project.archived).toBe(1);
+    expect(store.getProject('R-95').status).toBe('archived');
+  });
+
+  it('judges a legacy row\'s readiness as a field, leaving its stored word alone', () => {
+    writeLegacyEvents([created('R-97', 'parked')]);
+    const { project } = store.recordReadinessVerdict(bosun, {
+      project_id: 'R-97', reviewed_revision: store.readinessRevision('R-97'), verdict: 'pass', note: 'enough is known',
+    });
+    expect(project).toMatchObject({ status: 'parked', readiness: 'shaped' });
+    // And that shaped reading is what the go gate reads.
+    expect(store.setShipNext(mason, { project_id: 'R-97', decided_by: 'arthur', reason: 'go' }).project.status).toBe('Planned');
+  });
+});
+
+describe('the R-46 vocabulary migration', () => {
+  // What became of each shelved row, as the operator running the migration
+  // supplies it. The product carries no row ids of its own, so a judgment
+  // arrives here or not at all.
+  const SHELVED = {
+    'R-75': { status: 'Completed' as const, reason: 'delivered under another initiative' },
+    'R-72': { status: 'Canceled' as const, reason: 'superseded, with no remaining deliverable' },
+    'R-73': { status: 'Canceled' as const, reason: 'dropped with no outcome recorded' },
+  };
+
+  // One row per legacy word, plus the two kinds nobody can map by rule: a
+  // parked row with a go on its record, and an archive with no judgment
+  // supplied.
+  function legacyRows(): void {
+    writeLegacyEvents([
+      created('R-71', 'parked'), // a raw idea, never authorized
+      created('R-72', 'archived'), // shelved: superseded
+      created('R-73', 'archived'), // shelved: dropped
+      created('R-74', 'shaping'),
+      created('R-75', 'archived'), // shelved: delivered elsewhere
+      created('R-76', 'shipped_stable'),
+      created('R-77', 'shipped_watching'),
+      created('R-78', 'ship_next'),
+      created('R-79', 'ready'),
+      created('R-80', 'archived'), // no judgment recorded for this one
+      // A go, then stood down. The status word is `parked` like the raw
+      // idea's, and only its history says the two are different facts.
+      created('R-81', 'ready'),
+      ['R-81', 'ship_next_set', { decided_by: 'arthur', reason: 'go for the next release' }],
+      ['R-81', 'updated', { note: 'paused pending a plan', diffs: { status: { from: 'ship_next', to: 'parked' } } }],
+    ]);
+  }
+
+  it('maps every stored word to the reading it always had, and says why per row', () => {
+    legacyRows();
+    const plan = store.migrateR46(mason, { apply: true, shelved: SHELVED });
+    expect(plan.applied).toBe(true);
+
+    const read = (id: string) => {
+      const p = store.getProject(id);
+      return { status: p.status, readiness: p.readiness, archived: p.archived };
+    };
+    // An idea nobody authorized, and the delivery that was — same old word.
+    expect(read('R-71')).toEqual({ status: 'Proposed', readiness: 'raw idea', archived: 0 });
+    expect(read('R-81')).toEqual({ status: 'Paused', readiness: 'shaped', archived: 0 });
+    // Refinement was a status; it is a field now.
+    expect(read('R-74')).toEqual({ status: 'Proposed', readiness: 'shaped', archived: 0 });
+    expect(read('R-79')).toEqual({ status: 'Proposed', readiness: 'shaped', archived: 0 });
+    // The go, and the two shipped words. An authorized row is shaped by the
+    // gate that authorized it, so the stored default must not survive on it;
+    // on a delivered row readiness is not a reading and is left alone.
+    expect(read('R-78')).toEqual({ status: 'Active', readiness: 'shaped', archived: 0 });
+    expect(read('R-77').status).toBe('Monitoring');
+    expect(read('R-76').status).toBe('Completed');
+    // The three judgment calls: what became of it, then hidden.
+    expect(read('R-75')).toMatchObject({ status: 'Completed', archived: 1 });
+    expect(read('R-72')).toMatchObject({ status: 'Canceled', archived: 1 });
+    expect(read('R-73')).toMatchObject({ status: 'Canceled', archived: 1 });
+
+    const why = (id: string) => store.getEvents(id).at(-1)!.payload['note'] as string;
+    expect(why('R-81')).toContain('the go is on the record and the delivery was stood down');
+    expect(why('R-71')).toContain('no go on the record');
+    expect(why('R-72')).toContain('superseded, with no remaining deliverable');
+    expect(why('R-71')).toContain('no judgment was re-made');
+  });
+
+  it('leaves an archive nobody judged alone, and asks for the call', () => {
+    legacyRows();
+    const plan = store.migrateR46(mason, { apply: true, shelved: SHELVED });
+    expect(plan.undecided.map((u) => u.id)).toEqual(['R-80']);
+    expect(plan.undecided[0]!.reason).toMatch(/archived with no judgment supplied/);
+    // Untouched, and still reading as Canceled until someone decides.
+    expect(store.getProject('R-80').status).toBe('archived');
+    expect(store.getEvents('R-80')).toHaveLength(1);
+  });
+
+  // The migration ships in a public product and row ids are minted per
+  // installation, so a judgment the operator did not supply must never be
+  // supplied by the product: one installation's row id is not another's.
+  it('judges no shelved row by id when no judgment is supplied', () => {
+    legacyRows();
+    const plan = store.migrateR46(mason, { apply: true });
+
+    expect(plan.undecided.map((u) => u.id).sort()).toEqual(['R-72', 'R-73', 'R-75', 'R-80']);
+    expect(plan.decisions.map((d) => d.id)).not.toContain('R-72');
+    for (const id of ['R-72', 'R-73', 'R-75', 'R-80']) {
+      expect(store.getProject(id).status).toBe('archived');
+      expect(store.getProject(id).archived).toBe(0);
+      expect(store.getEvents(id)).toHaveLength(1);
+    }
+    // The rows that map by rule are unaffected: only the shelved ones wait.
+    expect(store.getProject('R-77').status).toBe('Monitoring');
+  });
+
+  it('refuses a judgment this store cannot apply, rather than ignoring it', () => {
+    legacyRows();
+    // A mistyped id would otherwise leave the row it meant sitting undecided
+    // while the report read as though every call had been made.
+    expect(() => store.migrateR46(mason, { apply: false, shelved: { 'R-999': SHELVED['R-72'] } }))
+      .toThrow(/R-999 is not a row in this installation/);
+    // And a row that maps by rule is not the operator's to re-decide.
+    expect(() => store.migrateR46(mason, { apply: false, shelved: { 'R-77': SHELVED['R-72'] } }))
+      .toThrow(/stored as "shipped_watching", not archived/);
+  });
+
+  it('reads an operator judgments file, and says what is wrong with a bad one', () => {
+    expect(parseR46Judgments({ 'R-72': { status: 'Canceled', reason: ' dropped ' } }))
+      .toEqual({ 'R-72': { status: 'Canceled', reason: 'dropped' } });
+    expect(() => parseR46Judgments([])).toThrow(/keyed by row id/);
+    expect(() => parseR46Judgments({ 'R4': { status: 'Canceled', reason: 'x' } })).toThrow(/not a row id/);
+    // An archived row was finished or dropped; it cannot be revived into the
+    // live ladder by a migration that is only renaming words.
+    expect(() => parseR46Judgments({ 'R-72': { status: 'Active', reason: 'x' } })).toThrow(/Completed or Canceled/);
+    expect(() => parseR46Judgments({ 'R-72': { status: 'Canceled', reason: '  ' } })).toThrow(/needs a reason/);
+  });
+
+  it('writes nothing without --apply, and the plan is the report', () => {
+    legacyRows();
+    const before = JSON.stringify(store.dumpState());
+    const plan = store.migrateR46(mason, { apply: false, shelved: SHELVED });
+    expect(plan.applied).toBe(false);
+    expect(plan.decisions).toHaveLength(10);
+    expect(JSON.stringify(store.dumpState())).toBe(before);
+
+    const report = formatR46Plan(plan);
+    expect(report).toContain('plan only, nothing written: 10 of 11 rows');
+    // Every count states its denominator in the same sentence.
+    expect(report).toContain('10 of 11 rows migrate; 0 already carry a new word; 1 await');
+    expect(report).toContain('parked → Paused: 1');
+    expect(report).toContain('parked → Proposed: 1');
+    expect(report).toContain('Re-run with --apply');
+  });
+
+  it('is a one-shot: a second run has nothing to write', () => {
+    legacyRows();
+    store.migrateR46(mason, { apply: true, shelved: SHELVED });
+    const events = store.dumpState()['projects']!.length;
+
+    const again = store.migrateR46(mason, { apply: true, shelved: SHELVED });
+    expect(again.decisions).toHaveLength(0);
+    expect(again.already).toEqual(['R-71', 'R-72', 'R-73', 'R-74', 'R-75', 'R-76', 'R-77', 'R-78', 'R-79', 'R-81'].sort((a, b) => Number(a.slice(2)) - Number(b.slice(2))));
+    // The unjudged archive is neither migrated nor counted as done.
+    expect(again.undecided.map((u) => u.id)).toEqual(['R-80']);
+    expect(store.dumpState()['projects']!.length).toBe(events);
+
+    // And the report for an already-migrated store says that plainly,
+    // instead of printing denominators with no rows under them.
+    const report = formatR46Plan(again);
+    expect(report).toContain('nothing to migrate: 10 of 11 rows already carry a word from the seven');
+    expect(report).toContain('R-80');
+    expect(report).not.toContain('--apply');
+  });
+
+  it('rewrites no event and fabricates no closing date, and replays exactly', () => {
+    legacyRows();
+    const history = store.getEvents('R-81').map((e) => `${e.event_type}:${JSON.stringify(e.payload)}`);
+    const beforeCount = (['R-71', 'R-72', 'R-81'] as const).map((id) => store.getEvents(id).length);
+
+    store.migrateR46(mason, { apply: true, shelved: SHELVED });
+
+    // Every prior event stands exactly as recorded; the migration only appends.
+    expect(store.getEvents('R-81').map((e) => `${e.event_type}:${JSON.stringify(e.payload)}`).slice(0, 3)).toEqual(history);
+    expect((['R-71', 'R-72', 'R-81'] as const).map((id) => store.getEvents(id).length)).toEqual(beforeCount.map((n) => n + 1));
+    // A row that was already closed does not get today's date as its close.
+    expect(store.getProject('R-76').closed_at).toBeNull();
+    expect(store.getProject('R-72').closed_at).toBeNull();
+
+    const after = JSON.stringify(store.dumpState());
+    store.rebuild();
+    expect(JSON.stringify(store.dumpState())).toBe(after);
+  });
+
+  it('a migrated store reads through the same gates as before', () => {
+    legacyRows();
+    store.migrateR46(mason, { apply: true, shelved: SHELVED });
+
+    expect(store.authorizedProjects().map((p) => p.id)).toEqual(['R-78']);
+    // R-75 is Completed AND hidden: after R-46 those are two facts, so the
+    // shipped family includes it and the surfaces apply the hide flag.
+    expect(store.shippedProjects().map((p) => p.id).sort()).toEqual(['R-75', 'R-76', 'R-77']);
+    expect(store.shippedProjects().filter((p) => !p.archived).map((p) => p.id).sort()).toEqual(['R-76', 'R-77']);
+    // A Paused delivery is still a paused delivery: it takes no go without a
+    // readiness verdict of its own, and it is not in the ranked work phase.
+    expect(store.rankProjects().map((r) => r.project.id)).toEqual(['R-78', 'R-74', 'R-79', 'R-71', 'R-81']);
+    // Terminal is still terminal after the rename.
+    expect(() => store.updateProject(mason, { project_id: 'R-72', note: 'reopen', status: 'Proposed' })).toThrow(/terminal/);
   });
 });
 
@@ -216,7 +553,7 @@ describe('claims, citations, ranking', () => {
 
     const top = store.rankProjects()[0]!;
     expect(top.explanation).toContain('1st');
-    expect(top.explanation).toContain('ready, no blockers');
+    expect(top.explanation).toContain('shaped, no blockers');
     expect(top.explanation).toContain('advances OBJ-1');
     expect(top.explanation).toContain('value high (mason');
   });
@@ -519,5 +856,25 @@ describe('the invariant', () => {
 
   it('swallowed tool-call markup is rejected at the door', () => {
     expect(() => store.createProject(mason, { title: 'x </title> <parameter name="body">oops' })).toThrow(/markup/);
+  });
+});
+
+describe('the work join is not this store’s to make', () => {
+  // R-47 C1: the roadmap store cannot see tickets, so the remaining-work and
+  // shipped-milestone readings are joined in `packages/cli/bin/serve.js` by
+  // the one process that holds both. The reading a standalone Roadmap view
+  // owes is therefore ABSENT, and a surface must render that as unknown —
+  // never as "nothing is outstanding". An empty array here would be this
+  // store claiming to have looked, which it never can.
+  it('leaves remaining work and shipped milestones off every row it serves', () => {
+    const a = store.createProject(mason, { title: 'Has tickets somewhere else' });
+    const rows = store.dumpState()['projects'] as Record<string, unknown>[];
+    for (const row of rows) {
+      expect(row).not.toHaveProperty('remaining_work');
+      expect(row).not.toHaveProperty('shipped');
+    }
+    const snapshot = store.projectSnapshot(a.id) as unknown as Record<string, unknown>;
+    expect(snapshot).not.toHaveProperty('remaining_work');
+    expect(snapshot.project).not.toHaveProperty('remaining_work');
   });
 });

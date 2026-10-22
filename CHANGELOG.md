@@ -11,6 +11,23 @@ consolidation imported still carried that release's notes under "Unreleased";
 this is the published wording, which is two entries and one commit reference
 longer.
 
+## Unreleased — 0.13.0
+
+- Overview adds Roadmap now: visible Active, Planned and Proposed counts,
+  recorded At risk and Off track initiatives with their reasons and record
+  links, and an explicit count of initiatives whose health is not recorded.
+  Hidden initiatives are excluded; missing health never implies healthy.
+
+- Runtime can recover one exact diagnosed failure through the supervisor without
+  clearing independent STOP, HOLD, PACE, LIMIT or structured block controls.
+  Recovery requests expire, bind the observed failure and worker, and are
+  consumed once under the shared BLOCKED writer lock.
+
+- Browser checks can run against a managed browser session supplied by the
+  session owner. Work validates the loopback capability and connects with a
+  bounded timeout; an invalid endpoint or a failed connection reports a
+  sanitized error and never launches a local browser instead.
+
 ## v0.12.1 — 2026-10-13
 
 - Attended work now belongs to its ticket rather than parking the whole seat.

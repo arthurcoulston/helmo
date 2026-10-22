@@ -89,14 +89,20 @@ error, and removes it. That is also what runs the gate — nothing else in the
 repository calls `typecheck`, so the shell's suite is where it happens, and
 the two `tsc` runs are most of the five seconds that suite now takes.
 
-**Every area is in this application.** Roadmap's server-ranked groups are
+**Every area is in this application.** Roadmap's seven status groups are
 compact Data Tables composed in `RoadmapView.tsx` over the shared
-`RecordTable.tsx`; the charter, claims and lazy history are in the Sheet that
+`RecordTable.tsx`, ranked within each group by the server; the charter, claims and lazy history are in the Sheet that
 table opens. Work's record groups are the same composition in
 `WorkRecord.tsx`. Runtime's complete status projection uses the official Table
 in `RuntimeView.tsx`, which declares its own column geometry rather than
 composing `RecordTable` — it has no expanding record — and UI.md says what that
-geometry is and why. Team profiles
+geometry is and why. Runtime `status` also reconciles complete unavailable-seat
+observations into `state/supervisor/stalled-work.json`: the same case/ticket
+updates one durable episode, a resolved observation disappears, and unreadable
+episode state is reported as unknown rather than an empty healthy result. The
+same independent check records ready work an eligible worker has not yet removed
+from the complete backlog; a claim/launch is the progress signal, so a lost
+incremental wake cannot hide the ticket. Team profiles
 are fetched only from configured roster members and shown in standard
 Collapsible components; a missing profile is an explicit Alert. All standalone
 entries serve the same application with navigation limited to their API areas.
@@ -226,6 +232,15 @@ results ledger, so a narrow window reaches all four readings before the ledger.
 Dense readings use document scrolling, never clipped cards or nested scroll
 regions. `verify:ui` records each card's baseline top and content height and
 refuses a reading that begins below the desktop fold (H-3092).
+The approved fifth reading, Roadmap now (R-46 H-3368), follows those four.
+`packages/cli/roadmap-now.mjs` counts visible Active, Planned and Proposed
+initiatives using Roadmap's compatibility vocabulary, carries every recorded
+At risk/Off track initiative and its reason, and counts missing health
+separately. `RoadmapNow.tsx` composes the generated Card and Button with the
+shared StatusBadge; concern links open the existing Roadmap record. No health
+is inferred from status or ticket counts. The existing four cards retain their
+order and desktop-fold checks; the fifth participates in the same responsive,
+theme and accessibility checks.
 The condensed roster
 (`team` on the Overview document, R-44 H-3091) is a join: which sessions are
 running comes from the runtime and what each seat has claimed comes from the
@@ -408,6 +423,18 @@ after it. `memory_dir` (H-3001) is the first key to make this bite.
   any brief that asks someone else to run this: a reviewer who allowed five
   minutes killed a sound run 33 seconds from the end and recorded a FAIL
   against a clean candidate (H-3019).
+- **The per-test budget is 15s, chosen rather than inherited.**
+  `scripts/vitest.shared.mjs` sets `testTimeout`, because vitest's own 5000ms
+  default was not a number anyone here picked and it is not one this suite can
+  live on: hundreds of cases spawn a real CLI under tsx, which costs 1.4-2.3s
+  per case on a quiet box, and the estate's nightly runs on a box that reaches
+  ten runnable threads per core. There that headroom is gone — CI took work red
+  at load 80 on a case measuring 2032ms when nothing else runs (H-3354) — and
+  the answer had been to hand-declare a timeout on each case as it got bitten.
+  A per-case `{ timeout: … }` is for cases genuinely slower than the floor, so
+  the floor is no higher than the smallest one anyone declared on purpose;
+  `scripts/test-env.test.mjs` fails if the floor is unset or if a declaration
+  falls below it, which would read as extra room while granting less.
 - **One version.** Every package carries the root version and depends on
   `@helmo/core` at exactly that version — in `devDependencies` for the shell,
   which reads core at build time and bundles none of it;

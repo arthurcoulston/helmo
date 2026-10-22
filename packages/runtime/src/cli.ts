@@ -9,12 +9,13 @@ import { sessionSpec } from './shim.js';
 import { LoopConfig } from './types.js';
 import { pollUsage, readCodexUsage, readUsage, refreshCodexUsage, usageLine, usagePath } from './usage.js';
 import { selectRun } from './routing.js';
-import { reconcileEndedClaim, unservedLaneWork } from './helm.js';
+import { eligibleSeatBacklog, reconcileEndedClaim, selfTriageWork, unavailableSeatWork, unservedLaneWork } from './helm.js';
 import { runLoop } from './loop.js';
 import { serviceFile, serviceInstall, serviceStart, serviceStatusLine, serviceUninstall, stalePinnedService } from './service.js';
 import { assertInstallation, requireTarget, target, targetLine } from './install.js';
 import { planLines, removalPlan, removeInstallation } from './remove.js';
 import { ReleaseError, describe as describeRelease, migrationLine, readSelection, rollback, selectionFile, upgrade } from './release.js';
+import { intentRefusal, isReleaseWriteVerb } from './release-intent.js';
 import { beginActivation, deploymentFile } from './deployment.js';
 import { readRedeploy, requestRedeploy, watchRedeploy } from './redeploy.js';
 import { logEvent, NO_OWNER_PID, pidAlive, processObservation, sClear, sGet, sHas, sPendingPid, sSet, sSetOwned, sValue, streakReset } from './sentinels.js';
@@ -24,6 +25,8 @@ import { buildIntakeResult, recordIntakeResult } from './intake-preparation.js';
 import { commandName, runCommand } from './command-name.js';
 import { assertTicketIdentity, readTicketLaunches, sessionTrace } from './session-trace.js';
 import { ticketHistory } from './helm.js';
+import { recordStallEpisodes } from './stalled-work.js';
+import { requestRuntimeRecovery, type RuntimeRecoveryRequest } from './runtime-recovery.js';
 
 import { endedClaimEvidence, type EndedClaimRequest } from './ended-claim.js';
 
@@ -40,6 +43,11 @@ if (cmd === 'trace') {
 // than a redirect (H-2473, src/install.ts). Taken out of `rest` here so that
 // no command's own positional arguments have to know it might be there.
 const requestedInstall = takeInstallFlag(rest);
+// `--ticket <id>` is taken out of `rest` here for the same reason: `release
+// upgrade --ticket H-1 <dir>` must not hand '--ticket' to the verb as its
+// release directory. It is read by the release-intent gate and by `redeploy`,
+// and consuming it once is also what keeps there being one way to ask.
+const requestedTicket = takeFlag(rest, 'ticket');
 // Assert the name here, at the door, and nowhere else. It used to be an
 // argument each handler passed to `requireTarget`, which meant it held only on
 // the surfaces that write: the read surfaces — exactly where a script puts an
@@ -145,10 +153,11 @@ const COMMAND_HELP: Record<string, string> = {
   run: `usage: ${commandName} run [<loop> [--count N]]`,
   stop: `usage: ${commandName} stop [<loop|role> [--worker]]`,
   resume: `usage: ${commandName} resume <loop|role> [--worker]`,
+  'recover-runtime': `usage: ${commandName} recover-runtime <exact worker> --record <JSON file> --installation <name>`,
   reload: `usage: ${commandName} reload <loop|role> [--worker]`,
   service: `usage: ${commandName} service <install|uninstall|start|status>`,
   install: `usage: ${commandName} install remove [--confirm]`,
-  release: `usage: ${commandName} release <status | upgrade <release directory> | rollback | activate>`,
+  release: `usage: ${commandName} release <status | upgrade <release directory> | rollback | activate> [--ticket <id>]`,
   redeploy: `usage: ${commandName} redeploy [--ticket <id>] [--reason "<why>"]`,
   pace: `usage: ${commandName} pace <loop|role> <fraction (0,1] | park | clear> [--worker]`,
   usage: `usage: ${commandName} usage [--poll]`,
@@ -236,6 +245,44 @@ function laneGaps(): ReturnType<typeof unservedLaneWork> | null {
       const s = state(name);
       return s === 'RUNNING' || s === 'IDLE' ? null : s;
     });
+  } catch {
+    return null;
+  }
+}
+
+function unavailableSeats(): ReturnType<typeof unavailableSeatWork> | null {
+  try {
+    return unavailableSeatWork(g, Object.values(loops), (name) => {
+      const s = state(name);
+      return s === 'RUNNING' || s === 'IDLE' ? null : s;
+    });
+  } catch {
+    return null;
+  }
+}
+
+function readyWithoutProgress(): ReturnType<typeof eligibleSeatBacklog> | null {
+  try {
+    return eligibleSeatBacklog(g, Object.values(loops), (name) => {
+      const s = state(name);
+      return s === 'RUNNING' || s === 'IDLE' ? null : s;
+    });
+  } catch {
+    return null;
+  }
+}
+
+function stalledWork(
+  unavailable: NonNullable<ReturnType<typeof unavailableSeatWork>>,
+  ready: NonNullable<ReturnType<typeof eligibleSeatBacklog>>,
+  selfTriage: NonNullable<ReturnType<typeof selfTriageWork>>,
+) {
+  try {
+    return recordStallEpisodes([
+      ...unavailable.map((gap) => ({ case: 'unavailable_seat' as const, ...gap })),
+      ...ready.map((gap) => ({ case: 'ready_without_progress' as const, ...gap })),
+      ...selfTriage.map((gap) => ({ case: 'self_triage' as const, ...gap })),
+    ]);
   } catch {
     return null;
   }
@@ -372,7 +419,7 @@ switch (cmd) {
     requestRedeploy({
       by: flag('by') ?? process.env['REV_LOOP'] ?? cliActor().label,
       reason: flag('reason') ?? 'activate committed changes',
-      ticket: flag('ticket'),
+      ticket: requestedTicket || undefined,
       actor: process.env['HELMO_ACTOR'] ? JSON.parse(process.env['HELMO_ACTOR']) as Record<string, unknown> : undefined,
       requested_at: new Date().toISOString(),
     });
@@ -401,6 +448,11 @@ switch (cmd) {
     // loops, so a liveness check asking "can builder take this?" needs each
     // loop's seat and claim scope, which the human table does not print. The
     // table stays as it is: four estate tools parse its header exactly.
+    const unavailable = unavailableSeats();
+    const ready = readyWithoutProgress();
+    let selfTriage: ReturnType<typeof selfTriageWork> | null;
+    try { selfTriage = selfTriageWork(g, Object.values(loops)); } catch { selfTriage = null; }
+    const episodes = unavailable === null || ready === null || selfTriage === null ? null : stalledWork(unavailable, ready, selfTriage);
     if (rest.includes('--json')) {
       console.log(JSON.stringify({
         installation: target('unchecked').label, home: target('unchecked').home,
@@ -415,6 +467,10 @@ switch (cmd) {
           };
         }),
         unserved_lanes: laneGaps(),
+        unavailable_seats: unavailable,
+        ready_without_progress: ready,
+        self_triage: selfTriage,
+        stalled_work: episodes,
       }, null, 2));
       break;
     }
@@ -448,6 +504,14 @@ switch (cmd) {
         .map((name) => `SHARED SEAT: ${name} works on beside ${(sGet(name, 'SEAT_SHARED') ?? '').trim()}`),
       ...(gaps === null ? ['UNSERVED LANE WORK: unreadable — Helmo did not answer']
         : gaps.map((gap) => `UNSERVED LANE WORK: ${gap.ticket} (${gap.seat}, lane ${gap.lane}) — ${gap.reason}`)),
+      ...(unavailable === null ? ['UNAVAILABLE SEAT WORK: unreadable — Helmo did not answer']
+        : unavailable.map((gap) => `UNAVAILABLE SEAT WORK: ${gap.ticket} (${gap.seat}) — ${gap.reason}; ${gap.action}`)),
+      ...(ready === null ? ['READY-PROGRESS CHECK: unreadable — Helmo did not answer']
+        : ready.map((gap) => `READY WITHOUT PROGRESS: ${gap.ticket} (${gap.seat}) — ${gap.reason}; ${gap.action}`)),
+      ...(selfTriage === null ? ['SELF-TRIAGE CHECK: unreadable — Helmo did not answer']
+        : selfTriage.map((gap) => `SELF-TRIAGE HOLD: ${gap.ticket} (${gap.seat}) — ${gap.reason}; ${gap.action}`)),
+      ...(episodes === null ? ['STALL EPISODES: unreadable — prior observation state could not be reconciled']
+        : episodes.map((episode) => `STALL EPISODE: ${episode.id} — observed ${episode.checks} time${episode.checks === 1 ? '' : 's'} since ${episode.first_observed_at}`)),
     ];
     if (laneLines.length) console.log(`\n${laneLines.join('\n')}`);
     console.log('\nSTATE: RUNNING=iteration in flight  IDLE=waiting on wake cursor  PARKED=held via PACE');
@@ -509,6 +573,23 @@ switch (cmd) {
       `Halt sentinels cleared for ${listed(names)}.` +
         (sup ? ` The supervisor picks it back up within ${g.poll_seconds}s.` : ` Start it with: ${commandName} run ${name}`),
     );
+    break;
+  }
+  case 'recover-runtime': {
+    const worker = rest[0];
+    const record = flag('record');
+    if (!worker || !loops[worker] || !record || !requestedInstall) {
+      console.error(`usage: ${commandName} recover-runtime <exact worker> --record <JSON file> --installation <name>`);
+      process.exit(1);
+    }
+    console.log(targetLine(requireTarget(`recover runtime '${worker}'`)));
+    try {
+      requestRuntimeRecovery(worker, JSON.parse(readFileSync(record, 'utf8')) as RuntimeRecoveryRequest, cliActor().label);
+      console.log('Runtime recovery queued once; the supervisor validates and consumes it. Verify this worker\'s status and useful work.');
+    } catch (e) {
+      console.error(e instanceof Error ? e.message : String(e));
+      process.exit(1);
+    }
     break;
   }
   // Reload one worker's roster without a fleet drain and without touching a
@@ -613,8 +694,16 @@ switch (cmd) {
       for (const line of describeRelease(file)) console.log(line);
       break;
     }
-    if (!['upgrade', 'rollback', 'activate'].includes(verb) || (verb === 'upgrade' && !rest[1])) {
+    if (!isReleaseWriteVerb(verb) || (verb === 'upgrade' && !rest[1])) {
       console.error(COMMAND_HELP['release']);
+      process.exit(1);
+    }
+    // Above the three-verb dispatch and above every read of the installation:
+    // a run that cannot say what it is for is refused before it is told
+    // anything about what it would have changed (H-3376, src/release-intent.ts).
+    const refusal = intentRefusal({ verb, ticket: requestedTicket, tty: Boolean(process.stdin.isTTY), env: process.env });
+    if (refusal) {
+      console.error(refusal);
       process.exit(1);
     }
     if (!file) {
@@ -625,6 +714,9 @@ switch (cmd) {
       process.exit(1);
     }
     console.log(targetLine(requireTarget(`${commandName} release ${verb}`, 'unchecked')));
+    // Printed, not merely accepted: the named intent belongs beside the change
+    // in whatever read this command's output.
+    if (requestedTicket) console.log(`intent: ${requestedTicket}`);
     try {
       if (verb === 'activate') {
         const selection = readSelection(file);
@@ -636,7 +728,12 @@ switch (cmd) {
         if (!sup) throw new ReleaseError(`no supervisor is running; use '${runCommand} service start' and verify it before activating a later selection`);
         if (readRedeploy()) throw new ReleaseError('a supervisor redeploy is already pending; wait for it to land before activating a release');
         const record = beginActivation(deploymentFile(file), selection, target('unchecked').label);
-        requestRedeploy({ by: cliActor().label, reason: `activate selected release ${selection.release}`, requested_at: record.updated_at });
+        requestRedeploy({
+          by: cliActor().label,
+          reason: `activate selected release ${selection.release}`,
+          ...(requestedTicket ? { ticket: requestedTicket } : {}),
+          requested_at: record.updated_at,
+        });
         console.log(`activation ${record.attempt}: ${selection.release} is queued. The current fleet drains within the configured bound; replacement sessions start only after the supervisor exits.`);
         break;
       }
@@ -802,6 +899,7 @@ switch (cmd) {
   stop <loop|role>         set STOP — clean halt after the in-flight iteration; a pooled
                            role reaches every worker of its seat, --worker only that loop
   resume <loop|role>       clear STOP/HOLD/BLOCKED; a running supervisor picks the loop back up
+  recover-runtime <worker> queue one exact runtime-trip recovery for the supervisor; preserves independent controls
   reload <loop|role>       respawn after the in-flight iteration on the current roster; never
                            clears a halt (a STOP/HOLD/BLOCKED present then keeps it down)
   pace <loop|role> <v>     velocity: fraction (0,1], 'park', or 'clear'
@@ -811,7 +909,7 @@ switch (cmd) {
   session-spec <seat>      the composed session as JSON (model, cwd, skills, MCP, env) — reads nothing else
   service <verb>           install|uninstall|start|status — survive reboots (launchd/systemd)
   install remove           delete this installation's records, controls and selection (no undo; --confirm)
-  release <verb>           status|upgrade <dir>|rollback|activate — select, then activate with a bounded drain
+  release <verb>           status|upgrade <dir>|rollback|activate [--ticket <id>] — select, then activate with a bounded drain
   reconcile-ended-claim --worker <exact worker> --record <JSON file> --installation <name>
   redeploy [--ticket <id>] [--reason "<why>"]
                            activate a committed fix: drain after in-flight iterations, come back on the new code

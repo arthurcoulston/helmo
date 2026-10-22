@@ -33,34 +33,53 @@ append-only event log, materialized state, `.immediate()` write transactions
   name are aliases only when the resolved home derives that exact pair. Other
   names refuse; reads remain available. Derived-only stores do not claim a
   durable name, preserving single-install use.
-  Derived rank: facts set the tier (ship_next · ready · shaping · blocked ·
-  parked), judgments order within it (best cited objective rank, latest
-  value claim, effort), every rank carries a one-line explanation; shipped
-  and archived projects are off the ranked list. Rules the store enforces,
-  not just the docs: judgments never land without a reason; 'ready' means
-  enough is known for an informed commitment and needs an agent other than
-  the last description shaper (the human is never gated; retitling is not
-  shaping); ship_next
-  — the work phase, ladder v2 (H-672) — only via `setShipNext` with
-  `decided_by`, several may hold it and the returned count is the
-  resistance signal; the shipped statuses (shipped_watching,
-  shipped_stable) are reachable only from ship_next, so nothing ships
-  without the human's go; archived is the one terminal status and is
-  permanent; actuals are absolute rollups recorded from Helmo's meter,
-  never deltas. Pre-v2 events ('shipping'/'shipped'/'abandoned' statuses,
-  ship_next 'demoted' payloads) still replay correctly — never strip that
-  handling.
+  The seven statuses (R-46, H-2953; `types.ts` carries the reasoning):
+  Proposed · Planned · Active · Monitoring · Completed · Paused · Canceled.
+  One value answers one question — how refined an idea is, is `readiness`;
+  whether a delivery is in trouble is `health`; whether a finished row is
+  drawn is the `archived` flag, which is the one field a Canceled project
+  still accepts. Derived rank: facts set the tier (Active 0 · Planned 1 ·
+  shaped 2 · blocked 3 · raw or Paused 4), judgments order within it (best
+  cited objective rank, latest value claim, effort), every rank carries a
+  one-line explanation; the shipped, completed and canceled families are off
+  the ranked list. Inactivity is checked BEFORE blocked-ness in that tiering,
+  or a blocker floats a raw idea above the prerequisite it waits on (H-441).
+  Rules the store enforces, not just the docs: judgments never land without a
+  reason; shaped readiness needs an agent other than the last description
+  shaper (the human is never gated; retitling is not shaping); Planned — the
+  go — only via `setShipNext` with `decided_by`, several may hold the work
+  phase and the returned count is the resistance signal; Active is reachable
+  only from a recorded go or a pause of one, and Monitoring/Completed only
+  from Active or within that family, so no agent starts or ships what the
+  human never declared go on (a human-kind actor passes that gate — the write
+  is itself the authorization — while Planned stays `setShipNext`-only even
+  for them, because that call is what records the go); Canceled is the one terminal status and is permanent; actuals
+  are absolute rollups recorded from Helmo's meter, never deltas.
+  **Both vocabularies live in one store.** Events are never rewritten, so
+  pre-R-46 words (`parked`, `shaping`, `ready`, `ship_next`,
+  `shipped_watching`, `shipped_stable`, `archived`, and the pre-v2
+  `shipping`/`shipped`/`abandoned`) stay on rows `roadmap-migrate r46` has
+  not yet written and in the log forever. `statusReading` is how every gate,
+  tier and listing reads them — never off the raw column — and the SQL family
+  filters (`CLOSED_SQL`, `SHIPPED_SQL`, `AUTHORIZED_SQL`) are generated from
+  it. `setShipNext` puts its status in the event payload so a pre-R-46 go,
+  which carries none, still replays to `ship_next`; `applyCreated`'s `parked`
+  fallback is replay fidelity for the same reason. Pre-v2 `demoted` payloads
+  still replay too — never strip that handling.
   `updateProject` takes an optional `if_revision` and compares it inside its
   own write transaction; `projectSnapshot` is the read that token comes from,
   and is one transaction for the same reason — see below.
-  `recordReadinessVerdict` is the independent path from shaping to ready. Its
+  `recordReadinessVerdict` is the independent path to shaped readiness; it
+  materializes the readiness field rather than changing project status. Its
   append-only verdict set is anchored to the latest non-verdict project event,
   so several reviewers can judge identical state without staling one another;
   any other write starts a new round. Each reviewer's latest verdict is their
   own correction, any FAIL governs, and PASS+FAIL is surfaced as contested.
-- `tools.ts` — the 11-tool MCP surface, descriptions are
+  `recordHealth` is the separate explained judgment path for On track, At risk,
+  or Off track; the event log and rebuild own both the value and its reason.
+- `tools.ts` — the 12-tool MCP surface, descriptions are
   guidance-as-deployed (Helmo's rule). v1 postures baked into them:
-  ship_next is FYI to the fleet, not tasking; the charter is derived from
+  the go is FYI to the fleet, not tasking; the charter is derived from
   the human's document, never authored here. Every argument schema is a
   strict Zod object: undeclared keys refuse during MCP validation before the
   handler, including on reads, so a misspelled filter cannot become an
@@ -138,6 +157,29 @@ append-only event log, materialized state, `.immediate()` write transactions
   atomic no-clobber link; validation streams through the exclusively created
   destination descriptor, and both refuse a replaced run directory. Permissions
   isolate OS users, not hostile processes under one login.
+- `migrate.ts` / `migrate-lib.ts` — the one-shot `roadmap-migrate r46`, the
+  vocabulary migration: every stored status word rewritten to the reading it
+  always had, with the rule that produced it in the event note. Plan-only
+  unless `--apply`, and a second run writes nothing — a row already carrying
+  one of the seven is reported as `already`, not touched. It appends its own
+  `updated` events through `Store.migrateR46` rather than `updateProject`,
+  deliberately for EVERY row: that path checks new decisions (terminal takes
+  no write, Planned only via the go, Active only from a recorded go, and any
+  write resets a standing readiness verdict), and a rename is not a decision.
+  The gates stay as they are for live callers. The only judgment calls are
+  the shelved rows: `archived` said a row was put away and never whether it
+  was finished or dropped, so those come in as `--judgments <path>`, a JSON
+  object of `{"R-n": {"status": "Completed"|"Canceled", "reason": "..."}}`
+  the operator writes. The product holds no row ids of its own on purpose —
+  ids are minted per installation, so a table compiled in here would apply
+  one estate's reasons to another installation's unrelated rows by id
+  collision. An archived row with no judgment supplied is reported for a
+  human call and left alone, because its stored word still reads as Canceled
+  until someone decides; a judgment naming a row that is neither archived nor
+  already migrated is refused rather than ignored, so a mistyped id cannot
+  leave the row it meant sitting undecided under a complete-looking report.
+  `rebuild()` replays the migration like any other update — the suite asserts
+  that.
 - `types.ts` — the vocabulary. Gates and stances are named in PRODUCT.md
   but deliberately absent from v1 behavior; leave the room, don't fill it.
 
@@ -148,6 +190,10 @@ append-only event log, materialized state, `.immediate()` write transactions
   estate design tokens and crew avatar sprite; add `-- --check` to fail on
   drift instead. See below.
 - View: `node dist/view.js`; restart after rebuilding.
+- One-shot: `node dist/migrate.js r46` prints the per-row plan and writes
+  nothing; `--apply` writes it. Identity comes from `ROADMAP_ACTOR` (or
+  `HELMO_ACTOR`) as it does for the MCP server — a write this broad still
+  records who made it.
 - The root `AGENT-INSTALL.md` is the agent-led install path a stranger's agent follows
   (H-1386). It states the two estate drift tests as expected skips — if that
   pair ever changes, it changes there too, or an installer reads a skip we no
@@ -315,8 +361,9 @@ on the same line.
 
 ## The update precondition
 
-Every rule `updateProject` enforces is a rule about STATE — archived takes no
-writes, only ship_next ships, the description's shaper cannot judge it ready —
+Every rule `updateProject` enforces is a rule about STATE — a Canceled record
+takes no writes but its hide flag, only an Active project ships, the
+description's shaper cannot judge it shaped —
 and each is decided against a `getProject` that finishes *before* the write
 begins. A project has more than one writer (an interactive session's and a
 bash-loop agent's, at least), so two of them interleave and the second one's
@@ -382,6 +429,21 @@ read only drifts. The roadmap holds no code
 path into Helmo: in v1 Bosun's sweep is the client — it reads metered
 cost from Helmo tickets tagged with the project id and records the rollup
 via `roadmap_record_actual`.
+
+R-46 adds a second client on the same seam, and it is deliberately not in
+this package. `remaining_work` and `shipped` — the open tagged tickets with
+their holds, the standing templates, and the closed work that left a result
+behind — are joined onto the list document in `packages/cli/bin/serve.js`,
+the one process that already holds both views (the Overview check-in is the
+precedent). The stores still do not read each other (R-47 C1), so the Roadmap
+view served on its own answers `/api/v1/roadmap` WITHOUT those fields. That
+absence is the reading: unknown, because nothing here could look. A surface
+that renders it as "nothing outstanding" is wrong, and this package must
+never supply an empty array to make the shape uniform — an empty array is a
+claim to have looked. The join also excludes recurring templates from the
+open count (a `schedule` ticket is the mechanism that watches an initiative,
+never its scope) and names the hold on a held ticket, because a hold only the
+operator can release leaves `needs_human` false.
 
 The notice used to be the half of the seam an agent could not close (H-324):
 a ship_next declared from a loop left a stale notice until a desk session

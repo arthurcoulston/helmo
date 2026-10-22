@@ -4,7 +4,7 @@
 // its ticket, and every path that must put a claim back down.
 import { describe, it, expect } from 'vitest';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { HELMO_CLI as HELM_CLI, HELMO_SERVER, HELMO_STORE } from './helmo.js';
@@ -722,6 +722,279 @@ describe('lane workers on one seat', { timeout: 90000 }, () => {
     const human = execFileSync('npx', ['tsx', REV_CLI, 'status'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') });
     expect(human).toContain('LANES: frontend=w1  backend=w2');
     expect(human).toContain(`UNSERVED LANE WORK: ${orphan} (builder, lane mobile) — no builder worker serves lane 'mobile'`);
+  });
+
+  it('reports ready reserved work when every eligible worker is unavailable', () => {
+    const e = setup((h) => worker('w1', h, 'true', 'lane = "frontend"\n') + worker('w2', h, 'true'));
+    const id = seedLane(e, 'Reserved frontend work', 'frontend');
+    execFileSync('node', [HELM_CLI, 'update', '--ticket', id, '--handoff-to', 'builder', '--note', 'route to builder'], {
+      env: { ...e.env, HELMO_ACTOR: JSON.stringify({ name: 'router', kind: 'agent', model: 't', version: '0' }) }, encoding: 'utf8',
+    });
+
+    const status = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    expect(status.unavailable_seats).toEqual([{
+      ticket: id,
+      seat: 'builder',
+      reason: 'w1 is halted',
+      action: 'coordinator must restore an eligible builder worker or reroute the ticket',
+    }]);
+    expect(status.stalled_work).toEqual([expect.objectContaining({
+      id: `unavailable_seat:${id}`, ticket: id, checks: 1,
+    })]);
+    const repeated = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    expect(repeated.stalled_work).toEqual([expect.objectContaining({
+      id: `unavailable_seat:${id}`, ticket: id, checks: 2,
+    })]);
+    expect(repeated.stalled_work[0].first_observed_at).toBe(status.stalled_work[0].first_observed_at);
+    const human = execFileSync('npx', ['tsx', REV_CLI, 'status'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') });
+    expect(human).toContain(`UNAVAILABLE SEAT WORK: ${id} (builder) — w1 is halted; coordinator must restore an eligible builder worker or reroute the ticket`);
+
+    writeFileSync(join(e.home, 'state', 'w1', 'HOLD'), 'deliberate\n');
+    const held = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    expect(held.unavailable_seats).toEqual([]);
+    expect(held.stalled_work).toEqual([]);
+
+    rmSync(join(e.home, 'state', 'w1', 'HOLD'));
+    writeFileSync(join(e.home, 'state', 'w1', 'RUNNING'), `${process.pid}\n`);
+    const waiting = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    expect(waiting.ready_without_progress).toEqual([expect.objectContaining({ ticket: id, seat: 'builder' })]);
+    expect(waiting.stalled_work).toEqual([expect.objectContaining({
+      id: `ready_without_progress:${id}`, ticket: id, checks: 1,
+    })]);
+    const stillWaiting = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    expect(stillWaiting.stalled_work).toEqual([expect.objectContaining({
+      id: `ready_without_progress:${id}`, ticket: id, checks: 2,
+    })]);
+
+    rmSync(join(e.home, 'state', 'w1', 'RUNNING'));
+    runOnce(e, 'w1');
+    expect(ticket(e, id).status).toBe('in_progress');
+    expect(journal(e, 'w1')).toHaveLength(1);
+    const resumed = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    expect(resumed.ready_without_progress).toEqual([]);
+    expect(resumed.stalled_work).toEqual([]);
+  });
+
+  it('requires every same-seat worker to be unavailable and confirms the episode by the second check', () => {
+    const e = setup((h) => worker('w1', h, 'true') + worker('w2', h, 'true'));
+    const id = seed(e, 'Shared-seat work');
+    execFileSync('node', [HELM_CLI, 'update', '--ticket', id, '--handoff-to', 'builder', '--note', 'route to builder'], {
+      env: { ...e.env, HELMO_ACTOR: JSON.stringify({ name: 'router', kind: 'agent', model: 't', version: '0' }) }, encoding: 'utf8',
+    });
+    mkdirSync(join(e.home, 'state', 'w2'), { recursive: true });
+    writeFileSync(join(e.home, 'state', 'w2', 'RUNNING'), `${process.pid}\n`);
+
+    const drawable = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    expect(drawable.unavailable_seats).toEqual([]);
+    expect(drawable.stalled_work).toEqual([expect.objectContaining({ id: `ready_without_progress:${id}`, checks: 1 })]);
+
+    rmSync(join(e.home, 'state', 'w2', 'RUNNING'));
+    const first = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    const confirmed = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    expect(first.stalled_work).toEqual([expect.objectContaining({ id: `unavailable_seat:${id}`, checks: 1 })]);
+    expect(confirmed.stalled_work).toEqual([expect.objectContaining({ id: `unavailable_seat:${id}`, checks: 2 })]);
+    expect(confirmed.stalled_work[0].first_observed_at).toBe(first.stalled_work[0].first_observed_at);
+    for (const workerName of ['w1', 'w2']) expect(existsSync(join(e.home, 'state', workerName, 'launches'))).toBe(false);
+  });
+
+  it('keeps Work and Runtime deliberate holds out of stalled-work episodes', () => {
+    const e = setup((h) => worker('w1', h, 'true'));
+    const store = new Store(e.db);
+    try {
+      const actor = { name: 'router', kind: 'agent' as const, model: 't', version: '0' };
+      store.createTicket(actor, { title: 'Date gate', body: 'wait', workstream: 'rev-test', type: 'ops', assignee: 'builder', not_before: '2099-01-01' });
+      store.createTicket(actor, { title: 'Human wait', body: 'wait', workstream: 'rev-test', type: 'ops', assignee: 'builder', needs_human: 'Two minutes to make the fixture decision.' });
+      const held = store.createTicket(actor, { title: 'Capacity hold', body: 'wait', workstream: 'rev-test', type: 'ops', assignee: 'builder' });
+      store.updateTicket(actor, { ticket_id: held.id, note: 'hold', capacity_hold: { reason: 'fixture hold', provenance: 'fixture', reconsider_when: 'fixture ends' } });
+    } finally { store.close?.(); }
+
+    for (const control of ['STOP', 'HOLD', 'PARKED', 'SEAT_HELD']) {
+      const dir = join(e.home, 'state', 'w1');
+      mkdirSync(dir, { recursive: true });
+      for (const name of ['STOP', 'HOLD', 'PARKED', 'SEAT_HELD', 'RUNNING']) rmSync(join(dir, name), { force: true });
+      if (control === 'PARKED' || control === 'SEAT_HELD') writeFileSync(join(dir, 'RUNNING'), `${process.pid}\n`);
+      writeFileSync(join(dir, control), 'deliberate fixture control\n');
+      const status = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+      expect(status.stalled_work).toEqual([]);
+      expect(existsSync(join(dir, 'launches'))).toBe(false);
+    }
+  });
+
+  it('observes a final blocker release across restart and admits only one worker in the race', async () => {
+    const e = setup((h) => worker('w1', h, `${BOUND}; ${FINISH}`) + worker('w2', h, `${BOUND}; ${FINISH}`));
+    const store = new Store(e.db);
+    let blocker: string;
+    let waiting: string;
+    try {
+      blocker = store.createTicket({ name: 'seeder', kind: 'agent', model: 't', version: '0' }, {
+        title: 'Final prerequisite', body: 'blocks the delivery', workstream: 'rev-test', type: 'ops', assignee: 'builder',
+      }).id;
+      waiting = store.createTicket({ name: 'router', kind: 'agent', model: 't', version: '0' }, {
+        title: 'Released delivery', body: 'runs after the final prerequisite', workstream: 'rev-test', type: 'ops', assignee: 'builder',
+        deps: [{ to: blocker, type: 'blocks' }],
+      }).id;
+    } finally { store.close?.(); }
+
+    const blocked = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    expect(blocked.ready_without_progress).not.toEqual(expect.arrayContaining([expect.objectContaining({ ticket: waiting })]));
+    expect(blocked.stalled_work).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: `ready_without_progress:${waiting}` })]));
+
+    execFileSync('node', [HELM_CLI, 'update', '--ticket', blocker, '--note', 'final prerequisite complete', '--status', 'done', '--completion-category', 'maintenance', '--completion-summary', 'The final prerequisite is complete.', '--evidence-kind', 'other', '--evidence-ref', 'fixture'], {
+      env: { ...e.env, HELMO_ACTOR: JSON.stringify({ name: 'builder', kind: 'agent', model: 't', version: '0' }) }, encoding: 'utf8',
+    });
+    for (const workerName of ['w1', 'w2']) writeFileSync(join(e.home, 'state', workerName, 'RUNNING'), `${process.pid}\n`);
+    const observed = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    expect(observed.ready_without_progress).toEqual([expect.objectContaining({ ticket: waiting, seat: 'builder' })]);
+    expect(observed.stalled_work).toEqual([expect.objectContaining({ id: `ready_without_progress:${waiting}`, checks: 1 })]);
+
+    const restarted = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    expect(restarted.stalled_work).toEqual([expect.objectContaining({ id: `ready_without_progress:${waiting}`, checks: 2 })]);
+    expect(restarted.stalled_work[0].first_observed_at).toBe(observed.stalled_work[0].first_observed_at);
+
+    for (const workerName of ['w1', 'w2']) rmSync(join(e.home, 'state', workerName, 'RUNNING'));
+    await Promise.all([runAsync(e, 'w1'), runAsync(e, 'w2')].map(exited));
+    expect(ticket(e, waiting).status).toBe('done');
+    expect(readFileSync(join(e.home, 'bound'), 'utf8').trim().split('\n')).toEqual([expect.stringMatching(new RegExp(`^w[12] ${waiting}$`))]);
+    expect(['w1', 'w2'].filter((workerName) => journal(e, workerName).some((entry) => entry.ticket_id === waiting))).toHaveLength(1);
+
+    const progressed = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    expect(progressed.ready_without_progress).toEqual([]);
+    expect(progressed.stalled_work).toEqual([]);
+  });
+
+  it('reports a self-filed reservation as a triage hold, not launchable work', () => {
+    const e = setup((h) => worker('w1', h, 'true'));
+    const created = JSON.parse(execFileSync('node', [HELM_CLI, 'create', '--title', 'Builder discovery', '--body', 'needs second eyes', '--workstream', 'rev-test', '--type', 'ops', '--assignee', 'builder'], {
+      env: { ...e.env, HELMO_ACTOR: JSON.stringify({ name: 'builder', kind: 'agent', model: 't', version: '0', session: 'rev:w1' }) }, encoding: 'utf8',
+    })) as { id: string };
+
+    const status = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    expect(status.ready_without_progress).toEqual([]);
+    expect(status.self_triage).toEqual([expect.objectContaining({ ticket: created.id, seat: 'builder' })]);
+    expect(status.stalled_work).toEqual([expect.objectContaining({ id: `self_triage:${created.id}`, checks: 1 })]);
+    const repeated = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    expect(repeated.stalled_work).toEqual([expect.objectContaining({ id: `self_triage:${created.id}`, checks: 2 })]);
+    expect(repeated.stalled_work[0].first_observed_at).toBe(status.stalled_work[0].first_observed_at);
+
+    const human = execFileSync('npx', ['tsx', REV_CLI, 'status'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') });
+    expect(human).toContain(`SELF-TRIAGE HOLD: ${created.id} (builder)`);
+    expect(ticket(e, created.id)).toMatchObject({ status: 'open', assignee: 'builder' });
+    expect(existsSync(join(e.home, 'state', 'w1', 'launches'))).toBe(false);
+  });
+
+  it('reports unreadable stalled-work state as unknown without replacing it', () => {
+    const e = setup((h) => worker('w1', h, 'true'));
+    const episodeFile = join(e.home, 'state', 'supervisor', 'stalled-work.json');
+    mkdirSync(join(e.home, 'state', 'supervisor'), { recursive: true });
+    writeFileSync(episodeFile, '{not-json\n');
+
+    const status = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    expect(status.stalled_work).toBeNull();
+    expect(readFileSync(episodeFile, 'utf8')).toBe('{not-json\n');
+    const human = execFileSync('npx', ['tsx', REV_CLI, 'status'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') });
+    expect(human).toContain('STALL EPISODES: unreadable — prior observation state could not be reconciled');
+  });
+
+  it('reports review and integration reservations that no configured worker can draw', () => {
+    const e = setup((h) => worker('w1', h, 'true', 'project = "R-44"\n') + worker('w2', h, 'true', 'project = "R-45"\n'));
+    const review = (helm(e, ['create', '--title', 'Independent review', '--body', 'review the candidate', '--workstream', 'review', '--type', 'review', '--assignee', 'reviewer']) as { id: string }).id;
+    const integration = seed(e, 'Integrate the candidate', 'R-43');
+    execFileSync('node', [HELM_CLI, 'update', '--ticket', integration, '--handoff-to', 'builder', '--note', 'hand the candidate to its integration owner'], {
+      env: { ...e.env, HELMO_ACTOR: JSON.stringify({ name: 'router', kind: 'agent', model: 't', version: '0' }) }, encoding: 'utf8',
+    });
+
+    const status = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    expect(status.unavailable_seats).toEqual(expect.arrayContaining([
+      {
+        ticket: review,
+        seat: 'reviewer',
+        reason: 'reviewer has no configured worker',
+        action: 'coordinator must configure the reviewer seat or reroute the ticket',
+      },
+      {
+        ticket: integration,
+        seat: 'builder',
+        reason: 'no builder worker is configured for its scope',
+        action: 'coordinator must repair the builder routing or reroute the ticket',
+      },
+    ]));
+    expect(status.stalled_work).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: `unavailable_seat:${review}`, checks: 1 }),
+      expect.objectContaining({ id: `unavailable_seat:${integration}`, checks: 1 }),
+    ]));
+    const repeated = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+    expect(repeated.stalled_work).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: `unavailable_seat:${review}`, checks: 2 }),
+      expect.objectContaining({ id: `unavailable_seat:${integration}`, checks: 2 }),
+    ]));
+    for (const episode of status.stalled_work) {
+      expect(repeated.stalled_work.find((candidate: { id: string }) => candidate.id === episode.id)?.first_observed_at).toBe(episode.first_observed_at);
+    }
+    expect(ticket(e, review)).toMatchObject({ status: 'open', assignee: 'reviewer' });
+    expect(ticket(e, integration)).toMatchObject({ status: 'open', assignee: 'builder' });
+    for (const worker of ['w1', 'w2']) expect(existsSync(join(e.home, 'state', worker, 'launches'))).toBe(false);
+  });
+
+  it('leaves a current release handoff with the human and detects it when the handoff becomes stale', () => {
+    const e = setup((h) => worker('w1', h, 'true'));
+    const store = new Store(e.db);
+    const writer = { name: 'builder', kind: 'agent' as const, model: 't', version: '0' };
+    const proof = { name: 'proof', kind: 'agent' as const, model: 't', version: '0' };
+    const ward = { name: 'ward', kind: 'agent' as const, model: 't', version: '0' };
+    const ref = `helmo@${'a'.repeat(40)}`;
+    try {
+      const technical = store.createTicket({ name: 'router', kind: 'agent', model: 't', version: '0' }, {
+        title: 'Release candidate', body: 'accepted release', workstream: 'rev-test', type: 'build', assignee: 'builder',
+      });
+      const clearance = store.createTicket(writer, {
+        title: 'Clear release', body: 'independent clearance', workstream: 'security', type: 'review', assignee: 'ward',
+      });
+      const technicalCompletion = store.recordProductCompletion(writer, {
+        ticket_id: technical.id, artifacts: [{ ref, author: 'builder' }], note: 'candidate',
+      }).completion!;
+      const technicalVerdict = store.recordAcceptanceVerdict(proof, {
+        ticket_id: technical.id, refs: [ref], verdict: 'pass', note: 'passes',
+      }).verdict!;
+      const clearanceCompletion = store.recordProductCompletion(writer, {
+        ticket_id: clearance.id, artifacts: [{ ref, author: 'builder' }], note: 'candidate',
+      }).completion!;
+      const clearanceVerdict = store.recordAcceptanceVerdict(ward, {
+        ticket_id: clearance.id, refs: [ref], verdict: 'pass', note: 'clear',
+      }).verdict!;
+      store.updateTicket(ward, {
+        ticket_id: clearance.id, note: 'clearance complete', status: 'done',
+        completion_account: { category: 'review', summary: 'The fixture release passed independent clearance.' },
+        evidence: [{ kind: 'other', ref: 'fixture', role: 'review' }],
+      });
+      store.recordReleaseHandoff(writer, {
+        ticket_id: technical.id,
+        manifest_sha256: 'b'.repeat(64), manifest: { refs: [ref] },
+        technical_ticket: technical.id, technical_completion_seq: technicalCompletion.seq,
+        technical_verdict_seq: technicalVerdict.seq, technical_reviewer: 'proof',
+        clearance_ticket: clearance.id, clearance_completion_seq: clearanceCompletion.seq,
+        clearance_verdict_seq: clearanceVerdict.seq, clearance_reviewer: 'ward',
+        gate_receipt: { path: '/tmp/gate.json', sha256: 'c'.repeat(64) },
+        publisher_receipt: { path: '/tmp/publish.json', sha256: 'd'.repeat(64) },
+        decision: 'Ten minutes deciding whether to accept the named material release risk.',
+        why_human: 'material_risk_exception: A material risk exception is reserved to Arthur.',
+        sitting_with: 'builder',
+      });
+      mkdirSync(join(e.home, 'state', 'w1'), { recursive: true });
+      writeFileSync(join(e.home, 'state', 'w1', 'RUNNING'), `${process.pid}\n`);
+
+      const current = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+      expect(current.ready_without_progress).toEqual([]);
+      expect(current.unavailable_seats).toEqual([]);
+      expect(existsSync(join(e.home, 'state', 'w1', 'launches'))).toBe(false);
+
+      store.recordProductCompletion(writer, {
+        ticket_id: technical.id, artifacts: [{ ref: `helmo@${'e'.repeat(40)}`, author: 'builder' }], note: 'candidate moved',
+      });
+      const stale = JSON.parse(execFileSync('npx', ['tsx', REV_CLI, 'status', '--json'], { env: e.env, encoding: 'utf8', cwd: join(import.meta.dirname, '..') }));
+      expect(stale.ready_without_progress).toEqual([expect.objectContaining({ ticket: technical.id, seat: 'builder' })]);
+      expect(stale.stalled_work).toEqual([expect.objectContaining({ id: `ready_without_progress:${technical.id}`, checks: 1 })]);
+      expect(store.getTicket(technical.id)).toMatchObject({ needs_human: false, release_handoff: { current: false } });
+    } finally { store.close?.(); }
   });
 
   it('a worker swapped to a lane while it holds work launches nothing and releases nothing; restoring its allowlist resumes it', () => {

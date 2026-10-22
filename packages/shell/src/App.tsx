@@ -7,6 +7,7 @@ import { RecentResults, resultsOf } from "./RecentResults"
 import { TeamActivity, activityOf } from "./TeamActivity"
 import { Runway, runwayOf } from "./Runway"
 import { TeamNow, teamNowOf } from "./TeamNow"
+import { RoadmapNow, roadmapNowOf } from "./RoadmapNow"
 import { IncidentsView, type IncidentsData } from "./IncidentsView"
 import { IncidentNoticeBand, incidentNoticesOf } from "./IncidentNotices"
 import { HistoryView, type HistoryData } from "./HistoryView"
@@ -852,6 +853,7 @@ function AreaContent({ area, state, selected, areas, period, onPeriodChange }: {
     const team = teamNowOf(state.data)
     const next = runwayOf(state.data)
     const activity = activityOf(state.data)
+    const roadmap = roadmapNowOf(state.data)
     /* Incidents first, above the readings rather than among them: this is the
        one thing on the page that can be about something happening right now,
        and a notice below the fold is not a notice. It draws nothing at all
@@ -866,6 +868,7 @@ function AreaContent({ area, state, selected, areas, period, onPeriodChange }: {
         {next ? <Runway data={next} /> : null}
         {activity ? <TeamActivity data={activity} /> : null}
         {results ? <RecentResults data={results} /> : null}
+        {roadmap ? <RoadmapNow data={roadmap} /> : null}
       </section>
       </>
     )

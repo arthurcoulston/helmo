@@ -120,6 +120,7 @@ export type ReleaseHandoffInput = Omit<ReleaseHandoff, 'seq' | 'ts' | 'actor' | 
 export interface ListFilter {
   ready?: boolean;
   caller?: string; // actor name, used by ready to include reservations
+  all_assignees?: boolean; // complete ready reservations, independent of one caller
   status?: Status;
   workstream?: string;
   project?: string;
@@ -2138,7 +2139,7 @@ export class Store {
     // the caller is ready wherever it lives. ANDing the workstream over the
     // assignee clause left a ticket routed to a loop's agent from another
     // workstream invisible to the loop forever (wake fired, ready said 0).
-    const routedReady = filter.ready && filter.caller && filter.workstream;
+    const routedReady = filter.ready && filter.caller && filter.workstream && !filter.all_assignees;
     if (filter.workstream && !routedReady) { clauses.push('workstream = ?'); params.push(filter.workstream); }
     if (filter.project) { clauses.push('project = ?'); params.push(filter.project); }
     // Lane is ANDed over the routed-ready clause, never in place of
@@ -2171,7 +2172,8 @@ export class Store {
       params.push(now());
       clauses.push(EXECUTABLE_HOLD);
       params.push(now());
-      if (routedReady) {
+      if (filter.all_assignees) clauses.push('assignee IS NOT NULL');
+      else if (routedReady) {
         clauses.push('((workstream = ? AND assignee IS NULL) OR assignee = ?)');
         params.push(filter.workstream, filter.caller);
       } else if (filter.caller) { clauses.push('(assignee IS NULL OR assignee = ?)'); params.push(filter.caller); }
@@ -2200,7 +2202,7 @@ export class Store {
         // Triage rule (H-55): work an agent filed for itself needs a second
         // pair of eyes before that same agent may draw it — otherwise the
         // queue is fed by its own consumer and never empties.
-        .filter((t) => !(filter.caller && this.selfFiledUntouched(t.id, filter.caller)))
+        .filter((t) => !(filter.caller && !filter.all_assignees && this.selfFiledUntouched(t.id, filter.caller)))
         .slice(0, limit);
     }
     return tickets;

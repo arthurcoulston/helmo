@@ -328,9 +328,9 @@ same-version full refresh, not a version-upgrade claim.
 documented shadcn composition, which is TanStack Table v9's feature set
 (`tableFeatures`, `useTable`, `table.FlexRender`) over the generated Table —
 in the shared `packages/shell/src/RecordTable.tsx`. A row carries the rank,
-the reference, the title, the server's own ranking explanation, the state and
-the recorded usage estimate, in the groups and the ranked order the server
-sends. Expanding a row shows the opening of the record, bounded at 320
+the reference, the title, the server's own ranking explanation, the state, the
+health where its owner has recorded one, and the recorded usage estimate, in
+the ranked order the server sends. Expanding a row shows the opening of the record, bounded at 320
 characters and cut at a word boundary, plus the way into the full record:
 it is an excerpt and is never presented as a summary, because no stored field
 says in one line what a project is and deriving a sentence would put a meaning
@@ -339,8 +339,40 @@ reason and its exit, citations, claims, dependencies, history — is an
 unmodified Sheet, opened from the title without expanding first. The old
 "Waits on" and "Advances nothing stated" badges are gone: the server's
 explanation already says both, under exactly the conditions the badges tested,
-and only ever on a row that also carried the explanation. Nothing was decided
-here about status or progress; that is R-46's question.
+and only ever on a row that also carried the explanation.
+
+**Roadmap's groups are the seven statuses, and the view owns that list.** Not
+the server's grouping, which never had one, and not five sections named after
+shipping stages: Active, Planned, Proposed, Paused, Monitoring, Completed,
+Canceled, in that order, each heading stating its own count (R-46). Three
+things follow, and each of them was a defect before:
+
+- **Planned, Active and Proposed draw whether or not they hold anything.**
+  Planned above all: a go-ahead with nothing underway had no section at all, so
+  an initiative Arthur had authorized and nobody had started sat under the same
+  heading, with the same badge, as work in flight. `PLANNED · 0` is the
+  reading, and the heading is the only place it can be made.
+- **A hidden record is absent, and still reachable.** `archived` is a flag over
+  a status, never a status: it says whether to draw the row, never what became
+  of it. So hidden rows are in no section — an "Archived" group is finished
+  records reading as a sixth state — and a footnote names each with the
+  status it kept, linked to its own record.
+- **Health is drawn and never derived.** Its owner sets it with a reason, which
+  travels with the word on the row as well as in the record. `projectHealthRole`
+  in `Status.tsx` is the one place that maps the three readings, and the only
+  roadmap mapping that colours a Paused or Proposed row at all: a delivery its
+  owner stopped on purpose is the system working, and a delivery its owner says
+  is Off track is not.
+
+**The record answers what remains and what shipped before it shows the body.**
+Both come from the work store, joined in `serve.js` because the two stores may
+not read each other, and both print the server's reading and coverage sentence
+verbatim — "N open of M tagged", recurring templates listed apart as what
+watches the initiative, no percentage anywhere. An absent field reads as
+*unknown*, never as "nothing is outstanding": a Roadmap served standalone has
+no such field at all. They sit above the body because a record can carry five
+thousand characters of filing history and a reading under it is one nobody
+scrolls to.
 
 **Work is the same compact reading.** Its groups — in motion, ready, blocked,
 standing, done, cancelled — are the same `RecordTable`, with columns chosen
@@ -466,6 +498,15 @@ heading counts the results a ticket recorded and no longer calls that count
 "recorded" — on the legacy records every purpose in it is the frozen
 `kind === "url"` guess, and each line underneath already says so.
 
+**Overview includes Roadmap now.** The approved fifth Card follows the four
+established readings, preserving their order and desktop position. It shows
+visible Active, Planned and Proposed counts, followed by each recorded At risk
+or Off track initiative with its reason and a link to its full record. Hidden
+initiatives contribute neither counts nor concerns. Missing health is stated
+explicitly; no concerns recorded is never presented as all projects healthy.
+The composition uses generated Card and Button components and the existing
+StatusBadge health mapping. No generated component or theme file changes.
+
 **Overview opens with what got done.** The first of Arthur's selected widgets
 (R-44) is one wide Card of up to six completed records from a rolling 24-hour
 window, composed from the generated Card, Badge, Button and Separator in
@@ -530,6 +571,21 @@ The browser verification runs after `npm run prepare:cold && npm run build`
 in a disposable checkout of the exact commit: `npm run verify:ui --workspace @helmo/shell`.
 Never run it against the shared checkout's intentionally unchanged compiled
 artifacts or rebuild that checkout as a workaround.
+
+`verify:roadmap` is the other half of that question and is not part of the
+gate: `npm run verify:roadmap --workspace @helmo/shell -- <origin>` reads a
+RUNNING installation and checks that what the Roadmap page states and what its
+own API serves are the same thing — the sections against the served statuses,
+the hidden rows against the flag, health against the rows that carry one. It
+exists because `verify:ui` proves every reading on a store it builds itself,
+and a page that is right about a fixture can still be wrong about a store
+written over months of real use. Expectations come from the installation's
+API rather than being written down, so it is run against an installation after
+adoption, not instead of the gate. One thing it learned the hard way: a status
+word is checked where a status is STATED — the section labels, the `state`
+column, the record's own badge — because "shipping" and "parked" are also
+ordinary English, and a whole-page search for them went red on a line of the
+operator's own charter that used one as a verb.
 It uses synthetic stores and the managed headless browser, exercising actual
 answers, copies, disclosures, two simultaneous windows, stale-answer refusal,
 embedded sizing, failed refreshes, keyboard table scrolling and both themes at

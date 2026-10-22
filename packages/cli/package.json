@@ -1,6 +1,6 @@
 {
   "name": "@helmo/cli",
-  "version": "0.12.1",
+  "version": "0.13.0",
   "description": "The one `helmo` command: the front door to the work record, the roadmap and the runtime.",
   "private": true,
   "type": "module",

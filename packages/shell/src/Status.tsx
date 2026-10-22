@@ -89,13 +89,49 @@ export function ticketStateRole(status: string): StatusRole | null {
   return null
 }
 
-/** A roadmap project's status. Ship next is the one in motion; stable is the
- *  one that came through; blocked is the one that needs a way opened. Shaping,
- *  ready and parked are the ordinary and the deliberate. */
+/** What a stored roadmap status means in today's words (R-46). A row keeps
+ *  the word it was written with until the one-shot migration writes the new
+ *  one, and the history panel shows old words forever, so both read here. */
+export function projectStatusReading(status: string): string {
+  return ({
+    parked: "Proposed", shaping: "Proposed", ready: "Proposed",
+    ship_next: "Active", shipping: "Active",
+    shipped_watching: "Monitoring", shipped: "Monitoring", shipped_stable: "Completed",
+    archived: "Canceled", abandoned: "Canceled",
+  })[status] ?? status
+}
+
+/** A roadmap project's status. The work phase is the one in motion; Completed
+ *  is the one that came through. Proposed, Paused and Canceled are the ordinary
+ *  and the deliberate: an idea nobody has started and a delivery its owner
+ *  stopped on purpose are both the system working. Whether an initiative is
+ *  GOING well is a different fact, and `projectHealthRole` is where it lives. */
 export function projectStatusRole(status: string): StatusRole | null {
-  if (status === "ship_next" || status === "shipped_watching") return "info"
-  if (status === "shipped_stable") return "success"
-  if (status === "blocked") return "attention"
+  const reading = projectStatusReading(status)
+  if (reading === "Planned" || reading === "Active" || reading === "Monitoring") return "info"
+  if (reading === "Completed") return "success"
+  return null
+}
+
+/** How an initiative is going, which its status cannot say: one can be Paused
+ *  deliberately AND Off track at the same time, and one field carrying both
+ *  was the conflation R-46 set out to end.
+ *
+ *  All three readings carry a role, which the restraint at the top of this file
+ *  otherwise withholds. They earn it by not being the ordinary case: health is
+ *  set by the initiative's owner and never derived, so a row only has one
+ *  because somebody judged it. Off track is the loud one — the owner saying
+ *  this will not arrive as intended, which is the single roadmap reading that
+ *  asks for intervention rather than patience.
+ *
+ *  This replaces a `status === "blocked"` branch that could never fire: no
+ *  roadmap status by that name has ever existed, so the attention role it
+ *  returned painted nothing. Off track with the blocker named in its reason is
+ *  what that branch was reaching for (H-3341). */
+export function projectHealthRole(health?: string | null): StatusRole | null {
+  if (health === "On track") return "success"
+  if (health === "At risk") return "attention"
+  if (health === "Off track") return "failure"
   return null
 }
 

@@ -235,6 +235,19 @@ describe('the activity reading: what lands where', () => {
     expect(a.week.buckets.filter((b) => b.before_record).map((b) => b.label)).toEqual(['Sat 3', 'Sun 4', 'Mon 5', 'Tue 6', 'Wed 7', 'Thu 8']);
   });
 
+  it('bands nothing on an installation that was already recording before the window', () => {
+    // The complement of the case above, and the reading every established
+    // installation takes: the band is the span BEFORE the first event, and a
+    // store recording a fortnight ago has no such span inside a day or a
+    // week. No band is the true reading here rather than a lost one, which is
+    // worth stating: a verify:ui fixture drifted into this state and read as a
+    // regression in the rule (H-3343).
+    const a = read({ recording_began_at: before(14 * 24 * HOUR), completions: [{ at: before(60_000), id: 'H-1' }] });
+    expect(a.day.buckets.filter((b) => b.before_record)).toEqual([]);
+    expect(a.week.buckets.filter((b) => b.before_record)).toEqual([]);
+    expect(seriesOf(a.week, 'completions').total).toBe(1);
+  });
+
   it('draws a flat line rather than dividing by an empty scale', () => {
     const a = read({});
     for (const s of a.day.series) expect(s).toMatchObject({ total: 0, peak: 0, floor: 0 });

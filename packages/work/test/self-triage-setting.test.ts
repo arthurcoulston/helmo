@@ -67,6 +67,23 @@ describe('self-triage setting (H-2147)', () => {
     expect(s.setSelfTriage(worker, true)).toBe(true);
     expect(s.selfTriage()).toBe(true);
   });
+
+  // H-3405. Each gate passed on its own and the pair still lifted the rule:
+  // one loop named a second loop leader (allowed then, because no leader
+  // stood), and that leader — exempt by the gate it had just been handed —
+  // turned the rule off for every filer, with no attended session or human
+  // anywhere in the chain. Naming the leader is where that is cut.
+  it('is not lifted by two supervised loops, one naming the other leader (H-3405)', () => {
+    expect(() => s.setLeaderActor(workerLoop, 'lead')).toThrow(/leader_refused/);
+    expect(s.leaderActor()).toBeNull();
+    expect(() => s.setSelfTriage(leadLoop, false)).toThrow(/self_triage_refused/);
+    expect(s.selfTriage()).toBe(true);
+
+    // The attended grant still stands, and the leader it names may still lift
+    // the rule from its own loop — that is the exemption, working as written.
+    s.setLeaderActor(worker, 'lead');
+    expect(s.setSelfTriage(leadLoop, false)).toBe(false);
+  });
 });
 
 // H-3402. Before this, both settings wrote `meta` alone: after naming a leader
@@ -78,14 +95,14 @@ describe('a lifted guard leaves a record and shows on the dashboard (H-3402)', (
   const finding = (check: string) => s.hygiene().find((f) => f.check === check);
 
   it('records who changed each setting, from what to what', () => {
-    s.setLeaderActor(workerLoop, 'lead');
+    s.setLeaderActor(worker, 'lead');
     s.setSelfTriage(leadLoop, false);
 
     expect(leaderEvents()).toHaveLength(1);
     expect(leaderEvents()[0]).toMatchObject({
       event_type: 'leader_set',
       actor: { name: 'worker', kind: 'agent' },
-      payload: { from: null, to: 'lead', supervised: true },
+      payload: { from: null, to: 'lead', supervised: false },
     });
     expect(leaderEvents()[0]!.ts).toMatch(/^\d{4}-\d{2}-\d{2}T/);
 
@@ -118,7 +135,7 @@ describe('a lifted guard leaves a record and shows on the dashboard (H-3402)', (
 
   it('reports the off rule to the operator, naming who lifted it, until it is restored', () => {
     expect(finding('self_triage_off')).toBeUndefined();
-    s.setLeaderActor(workerLoop, 'lead');
+    s.setLeaderActor(worker, 'lead');
     s.setSelfTriage(leadLoop, false);
 
     const off = finding('self_triage_off')!;
@@ -132,10 +149,10 @@ describe('a lifted guard leaves a record and shows on the dashboard (H-3402)', (
 
   it('reports a named leader as the standing exemption it is', () => {
     expect(finding('leader_named')).toBeUndefined();
-    s.setLeaderActor(workerLoop, 'lead');
+    s.setLeaderActor(worker, 'lead');
     const named = finding('leader_named')!;
     expect(named.detail).toMatch(/^lead is this installation's leader/);
-    expect(named.detail).toMatch(/set by worker, writing as a supervised worker/);
+    expect(named.detail).toMatch(/set by worker, writing as an attended session/);
     s.setLeaderActor(operator, null);
     expect(finding('leader_named')).toBeUndefined();
   });
@@ -165,13 +182,13 @@ describe('a lifted guard leaves a record and shows on the dashboard (H-3402)', (
   it('reads back the provenance of each setting, and null where there is none', () => {
     expect(s.settingProvenance('leader')).toBeNull();
     expect(s.settingProvenance('self_triage')).toBeNull();
-    s.setLeaderActor(workerLoop, 'lead');
-    s.setSelfTriage(lead, false);
+    s.setLeaderActor(worker, 'lead');
+    s.setSelfTriage(leadLoop, false);
     expect(s.settingProvenance('leader')).toMatchObject({
-      actor: { name: 'worker' }, writing_as: 'a supervised worker', from: null, to: 'lead',
+      actor: { name: 'worker' }, writing_as: 'an attended session', from: null, to: 'lead',
     });
     expect(s.settingProvenance('self_triage')).toMatchObject({
-      actor: { name: 'lead' }, writing_as: 'an attended session', from: true, to: false,
+      actor: { name: 'lead' }, writing_as: 'a supervised worker', from: true, to: false,
     });
     s.setSelfTriage(operator, true);
     expect(s.settingProvenance('self_triage')).toMatchObject({

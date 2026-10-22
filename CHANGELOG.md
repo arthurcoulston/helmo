@@ -13,6 +13,14 @@ longer.
 
 ## Unreleased — 0.13.0
 
+- Naming this installation's leader now needs an attended session or a human,
+  as replacing or clearing one already did. A caller writing as a supervised
+  worker could name the first leader of a store that had none; because the
+  leader may also turn the self-triage rule off, two unattended loops could
+  lift that second-eyes check installation-wide between them — one naming the
+  other leader, the other lifting the rule. Naming the leader is itself the
+  exemption, so it is held to the same bar.
+
 - Naming a leader or turning the self-triage rule off now leaves a record and
   shows on the dashboard. Both settings used to write only store metadata, so
   nothing could say who removed a second-eyes check, or when; each change is

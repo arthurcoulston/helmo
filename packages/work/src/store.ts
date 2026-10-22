@@ -1465,9 +1465,14 @@ export class Store {
   }
 
   /** Name the leader, or clear it. No agent can name itself — the grant comes
-   *  from someone else. A caller writing as a supervised worker may name the
-   *  first leader of a store that has none; replacing or clearing a named
-   *  leader needs a caller writing as an attended session or a human.
+   *  from someone else — and naming, replacing or clearing one needs a caller
+   *  writing as an attended session or a human. A caller writing as a
+   *  supervised worker could once name the first leader of a store that had
+   *  none, which cost nothing alone and everything in composition (H-3405):
+   *  one loop named a second loop leader, and that leader, exempt by this
+   *  grant, turned the self-triage rule off installation-wide with nobody
+   *  attending. Naming the leader IS the grant, so it is held to the same bar
+   *  as removing the check it exempts from.
    *
    *  What that check verifies is the actor THIS CALL states: `supervised` reads
    *  `kind` and the `session` stamp, both supplied by the caller, so the gate
@@ -1477,14 +1482,17 @@ export class Store {
   setLeaderActor(actor: Actor, name: string | null): string | null {
     validateActor(actor);
     const current = this.leaderActor();
-    if (supervised(actor) && (name === null || (current !== null && current !== name))) {
-      throw new HelmoError(`leader_refused: a caller writing as a supervised worker cannot ${name === null ? 'clear' : `replace ${current} as`} the installation leader. A caller writing as an attended session or a human can. Nothing was written.`);
-    }
     if (name !== null) {
       if (!name.trim() || name !== name.trim()) throw new HelmoError('leader --actor-name needs the exact agent name, with no surrounding whitespace.');
       if (actor.kind === 'agent' && actor.name === name) {
         throw new HelmoError(`leader_refused: ${name} cannot name itself leader; another seat or a human grants it. Nothing was written.`);
       }
+    }
+    if (supervised(actor)) {
+      const what = name === null ? 'clear the installation leader'
+        : current === null ? `name ${name} this installation's first leader`
+        : `replace ${current} with ${name} as the installation leader`;
+      throw new HelmoError(`leader_refused: a caller writing as a supervised worker cannot ${what}. A caller writing as an attended session or a human can — naming the leader is what exempts a seat from self-triage, so the grant is not an unattended loop's to make. Nothing was written.`);
     }
     // Re-asserting the standing leader changes nothing; recording it would
     // only pad the log the operator reads to find the grant that matters.
@@ -1533,11 +1541,11 @@ export class Store {
    *  filings.
    *
    *  As with `setLeaderActor`, the distinction is the actor this call states,
-   *  not one the store can verify, and `leaderActor()` itself can be set by a
-   *  caller writing as a supervised worker when no leader stands yet. So the
-   *  honest claim is about this code path; the event below and the
-   *  `self_triage_off` hygiene check are what keep a lifted guard visible
-   *  (H-3402). */
+   *  not one the store can verify, and the leader exemption here is worth no
+   *  more than what naming the leader costs — which is why that needs an
+   *  attended session or a human too (H-3405). So the honest claim is about
+   *  this code path; the event below and the `self_triage_off` hygiene check
+   *  are what keep a lifted guard visible (H-3402). */
   setSelfTriage(actor: Actor, on: boolean): boolean {
     validateActor(actor);
     if (supervised(actor) && actor.name !== this.leaderActor()) {

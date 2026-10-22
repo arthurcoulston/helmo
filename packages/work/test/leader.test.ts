@@ -60,13 +60,17 @@ describe('installation leader (H-2073)', () => {
     expect(claimEvent.actor).toMatchObject({ name: 'lead', kind: 'agent' });
   });
 
-  it('is never self-granted; a supervised worker may only name the first one', () => {
+  // H-3405. Naming the first leader was once open to a supervised worker, on
+  // the reading that a store with no leader had nothing to take away. It had:
+  // the leader may lift the self-triage rule, so the grant is the check.
+  it('is never self-granted, and never named by an unattended loop', () => {
     expect(() => s.setLeaderActor(lead, 'lead')).toThrow(/leader_refused: lead cannot name itself/);
     expect(() => s.setLeaderActor(leadLoop, 'lead')).toThrow(/leader_refused: lead cannot name itself/);
     expect(s.leaderActor()).toBeNull();
-    expect(s.setLeaderActor(workerLoop, 'lead')).toBe('lead');
-    expect(s.setLeaderActor(workerLoop, 'lead')).toBe('lead');
-    expect(() => s.setLeaderActor(workerLoop, 'reviewer')).toThrow(/leader_refused: a caller writing as a supervised worker cannot replace lead/);
+    expect(() => s.setLeaderActor(workerLoop, 'lead')).toThrow(/a caller writing as a supervised worker cannot name lead this installation's first leader/);
+    expect(s.leaderActor()).toBeNull();
+    expect(s.setLeaderActor(worker, 'lead')).toBe('lead');
+    expect(() => s.setLeaderActor(workerLoop, 'reviewer')).toThrow(/leader_refused: a caller writing as a supervised worker cannot replace lead with reviewer/);
     expect(() => s.setLeaderActor(workerLoop, null)).toThrow(/leader_refused: a caller writing as a supervised worker cannot clear/);
     expect(s.leaderActor()).toBe('lead');
     expect(s.setLeaderActor(worker, 'reviewer')).toBe('reviewer');

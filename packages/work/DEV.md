@@ -400,9 +400,14 @@ Pinned releases accept both the historical three-component layout and C1's one
   filings from the self-triage rule; meta `self_triage = 'off'`
   (`self-triage --off | --on`) lifts the rule for every filer, and tool
   descriptions follow it at server start. Both are unset by default. No
-  agent names itself leader; a caller writing as a supervised worker may name
-  only a store's first leader, and the self-triage setting changes only for a
-  caller writing as the leader, an attended session or a human.
+  agent names itself leader; naming, replacing or clearing one needs a caller
+  writing as an attended session or a human, and the self-triage setting
+  changes only for a caller writing as the leader, an attended session or a
+  human. Those two gates compose (H-3405): naming the FIRST leader of a store
+  that had none was once open to a supervised worker, so one loop named a
+  second loop leader and that leader, exempt by the grant it had just been
+  handed, lifted the rule installation-wide with nobody attending. Naming the
+  leader IS the grant, so it is held to the bar of the check it exempts from.
   Say "writing as" and mean it (H-3402): `supervised()` reads `actor.kind` and
   the `session` stamp, and the caller supplies both — a loop passing
   `--actor '{"name":"x","kind":"human"}'`, or an env actor with no `session`,

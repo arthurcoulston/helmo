@@ -13,6 +13,15 @@ longer.
 
 ## Unreleased — 0.13.0
 
+- Runtime can hand a client's approved project start and each batch of their
+  new research remarks to a configured research seat. Under the intake
+  preparation opt-in, an installation that names `research_handoff_assignee`
+  claims each from the product's signed `/api/project-start` and
+  `/api/research-feedback` routes, files one identifiers-only assignment
+  (the start names the version's `gitRef` and marks a test organization),
+  and reports the ticket ref back, never filing twice. With no seat named,
+  nothing changes.
+
 - Overview adds Roadmap now: visible Active, Planned and Proposed counts,
   recorded At risk and Off track initiatives with their reasons and record
   links, and an explicit count of initiatives whose health is not recorded.

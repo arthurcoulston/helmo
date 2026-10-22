@@ -99,6 +99,14 @@ The same settings carry the refinement commit pull: a drafted directive
 revision's exact words are committed on their own `refinement/...` branch,
 pushed, and proven back to the Worker with raw Git objects, with no session
 and no change to the checkout's working tree.
+An installation that also names `research_handoff_assignee` (a seat) runs two
+client research handoffs on the same poll: an approved project start
+(`/api/project-start`) and each batch of a client's new research remarks
+(`/api/research-feedback`) each become one `research` assignment for that seat,
+under `research_handoff_workstream` (default `goodplumb`), carrying identifiers
+only, and the installation-qualified ticket ref is reported back. A local
+ledger means a lost report re-reports the same ticket and never files twice.
+With no seat named, neither handoff runs.
 Omitting either setting disables the integration and preserves ordinary Rev
 behaviour.
 

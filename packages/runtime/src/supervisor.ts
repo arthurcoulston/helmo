@@ -14,7 +14,7 @@ import { spawn, ChildProcess } from 'node:child_process';
 import { ancestryBroken, ancestryStamp } from './ancestry.js';
 import { closeSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { loadRoster, revHome, stateDir } from './config.js';
+import { loadRoster, revHome, stateDir, validateRefinementPreparationConfig } from './config.js';
 import { respawnDecide } from './ladder.js';
 import { pollUsage } from './usage.js';
 import { rotateOpenFd } from './logretention.js';
@@ -29,6 +29,8 @@ import { target } from './install.js';
 import { intakePreparationPass } from './intake-preparation.js';
 import { commandName } from './command-name.js';
 import { refinementCommitPass } from './refinement-commit.js';
+import { refinementPreparationPass } from './refinement-preparation.js';
+import { isolatedRefinementCallbacks } from './refinement-artifact.js';
 import { consumeRuntimeRecovery } from './runtime-recovery.js';
 
 const SUP = 'supervisor';
@@ -95,6 +97,7 @@ function agentResume(g: GlobalConfig, l: LoopConfig): { ticket: string; kind: 'a
 /** Resolves with the process exit code: 0 for a drain that should stay down,
  *  REDEPLOY_EXIT for one the service manager must bring back (H-1046). */
 export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Promise<number> {
+  validateRefinementPreparationConfig(g);
   const existing = occupiedPid(SUP);
   if (existing) {
     throw new Error(`A supervisor is already running (PID ${existing}). Check: ${commandName} status`);
@@ -158,14 +161,18 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
 
   const slots = new Map<string, Slot>();
   let shuttingDown = false;
+  let preparationPending: Promise<unknown> | null = null;
+  let finished = false;
   let drainAt = 0;
   let redeploying: RedeployRequest | null = null;
   const lineage = ancestryStamp();
 
   return new Promise<number>((resolve) => {
     const finishIfDrained = () => {
-      if (!shuttingDown) return;
+      if (!shuttingDown || finished) return;
+      if (preparationPending) return;
       for (const s of slots.values()) if (s.child) return;
+      finished = true;
       clearInterval(timer);
       if (usageTimer) clearInterval(usageTimer);
       if (intakeTimer) clearInterval(intakeTimer);
@@ -418,7 +425,7 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
     // no second daemon. The origin and checkout opt in; the capability itself
     // is read by the adapter from Mac Keychain on every signed pass.
     const intake = () => {
-      if (!g.intake_preparation_origin || !g.intake_preparation_checkout) return;
+      if (shuttingDown || slots.size === 0 || !g.intake_preparation_origin || !g.intake_preparation_checkout) return;
       const dir = stateDir(SUP);
       void intakePreparationPass({
         origin: g.intake_preparation_origin,
@@ -440,14 +447,31 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
       }).then((result) => {
         if (result !== 'idle') logEvent(SUP, 'refinement-commit', `result=${result}`);
       }).catch((error) => logEvent(SUP, 'refinement-commit-error', String(error).replace(/\s+/g, ' ').slice(0, 200)));
+      if (g.refinement_preparation_enabled === true && !preparationPending) {
+        const callbacks = isolatedRefinementCallbacks({
+          source: g.refinement_preparation_source!, baseRef: g.refinement_preparation_base_ref!,
+          workRoot: g.refinement_preparation_work_root!, syncScript: g.refinement_preparation_sync_script!,
+          scanScript: g.refinement_preparation_scan_script!, origin: g.intake_preparation_origin,
+        });
+        preparationPending = refinementPreparationPass({
+          ...callbacks, origin: g.intake_preparation_origin,
+          stateFile: join(dir, 'refinement-preparation.json'),
+          lastRunFile: join(dir, 'refinement-preparation-last.json'),
+          shouldContinue: () => !shuttingDown,
+        }).then(result => {
+          if (result !== 'idle') logEvent(SUP, 'refinement-preparation', `result=${result}`);
+        }).catch(() => logEvent(SUP, 'refinement-preparation-error', 'unavailable; Builder owns retained attempt inspection'))
+          .finally(() => { preparationPending = null; finishIfDrained(); });
+      }
     };
     const intakeTimer = g.intake_preparation_origin && g.intake_preparation_checkout
       ? setInterval(intake, g.poll_seconds * 1000) : null;
-    if (intakeTimer) intake();
+    // Start after the roster slots exist; an empty roster starts no adapter.
 
     const drain = (sig: string) => {
       if (shuttingDown) return;
       shuttingDown = true;
+      if (intakeTimer) clearInterval(intakeTimer);
       drainAt = Date.now();
       logEvent(SUP, 'drain', `signal=${sig}`);
       console.log(`rev: ${sig} — draining the fleet (in-flight iterations finish their close-out).`);
@@ -476,10 +500,12 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
         launch(slot);
       }
     }
+    if (intakeTimer) intake();
     if (slots.size === 0) {
       console.log('rev: roster has no loops — nothing to supervise.');
       clearInterval(timer);
       if (usageTimer) clearInterval(usageTimer);
+      if (intakeTimer) clearInterval(intakeTimer);
       resolve(0);
     }
   });

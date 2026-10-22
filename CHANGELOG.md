@@ -13,6 +13,21 @@ longer.
 
 ## Unreleased — 0.13.0
 
+- Opted-in refinement preparation now produces and verifies the voice-agent
+  binding for one prepared meeting. The supervisor's existing intake poll runs
+  it only with `refinement_preparation_enabled = true` and all five explicit
+  paths plus the accepted immutable base commit configured; incomplete or
+  malformed configuration refuses startup without echoing the fields, and an
+  empty roster starts no adapter at all. Each meeting gets its own isolated
+  worktree on that pinned base, commits only its two deterministic artifacts,
+  publishes through the configured scanner-backed sync, and has the resulting
+  provider configuration read back independently before a binding receipt is
+  delivered. A fresh signed checkpoint precedes every external effect; a drain
+  starts no new pass and lets the one in flight settle; a lost result response
+  is redelivered rather than republished; and five refused results stop
+  automatic retry for owned inspection. Installations that do not set the
+  opt-in are unaffected.
+
 - A worker that stopped cleanly still held its ticket's execution claim, so
   the work it had paused could not be picked up again by anyone. Runtime's
   `reconcile-ended-claim` now releases exactly that claim into a deliberate

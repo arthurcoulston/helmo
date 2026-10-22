@@ -101,6 +101,18 @@ longer.
   killed at its deadline, and is not parked or ranked by subscription bars.
   An optional `allocation_file` adds durable, fsynced pre-launch reservations
   that survive restarts. Rosters without such a provider are unchanged.
+- Work can bound autonomous work by a roadmap's Ship Next (its Planned and
+  Active projects). Off by default; `helmo-cli delivery-scope --roadmap-db
+  /abs/roadmap.db` turns it on. Supervised workers then claim, resume, wake
+  on and see as ready only tickets in those projects, and a held claim whose
+  project leaves is put down at the next launch, still reserved. An unreadable
+  roadmap admits nothing. Attended sessions and humans are unscoped and only
+  they can turn it off. Support work (a parent-linked subtask, or a ticket
+  in-flight work comes to wait on) inherits the served ticket's project, a
+  project entering Ship Next or a ticket tagged into one wakes the seat, and
+  `create` takes `--project`. Runtime files a halted worker's escalation as a
+  subtask of the ticket it stopped on, and files intake assignments under the
+  live Ship Next.
 
 - Overview adds Roadmap now: visible Active, Planned and Proposed counts,
   recorded At risk and Off track initiatives with their reasons and record

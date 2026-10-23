@@ -330,6 +330,38 @@ If the launcher cannot resolve the selection, it refuses in one line naming the
 installation and the repair, and exits non-zero on purpose: the manager retries,
 so repairing the selection brings the supervisor back with no command run.
 
+## Upgrading from v0.12.1 to v1.0.0
+
+This is a compatibility change, even for an installation that enables none of
+this release's new optional services. Read the version's [changelog](CHANGELOG.md)
+and refresh MCP clients so their Roadmap schemas use the seven new status values.
+Update scripts that send old status names, and add `--ticket <record-id>` to
+automated `helmo release upgrade`, `rollback` and `activate` calls. Existing
+service identities, ports and entry-point paths are unchanged.
+
+Stop writers and back up both stores, the roster, control state and release
+selection before the first command from the new release opens the installation.
+Stage and verify the new release independently, as described above. Copy its
+`packages/runtime/MIGRATION.json` beside `RELEASE.json`; do not carry the previous
+release's compatibility declaration forward.
+
+The Roadmap schema additions are automatic on open, but converting historical
+rows to the new vocabulary is optional and explicit. The new code reads old
+rows and events. To inspect the conversion with the installation's normal target
+and actor environment, run `node packages/roadmap/dist/migrate.js r46` from the
+staged checkout. Supply `--judgments <path>` for archived rows whose outcome
+only that installation can determine; inspect the plan before using `--apply`.
+No other installation's judgments belong in that file.
+
+A code-only downgrade to v0.12.1 is not supported after new Roadmap writes:
+that version does not understand the new statuses and events. The declaration
+conservatively blocks automatic rollback as soon as this release is selected.
+To recover, stop all writers, preserve the post-upgrade stores for reconciliation,
+restore a coherent pre-upgrade backup with its code, roster, controls and selection,
+then verify the installation before restarting work. This recovery does not
+retain post-backup writes automatically. Optional provider and delivery-scope
+settings also belong to the matching roster and store backup.
+
 ## Which versions go together, and what a migration cannot undo
 
 **A version here is one commit, not an npm version.** Package manifests carry

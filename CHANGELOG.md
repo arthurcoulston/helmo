@@ -11,7 +11,58 @@ consolidation imported still carried that release's notes under "Unreleased";
 this is the published wording, which is two entries and one commit reference
 longer.
 
-## Unreleased — 0.13.0
+## v1.0.0 — 2026-10-22
+
+This cut includes the integrated runtime, work and roadmap changes since
+v0.12.1. The major version marks the compatibility changes below; it does
+not change the product's declared development stage.
+
+### Breaking changes and upgrade steps
+
+- Roadmap MCP status inputs now use `Proposed`, `Planned`, `Active`,
+  `Monitoring`, `Completed`, `Paused` and `Canceled`. Update clients that
+  send the old lowercase status values. Readiness is a separate field;
+  `roadmap_set_ship_next` now records `Planned`, and a subsequent update
+  records `Active` when work begins. A readiness verdict changes readiness,
+  not status. Hiding a finished record uses `archived: true`.
+- Existing Roadmap rows and events remain readable without rewriting them.
+  The optional `roadmap-migrate r46` command prints a migration plan; only
+  `--apply` writes it. Archived rows require the installation's own
+  `--judgments` file. No migration decision is inferred from a record id.
+- Automated `helmo release upgrade`, `rollback` and `activate` commands
+  must pass `--ticket <record-id>`; an interactive terminal with no supervised
+  loop stamp remains accepted without it. Update unattended wrappers before
+  adopting this release. Release status reads are unchanged.
+- Explicit charter ids must be `OBJ-n` or `BET-n` with a safe integer suffix.
+  Invalid ids now refuse rather than corrupting the next minted id.
+- Back up Work and Roadmap stores, the roster, controls and release selection
+  before any new-version command opens the installation. Version 1.0 writes
+  Roadmap statuses, readiness and health events that v0.12.1 cannot interpret
+  faithfully. The shipped migration declaration therefore refuses automatic
+  code-only rollback. Recovery requires stopping writers and restoring a
+  coherent pre-upgrade backup with its matching code and configuration;
+  writes after that backup need separate reconciliation. See
+  [INSTALLATIONS.md](INSTALLATIONS.md#upgrading-from-v0121-to-v100).
+
+### Included changes
+
+- The collapsed navigation shows **H** within the icon rail, while expanded
+  and mobile navigation retain **Helmo**. A bundled H favicon adds the same
+  mark to the browser tab, with no external asset request.
+- Roadmap separates lifecycle status, readiness, health and visibility, and
+  presents the seven statuses with recorded concerns and remaining work.
+  Project cost readings use exact full-project totals, including pages beyond
+  the visible ticket list; missing usage remains distinct from a measured zero.
+- Runtime records stalled-work episodes for unavailable seats, unmoved ready
+  work, review reservations and self-triage. Resolved observations disappear;
+  unreadable state remains unknown rather than looking healthy.
+- Claim recovery preserves live executions, generation ownership and
+  independent holds. Takeovers establish the new execution owner correctly;
+  ended-claim repairs are bounded and literal, and missing-claim recovery
+  shares the same liveness guard.
+- A remote Work server exits when its IPC owner goes away. Browser and runtime
+  integration checks use the supported test environment and explicit budgets.
+
 
 - Runtime can hand a client's approved project start and each batch of their
   new research remarks to a configured research seat. Under the intake
@@ -137,6 +188,23 @@ longer.
   session owner. Work validates the loopback capability and connects with a
   bounded timeout; an invalid endpoint or a failed connection reports a
   sanitized error and never launches a local browser instead.
+
+Commit coverage (v0.12.1 through the release source; metadata cut excluded):
+`0b6dc71`, `f687c4e`, `7a1c432`, `0236f77`, `36f9bc1`, `591a8fd`,
+`9bc92c1`, `68f2c7d`, `b8ea500`, `2ebdff2`, `22098b7`, `e4753be`,
+`b67c189`, `0cd966c`, `34b8bff`, `830b9f9`, `e5943f2`, `49912e2`,
+`03161d3`, `e31f187`, `8c7711f`, `5f4e1ff`, `08d542c`, `f0c63f0`,
+`edc7122`, `879dd7a`, `1c5cf11`, `a46563f`, `3292b8d`, `06f3fb5`,
+`d18f7d5`, `c78f3b8`, `d85a8df`, `eb1ee1a`, `d6d6a6e`, `15441d1`,
+`58731c7`, `a487af1`, `c9435cb`, `2aa4ca6`, `6b5a724`, `ef762ad`,
+`5b5663a`, `4602625`, `381c13c`, `2d2f27a`, `5a43c24`, `6b5bc94`,
+`1f13279`, `61da723`, `7d48c2c`, `c68ded3`, `c6eceba`, `f7de8a5`,
+`9288a7b`, `0de1842`, `37ae3c9`, `1f5cff6`, `a4f9c05`, `8fa8d29`,
+`3d700a3`, `76ef65a`, `9492662`, `6aa139b`, `f751cc8`, `fe3ffd8`,
+`53c2ac5`, `c68b649`, `7fdfe54`, `1272837`, `5b3da6c`, `b29e28f`,
+`78e778f`, `6e9b73f`, `19c7650`, `7c9c92c`, `f21fd55`, `d9029ea`,
+`45f2af2`, `0eb6230`, `468dc3f`, `dd05723`, `f482396`, `85eba5a`,
+`efc42df`, `28359b5`, `3efd825`, `a1159d8`, `c80711f`.
 
 ## v0.12.1 — 2026-10-13
 

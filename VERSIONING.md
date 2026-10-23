@@ -32,11 +32,18 @@ misdirection boundary until it is upgraded to v0.9 or later again; the
 two-release data/protocol compatibility window does not make the older client
 deed-aware.
 
-During an upgrade, the released consolidated version and its immediately
-preceding consolidated version are supported together for the documented
-two-release compatibility window. Compatibility does not authorize a store
-migration or a service-name, port, configuration-key, or entry-point change;
-those require their own reviewed migration and recovery contract.
+Version 1.0 is a major compatibility cut: Roadmap's accepted MCP status
+values and readiness/go semantics change, and automated release writes require
+`--ticket`. The version number does not promote the product's development stage.
+[INSTALLATIONS.md](INSTALLATIONS.md#upgrading-from-v0121-to-v100) gives the
+client updates, backup boundary and recovery steps. Old Roadmap rows and events
+remain readable by the new version; v0.12.1 cannot safely operate on new-version
+writes, so this major boundary has no mixed-writer or code-only rollback window.
+
+Within a compatible release line, the released version and its immediately
+preceding compatible version are supported together for a two-release window.
+That window never overrides the exact release's `MIGRATION.json` declaration or
+a documented protocol, configuration, service, port or entry-point change.
 
 ## Accepted legacy spellings
 

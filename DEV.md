@@ -379,6 +379,14 @@ supervisor, every loop and the app alike — the moment the selection moves back
 Restore the roster of the outgoing release's era as part of the rollback, never
 after it. `memory_dir` (H-3001) is the first key to make this bite.
 
+## Version 1.0 release boundary
+
+The release changes the Roadmap MCP status vocabulary and unattended release
+CLI requirements. VERSIONING.md and INSTALLATIONS.md carry the consumer contract;
+packages/runtime/MIGRATION.json refuses code-only rollback because older code
+cannot faithfully interpret new Roadmap writes. This metadata changes no product
+stage and starts no installation migration or activation.
+
 ## Boundaries the build enforces
 
 - **The runtime never reads the work record's store.** Runtime talks to Work

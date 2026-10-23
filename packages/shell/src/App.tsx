@@ -1005,8 +1005,10 @@ export function App() {
     <TooltipProvider>
       <SidebarProvider open={sidebarOpen} onOpenChange={rememberSidebar}>
         <Sidebar collapsible="icon">
-          <SidebarHeader className="px-4 py-3 text-sm font-medium">
-            Helmo
+          <SidebarHeader className="px-4 py-3 text-sm font-medium group-data-[collapsible=icon]:px-0">
+            <span className="sr-only">Helmo</span>
+            <span aria-hidden="true" className="group-data-[collapsible=icon]:hidden">Helmo</span>
+            <span aria-hidden="true" className="hidden text-center group-data-[collapsible=icon]:block">H</span>
           </SidebarHeader>
           <SidebarContent>
             <SidebarGroup>

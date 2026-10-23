@@ -57,6 +57,7 @@
     "local": [
       "index.html",
       "src/App.tsx",
+      "src/assets/favicon.svg",
       "package.json",
       "upstream.json",
       "scripts/upstream.mjs",

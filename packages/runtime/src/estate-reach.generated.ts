@@ -9,6 +9,6 @@
 
 export const ESTATE_REACH: Record<string, { url: string; path: string }> = {
   "helmo-app": { url: "http://localhost:4400/", path: "http://localhost:4400/" },
-  "goodplumb-estate-shell": { url: "http://localhost:4320/", path: "/" },
+  "goodplumb-dashboard": { url: "http://localhost:4320/", path: "/" },
   "meetings": { url: "http://localhost:4700/", path: "http://localhost:4700/" },
 };

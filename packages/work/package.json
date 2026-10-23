@@ -1,6 +1,6 @@
 {
   "name": "helmo",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Agent work record: agents write, humans read and meet.",
   "scripts": {
     "test": "vitest run",
@@ -38,10 +38,10 @@
   },
   "type": "module",
   "dependencies": {
-    "@helmo/core": "1.0.0",
+    "@helmo/core": "1.0.1",
     "@modelcontextprotocol/sdk": "^1.31.0",
     "better-sqlite3": "^13.0.2",
-    "helmo-roadmap": "1.0.0",
+    "helmo-roadmap": "1.0.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {

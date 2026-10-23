@@ -1,6 +1,6 @@
 {
   "name": "helmo-roadmap",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "The layer above the ticket: where ideas get parked, shaped, ranked, and declared go.",
   "scripts": {
     "test": "vitest run",
@@ -23,7 +23,7 @@
   "license": "MIT",
   "type": "module",
   "dependencies": {
-    "@helmo/core": "1.0.0",
+    "@helmo/core": "1.0.1",
     "@modelcontextprotocol/sdk": "^1.31.0",
     "better-sqlite3": "^13.0.2",
     "zod": "^4.4.3"

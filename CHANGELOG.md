@@ -11,6 +11,10 @@ consolidation imported still carried that release's notes under "Unreleased";
 this is the published wording, which is two entries and one commit reference
 longer.
 
+## Unreleased — 1.0.1
+
+No unreleased changes.
+
 ## v1.0.0 — 2026-10-22
 
 This cut includes the integrated runtime, work and roadmap changes since

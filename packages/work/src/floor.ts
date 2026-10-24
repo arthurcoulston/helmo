@@ -104,6 +104,68 @@ export const FLOOR = {
   BYTES_PER_ROW_MIN_ROWS: 40,
 } as const;
 
+// ---------- the served JSON, which is what the application reads ----------
+
+/* The budget above protects an HTML document the product no longer serves. The
+ * application reads JSON and polls it every fifteen seconds, and that surface
+ * shipped with no enforcement at all: on the dev.rev store, 3,513 tickets,
+ * 2026-10-24, `/api/v1/work` served 15,210,873 bytes against the 4,200,000
+ * ceiling above — 3.62× it — and `/api/v1/overview` another 14,983,358, of
+ * which 98.4% and 99.9% were a copy of the whole ticket store that nothing in
+ * the browser drew (H-3512 M1, issue #32).
+ *
+ * The numbers below are measured on the capacity seed with an archive behind
+ * it — `seedCapacityRecord` plus `seedClosedHistory` at 1,000 and 10,000
+ * closed tickets, 2026-10-24, this file's own fixtures — and sit 20% above
+ * that measurement, the same way the byte budgets above do:
+ *
+ *   default /api/v1/work      3,231,174 bytes / 146 rows / 22,131 per row
+ *   archive /api/v1/work?whole=1  7,294,694 bytes / 326 rows / 22,376 per row
+ *
+ * Fixture rows are about four times the weight of the deployed record's
+ * (22 KB against a 5,194-byte median), which is what makes a ceiling measured
+ * on them a ceiling rather than a trap: the same two documents on the live
+ * store read 249,205 and 21,281 bytes once the store came off the wire.
+ */
+export const API_FLOOR = {
+  WORK_DOCUMENT_BYTES: 3_900_000,
+  ARCHIVE_DOCUMENT_BYTES: 8_800_000,
+  BYTES_PER_ROW: 27_000,
+  /** Below this many rows a document is mostly envelope and per-row says
+   *  nothing, exactly as for the HTML budget. */
+  BYTES_PER_ROW_MIN_ROWS: 40,
+
+  /* The load-bearing case, and the only one that would have caught what
+     shipped. An absolute ceiling says a document is big; this says it is big
+     FOR A REASON OTHER THAN the rows it drew. The two fixtures differ only in
+     how much closed history sits behind the same live rows and the same
+     archive page, so a document whose cost tracks the store fails here while
+     passing every ceiling on a small installation. Measured at 0.00003
+     (100 bytes over a store ten times the size) after the projection change;
+     before it, the same comparison would have been roughly 10×. */
+  STORE_GROWTH: 0.1,
+} as const;
+
+/** What one served JSON document is allowed, given the route and what it
+ *  drew. The route decides the ceiling because the archive is deliberately
+ *  the heavier document: a reader who asks for a page of closed history is
+ *  asking for 200 extra rows. */
+export function overApiBudget(
+  doc: { route: string; bytes: number; rows: number },
+  floor: typeof API_FLOOR = API_FLOOR,
+): string[] {
+  const failures: string[] = [];
+  const archive = doc.route.includes('whole=1');
+  const ceiling = archive ? floor.ARCHIVE_DOCUMENT_BYTES : floor.WORK_DOCUMENT_BYTES;
+  if (doc.bytes >= ceiling) failures.push(`${doc.route} is ${doc.bytes} bytes, budget ${ceiling}`);
+  if (doc.rows >= floor.BYTES_PER_ROW_MIN_ROWS) {
+    const perRow = doc.bytes / doc.rows;
+    if (perRow >= floor.BYTES_PER_ROW)
+      failures.push(`${doc.route} costs ${perRow.toFixed(0)} bytes per row over ${doc.rows} rows, budget ${floor.BYTES_PER_ROW}`);
+  }
+  return failures;
+}
+
 /** Rows the document actually drew. Every row shape — question card, sitting,
  *  work in motion, closed row — carries the ticket id as the element id, and
  *  the floor's own uniqueness check is what keeps that countable. */

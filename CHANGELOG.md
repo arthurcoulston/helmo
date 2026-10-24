@@ -13,7 +13,38 @@ longer.
 
 ## Unreleased — 1.0.1
 
-No unreleased changes.
+### Behavior changes
+
+- `/api/v1/work` no longer carries a top-level `records` array, and
+  `/api/v1/overview`'s `records` carries its four area cards alone instead of
+  every ticket spread in behind them. The array held the whole store on both
+  routes — 98.4% of the Work document and 99.9% of Overview's, and nothing in
+  the dashboard drew it — so a 3,513-ticket installation served 15 MB on each
+  poll, four times a minute, twice over. The Work document's `record.rows` is
+  what the dashboard draws and `record.total` is the store's size; the detail
+  route `/api/v1/work/tickets/H-n` is unchanged. A reader of these documents
+  that needs the whole ticket list should read it from the store (Work's
+  `workTickets()` in-process, or `helmo_list_tickets`). The field set of an
+  HTTP document is internal under [VERSIONING.md](VERSIONING.md); this note is
+  here because the route is spelled `/api/v1/` and a reader may have treated
+  the shape as versioned.
+- `/api/v1/work?whole=1` serves the closed archive one page of 200 rows
+  instead of the entire terminal record, which grew without limit as an
+  installation aged. `record.archive` carries `cursor`, `limit`, `returned`,
+  `closed_total` and `next_cursor` (null at the end), `&cursor=N` asks for the
+  next page, and the dashboard draws both ends of the walk with its position
+  in the archive. A `?whole=1#H-n` link to a closed ticket of any age still
+  resolves: the application passes the fragment through as `?ticket=H-n`,
+  which pins that row whatever page it would otherwise fall on.
+
+### Fixes
+
+- The release floor can fail again on the surface the product actually serves.
+  `API_FLOOR`/`overApiBudget` measure the served JSON, and
+  `packages/work/test/api-floor.test.ts` runs them on stores of 1,000 and
+  10,000 closed tickets; its load-bearing case is that the document does not
+  grow with the store. The HTML render-time budget remains without a runner
+  and is named as such in `packages/work/DEV.md`.
 
 ## v1.0.0 — 2026-10-22
 

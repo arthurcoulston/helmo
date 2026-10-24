@@ -2,7 +2,7 @@
 import { appConfig, startAppServer } from '../app-server.mjs';
 import { roadmapNow } from '../roadmap-now.mjs';
 import { appRequest, shellRequest } from '../../app/server.mjs';
-import { activitySnapshot, checkInSnapshot, historySnapshot, incidentNoticesSnapshot, incidentSnapshot, incidentsSnapshot, issuesSnapshot, runwaySnapshot, workHealth, workListening, workRequest, workSnapshot } from '../../work/dist/view.js';
+import { activitySnapshot, archiveCursor, checkInSnapshot, historySnapshot, incidentNoticesSnapshot, incidentSnapshot, incidentsSnapshot, issuesSnapshot, resultsSnapshot, runwaySnapshot, workHealth, workListening, workRequest, workSnapshot, workTickets } from '../../work/dist/view.js';
 import { resultDisplay, seatWork } from '../../work/dist/presentation.js';
 import { roadmapHealth, roadmapRequest, roadmapSnapshot } from '../../roadmap/dist/view.js';
 import { AUTHORIZED, statusReading } from '../../roadmap/dist/types.js';
@@ -57,11 +57,17 @@ function answer(response, area, read) {
 let origin = null;
 // Overview counts the roster, never the Team document: that document measures
 // every configured file with a real tokenizer, and the summary needs a count.
+//
+// It is also Overview's roster failure boundary, which is the reason this
+// count outlived the card grid that drew it: `teamNowSnapshot` reports an
+// unreadable roster as `unavailable` and the page would draw on regardless,
+// so without a read that THROWS here, `/api/v1/overview` answers 200 over a
+// fleet nobody could read (asserted in cli/test/app-acceptance.test.mjs).
 function teamCount() {
   return Object.keys(loadRoster().loops).length;
 }
-function checkInInput(work, roadmap, team) {
-  const continuing = new Set(work.records
+function checkInInput(tickets, roadmap, team) {
+  const continuing = new Set(tickets
     .filter((ticket) => !['done', 'cancelled'].includes(ticket.status))
     .map((ticket) => ticket.project)
     .filter(Boolean));
@@ -179,7 +185,7 @@ function initiativeWork(tickets) {
 function roadmapDocument() {
   const snapshot = roadmapSnapshot();
   const tagged = new Map(snapshot.projects.map((project) => [project.id, []]));
-  for (const ticket of workSnapshot().records) tagged.get(ticket.project)?.push(ticket);
+  for (const ticket of workTickets()) tagged.get(ticket.project)?.push(ticket);
   // Only `projects` is enriched. `ranked` carries its own copy of each row and
   // the shell already resolves those back through `projects`, so writing the
   // join twice would be two readings of one fact that could disagree.
@@ -187,18 +193,26 @@ function roadmapDocument() {
 }
 
 function overviewSnapshot(since) {
-  const work=workSnapshot(), roadmap=roadmapSnapshot(), runtime=runtimeSnapshot();
-  const team=teamNowSnapshot(seatWork(work.records));
+  const tickets=workTickets();
+  const roadmap=roadmapSnapshot(), runtime=runtimeSnapshot();
+  const team=teamNowSnapshot(seatWork(tickets));
+  // The four area cards, and no ticket store behind them. `...work.records`
+  // used to spread every ticket in the installation into this array — 99.9% of
+  // this document, parsed by the browser four times a minute to render
+  // nothing, because both the work and the overview areas return before the
+  // generic card grid that is the array's only reader (H-3512 M1, issue #32).
+  // The cards stay: `teamCount()` is the roster failure boundary above.
   return { records: [
-    { id:'work', title:'Work', state:`${work.records.length} records`, links:[{label:'Open Work',href:'/work'}] },
+    { id:'work', title:'Work', state:`${tickets.length} records`, links:[{label:'Open Work',href:'/work'}] },
     { id:'roadmap', title:'Roadmap', state:`${roadmap.projects.length} projects`, links:[{label:'Open Roadmap',href:'/roadmap'}] },
     { id:'team', title:'Team', state:`${teamCount()} configured`, links:[{label:'Open Team',href:'/team'}] },
     { id:'runtime', title:'Runtime', state:runtime.supervisor_state, links:[{label:'Open Runtime',href:'/run'}] },
-    ...work.records,
-  // Carried through from the Work document rather than recomputed: the window
-  // is the server's to fix, and two readings taken at two instants on one page
-  // would disagree about what the past 24 hours held (R-44).
-  ], results: work.results,
+  ],
+  // The same reading Work serves, from the same function rather than recomputed
+  // here: the window is the server's to fix, and two readings taken at two
+  // instants on one page would disagree about what the past 24 hours held
+  // (R-44).
+  results: resultsSnapshot(),
   roadmap_now: roadmapNow(roadmap.projects),
   // The condensed roster. This is the one place the two records meet: the
   // runtime knows which sessions are running and the work record knows what
@@ -221,7 +235,7 @@ function overviewSnapshot(since) {
   // separate act an agent could skip, and no ticket parked out of the agents'
   // queues to get his attention.
   incident_notices: incidentNoticesSnapshot(),
-  ...(since !== undefined ? { check_in: checkInSnapshot(since, checkInInput(work, roadmap, team)) } : {}) };
+  ...(since !== undefined ? { check_in: checkInSnapshot(since, checkInInput(tickets, roadmap, team)) } : {}) };
 }
 const appDocuments={overview:overviewSnapshot};
 const running = await startAppServer(appConfig(), (request, response) => {
@@ -239,10 +253,11 @@ const running = await startAppServer(appConfig(), (request, response) => {
       if (url.pathname === '/api/v1/work' && url.searchParams.has('since')) {
         const since = url.searchParams.get('since');
         if (!since) throw new Error('since="" is not an instant this reading can parse; supply an ISO instant.');
-        const work = workSnapshot({ whole: url.searchParams.get('whole') === '1', ticket: url.searchParams.get('ticket') ?? undefined });
+        const tickets = workTickets();
+        const work = workSnapshot({ whole: url.searchParams.get('whole') === '1', ticket: url.searchParams.get('ticket') ?? undefined, cursor: archiveCursor(url.searchParams) });
         const roadmap = roadmapSnapshot();
-        const team = teamNowSnapshot(seatWork(work.records));
-        const document_ = apiJson('work', { ...work, check_in: checkInSnapshot(since, checkInInput(work, roadmap, team)) });
+        const team = teamNowSnapshot(seatWork(tickets));
+        const document_ = apiJson('work', { ...work, check_in: checkInSnapshot(since, checkInInput(tickets, roadmap, team)) });
         response.writeHead(200, JSON_HEADERS); response.end(document_); return;
       }
       return workRequest(request, response);

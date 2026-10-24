@@ -179,7 +179,13 @@ function useArea(area: string, selected: string, extra: Record<string, string> =
       try {
         const query = new URLSearchParams()
         if (area === "work") {
-          if (new URLSearchParams(location.search).get("whole") === "1") query.set("whole", "1")
+          const search = new URLSearchParams(location.search)
+          if (search.get("whole") === "1") {
+            query.set("whole", "1")
+            // The archive is paged (ARCHIVE_PAGE rows a response), so the
+            // offset the reader navigated to travels with the read.
+            if (search.get("cursor")) query.set("cursor", search.get("cursor")!)
+          }
           if (/^H-\d+$/.test(selected)) query.set("ticket", selected)
         }
         for (const [key, value] of Object.entries(extra)) query.set(key, value)

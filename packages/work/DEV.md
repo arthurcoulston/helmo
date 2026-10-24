@@ -71,9 +71,27 @@ other — the join lives in the process holding both, exactly as Team now's does
 A `null` seat list is an unreadable roster, not an empty fleet, and the whole
 forecast is then `unavailable` with that missing basis named.
 
-`/api/v1/work` retains its original records and request projection and adds a
-server-grouped `record` with every live ticket and the newest 20 terminal rows.
-`?whole=1` includes all rows; `?ticket=H-n` includes an older bookmarked row.
+`/api/v1/work` serves the request projection and a server-grouped `record`
+with every live ticket and the newest 20 terminal rows. `?whole=1` opens the
+closed archive one `ARCHIVE_PAGE` (200 rows) at a time, with
+`record.archive` carrying `cursor`, `limit`, `returned`, `closed_total` and a
+`next_cursor` that is null at the end; `&cursor=N` is the next page and the
+application draws both ends of the walk. `?ticket=H-n` includes an older
+bookmarked row, which is what keeps a `?whole=1#H-n` link to a deep closed
+ticket working now that the archive is paged.
+The document carries no top-level `records` array. It used to hold every
+ticket in the store — 98.4% of the default Work document and 99.9% of
+Overview's, 15 MB four times a minute on a 3,513-ticket store, drawn by
+nothing — because the composition root read the full list off the document
+instead of asking the store. `workTickets()` is that accessor, and
+`resultsSnapshot()` is the results window on its own, so Overview no longer
+builds a whole Work document to keep one field of it (H-3512 M1, issue #32).
+Overview keeps `records` holding its four area cards and nothing else. The
+shaping review found nothing renders them and recommended dropping the field;
+the suite then showed why it stays — `teamCount()` inside the `team` card is
+Overview's roster failure boundary, because `teamNowSnapshot` reports an
+unreadable roster as `unavailable` and the API would answer 200 over a fleet
+nobody could read.
 `/api/v1/work/tickets/H-n` returns the record, dependencies and event history on
 expansion. Readiness and consent fingerprints remain server-owned. The client
 polls at 15 seconds and preserves focus/disclosures, retaining and visibly
@@ -802,15 +820,24 @@ Pinned releases accept both the historical three-component layout and C1's one
   against the numbers in `src/floor.ts`'s `REAL_RECORD`, warming each document
   once and requiring the slowest of three bounded warm renders' in-process CPU
   time to meet the 600 ms budget.
-  **Nothing runs that fixture today.** `test/view-release-floor.test.ts` and
-  `test/view-viewport-render.test.ts` were deleted with the old server-rendered
-  view in H-2939 (helmo@218e5fc), so `served-record.ts`, `CAPACITY` and
-  `REAL_RECORD` have no caller and the budget is declared rather than checked.
-  `scripts/live-floor.mjs` still reads `FLOOR` and `overBudget` against a
-  deployed origin, and `packages/shell/scripts/verify-ui.mjs` seeds its own
-  small fixture — neither is the capacity measurement. Reviving it belongs with
-  the shadcn surface that replaced the view, not with whatever change next
-  touches `floor.ts`.
+  **What runs that fixture, and what still does not.**
+  `test/view-release-floor.test.ts` and `test/view-viewport-render.test.ts`
+  were deleted with the old server-rendered view in H-2939 (helmo@218e5fc),
+  which left `FLOOR`'s HTML budget declared rather than checked — and the
+  service then shipped a 15,210,873-byte Work document against a 4,200,000
+  ceiling, 3.62× it, with nothing able to go red. `scripts/live-floor.mjs`
+  reads `FLOOR` against a deployed origin but throws in `renderMs` before it
+  measures: no route emits a `helmo-render` Server-Timing header any more.
+  `test/api-floor.test.ts` is the runner for the surface that replaced the
+  view: `API_FLOOR` and `overApiBudget` against the served JSON on stores of
+  1,000 and 10,000 closed tickets, built by `seedCapacityRecord` plus
+  `seedClosedHistory`. Its load-bearing case is `STORE_GROWTH`, not an
+  absolute ceiling — a document that costs more on a bigger store is carrying
+  the store, which is the defect that got through. Still unchecked and named
+  so: `FLOOR.RENDER_MS` (nothing emits the timing), the HTML link/markup and
+  contrast axes on the SPA shell, and `live-floor.mjs` itself. Restoring a
+  render-timing header is observation the product does not currently emit and
+  sits beside R-32's paused tracing, so it was not done here.
   The budget it shipped with before did none of that: 300,000 bytes asserted over 80
   one-line tickets while the record it was shipped against served 2,718,020,
   nine times the ceiling, green the whole time (H-202).

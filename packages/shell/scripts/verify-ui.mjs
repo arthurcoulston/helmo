@@ -568,6 +568,16 @@ try {
   await page.getByText('6 ready', { exact: true }).waitFor();
   assert.equal(await page.getByRole('link', { name: 'Archived', exact: true }).getAttribute('href'), '?whole=1');
   assert.equal(await page.getByRole('link', { name: 'See all completed tickets.', exact: true }).getAttribute('href'), '?whole=1');
+  // The archive is paged (H-3512 M1), so the scope nav says where in the
+  // closed record the reader is standing. This fixture holds fewer closed
+  // tickets than one page, so it proves the position line and the absence of
+  // a next page; the walk itself is proven on the 1,000- and 10,000-ticket
+  // stores in `packages/work/test/api-floor.test.ts`.
+  await page.goto(`${origin}/work?whole=1`);
+  const scope = page.getByRole('navigation', { name: 'Record scope', exact: true });
+  await scope.getByText(/^Completed 1–\d+ of \d+$/).waitFor();
+  assert.equal(await scope.getByRole('link', { name: 'Older completed work', exact: true }).count(), 0, 'a single-page archive must not offer a next page');
+  await page.goto(`${origin}/work`);
   const sidebar = page.locator('[data-slot="sidebar"]');
   assert.equal(await sidebar.getAttribute('data-state'), 'collapsed', 'a fresh desktop window starts with the icon rail collapsed');
   await page.getByRole('button', { name: 'Toggle Sidebar', exact: true }).click();

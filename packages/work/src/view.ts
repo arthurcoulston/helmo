@@ -15,7 +15,7 @@ import { answerRequest } from './answer.js';
 import { loaded, running } from './build.js';
 import { installationLine, requestedInstallation, requireInstallation } from './install.js';
 import { history, type HistoryPeriod } from './history.js';
-import { actionFingerprint, activityWindowStart, ask, checkInBound, CLOSED_TAIL, recentResults, recordTickets, resultDisplay, teamActivity } from './presentation.js';
+import { actionFingerprint, activityWindowStart, archiveReading, ask, checkInBound, CLOSED_TAIL, recentResults, recordTickets, resultDisplay, teamActivity } from './presentation.js';
 import { ContinuationGap, quietAccount } from './quiet.js';
 import { DURATION_WINDOW_DAYS, runway, SeatReading } from './runway.js';
 import { Store } from './store.js';
@@ -255,6 +255,13 @@ function resultsDocument(complete: Ticket[]) {
   });
 }
 
+/** The same window, for a reader that wants only this. Overview used to build
+ *  a whole Work document — every drawn row, the awaiting family, hygiene — and
+ *  keep one field of it (H-3512 M1). */
+export function resultsSnapshot() {
+  return resultsDocument(workTickets());
+}
+
 /** Overview's activity reading: tokens, completions and requests for Arthur
  *  over the past day and the past week (R-44 H-3090).
  *
@@ -375,9 +382,22 @@ export function checkInSnapshot(since: string, input: CheckInInput) {
   };
 }
 
-export function workSnapshot(options: { whole?: boolean; ticket?: string } = {}) {
-  const complete = store.listTickets({ limit: -1 });
-  const selected = recordTickets(complete, options.whole);
+/** Every ticket in the store, for a caller in this process.
+ *
+ *  The composition root (`cli/bin/serve.js`) needs the full list in four
+ *  places — continuation gaps, the roadmap join, seat work on two routes, and
+ *  Overview's record count — and used to read it off `workSnapshot().records`,
+ *  which is why that array was on the wire at all. 98.4% of the Work document and 99.9% of the Overview document
+ *  were a store nothing in the browser drew (H-3512 M1, issue #32). The
+ *  accessor is the supported way to ask; the document carries what a reader
+ *  reads. */
+export function workTickets(): Ticket[] {
+  return store.listTickets({ limit: -1 });
+}
+
+export function workSnapshot(options: { whole?: boolean; ticket?: string; cursor?: number } = {}) {
+  const complete = workTickets();
+  const selected = recordTickets(complete, options.whole, { cursor: options.cursor });
   const pinned = options.ticket && complete.find((t) => t.id === options.ticket);
   if (pinned && !selected.some((t) => t.id === pinned.id)) selected.push(pinned);
   const progress = store.latestProgress(selected.filter((t) => !['done', 'cancelled'].includes(t.status)).map((t) => t.id));
@@ -396,7 +416,6 @@ export function workSnapshot(options: { whole?: boolean; ticket?: string } = {})
   };
   return {
     installation: store.installationIdentity(),
-    records: complete,
     running: running(),
     awaiting: awaitingDocument(),
     results: resultsDocument(complete),
@@ -404,6 +423,10 @@ export function workSnapshot(options: { whole?: boolean; ticket?: string } = {})
       whole: Boolean(options.whole),
       closed_tail: CLOSED_TAIL,
       total: complete.length,
+      // Only on the archive read: the default record's bound is `closed_tail`,
+      // and a null here says "this is not a paged document" rather than
+      // leaving a reader to compare two fields to find out.
+      archive: options.whole ? archiveReading(complete, { cursor: options.cursor }) : null,
       hygiene: store.hygiene(),
       rows: selected.map((t) => {
         const acceptance = store.productAcceptance(t.id);
@@ -419,11 +442,24 @@ export function workSnapshot(options: { whole?: boolean; ticket?: string } = {})
   };
 }
 
+/** The archive's offset, read from the query. A cursor that is not a
+ *  non-negative integer reads as the first page rather than refusing: this is
+ *  a navigation parameter on a read, and a reader who hand-edits it gets the
+ *  archive's beginning, not an error page. */
+export function archiveCursor(params: URLSearchParams): number {
+  const raw = Number(params.get('cursor'));
+  return Number.isSafeInteger(raw) && raw > 0 ? raw : 0;
+}
+
 export function workRequest(req: IncomingMessage, res: ServerResponse) {
   const apiUrl = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
   if (apiUrl.pathname === '/api/v1/work') {
     res.writeHead(200, JSON_HEADERS);
-    res.end(apiJson('work', workSnapshot({ whole: apiUrl.searchParams.get('whole') === '1', ticket: apiUrl.searchParams.get('ticket') ?? undefined })));
+    res.end(apiJson('work', workSnapshot({
+      whole: apiUrl.searchParams.get('whole') === '1',
+      ticket: apiUrl.searchParams.get('ticket') ?? undefined,
+      cursor: archiveCursor(apiUrl.searchParams),
+    })));
     return;
   }
   const detail = /^\/api\/v1\/work\/tickets\/(H-\d+)$/.exec(apiUrl.pathname);

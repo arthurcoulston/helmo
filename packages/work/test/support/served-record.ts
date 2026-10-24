@@ -180,6 +180,70 @@ export function seedCapacityRecord(db: string): { rows: number; storedTextBytes:
   return { rows: CAPACITY.rows + 6, storedTextBytes };
 }
 
+/** Closed history at a named depth, written on top of the capacity record:
+ *  the archive a default document must not carry (H-3512 M1, issue #32).
+ *
+ *  Two weights, because one would make the fixture dishonest in one direction
+ *  or the other. The newest `heavyNewest` rows carry the capacity profile —
+ *  they are the page an archive read actually returns, so the budget has to be
+ *  measured on them. The deep tail behind them carries the DEPLOYED record's
+ *  measured average body and a short evidence list: ten thousand rows at
+ *  capacity weight would be a 200 MB fixture standing in for an installation
+ *  nobody has, and the thing the tail is here to prove is that its bytes never
+ *  reach the wire at all, which it proves at any weight.
+ *
+ *  Written oldest first, so the heavy rows close last and sit on page 0.
+ *  Returns what it wrote, so a caller states the denominator it measured
+ *  against instead of trusting the depth it asked for. */
+export function seedClosedHistory(
+  db: string,
+  count: number,
+  { heavyNewest = 200 }: { heavyNewest?: number } = {},
+): { closed: number; storedTextBytes: number; heavy: number } {
+  const seed = new Store(db);
+  let storedTextBytes = 0;
+  const heavyFrom = Math.max(0, count - heavyNewest);
+  for (let i = 0; i < count; i++) {
+    const heavy = i >= heavyFrom;
+    const title = `Archived row ${i}, recorded under ${LONG_REF} at ${DIGEST(i)}`;
+    const body = heavy ? bodyOf(bodyBytes(i), i) : bodyOf(REAL_RECORD.averageBodyBytes, i);
+    const evidence = evidenceOf(heavy ? evidenceCount(i) : 4, i);
+    const t = seed.createTicket(agent, { title, body, workstream: 'helmo-dev', type: 'build' });
+    seed.updateTicket(agent, {
+      ticket_id: t.id,
+      status: 'done',
+      completion_account: { category: 'maintenance', summary: 'Closed by the archive fixture.' },
+      note: 'shipped',
+      evidence,
+    });
+    storedTextBytes += title.length + body.length + JSON.stringify(evidence).length;
+  }
+  seed.close();
+  return { closed: count, storedTextBytes, heavy: count - heavyFrom };
+}
+
+/** One closed ticket heavier than anything the real record holds, written
+ *  deep enough in the archive that no default document draws it. The case it
+ *  exists for: hidden text must not inflate the list (H-3512 M1 case 3). */
+export function seedBuriedWeight(db: string): { id: string; bytes: number } {
+  const seed = new Store(db);
+  const body = bodyOf(REAL_RECORD.longestBodyBytes * 4, 7);
+  const evidence = evidenceOf(REAL_RECORD.mostEvidenceItems, 53);
+  const t = seed.createTicket(agent, { title: `Buried weight under ${LONG_REF}`, body, workstream: 'helmo-dev', type: 'build' });
+  seed.updateTicket(agent, {
+    ticket_id: t.id,
+    status: 'done',
+    completion_account: { category: 'maintenance', summary: 'Closed by the archive fixture.' },
+    note: 'shipped',
+    evidence,
+  });
+  // Backdated by the store's own clock is not available, so weight is buried
+  // by ORDER instead: this row is written BEFORE the archive filler, so the
+  // filler closes after it and pushes it past the page a reader is served.
+  seed.close();
+  return { id: t.id, bytes: body.length + JSON.stringify(evidence).length };
+}
+
 /** Starts the view over one store and resolves its origin. The operator is
  *  set so the answer control renders: an interactive element that exists only
  *  for the human is exactly the one a floor check must not miss. */

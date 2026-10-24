@@ -173,7 +173,7 @@ describe('a live surface asked after a rebuild says STALE (H-2490)', () => {
 
   it('names the installation and the build it loaded while that is still true', async () => {
     const data = (await (await fetch(`http://127.0.0.1:${port}/api/v1/work`)).json()).data;
-    expect(data.records.some((row: { title: string }) => row.title === title)).toBe(true);
+    expect(data.record.rows.some((row: { title: string }) => row.title === title)).toBe(true);
     expect(data.running.commit).toBe('1'.repeat(40));
     expect(data.running.state).toBe('verified');
   });
@@ -185,7 +185,7 @@ describe('a live surface asked after a rebuild says STALE (H-2490)', () => {
     expect(data.running.state).toBe('stale');
     expect(data.running.commit).toBe('1'.repeat(40));
     expect(data.running.commit).not.toBe(REBUILT_COMMIT);
-    expect(data.records.some((row: { title: string }) => row.title === title)).toBe(true);
+    expect(data.record.rows.some((row: { title: string }) => row.title === title)).toBe(true);
   });
 
 });

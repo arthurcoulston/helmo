@@ -67,14 +67,48 @@ export function ask(q: Question): PresentedAsk {
 const when = (t: Ticket) => t.closed_at ?? t.updated_at;
 const seq = (t: Ticket) => Number.parseInt(t.id.replace(/^\D+/, ''), 10) || 0;
 
-/** The bounded default record for the HTML view; `whole` is the explicit
- *  escape hatch for terminal history. */
-export function recordTickets(all: Ticket[], whole = false): Ticket[] {
+/** One page of closed history, newest first. The archive used to be the whole
+ *  terminal record in one response — 3,513 tickets and 17.5 MB of rows on the
+ *  store that found it — which is a document that grows without limit as the
+ *  installation ages (H-3512 M1, issue #32). Paged with the store's own
+ *  limit/cursor shape rather than a dated window, because `ListFilter` already
+ *  pages that way and one mechanism is easier to reason about than two.
+ *
+ *  Offset paging can skip or repeat a row if work closes mid-walk. That is the
+ *  same trade the ticket-list tool already accepts, and the alternative — a
+ *  keyset cursor on (`closed_at`, id) — buys exactness nobody reading the
+ *  archive has asked for. */
+export const ARCHIVE_PAGE = 200;
+
+export interface ArchivePage {
+  cursor?: number;
+  limit?: number;
+}
+
+const closedNewestFirst = (all: Ticket[]): Ticket[] =>
+  all.filter((t) => TERMINAL.has(t.status)).sort((a, b) => when(b).localeCompare(when(a)) || seq(b) - seq(a));
+
+/** The bounded default record for the application; `whole` is the explicit
+ *  escape hatch for terminal history, itself bounded to one `ARCHIVE_PAGE`. */
+export function recordTickets(all: Ticket[], whole = false, archive: ArchivePage = {}): Ticket[] {
   const live = all.filter((t) => !TERMINAL.has(t.status));
-  const closed = all
-    .filter((t) => TERMINAL.has(t.status))
-    .sort((a, b) => when(b).localeCompare(when(a)) || seq(b) - seq(a));
-  return [...live, ...(whole ? closed : closed.slice(0, CLOSED_TAIL))];
+  const closed = closedNewestFirst(all);
+  if (!whole) return [...live, ...closed.slice(0, CLOSED_TAIL)];
+  const cursor = Math.max(0, archive.cursor ?? 0);
+  const limit = Math.max(1, archive.limit ?? ARCHIVE_PAGE);
+  return [...live, ...closed.slice(cursor, cursor + limit)];
+}
+
+/** Where that page sat and whether another follows, so a reader can walk the
+ *  archive to its end without guessing. `next_cursor` is null at the end:
+ *  absence says "no more", which a reader must not have to infer from a page
+ *  that came back short. */
+export function archiveReading(all: Ticket[], archive: ArchivePage = {}) {
+  const closed_total = all.filter((t) => TERMINAL.has(t.status)).length;
+  const cursor = Math.max(0, archive.cursor ?? 0);
+  const limit = Math.max(1, archive.limit ?? ARCHIVE_PAGE);
+  const returned = Math.max(0, Math.min(limit, closed_total - cursor));
+  return { cursor, limit, returned, closed_total, next_cursor: cursor + returned < closed_total ? cursor + returned : null };
 }
 
 // ---------- what the work produced (R-42 / H-2969) ----------

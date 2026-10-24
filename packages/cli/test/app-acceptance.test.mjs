@@ -205,7 +205,16 @@ test('the app answers its own port directly and renders the record a recorded UR
   const { origin } = await startApp(t, homes);
 
   const overview = await (await fetch(`${origin}/api/v1/overview`)).json();
-  assert.ok(overview.data.records.some(record => record.id === ticket), 'Overview API preserves its existing record projection');
+  // Overview carries the four area cards and NOT the ticket store that used to
+  // be spread in behind them — 99.9% of the document, drawn by nothing
+  // (H-3512 M1). The cards themselves stay: counting the roster is where an
+  // unreadable one is discovered, which the `invalid` cases below assert.
+  assert.deepEqual(overview.data.records.map((record) => record.id), ['work', 'roadmap', 'team', 'runtime']);
+  assert.ok(!overview.data.records.some((record) => record.id === ticket), 'Overview still spreads the ticket store into its cards');
+  assert.match(overview.data.records[0].state, /^\d+ records$/);
+  for (const field of ['results', 'roadmap_now', 'team', 'next', 'activity']) {
+    assert.ok(overview.data[field], `Overview lost the ${field} reading the application draws`);
+  }
   assert.equal(overview.data.check_in, undefined, 'Overview invented a check-in without a reader-supplied instant');
   assert.deepEqual(overview.data.roadmap_now.counts, { Active: 0, Planned: 0, Proposed: 0 });
   const planned = seedShipNextProject(homes, 'The authorized next delivery');
@@ -331,7 +340,8 @@ test('the app answers its own port directly and renders the record a recorded UR
   // `#H-n` reading below still lands on Work's own document, which `/` serves
   // until H-2937.
   const work = await (await fetch(`${origin}/api/v1/work`)).json();
-  assert.ok(work.data.records.some(record => record.id === ticket), 'the work API no longer carries the record the view draws');
+  assert.equal(work.data.records, undefined, 'the work API still carries the whole store beside the rows it draws');
+  assert.ok(work.data.record.rows.some(record => record.id === ticket), 'the work API no longer carries the record the view draws');
   assert.ok(work.data.awaiting, 'the work API carries no awaiting family for the view to draw');
 
   // `:4400/#H-n` reaches the server as `/`: the fragment is resolved in the

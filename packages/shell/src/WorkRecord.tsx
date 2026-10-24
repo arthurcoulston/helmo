@@ -38,6 +38,9 @@ type Row = {
 }
 export type WorkRecordData = {
   whole: boolean; closed_tail: number; total: number; rows: Row[]
+  /* Only the archive read is paged; the current record's bound is
+     `closed_tail`, and null says this document is not a page of anything. */
+  archive: { cursor: number; limit: number; returned: number; closed_total: number; next_cursor: number | null } | null
   hygiene: { check: string; ticket_id?: string; workstream?: string; detail: string }[]
 }
 
@@ -354,6 +357,11 @@ function columnsFor(open: Opener): RecordColumn<Row>[] {
   ]
 }
 
+/* One page of the archive. The first page carries no cursor, so a bookmark
+   taken from the archive's front stays the shortest URL it was before the
+   archive was paged at all. */
+const archiveHref = (cursor: number) => (cursor ? `?whole=1&cursor=${cursor}` : "?whole=1")
+
 const GROUPS = [["motion", "In motion"], ["ready", "Ready"], ["blocked", "Blocked"], ["standing", "Standing"], ["done", "Done"], ["cancelled", "Cancelled"]]
 
 export function WorkRecord({ data, selected }: { data: WorkRecordData; selected: string }) {
@@ -384,6 +392,15 @@ export function WorkRecord({ data, selected }: { data: WorkRecordData; selected:
   return <>
     {data.whole ? <nav aria-label="Record scope" className="flex flex-wrap items-center gap-2 text-sm">
       <Button variant="outline" size="sm" asChild><a href="?">Return to current record</a></Button>
+      {/* The archive is one page of closed work at a time. Both ends are
+          drawn, and the count says where the reader is, because "older" with
+          no denominator leaves them walking to find out whether they are
+          nearly done. */}
+      {data.archive ? <>
+        {data.archive.cursor ? <Button variant="outline" size="sm" asChild><a href={archiveHref(Math.max(0, data.archive.cursor - data.archive.limit))}>Newer completed work</a></Button> : null}
+        {data.archive.next_cursor !== null ? <Button variant="outline" size="sm" asChild><a href={archiveHref(data.archive.next_cursor)}>Older completed work</a></Button> : null}
+        <span className="text-muted-foreground">Completed {data.archive.cursor + 1}–{data.archive.cursor + data.archive.returned} of {data.archive.closed_total}</span>
+      </> : null}
     </nav> : null}
     {data.hygiene.length ? <Collapsible>
       <CollapsibleTrigger asChild><Button variant="outline">Needs grooming · {data.hygiene.length}</Button></CollapsibleTrigger>

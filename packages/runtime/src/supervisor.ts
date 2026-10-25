@@ -21,7 +21,7 @@ import { rotateOpenFd } from './logretention.js';
 import { logEvent, occupiedPid, pidAlive, runningStamp, sClear, sGet, sHas, sSet, streakReset } from './sentinels.js';
 import { endSessionGroup, sessionGroupsOf } from './shim.js';
 import { REDEPLOY_EXIT, RedeployRequest, armRedeployWatch, readRedeploy, reportRedeployLanded } from './redeploy.js';
-import { agentFalseAlarmDisposition, answeredResumeEscalation, completeAnsweredResume, createFeedbackAssignment, createIntakeAssignment, createResearchAssignment, failAnsweredResume, recordAgentResumeFailure, recordRelapse, researchHandoffSeat, cliError, ticketStatus } from './helm.js';
+import { agentFalseAlarmDisposition, answeredResumeEscalation, completeAnsweredResume, createFeedbackAssignment, createIntakeAssignment, createResearchAssignment, failAnsweredResume, recordAgentResumeFailure, recordRelapse, researchHandoffSeat, releaseSetMoved, cliError, ticketStatus } from './helm.js';
 import { GlobalConfig, LoopConfig } from './types.js';
 import { completeActivation, deploymentFile, recordRestart, refuseStart } from './deployment.js';
 import { readSelection, releasePinProblems, selectionFile } from './release.js';
@@ -168,6 +168,31 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
   let drainAt = 0;
   let redeploying: RedeployRequest | null = null;
   const lineage = ancestryStamp();
+
+  // A supervisor outlives its release only inside an activation: the two roster
+  // globals it read at startup still name the outgoing tree, and from the
+  // moment the selection moves Helmo refuses every call it makes. Reported as
+  // whichever check happened to ask, that reads as a fault in that check —
+  // `answer-resume-check-failed` on the one loop unlucky enough to need a
+  // resume in that window cost an agent an iteration to re-diagnose, and
+  // events.log is not where anyone looks for an outage (H-3530). True once, so
+  // said once, and said on the console because it is a far larger statement
+  // than any single check's: this process can no longer read Helmo at all.
+  // A false answer leaves the caller's own line to its own failure.
+  let announcedRelease = false;
+  const reportReleaseMove = (loop: string, at: string, e: unknown): boolean => {
+    const moved = releaseSetMoved(e);
+    if (!moved) return false;
+    logEvent(loop, 'release-set-moved', `at=${at} running=${moved.running} selected=${moved.selected}`);
+    if (announcedRelease) return true;
+    announcedRelease = true;
+    console.error(
+      `rev: the release set moved under this supervisor — it reads Helmo at ${moved.running}, and ${moved.selected} is now selected.\n`
+      + '  Every Helmo call it makes is refused from here, so no loop resume or completion can be recorded until it restarts on the selected release.\n'
+      + `  An activation in flight restarts the fleet itself; if none is: ${commandName} redeploy`,
+    );
+    return true;
+  };
 
   return new Promise<number>((resolve) => {
     const finishIfDrained = () => {
@@ -352,7 +377,9 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
             s.resumeDetail = null;
             logEvent(s.cfg.name, 'resume-complete', `ticket=${ticket}${closed ? '' : ' already closed by someone else'}`);
           } catch (e) {
-            logEvent(s.cfg.name, 'resume-completion-failed', `ticket=${ticket} ${cliError(e).slice(0, 200)}`);
+            if (!reportReleaseMove(s.cfg.name, 'resume-completion', e)) {
+              logEvent(s.cfg.name, 'resume-completion-failed', `ticket=${ticket} ${cliError(e).slice(0, 200)}`);
+            }
           }
         }
         if (!shuttingDown && sHas(s.cfg.name, 'RELOAD')) {
@@ -394,7 +421,9 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
               logEvent(name, agent ? 'agent-resume' : 'answer-resume', `ticket=${ticket} BLOCKED cleared${agent ? ` reason=${agent.reason}` : ''}`);
             }
           } catch (e) {
-            logEvent(name, 'answer-resume-check-failed', String(e).slice(0, 200));
+            if (!reportReleaseMove(name, 'answer-resume-check', e)) {
+              logEvent(name, 'answer-resume-check-failed', String(e).slice(0, 200));
+            }
           }
         }
         if (s.respawnAt !== null) {

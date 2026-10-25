@@ -4,7 +4,7 @@
 import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { stateDir, tokenLogPath } from './config.js';
-import { LaunchAdmission, LaunchClaim, WakeCheck, WorkstreamInfo, actorActivity, actorSelfSpend, actorTickets, escalateBlocked, escalateSilentDeclines, launchAdmit, launchClaim, launchId, launchQuarantine, launchReceipt, launchRevalidate, openEscalation, poolWorker, readyTicketIds, recordSpend, releaseClaim, scopeLabel, seatHolds, seatId, seatName, seatStreams, ticketState, ticketStatus, wakeCheck, withoutHolds, workstreamInfo } from './helm.js';
+import { LaunchAdmission, LaunchClaim, WakeCheck, WorkstreamInfo, actorActivity, actorSelfSpend, actorTickets, escalateBlocked, escalateSilentDeclines, launchAdmit, launchClaim, launchId, launchQuarantine, launchReceipt, launchRevalidate, openEscalation, poolWorker, readyTicketIds, recordSpend, releaseClaim, releaseSetMoved, scopeLabel, seatHolds, seatId, seatName, seatStreams, ticketState, ticketStatus, wakeCheck, withoutHolds, workstreamInfo } from './helm.js';
 import { burnWindow, markBurnFloor, recentCosts } from './burn.js';
 import { exhaustedLimit, pollUsage, readCodexUsage, readUsage, refreshCodexUsage, refreshFor, usageForModel } from './usage.js';
 import { anomalyDecide, capacityDecide, planPointsConsumed } from './capacity.js';
@@ -60,6 +60,38 @@ function tryWakeCheck(g: GlobalConfig, l: LoopConfig, sinceSeq: number): WakeChe
     const decision = wedgeDecide(streak(l.name, 'wakefail', true), g.wedge_cap);
     if (decision.act === 'wedge') raiseWedgeAlarm(l.name, decision.reason);
     return null;
+  }
+}
+
+/** Did this session advance work? The same subprocess boundary as the wake
+ *  check, at the iteration's other end, and until H-3530 the one Helmo read in
+ *  an iteration that could still kill the loop with an uncaught throw — which
+ *  is the defect H-134 closed above, restated.
+ *
+ *  Unreachable reads as not produced, which only idles the loop at its cursor:
+ *  nothing is charged against the agent, because the decline check downstream
+ *  reaches Helmo through this same path and declines nothing when it cannot.
+ *  The release set moving under a loop is the expected cause — the wake check
+ *  minutes earlier succeeded, so the tree moved mid-iteration — and it gets one
+ *  line that names both releases instead of a stack trace at the head of the
+ *  log that reads exactly like a fleet running stale code. Anything else keeps
+ *  the full error. */
+function tryActorActivity(g: GlobalConfig, l: LoopConfig, sinceSeq: number): number {
+  try {
+    return actorActivity(g, l, sinceSeq);
+  } catch (e) {
+    const moved = releaseSetMoved(e);
+    if (moved) {
+      logEvent(l.name, 'release-set-moved', `at=actor-activity running=${moved.running} selected=${moved.selected}`);
+      console.error(
+        `rev: the release set moved while '${l.name}' was running — it reads Helmo at ${moved.running}, and ${moved.selected} is now selected.`
+        + ' This iteration counts as no production; the fleet restart that follows an activation brings this loop back on the selected release.',
+      );
+    } else {
+      logEvent(l.name, 'activity-check-failed', String(e).slice(0, 200));
+      console.error(`rev: could not read what '${l.name}' produced this iteration — counting it as none. ${String(e).slice(0, 200)}`);
+    }
+    return 0;
   }
 }
 
@@ -872,7 +904,7 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     // Production means work advanced, not bytes written (H-412): a note-only
     // update does not count, so an agent that reports "nothing to do" idles
     // instead of re-certifying itself busy.
-    const produced = res.cls === 'ok' && launchTrusted ? actorActivity(g, l, before.max_seq) > 0 : false;
+    const produced = res.cls === 'ok' && launchTrusted ? tryActorActivity(g, l, before.max_seq) > 0 : false;
     const failStreak = res.cls === 'failure' ? streak(l.name, 'fail', true) : 0;
     const limitStreak = res.cls === 'transient' ? streak(l.name, 'limit', true) : 0;
     let action = ladderDecide(res.cls, {

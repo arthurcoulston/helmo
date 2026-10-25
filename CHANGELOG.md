@@ -39,6 +39,18 @@ longer.
 
 ### Fixes
 
+- A release activation no longer kills the loops of the fleet it replaces. The
+  produced-check at the end of each iteration was the last Helmo read a loop
+  made and the only unguarded one, so an activation landing mid-iteration took
+  the outgoing loop down with an uncaught stack trace that named the outgoing
+  release — unreadable, in a log, against a fleet genuinely running stale code.
+  Rev now recognises "the release set moved under me" as its own condition:
+  the loop logs `release-set-moved` with both release paths, counts the
+  iteration as no production and idles, and the supervisor's poll-time resume
+  and recovery checks report it in place of their own failure and say once on
+  the console that the process can no longer read Helmo until it restarts on
+  the selected release. The coherence check itself is unchanged and still
+  refuses every call from a tree that is not the installed release.
 - The release floor can fail again on the surface the product actually serves.
   `API_FLOOR`/`overApiBudget` measure the served JSON, and
   `packages/work/test/api-floor.test.ts` runs them on stores of 1,000 and

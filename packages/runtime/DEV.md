@@ -1670,6 +1670,28 @@ follow a module imported dynamically much later.
   Known gap, latent rather than observed: a scoped loop's wake still fires on
   `ready_count > 0` alone, so a ready ticket the agent keeps declining re-wakes
   it each poll. That belongs to the wake gate.
+- **A long-lived Rev process keeps the Helmo path it read at startup**
+  (H-3530). `g.helmo_cli` comes from the roster once, at `loadRoster()`, and
+  nothing refreshes it — which is why the start-time `releasePinProblems` check
+  is where a stranded path is refused: the supervisor is the one process a
+  release change restarts. Inside an activation window the opposite holds, the
+  selection having moved while the supervisor and its loops have not, so every
+  Helmo call those processes make is refused by the coherence check, correctly.
+  `releaseSetMoved` in `helm.ts` reads that one refusal out of the CLI's error
+  ("running from A, not B" — never the selection-or-manifest disagreements that
+  share its prefix and mean a broken installation), and the two call sites that
+  meet it in that window name it rather than their own failure. The
+  produced-check logs `release-set-moved`, counts the iteration as no
+  production and goes on; it used to die there with a Node stack trace naming
+  the outgoing release, which is indistinguishable in a log from a fleet
+  genuinely executing stale code — 1,020 to 1,437 of them per loop console log
+  on 2026-10-25, and one mason iteration spent re-establishing that they were
+  benign. The supervisor's two poll-time Helmo calls — the blocked-loop resume
+  check and its completion — log it in place of their own `*-failed` line and
+  say once on the console that this process can no longer read Helmo at all,
+  which is the larger true statement that `answer-resume-check-failed` on one
+  unlucky loop was hiding. `consumeRuntimeRecovery` beside them is deliberately
+  not wrapped: it reads local files only and can never meet this refusal.
 - **The usage poller never touches the token except in one header** (H-278/
   H-280). Read from the keychain per poll and discarded when the call returns;
   never held for the process lifetime, never written to disk, never in argv —

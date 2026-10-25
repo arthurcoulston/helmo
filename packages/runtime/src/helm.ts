@@ -209,13 +209,32 @@ export function createFeedbackAssignment(g: GlobalConfig, body: string): string 
  *  a refusal on a closed ticket read for a day as a missing actor (H-1118).
  *  The CLI prints {"error": ...} to stderr and exits 1; that is the reason. */
 export function cliError(e: unknown): string {
-  const err = e as { stderr?: string | Buffer; message?: string };
+  // `?? {}` because every caller is a catch block, and a thrown null or
+  // undefined would otherwise make the reason-reader itself the crash.
+  const err = (e ?? {}) as { stderr?: string | Buffer; message?: string };
   const raw = String(err.stderr ?? '').trim();
   try {
     return String((JSON.parse(raw) as { error?: unknown }).error ?? raw);
   } catch {
     return raw || String(err.message ?? e);
   }
+}
+
+/** The release set moved out from under this process (H-3530). Helmo's
+ *  coherence check refuses every command, reads included, from a tree that is
+ *  not the installed release — correctly, and for a Rev process that read its
+ *  `helmo_cli` before an activation replaced the selection, unavoidably. Only
+ *  the "running from A, not B" refusal counts: the check's other failures
+ *  (a selection that names no directory, a component that does not match) are
+ *  a broken installation, not a tree that moved.
+ *
+ *  This says nothing about whether the condition is benign. That is the call
+ *  site's to make — a loop on its way out versus one mid-iteration — and what
+ *  it buys is a report that names both releases instead of one that reads as a
+ *  fault in whichever feature happened to ask. */
+export function releaseSetMoved(e: unknown): { product: string; running: string; selected: string } | null {
+  const m = /incoherent release set: ([\w-]+): \S+ is running from (.+), not (.+)$/.exec(cliError(e).split('\n')[0]!.trim());
+  return m ? { product: m[1]!, running: m[2]!, selected: m[3]! } : null;
 }
 
 /** Workflow launch admission (H-2561, helmo H-471). Asked immediately before a

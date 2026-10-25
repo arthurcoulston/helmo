@@ -3,7 +3,7 @@
 // completes a ticket through Helm → produced-check → idle → escalation on
 // repeated failure. No agent CLI, no tokens.
 import { describe, it, expect, beforeEach } from 'vitest';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync, chmodSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -106,6 +106,28 @@ const args = process.argv.slice(2);
 if (args[0] === 'actor-tickets' && !existsSync(${JSON.stringify(failed)})) {
   writeFileSync(${JSON.stringify(failed)}, 'failed');
   process.stderr.write('injected actor-tickets failure\\n');
+  process.exit(1);
+}
+const result = spawnSync(process.execPath, [${JSON.stringify(HELM_CLI)}, ...args], { env: process.env, stdio: 'inherit' });
+process.exit(result.status ?? 1);
+`);
+  const roster = join(e.home, 'roster.toml');
+  writeFileSync(roster, readFileSync(roster, 'utf8').replace(`helmo_cli = "${HELM_CLI}"`, `helmo_cli = "${proxy}"`));
+}
+
+/**
+ * An activation that lands mid-iteration: the selection moves, and Helmo's
+ * coherence check refuses every call the loop makes from its captured release
+ * path. Only `actor-activity` is refused here, which is the narrow case that
+ * matters — the produced-check is the last Helmo read of an iteration, so it is
+ * the one a release change can reach after everything before it succeeded.
+ */
+function releaseMovedProxy(e: Env): void {
+  const proxy = join(e.home, 'release-moved-proxy.mjs');
+  writeFileSync(proxy, `import { spawnSync } from 'node:child_process';
+const args = process.argv.slice(2);
+if (args[0] === 'actor-activity') {
+  process.stderr.write(JSON.stringify({ error: 'incoherent release set: helmo: helmo is running from /releases/2026.10-27/helmo/packages/work, not /releases/2026.10-28/helmo/packages/work' }));
   process.exit(1);
 }
 const result = spawnSync(process.execPath, [${JSON.stringify(HELM_CLI)}, ...args], { env: process.env, stdio: 'inherit' });
@@ -552,6 +574,49 @@ fi
     // which is not a refusal and is not recorded as a decision.
     expect(events.match(/launch-admitted/g)).toHaveLength(1);
     expect(events).not.toMatch(/launch-denied|launch-admit-unsupported/);
+  });
+
+  // H-3530: the produced-check was the one Helmo read left in an iteration that
+  // could still kill the loop with an uncaught throw — the defect H-134 closed
+  // for the wake check, at the iteration's other end. Its commonest cause is an
+  // activation moving the release set under a loop that is already running, and
+  // the refusal arrived as a Node stack trace at the head of the console log,
+  // naming the outgoing release: indistinguishable, to anyone reading that log,
+  // from a fleet genuinely executing stale code.
+  it('survives the release set moving under it, and names both releases instead of throwing (H-3530)', () => {
+    const e = setup(`[loops.moved-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+mock_cmd = '''
+set -e
+ID=$(node ${HELM_CLI} list --ready --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
+if [ -n "$ID" ]; then
+  node ${HELM_CLI} update --ticket $ID --note "claimed by mock" --status in_progress
+  node ${HELM_CLI} update --ticket $ID --note "worked by mock"
+fi
+'''
+`);
+    seedTicket(e, 'Work the mock advances before the release moves');
+    releaseMovedProxy(e);
+
+    const run = spawnSync('node', ['--import', 'tsx', REV_CLI, 'run', 'moved-loop', '--count', '1'], {
+      env: e.env, cwd: join(import.meta.dirname, '..'), encoding: 'utf8',
+    });
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).toContain('the release set moved while \'moved-loop\' was running');
+    expect(run.stderr).toContain('/releases/2026.10-27/helmo/packages/work');
+    expect(run.stderr).toContain('/releases/2026.10-28/helmo/packages/work');
+    // The signal the old stack trace buried: not a Node error, and not the
+    // generic reason-reader either.
+    expect(run.stderr).not.toMatch(/at actorActivity|genericNodeError/);
+    const events = readFileSync(join(e.home, 'state', 'moved-loop', 'events.log'), 'utf8');
+    expect(events).toMatch(/release-set-moved\s+at=actor-activity running=\S+2026\.10-27\S+ selected=\S+2026\.10-28\S+/);
+    expect(events).not.toMatch(/activity-check-failed/);
+    // An unreadable produced-check is not a verdict: the loop idles at its
+    // cursor rather than running on, and the session is not charged a decline.
+    expect(events).toMatch(/run-end.*produced=false.*action=idle/);
   });
 
   it('journals which tickets a scoped seat\'s session wrote to, so a trace can find it (H-2901)', () => {

@@ -12,6 +12,16 @@ import { HELMO_VERSION } from '@helmo/core';
 // agents via the crew-mcp worker) — register the identical tools from here.
 // Tool descriptions are guidance-as-deployed; edit them here and only here.
 
+// A ceiling on how much structure one tools/call may hand the schemas, which is
+// how GHSA-46jr-4wx8-v453 is closed: a body inside any size limit can still
+// carry enough array elements and object members to exhaust memory during
+// validation, and the SDK only counts them when asked (H-3517). The figure is
+// measured, not guessed: over the 28,909 events of the busiest store it was
+// taken on, the largest write counted 2,014 elements — a long body with a
+// multi-item `evidence` array beside it — so this leaves roughly five times the
+// headroom of anything real while refusing the shapes the advisory describes.
+export const MAX_TOOL_INPUT_ELEMENTS = 10_000;
+
 const actorSchema = z
   .object({
     name: z.string(),
@@ -77,7 +87,11 @@ function compact(t: Ticket, blockedBy: string[] = []) {
   };
 }
 
-export function buildServer(store: Store, envActor: Actor | null, server = new McpServer({ name: 'helmo', version: HELMO_VERSION })): McpServer {
+export function buildServer(
+  store: Store,
+  envActor: Actor | null,
+  server = new McpServer({ name: 'helmo', version: HELMO_VERSION }, { maxToolInputElements: MAX_TOOL_INPUT_ELEMENTS }),
+): McpServer {
   const resolveActor = (override?: Actor): Actor => writingActor(override, envActor);
 
   // The installation comes off the store rather than a second parameter, so

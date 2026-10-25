@@ -24,7 +24,7 @@
   "type": "module",
   "dependencies": {
     "@helmo/core": "1.0.1",
-    "@modelcontextprotocol/sdk": "^1.31.0",
+    "@modelcontextprotocol/sdk": "^1.32.0",
     "better-sqlite3": "^13.0.2",
     "zod": "^4.4.3"
   },
@@ -33,7 +33,7 @@
     "@types/node": "^26.1.2",
     "tsx": "^4.23.5",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.12"
   },
   "bin": {
     "roadmap-mcp": "bin/roadmap-mcp.js",

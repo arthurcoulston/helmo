@@ -9,6 +9,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { installation, InstallationError, requestedInstallation, requireInstallation } from '../src/install.js';
 import { Store } from '../src/store.js';
+import { MAX_TOOL_INPUT_ELEMENTS } from '../src/tools.js';
 import { Actor } from '../src/types.js';
 
 // H-2472. Four entry points each resolved HELMO_DB on their own, and an
@@ -251,6 +252,70 @@ describe('every entry point reaches one installation through its home (H-2472)',
         resolve();
       });
     });
+  });
+});
+
+// What the remote surface refuses, as opposed to what it serves (H-3517). The
+// three cases below are the whole of what an authenticated caller can spend on
+// this process before any tool runs: the bearer token, the body it may send,
+// and how much structure that body may carry.
+describe('the remote surface refuses before it spends anything (H-3517)', () => {
+  let dir: string;
+  let home: string;
+  let url: string;
+  const running: ChildProcess[] = [];
+
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'helmo-remote-refusals-'));
+    home = join(dir, '.helmo');
+    mkdirSync(home, { recursive: true });
+    new Store(join(home, 'helmo.db')).close();
+    const port = await freePort();
+    const { child } = await started('src/remote.ts', { HELMO_HOME: home, HELMO_REMOTE_PORT: String(port) });
+    running.push(child);
+    url = `http://127.0.0.1:${port}/`;
+  });
+  afterAll(() => {
+    for (const c of running) c.kill('SIGKILL');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** A well-formed tools/call, so each case below differs in exactly one way. */
+  const call = (args: unknown) => JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'helmo_get_ticket', arguments: args } });
+  const post = (body: string, token: string | null = TOKEN) =>
+    fetch(url, {
+      method: 'POST',
+      headers: {
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
+      },
+      body,
+    });
+
+  it('answers 401 to a wrong token and to no token at all, before reading a body', async () => {
+    for (const token of [null, 'not-the-token-but-long-enough-to-pass']) {
+      const res = await post(call({ ticket_id: 'H-1' }), token);
+      expect(res.status, `token: ${String(token)}`).toBe(401);
+      expect(await res.json()).toEqual({ error: 'unauthorized' });
+    }
+  });
+
+  it('answers 413 to a body over the cap instead of parsing it (GHSA-46jr-4wx8-v453)', async () => {
+    // Over 4 MiB in one string: a single declared Content-Length is enough,
+    // which is the shape the entry used to concatenate in full before the
+    // transport saw it.
+    const res = await post(call({ ticket_id: 'H'.repeat(5 * 1024 * 1024) }));
+    expect(res.status).toBe(413);
+    expect(JSON.stringify(await res.json())).toMatch(/too large/i);
+  });
+
+  it('refuses a body within the cap that carries more elements than the schemas may walk', async () => {
+    // Small on the wire, expensive to validate: the element ceiling is the only
+    // thing between this payload and the memory the advisory describes.
+    const res = await post(call({ ticket_id: 'H-1', evidence: Array.from({ length: MAX_TOOL_INPUT_ELEMENTS + 1 }, () => 1) }));
+    expect(res.status).toBe(200);
+    expect(JSON.stringify(await res.json())).toContain(`more than the maximum of ${MAX_TOOL_INPUT_ELEMENTS} elements`);
   });
 });
 

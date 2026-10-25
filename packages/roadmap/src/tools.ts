@@ -10,6 +10,12 @@ import { HELMO_VERSION } from '@helmo/core';
 // Single source of truth for the MCP tool surface, Helmo-style: tool
 // descriptions are guidance-as-deployed. Edit them here and only here.
 
+// Same ceiling as Work's, for the same advisory (GHSA-46jr-4wx8-v453, H-3517).
+// Roadmap serves stdio only, so no remote caller reaches it, but the two tool
+// surfaces are built the same way and a limit that holds on one and not the
+// other is a limit nobody can state.
+const MAX_TOOL_INPUT_ELEMENTS = 10_000;
+
 const actorSchema = z
   .object({
     name: z.string(),
@@ -61,7 +67,7 @@ export function buildServer(
   store: Store,
   envActor: Actor | null,
   install?: Installation,
-  server = new McpServer({ name: 'helmo-roadmap', version: HELMO_VERSION }),
+  server = new McpServer({ name: 'helmo-roadmap', version: HELMO_VERSION }, { maxToolInputElements: MAX_TOOL_INPUT_ELEMENTS }),
 ): McpServer {
   const resolveActor = (override?: Actor): Actor => override ?? envActor ?? ({} as Actor);
   const identity = store.installationIdentity();

@@ -46,6 +46,26 @@ longer.
   grow with the store. The HTML render-time budget remains without a runner
   and is named as such in `packages/work/DEV.md`.
 
+### Security
+
+- The remote MCP entry (`packages/work/dist/remote.js`, not launched by any
+  install step) answers `413` to a request body over 4 MiB instead of reading
+  it in full, and both tool surfaces refuse a `tools/call` whose arguments
+  carry more than 10,000 array elements and object members. Together these
+  close GHSA-46jr-4wx8-v453, where one HTTP request inside the size limit can
+  exhaust server memory during validation: the entry used to concatenate the
+  whole body itself and hand the transport a pre-parsed object, which is the
+  one branch that skips the transport's size check, and the SDK's element
+  ceiling is off until a server sets it. The surface was already gated by a
+  shared bearer token checked before any SDK parsing, so an unauthenticated
+  caller never reached either path.
+- `@modelcontextprotocol/sdk` ^1.32.0, `vite` ^8.3.3 and `vitest` ^4.1.12 are
+  the new floors, and the lockfile re-resolves `ip-address`, `zod`, `undici`,
+  `body-parser`, `fast-uri`, `shadcn` and `@vitest/mocker` onto their patched
+  versions. `npm audit` reads zero. The vite and vitest advisories are
+  dev-server and browser-mode issues that no install path runs; the
+  per-advisory reasoning for each is recorded with the release.
+
 ## v1.0.0 — 2026-10-22
 
 This cut includes the integrated runtime, work and roadmap changes since

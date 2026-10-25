@@ -33,12 +33,14 @@ const store = new Store(install.db, install);
 
 const port = Number(process.env['HELMO_REMOTE_PORT'] ?? 4401);
 
-async function readBody(req: IncomingMessage): Promise<unknown> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(chunk as Buffer);
-  const raw = Buffer.concat(chunks).toString('utf8');
-  return raw ? JSON.parse(raw) : undefined;
-}
+// How large a request body this surface will read before answering 413. The
+// transport enforces it — but only on bodies IT reads: this entry used to
+// concatenate the whole stream itself and hand the transport the parsed
+// object, and `parsedBody` is the one branch that skips the size check
+// (GHSA-46jr-4wx8-v453, H-3517). So the stream goes to the transport unread.
+// 4 MiB is the SDK's own default, stated here rather than inherited, because a
+// cap a later release quietly changes is a cap nobody can test against.
+const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024;
 
 const listener = createServer((req: IncomingMessage, res: ServerResponse) => {
   void (async () => {
@@ -55,13 +57,17 @@ const listener = createServer((req: IncomingMessage, res: ServerResponse) => {
     // Remote callers never inherit a machine identity: no HELMO_ACTOR here,
     // so every write must carry a truthful per-call actor or be rejected (H-3).
     const server = buildServer(store, null);
-    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+      enableJsonResponse: true,
+      maxRequestBodySize: MAX_REQUEST_BODY_BYTES,
+    });
     res.on('close', () => {
       void transport.close();
       void server.close();
     });
     await server.connect(transport);
-    await transport.handleRequest(req, res, await readBody(req));
+    await transport.handleRequest(req, res);
   })().catch((e) => {
     console.error('remote request failed:', e);
     if (!res.headersSent) {

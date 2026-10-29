@@ -133,6 +133,15 @@ const UNMEASURED = [
 
 const sha256 = (text: string): string => createHash('sha256').update(text, 'utf8').digest('hex');
 
+/** The shape a host session id has to have before it may become part of a
+ *  path. The id comes from the host CLI's own `session_id` and is a uuid, but
+ *  it reaches us through this installation's launch journal, and whatever
+ *  wrote that journal chose the string we are about to join onto a directory
+ *  name. `../../../outside` is a session id as far as `join` is concerned
+ *  (H-3599). Validating the shape costs nothing and means the only paths this
+ *  module can build are the ones the host itself could have written. */
+const HOST_SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** `~/.claude` unless the operator moved it. The host decides this, so it is
  *  read from the host's own variable rather than assumed. */
 function claudeHome(): string {
@@ -258,6 +267,7 @@ interface HostRecord {
  *  computed name would report a present record as missing. The expected name
  *  is tried first because it is one stat instead of a scan. */
 export function readClaudeHostRecord(sessionId: string, cwd: string): HostRecord | null {
+  if (!HOST_SESSION_ID.test(sessionId)) return null;
   const projects = join(claudeHome(), 'projects');
   const expected = join(projects, claudeProjectSlug(cwd), `${sessionId}.jsonl`);
   let file: string | null = existsSync(expected) ? expected : null;
@@ -475,6 +485,18 @@ export function checkClaudePath(l: LoopConfig, opts: { installation?: string; in
       repair: 'The adapter did not report a session id. Check whether the host CLI still prints `session_id` in its `--output-format json` result; the shim reads it from there.',
     });
     return done('stale', 'The launch settled but carries no join key, so no historical evidence could be read.');
+  }
+  if (!HOST_SESSION_ID.test(session.provider_session_id)) {
+    // Reported as a malformed join key rather than a missing record, because
+    // those are different repairs: the record is not absent, the id never
+    // named one. The id is not echoed — a string shaped like a path is the
+    // one case where printing it is the thing to avoid (H-3599).
+    assertions.push({
+      id: 'provider_session_id', held: false,
+      detail: `Launch ${launch.launch_id} carries a provider session id that is not a host session id (${session.provider_session_id.length} characters, not a uuid), so it names no host record.`,
+      repair: 'The launch journal entry was written by something other than this installation\'s shim, or the host CLI changed what it reports as `session_id`. Check the entry under `$REV_HOME/state/<seat>/launches` and the adapter that wrote it.',
+    });
+    return done('stale', 'The join key is present and is not a host session id, so no historical evidence could be read.');
   }
   assertions.push({ id: 'provider_session_id', held: true, detail: `Observed: ${session.provider_session_id}.` });
 

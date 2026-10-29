@@ -294,6 +294,22 @@ describe('the host record', () => {
     expect(coverage.last_verified_at).toBeNull();
   });
 
+  it('refuses an id that is not a host session id rather than joining it onto a path', () => {
+    // The id reaches the reader through this installation's own launch
+    // journal, so a writer of that journal chooses the string (H-3599). Plant
+    // the file a traversal id would reach and assert it is never opened.
+    const outside = join(claude, 'outside.jsonl');
+    writeFileSync(outside, `${JSON.stringify({ type: 'user', cwd: tree, version: '9.9.9' })}\n`);
+
+    expect(readClaudeHostRecord('../../outside', tree)).toBeNull();
+    expect(readClaudeHostRecord('/etc/passwd', tree)).toBeNull();
+    expect(readClaudeHostRecord('aaaaaaaa-1111-2222-3333-444444444444/../../outside', tree)).toBeNull();
+    // And the shape it does accept still reads: the guard is not a refusal of
+    // every id, which a test asserting only nulls would not notice.
+    hostRecord('cccccccc-1111-2222-3333-444444444444');
+    expect(readClaudeHostRecord('cccccccc-1111-2222-3333-444444444444', tree)?.cli_version).toBe('2.1.300');
+  });
+
   it('reads nothing from a record that is not a regular file', () => {
     const dir = join(claude, 'projects', claudeProjectSlug(tree));
     mkdirSync(join(dir, 'bbbbbbbb-1111-2222-3333-444444444444.jsonl'), { recursive: true });
@@ -312,6 +328,20 @@ describe('a launch with nothing to join on', () => {
     expect(coverage.state).toBe('stale');
     expect(coverage.assertions[0]).toMatchObject({ id: 'provider_session_id', held: false });
     expect(coverage.assertions[0]!.repair).toContain('--output-format json');
+  });
+
+  it('calls a join key that is not a host session id malformed, not missing, and does not echo it', () => {
+    settled('mason', 'rev:mason:1:1:1793000000000', { provider_session_id: '../../../outside' });
+    const coverage = checkClaudePath(loop());
+
+    expect(coverage.state).toBe('stale');
+    expect(coverage.assertions[0]).toMatchObject({ id: 'provider_session_id', held: false });
+    expect(coverage.assertions[0]!.detail).toContain('not a uuid');
+    expect(coverage.assertions[0]!.detail).not.toContain('..');
+    expect(coverage.assertions[0]!.repair).toContain('launches');
+    // The reading stops at the join key: no host_record assertion is reached,
+    // so nothing claims a record is absent when none was ever named.
+    expect(coverage.assertions.map((a) => a.id)).not.toContain('host_record');
   });
 
   it('is stale, with no launch rather than no account, before a path has ever run', () => {

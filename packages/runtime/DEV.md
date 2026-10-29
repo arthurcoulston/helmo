@@ -448,7 +448,12 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   host maps both `/` and `.` to `-`, so the name is lossy both ways and a
   present record would be reported missing. `HOST_RECORD_BYTE_CEILING` bounds
   a transcript that holds no request shape at all; the launch's own shape is in
-  the first entries and the read stops there.
+  the first entries and the read stops there. The id is held to the uuid shape
+  before it becomes part of a path (`HOST_SESSION_ID`, H-3599): it comes from
+  the host CLI's own `session_id`, but it reaches the reader through this
+  installation's launch journal, and an id that is not a session id is reported
+  as a malformed join key rather than as a missing record — different repairs,
+  and the id itself is not echoed back.
 - **Every Team read goes through `readBounded`, and that is the whole guard
   (H-3004).** The inventory includes every `CLAUDE.md` and `AGENTS.md` found
   walking up from a seat's cwd — files no roster entry names, in trees any agent

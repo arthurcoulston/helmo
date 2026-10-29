@@ -80,6 +80,16 @@ longer.
   the console that the process can no longer read Helmo until it restarts on
   the selected release. The coherence check itself is unchanged and still
   refuses every call from a tree that is not the installed release.
+- A session trace keeps a run record whose measured window names a test result.
+  A seat's attribution window groups Work events by their row id, and a
+  recorded test result's row id is the suite's own name rather than a ticket;
+  the reader refused the whole launch entry over one such row, so every
+  session that recorded a test result lost its provider, model, timing and
+  usage and was counted only in `malformed_launch_records`. It now keeps the
+  entry and drops the rows that are not ticket ids, which recovers 37 existing
+  records on this machine, and the writer filters the same rows so a suite
+  name can no longer be the primary ticket a session's metered spend is
+  charged to.
 - The release floor can fail again on the surface the product actually serves.
   `API_FLOOR`/`overApiBudget` measure the served JSON, and
   `packages/work/test/api-floor.test.ts` runs them on stores of 1,000 and

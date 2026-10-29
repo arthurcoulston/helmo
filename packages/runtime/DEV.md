@@ -458,6 +458,62 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   id has been observed AND held to its shape, because building `historical`
   from the journal entry first put the raw string one field away from an
   assertion carefully reporting nothing but a character count (H-3612).
+- `startup-context.ts` — what one launch ACTUALLY received, written at the
+  moment it was handed over (R-55 H-3573). context-coverage.ts names its own
+  two limits in its code, and both are this module's contract: the host's
+  transcript is prunable and not versioned with our releases, so a host path is
+  not retention; and that transcript retains the prompt WHOLE with no
+  per-source hash, so it can only say the bytes differ, never which file moved.
+  So this record is this installation's own, and it is per source.
+  Two halves, written at the two moments their evidence exists. At dispatch,
+  immediately before the model process starts, `recordStartupContext` reads the
+  constitution, each roster skill and each discovered instruction file once,
+  retains their exact bytes, and records the identity, association basis,
+  versions, channels, per-source hashes, source repositories and the
+  composition's own hash. At settlement `attachSettlement` adds the host CLI's
+  own record and asks the one question that turns RECORDED into CONFIRMED:
+  does the host's retained prompt contain the exact bytes this receipt took at
+  launch? A receipt whose host record was pruned stays `supplied_confirmed:
+  null` with its content intact — the case the retained copy exists for — and a
+  receipt whose host disagrees says so rather than reconciling it.
+  **The composed prompt is not stored.** It is rebuilt from the per-source
+  blobs and `skillHeader`'s framing by `reconstructComposed`, then checked
+  against the sha256 taken at launch. That check is what makes the rebuild
+  evidence instead of a plausible reconstruction: if this reader's framing and
+  the launcher's ever drift, it reports a mismatch rather than returning bytes
+  nobody received. Storing a second copy of the same bytes would be the
+  redundant content the brief warns against, and it would not carry that check.
+  Content lives in one content-addressed store per installation,
+  `state/context-blobs/<first two>/<sha256>`, shared by every receipt naming
+  it: a seat's constitution is one copy however many times it launches, so
+  storage is O(distinct content) rather than O(launches). Blobs are written
+  before the receipt, so a receipt never names a blob that was not on disk
+  first.
+  Five distinctions, the same discipline as team.ts's three and
+  context-coverage.ts's four. SUPPLIED against DISCOVERED: Rev composes the
+  constitution and the roster skills, and the host CLI finds `CLAUDE.md` files
+  itself — both are recorded, only the first is something this installation
+  handed over, and NEITHER is a claim the session read them. RECORDED against
+  CONFIRMED, above. RETAINED against EXPIRED against LOST: `resolveContent`
+  resolves each reference at READ time, so a receipt is never rewritten to hide
+  the difference between content the policy dropped at `RETENTION_DAYS` and
+  content that went missing inside the horizon, which is a defect in the store.
+  COMPLETE against PARTIAL against FAILED recording: a recording failure must
+  never take down a launch and must never pass as an absence, so it writes a
+  receipt that says it failed, keeping the work association and the hashes of
+  what it did read — a launch with no receipt at all therefore means only that
+  nothing could be written. And NOW against LATER: nothing here covers what a
+  session read after it started or what survived a compaction, and both stay
+  named in `unknowns`.
+  The tool surface is named by reference only — server names and the program
+  each runs. Never their arguments or environment, which is where credentials
+  and the per-session actor stamp live, and a receipt is a document somebody
+  reads. `compareReceipts` is the two-run comparison and answers in file names;
+  it refuses to read a cross-installation pair as drift in one, since seat
+  names and launch ids are unique only inside an installation. `pruneBlobs` is
+  reference-counted over the receipts inside the horizon and never over a
+  blob's own mtime: two launches 100 days apart share the constitution, and
+  dropping it on its age would empty a receipt written yesterday.
 - **Every Team read goes through `readBounded`, and that is the whole guard
   (H-3004).** The inventory includes every `CLAUDE.md` and `AGENTS.md` found
   walking up from a seat's cwd — files no roster entry names, in trees any agent
@@ -1337,6 +1393,18 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   any path is `stale` or `error`, so whatever runs it learns the finding
   without reading the JSON. `--no-inventory` drops the tokenized per-file
   measurement; the whole fleet with it measures ~2s here.
+- `node dist/cli.js startup-context [seat] [--launch <id>] [--ticket <id>]
+  [--limit <n>]` prints the startup receipts: one per launch, newest first,
+  each with its content resolved now and whether its composition still rebuilds.
+  `--ticket` is the flag the CLI door already consumes, and the work-linked
+  lookup goes through the launch journal's admitted ticket and measured
+  `touched_tickets` window rather than a second index that could disagree with
+  it. `--diff <launch> --b <launch>` (with `--a-seat`/`--b-seat` to cross seats)
+  compares two runs per source. `--prune` reports what the retention policy
+  would drop and deletes nothing until `--apply`: the destructive half of a
+  policy asks for the word, so that reading the policy can never delete under
+  it. Exits non-zero when a receipt failed to record or retained content went
+  missing inside the horizon.
 - `npm run vendor:tokens` refreshes the vendored estate design tokens,
   `npm run vendor:avatars` the vendored crew avatar sprite, and
   `npm run vendor:reach` the vendored estate reach table; add `-- --check`

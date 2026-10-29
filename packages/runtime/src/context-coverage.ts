@@ -144,7 +144,7 @@ const HOST_SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-
 
 /** `~/.claude` unless the operator moved it. The host decides this, so it is
  *  read from the host's own variable rather than assumed. */
-function claudeHome(): string {
+export function claudeHome(): string {
   const configured = process.env['CLAUDE_CONFIG_DIR'];
   return configured && configured.trim() ? configured : join(homedir(), '.claude');
 }
@@ -163,7 +163,7 @@ export function claudeProjectSlug(cwd: string): string {
  *  Deliberately not two reads: reporting a source `read` from one open and
  *  composing the prompt from a second would let a file that changed between
  *  them be left out of a composition this reading calls complete. */
-function readSource(path: string, role: SourceReading['role']): { source: SourceReading; text: string | null } {
+export function readSource(path: string, role: SourceReading['role']): { source: SourceReading; text: string | null } {
   const at = (source: SourceReading): { source: SourceReading; text: null } => ({ source, text: null });
   if (!existsSync(path)) {
     return at({ path, role, bytes: 0, sha256: null, state: 'missing', error: 'The roster names this file and it is not there.' });
@@ -210,7 +210,7 @@ function composeToday(l: LoopConfig): { sources: SourceReading[]; text: string |
  *  Separate from the installed release version: a release says which Helmo is
  *  running, and this says which revision of the INSTRUCTIONS it was handed.
  *  The audit's own figures went stale on the second of those, not the first. */
-function sourceRepos(sources: SourceReading[]): CurrentSources['repos'] {
+export function sourceRepos(sources: SourceReading[]): CurrentSources['repos'] {
   const byDir = new Map<string, string[]>();
   for (const source of sources) {
     const dir = dirname(source.path);

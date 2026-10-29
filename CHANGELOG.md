@@ -15,6 +15,26 @@ longer.
 
 ### Added
 
+- Every launch on the Claude path now leaves a **startup receipt**: what that
+  run actually received, recorded at the moment it was handed over rather than
+  reconstructed later from whatever the files say now. Each receipt carries the
+  run/seat/task identity and the evidence its ticket association rests on, the
+  provider, model and adapter versions, the ordered sources with a hash per
+  file and the repository commit each sits in, the channel each arrived
+  through, and the exact bytes — retained in this installation's own
+  content-addressed store, because the host CLI's transcript can be pruned and
+  a path that may be pruned is not retention. The composed prompt is not stored
+  twice: it rebuilds from the per-source bytes and is checked against the hash
+  taken at launch. At settlement the host's own record is read, and whether it
+  contains those exact bytes is recorded as a separate claim from having
+  recorded them. `rev startup-context` reads the receipts for a seat, a launch
+  or a ticket; `--diff` compares two runs and answers in file names, which the
+  host's own record cannot do because it retains the prompt whole; `--prune`
+  reports what the 90-day retention policy would drop and deletes nothing until
+  `--apply`. Supplied and discovered sources stay separate claims, neither is a
+  claim the session read them, a recording failure writes a receipt saying so
+  rather than leaving an absence, and what a session read later or kept after a
+  compaction stays named as unmeasured.
 - `rev context-coverage [seat] [--no-inventory]` answers whether this
   installation's account of what each agent loads is still TRUE. The Team
   inventory says what the roster is configured to supply; it cannot say whether

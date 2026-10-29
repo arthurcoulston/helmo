@@ -662,6 +662,50 @@ fi
     expect(readTicketLaunches(['traced-loop'], side).launches).toEqual([]);
   });
 
+  it('records what the launch was handed, before the session, from the real loop (R-55 H-3573)', () => {
+    // The unit tests exercise the recorder; this exercises the WIRING. A
+    // receipt that only ever appears when a test calls the module proves the
+    // module, and the thing that has to be true is that an ordinary iteration
+    // writes one without being asked.
+    const constitution = join(mkdtempSync(join(tmpdir(), 'rev-startup-e2e-')), 'PROFILE.md');
+    writeFileSync(constitution, 'the seat itself, as this loop composes it\n');
+    const e = setup(`[loops.receipt-loop]
+workstream = "rev-test"
+cwd = "/tmp"
+runtime = "mock"
+constitution = "${constitution}"
+mock_cmd = "touch $REV_HOME/session-launched"
+`);
+    seedTicket(e, 'Work that leaves a startup receipt');
+    rev(e, ['run', 'receipt-loop', '--count', '1']);
+
+    const dir = join(e.home, 'state', 'receipt-loop', 'startup');
+    const receipt = JSON.parse(readFileSync(join(dir, readdirSync(dir).find((n) => n.endsWith('.json'))!), 'utf8'));
+    expect(receipt).toMatchObject({ schema: 'helmo.startup-context.v1', seat: 'receipt-loop', recording: { state: 'complete', errors: [] } });
+    // The exact bytes of the constitution this loop was configured with, held
+    // by this installation rather than read back off the live file.
+    expect(receipt.sources).toHaveLength(1);
+    expect(receipt.sources[0]).toMatchObject({ path: constitution, role: 'constitution', claim: 'supplied', state: 'read' });
+    expect(readFileSync(join(e.home, 'state', 'context-blobs', receipt.sources[0].content.sha256.slice(0, 2), receipt.sources[0].content.sha256), 'utf8'))
+      .toBe('the seat itself, as this loop composes it\n');
+    // The iteration prompt the loop actually built, not a reconstruction.
+    expect(receipt.iteration_prompt.retention).toBe('retained');
+    expect(receipt.iteration_prompt.bytes).toBeGreaterThan(0);
+    // Written BEFORE the session, which is the whole claim: a receipt taken
+    // afterwards would be an account of the files, not of the launch. The
+    // journal's own `session.started_at` is the boundary, and it is not a
+    // figure this module writes.
+    const journalDir = join(e.home, 'state', 'receipt-loop', 'launches');
+    const journal = JSON.parse(readFileSync(join(journalDir, readdirSync(journalDir).find((n) => n.endsWith('.json'))!), 'utf8'));
+    expect(Date.parse(receipt.recorded_at)).toBeLessThanOrEqual(Date.parse(journal.session.started_at));
+    expect(readFileSync(join(e.home, 'state', 'receipt-loop', 'events.log'), 'utf8')).toMatch(/startup-context-complete/);
+    expect(existsSync(join(e.home, 'session-launched'))).toBe(true);
+    // A mock launch has no host record to confirm against, and the settlement
+    // says that rather than reporting a Claude record as missing.
+    expect(receipt.settled.supplied_confirmed).toBeNull();
+    expect(receipt.settled.confirmation).toContain('mock adapter');
+  });
+
   it('works on beside an attended sitting in its name, leaving only the sitting\'s ticket alone (H-558)', async () => {
     // The mock "agent" is the single worker drawing its own work: it claims
     // and completes the first ready ticket, then tries to close the sitting's

@@ -17,6 +17,8 @@ import { ancestryBroken, ancestryStamp } from './ancestry.js';
 import { runSession } from './shim.js';
 import { GlobalConfig, LoopConfig, RunChoice } from './types.js';
 import { checkOnSettle } from './context-coverage.js';
+import { attachSettlement, launchAssociation, recordStartupContext } from './startup-context.js';
+import { workingTreeInstructions } from './team.js';
 import { launchGroupFile, launchSessionRunning, readLaunch, recordLaunchAdmission, recordLaunchClaim, recordLaunchDispatch, recordLaunchIntent, recordLaunchSession, recordLaunchTouched, settleLaunch, unsettledLaunches } from './launch-journal.js';
 import { commandName } from './command-name.js';
 
@@ -827,6 +829,26 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       await sleep(g.poll_seconds);
       continue;
     }
+    // What this launch is about to receive, recorded before the model process
+    // starts (R-55, H-3573). Here and not after the session, because a receipt
+    // reconstructed later from live files is an account of the files, not of
+    // the launch. Never throws, and a failure writes a receipt saying so, so a
+    // launch with no receipt means only that nothing could be written at all.
+    if (journaledLaunchId) {
+      const startup = recordStartupContext(g, l, {
+        launchId: journaledLaunchId,
+        runtime: run.runtime, provider: run.provider, model,
+        iterationPrompt: prompt,
+        association: launchAssociation({
+          ...(admission.admissionId ? { admissionId: admission.admissionId } : {}),
+          ...(admission.ticketId ? { ticketId: admission.ticketId } : {}),
+          ...(admission.workflowAttemptId ? { workflowAttemptId: admission.workflowAttemptId } : {}),
+          claimedTicket, scoped: l.workstream !== '*',
+        }),
+        discovered: workingTreeInstructions(l.cwd, run.runtime),
+      });
+      logEvent(l.name, `startup-context-${startup.state}`, startup.line);
+    }
     const sessionStartedAt = new Date().toISOString();
     // Only preclaimed pool work is fenced to a launch generation. Scoped
     // seats claim inside the session and may carry that claim across the next
@@ -862,6 +884,22 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       // fails cannot affect the run that produced it.
       const coverage = checkOnSettle(l, run.runtime, journaledLaunchId);
       if (coverage) logEvent(l.name, `context-coverage-${coverage.state}`, coverage.line);
+      // The other half of this launch's startup receipt: the host CLI's own
+      // record now exists, and it is what turns "this installation recorded
+      // these bytes" into "the model was given them" (R-55). Its own block
+      // after settling, so neither half can affect the run that produced it.
+      try {
+        const entry = readLaunch(l.name, journaledLaunchId);
+        if (entry?.session) {
+          const receipt = attachSettlement(l, journaledLaunchId, entry.session);
+          if (receipt?.settled) {
+            logEvent(l.name, `startup-context-${receipt.settled.supplied_confirmed === true ? 'confirmed' : receipt.settled.supplied_confirmed === false ? 'contradicted' : 'unconfirmed'}`,
+              `${journaledLaunchId} ${receipt.composed.sha256 ?? 'no-composition'}`);
+          }
+        }
+      } catch (e) {
+        logEvent(l.name, 'startup-context-settle-failed', `${journaledLaunchId} ${String(e).split('\n')[0]!.slice(0, 160)}`);
+      }
     }
     let launchTrusted = true;
 

@@ -26,6 +26,7 @@ import { buildIntakeResult, recordIntakeResult } from './intake-preparation.js';
 import { commandName, runCommand } from './command-name.js';
 import { assertTicketIdentity, readTicketLaunches, sessionTrace } from './session-trace.js';
 import { coverageReading } from './context-coverage.js';
+import { compareReceipts, pruneBlobs, readReceipt, startupReading } from './startup-context.js';
 import { ticketHistory } from './helm.js';
 import { recordStallEpisodes } from './stalled-work.js';
 import { requestRuntimeRecovery, type RuntimeRecoveryRequest } from './runtime-recovery.js';
@@ -170,6 +171,7 @@ const COMMAND_HELP: Record<string, string> = {
   tail: `usage: ${commandName} tail <loop>`,
   trace: `usage: ${commandName} trace <installation-qualified ticket>`,
   'context-coverage': `usage: ${commandName} context-coverage [seat] [--no-inventory]`,
+  'startup-context': `usage: ${commandName} startup-context [seat] [--launch <id>] [--ticket <id>] [--limit <n>]\n   or: ${commandName} startup-context --diff <launch> --b <launch> [--a-seat <seat>] [--b-seat <seat>]\n   or: ${commandName} startup-context --prune [--apply]`,
   'session-spec': `usage: ${commandName} session-spec <seat> --session <actor stamp> [--provider claude] [--tier high] [--model M] [--cwd P] [--constitution P] [--version V]`,
   team: `usage: ${commandName} team <stop|resume> <loop|role|all> [--worker]`,
   intake: `usage: ${commandName} intake result goodplumb@<40-hex-commit>`,
@@ -347,6 +349,46 @@ switch (cmd) {
     // A path whose account can no longer be checked is the finding this
     // command exists for, so it leaves a non-zero status for whatever ran it.
     if (reading.summary.stale || reading.summary.error) process.exitCode = 1;
+    break;
+  }
+  // What a launch actually received, from this installation's own retained
+  // record rather than from today's files (R-55). `--ticket` is the flag the
+  // door already consumed, so there is one way to ask.
+  case 'startup-context': {
+    const seat = rest[0] && !rest[0].startsWith('--') ? knownLoop(rest[0]) : undefined;
+    const diff = flag('diff');
+    if (diff !== undefined) {
+      const [seatA, launchA, seatB, launchB] = [flag('a-seat') ?? seat, diff, flag('b-seat') ?? flag('a-seat') ?? seat, flag('b')];
+      if (!seatA || !seatB || !launchB) {
+        console.error(COMMAND_HELP['startup-context']);
+        process.exit(1);
+      }
+      const a = readReceipt(knownLoop(seatA), launchA);
+      const b = readReceipt(knownLoop(seatB), launchB);
+      if (!a || !b) {
+        console.error(`No startup receipt for ${!a ? `${seatA} launch ${launchA}` : `${seatB} launch ${launchB}`}.`);
+        process.exit(1);
+      }
+      console.log(JSON.stringify(compareReceipts(a, b), null, 2));
+      break;
+    }
+    if (rest.includes('--prune')) {
+      // Dry by default: the destructive half of a retention policy asks for
+      // the word, so that reading the policy can never delete under it.
+      console.log(JSON.stringify(pruneBlobs({ global: g, loops, providers }, { apply: rest.includes('--apply') }), null, 2));
+      break;
+    }
+    const limit = flag('limit');
+    const reading = startupReading({ global: g, loops, providers }, {
+      ...(seat ? { seats: [seat] } : {}),
+      ...(requestedTicket ? { ticket: requestedTicket } : {}),
+      ...(flag('launch') ? { launch: flag('launch')! } : {}),
+      limit: limit === undefined ? 20 : Number(limit),
+    });
+    console.log(JSON.stringify(reading, null, 2));
+    // A receipt that could not be written, or retained content that went
+    // missing inside the horizon, is the finding this command exists for.
+    if (reading.summary.failed || reading.receipts.some((r) => r.content_states['lost'])) process.exitCode = 1;
     break;
   }
   case 'intake': {

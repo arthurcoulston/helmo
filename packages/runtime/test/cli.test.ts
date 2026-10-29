@@ -76,6 +76,53 @@ constitution = "${join(home, 'PROFILE.md')}"
   });
 });
 
+describe('startup-context (R-55 H-3573)', () => {
+  function claudeRoster(): string {
+    const home = mkdtempSync(join(tmpdir(), 'rev-startup-cli-'));
+    writeFileSync(join(home, 'PROFILE.md'), 'the seat itself\n');
+    writeFileSync(join(home, 'roster.toml'), `[global]
+helmo_cli = "/tmp/helmo-cli.js"
+helmo_mcp_server = "/tmp/helmo-server.js"
+
+[loops.alpha]
+workstream = "test"
+cwd = "/tmp"
+provider = "claude"
+model = "claude-opus-5"
+constitution = "${join(home, 'PROFILE.md')}"
+`);
+    return home;
+  }
+
+  it('reads an installation with no receipts yet without claiming one', () => {
+    const result = rev(claudeRoster(), ['startup-context']);
+    const reading = JSON.parse(result.stdout) as {
+      schema: string; retention: { days: number; store: string }; receipts: unknown[]; summary: Record<string, number>; scope: string;
+    };
+
+    // An empty record is not a finding: nothing has launched. The policy and
+    // the store are disclosed on every reading, so an operator asking what is
+    // kept never has to find the code.
+    expect(result.status).toBe(0);
+    expect(reading.schema).toBe('helmo.startup-context.reading.v1');
+    expect(reading.receipts).toEqual([]);
+    expect(reading.retention.days).toBe(90);
+    expect(reading.retention.store).toContain('context-blobs');
+    expect(reading.scope).toContain('not what the session read');
+  });
+
+  it('is a dry report when told to prune, and refuses a diff it has no second half for', () => {
+    const home = claudeRoster();
+    const pruned = JSON.parse(rev(home, ['startup-context', '--prune']).stdout) as { applied: boolean; dropped: unknown[] };
+    expect(pruned.applied).toBe(false);
+    expect(pruned.dropped).toEqual([]);
+
+    const diff = rev(home, ['startup-context', 'alpha', '--diff', 'launch-1']);
+    expect(diff.status).toBe(1);
+    expect(diff.stderr).toContain('startup-context');
+  });
+});
+
 describe('gp-rev instance binding (H-2277)', () => {
   it('always reads ~/.rev-gp, even when the caller supplies another REV_HOME', () => {
     const home = mkdtempSync(join(tmpdir(), 'gp-rev-cli-'));

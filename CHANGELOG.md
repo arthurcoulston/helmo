@@ -85,6 +85,29 @@ longer.
   in the archive. A `?whole=1#H-n` link to a closed ticket of any age still
   resolves: the application passes the fragment through as `?ticket=H-n`,
   which pins that row whatever page it would otherwise fall on.
+- **Retained startup content is now deleted without being asked.** The 90-day
+  horizon used to hold only as long as an operator remembered to type
+  `rev startup-context --prune --apply`; the supervisor's periodic pass now
+  runs the same walk once a day and applies it, dropping blobs no receipt
+  inside the horizon references. The walk is reference-counted over the
+  receipts, never keyed on a blob's own age, so two launches far apart can
+  share one copy; content written or reused in the last hour is held, because
+  a launch writes its blobs before the receipt that names them; and a receipt
+  is never rewritten by expiry — a reader past the horizon is told the policy
+  dropped the content. `--prune` on its own still reports and deletes nothing.
+  An operator who was relying on content surviving past 90 days because
+  nothing collected it should know that it no longer does.
+- **`rev startup-context` exits non-zero in two more cases.** A selector that
+  named one thing and matched nothing (`--launch`, or `--ticket`) is now a
+  refusal with a named line on stderr rather than an empty reading at exit 0,
+  so a script can tell "no such launch" from "nothing to say"; and a reading
+  whose status is `degraded` — a `partial` receipt, as well as the `failed`
+  and `lost` cases — now exits 1, because a store obstructed on every launch
+  records `partial` for ever and a health probe that stays green through that
+  cannot see the failure it exists for. A bare seat or installation read of an
+  empty store still exits 0: zero receipts is the right answer while a fleet
+  has not launched. Wrappers that treated any exit 0 as "receipts fine" need
+  no change; wrappers that treated exit 1 as "command broken" do.
 
 ### Fixes
 

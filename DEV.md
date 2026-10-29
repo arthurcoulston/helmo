@@ -337,6 +337,10 @@ next iteration resumes, so the loop instead journals `touched_tickets` — the
 tickets the seat session wrote to since this launch opened, the same measured
 window the meter charges. That is an attribution, not a key, and the trace
 reports it as `seat_session_event_window` rather than letting it read as one.
+That window is grouped by the row id each Work event carries, and a recorded
+test result's row id is the suite's own name rather than a ticket; those rows
+are dropped where the window is journaled and again where it is read, so one
+of them never makes a sound run record read as corrupt.
 A settled launch naming no ticket is sound, not malformed: a scoped iteration
 touches none, and a claim-intent launch settles complete precisely because
 nothing was claimed. Only an admitted launch is held to its ticket.

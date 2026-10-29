@@ -523,11 +523,17 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   walks the SEATS THAT HAVE RECEIPTS, not `roster.loops` — a seat retired while
   its receipts were still inside the horizon lost its blobs to a roster walk,
   and those receipts then read `lost`, reporting a store defect that was the
-  prune's own doing (H-3641). Two shapes it refuses rather than walks: an entry
-  in the store whose name is not a sha256, and a shard that is not two hex
-  characters, both reported under `skipped`. And `PRUNE_WRITE_GRACE_MS` holds
-  anything written in the last hour, because `retain` returns before the
-  receipt naming it exists and that gap belongs to a launch in flight.
+  prune's own doing (H-3641). Three shapes it refuses rather than walks: an entry
+  in the store whose name is not a sha256, a shard that is not two hex
+  characters, and an entry that is not a regular file — a symlink wearing a
+  valid blob name is reported, never unlinked and never counted as content the
+  store holds, because the names in a trust boundary are not the store's own
+  (H-3701). All three are reported under `skipped`. And `PRUNE_WRITE_GRACE_MS`
+  holds anything written in the last hour, because `retain` returns before the
+  receipt naming it exists and that gap belongs to a launch in flight; a
+  `retain` that deduplicates against bytes already there touches their mtime
+  for the same reason, since a reuse writes nothing and would otherwise leave
+  an aged blob droppable in the window before the new receipt lands (H-3701).
   **Operating it** (R-55 asks for this by name). The operating owner is the
   `estate-ui` seat, which owns this module, its retention constant and its
   repair; Ward holds the posture of the blob store itself (H-3637). Capture

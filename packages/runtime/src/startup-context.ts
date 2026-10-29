@@ -40,7 +40,7 @@
 // all — it is reconstructed from the per-source blobs and checked against the
 // sha256 recorded at launch.
 import { createHash } from 'node:crypto';
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, type Dirent, type Stats } from 'node:fs';
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, utimesSync, writeFileSync, type Dirent, type Stats } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { revHome, stateDir, type Roster } from './config.js';
 import { claudeHome, readClaudeHostRecord, readSource, sourceRepos, type SourceReading } from './context-coverage.js';
@@ -233,7 +233,18 @@ export function blobPath(hash: string): string {
 export function retain(text: string): { sha256: string; written: boolean } {
   const hash = sha256(text);
   const file = blobPath(hash);
-  if (existsSync(file)) return { sha256: hash, written: false };
+  if (existsSync(file)) {
+    // A reuse is a launch claiming these bytes now, so it has to move the
+    // clock prune's write grace reads. Without this, a blob whose only
+    // receipts have expired is droppable in the window between a new launch
+    // deduplicating against it and that launch's receipt landing, and the
+    // receipt then reads `lost` — the race the grace closed, reopened on the
+    // dedup path because an early return writes nothing (H-3701).
+    // Best-effort: a store we can read but not touch must not fail a launch,
+    // and the blob is still there either way.
+    try { const stamp = new Date(); utimesSync(file, stamp, stamp); } catch { /* grace unmoved */ }
+    return { sha256: hash, written: false };
+  }
   mkdirSync(dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
   try {
@@ -903,11 +914,20 @@ export function pruneBlobs(opts: { now?: Date; apply?: boolean } = {}): {
     // than walked or deleted: a two-hex directory holding entries whose names
     // are sha256s beginning with it (H-3637).
     if (!shard.isDirectory() || !/^[0-9a-f]{2}$/.test(shard.name)) { skipped.push(shard.name); continue; }
-    let names: string[];
-    try { names = readdirSync(join(blobDir(), shard.name)); } catch { continue; }
-    for (const name of names) {
+    let entries: Dirent[];
+    try { entries = readdirSync(join(blobDir(), shard.name), { withFileTypes: true }); } catch { continue; }
+    for (const entry of entries) {
+      const name = entry.name;
       if (name.endsWith('.tmp')) continue;
       if (!BLOB_NAME.test(name) || !name.startsWith(shard.name)) { skipped.push(join(shard.name, name)); continue; }
+      // A blob is a regular file `retain` renamed into place. Anything else
+      // wearing a blob's name is a foreign object in a trust boundary, and it
+      // is reported rather than acted on — the same treatment a symlinked
+      // shard already gets above. Before the liveness test, because counting
+      // a symlink as content the store holds is as wrong as unlinking it, and
+      // `statSync` through the link would read the target's size and mtime
+      // (H-3701).
+      if (!entry.isFile()) { skipped.push(join(shard.name, name)); continue; }
       if (live.has(name)) { kept += 1; continue; }
       const file = join(blobDir(), shard.name, name);
       let stat: Stats;

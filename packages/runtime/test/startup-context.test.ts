@@ -7,9 +7,9 @@
 // would be experimenting on the thing it is meant to preserve.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, unlinkSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   PRUNE_INTERVAL_MS, PRUNE_WRITE_GRACE_MS, RETENTION_DAYS, attachSettlement, blobDir, blobPath,
   buildReceipt, compareReceipts, launchAssociation, pruneBlobs, pruneRetainedContent, readReceipt,
@@ -566,6 +566,68 @@ describe('retention', () => {
     expect(again.ran).toBe(false);
     const tomorrow = pruneRetainedContent({ now: new Date(Date.now() + PRUNE_INTERVAL_MS + PRUNE_WRITE_GRACE_MS) });
     expect(tomorrow.ran).toBe(true);
+  });
+
+  it('holds a blob a new launch reused, even though that launch wrote no byte for it', () => {
+    // The grace is mtime-based and `retain` returns early on a hit, so dedup
+    // reopened the race finding 3 closed: an aged blob whose only receipts
+    // have expired is unprotected between a new launch reusing it and that
+    // launch's receipt landing (H-3701, found independently by ward and
+    // proof).
+    const text = 'bytes two launches far apart both retain.\n';
+    const first = retain(text);
+    const file = blobPath(first.sha256);
+    // An old blob: nothing in `live` names it and it is well past the grace.
+    const aged = new Date(Date.now() - PRUNE_WRITE_GRACE_MS - 86_400_000);
+    utimesSync(file, aged, aged);
+    // The control. Dry, so it reports without removing: at real `now`, and
+    // with no reuse, this blob is exactly what prune is for.
+    expect(pruneBlobs({}).dropped.map((d) => d.sha256)).toContain(first.sha256);
+
+    // Now a launch reuses it and has not written its receipt yet.
+    const again = retain(text);
+    expect(again.written).toBe(false);
+    const pruned = pruneBlobs({ apply: true });
+    expect(pruned.dropped.map((d) => d.sha256)).not.toContain(first.sha256);
+    expect(pruned.held).toBeGreaterThan(0);
+    expect(existsSync(file)).toBe(true);
+    // And it is a hold, not a reprieve: past the grace with still no receipt,
+    // the blob goes.
+    expect(pruneBlobs({ now: afterGrace(), apply: true }).dropped.map((d) => d.sha256)).toContain(first.sha256);
+  });
+
+  it('reports a symlink wearing a blob\'s name instead of unlinking or counting it', () => {
+    // Prune skips a symlinked shard but used to walk into the names inside
+    // one: a link whose own name is a valid sha256 filed under its first two
+    // characters passed every check, was stat'd THROUGH the link, and was
+    // unlinked (ward, H-3651). Unlinking drops the link and not its target,
+    // so this is tidiness in a trust boundary rather than a disclosure.
+    const l = loop();
+    capture(l, 'launch-1');
+    const target = join(tree, 'pointed-at.md');
+    writeFileSync(target, 'a file outside the store entirely.\n');
+
+    const name = sha('a plausible-looking blob');
+    const link = join(blobDir(), name.slice(0, 2), name);
+    mkdirSync(dirname(link), { recursive: true });
+    symlinkSync(target, link);
+
+    const pruned = pruneBlobs({ now: afterGrace(), apply: true });
+    // The effect first: the link is still a link, and its target untouched.
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(existsSync(target)).toBe(true);
+    expect(pruned.skipped).toContain(join(name.slice(0, 2), name));
+    expect(pruned.dropped.map((d) => d.sha256)).not.toContain(name);
+
+    // The live-reference variant escaped the unlink by the `kept` branch, but
+    // counting a foreign object as content the store holds is the same false
+    // reading. Reported either way.
+    const liveHash = readReceipt('mason', 'launch-1')!.sources[0]!.content.sha256!;
+    rmSync(blobPath(liveHash));
+    symlinkSync(target, blobPath(liveHash));
+    const second = pruneBlobs({ now: afterGrace(), apply: true });
+    expect(second.skipped).toContain(join(liveHash.slice(0, 2), liveHash));
+    expect(lstatSync(blobPath(liveHash)).isSymbolicLink()).toBe(true);
   });
 
   it('leaves alone anything in the store that is not shaped like a blob', () => {

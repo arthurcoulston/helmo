@@ -1,8 +1,10 @@
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import type { StartupReceipt } from '../src/startup-context.js';
 
 const REV_CLI = join(import.meta.dirname, '..', 'src', 'cli.ts');
 const GP_REV_CLI = join(import.meta.dirname, '..', 'bin', 'gp-rev.js');
@@ -94,8 +96,39 @@ constitution = "${join(home, 'PROFILE.md')}"
     return home;
   }
 
+  /** A receipt as the store holds one: filed under the sha256 of its launch
+   *  id, which is what makes `--launch` and `--diff` answerable by key.
+   *
+   *  Nothing in it is retained. `not_retained` content resolves without a blob
+   *  store, so these cases stay about the exit code and the refusal line —
+   *  test/startup-context.test.ts owns what the blobs do. */
+  function fileReceipt(home: string, launchId: string, over: Partial<StartupReceipt> = {}): void {
+    const unretained = { sha256: null, bytes: 0, retention: 'not_retained' as const, reason: 'a fixture about the reading, not the bytes' };
+    const receipt = {
+      schema: 'helmo.startup-context.v1', format: 1,
+      id: `fixture.rev/alpha/${launchId}`, installation: 'fixture.rev', seat: 'alpha',
+      launch_id: launchId, recorded_at: '2026-10-29T13:00:00.000Z',
+      runtime: 'claude', provider: 'claude', model: 'claude-opus-5', cwd: '/tmp',
+      association: { ticket_id: 'H-3641', basis: 'claimed', detail: 'a fixture launch' },
+      versions: { rev_release: '2026.10-30', rev_commit: null, rev_dirty: null, adapter: 'claude', adapter_route: 'fixture', host_cli_version: null },
+      sources: [{
+        order: 1, path: join(home, 'PROFILE.md'), role: 'constitution', claim: 'supplied',
+        channel: 'fixture', inclusion_reason: 'the seat itself', state: 'read', content: unretained,
+      }],
+      composed: { sha256: null, bytes: null, channel: 'fixture', reconstructable: false },
+      iteration_prompt: { ...unretained, channel: 'fixture' },
+      repos: [], tools: { channel: 'fixture', servers: [], excluded: 'nothing, in a fixture' },
+      unknowns: [], recording: { state: 'complete', errors: [] },
+      ...over,
+    } as StartupReceipt;
+    const dir = join(home, 'state', 'alpha', 'startup');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `${createHash('sha256').update(launchId, 'utf8').digest('hex')}.json`), `${JSON.stringify(receipt, null, 1)}\n`);
+  }
+
   it('reads an installation with no receipts yet without claiming one', () => {
-    const result = rev(claudeRoster(), ['startup-context']);
+    const home = claudeRoster();
+    const result = rev(home, ['startup-context']);
     const reading = JSON.parse(result.stdout) as {
       schema: string; retention: { days: number; store: string }; receipts: unknown[]; summary: Record<string, number>; scope: string;
     };
@@ -109,6 +142,59 @@ constitution = "${join(home, 'PROFILE.md')}"
     expect(reading.retention.days).toBe(90);
     expect(reading.retention.store).toContain('context-blobs');
     expect(reading.scope).toContain('not what the session read');
+    // And the read created nothing. Asking a seat what it was handed used to
+    // bring that seat's store into being, so reading another seat's receipts
+    // wrote to its home (H-3637, finding 5).
+    expect(existsSync(join(home, 'state'))).toBe(false);
+  });
+
+  it('refuses a selector that matched nothing, while a bare empty read stays green', () => {
+    const home = claudeRoster();
+
+    // A selector names ONE thing. Empty is the right answer for a seat or an
+    // installation and the wrong one here: a script asking after a launch
+    // could not tell "no such launch" from "nothing to say" (H-3637,
+    // finding 6).
+    const launch = rev(home, ['startup-context', '--launch', 'launch-404']);
+    expect(launch.status).toBe(1);
+    expect(launch.stderr).toContain('No startup receipt for launch launch-404');
+
+    const ticket = rev(home, ['startup-context', 'alpha', '--ticket', 'H-999999']);
+    expect(ticket.status).toBe(1);
+    expect(ticket.stderr).toContain('naming ticket H-999999 on seat alpha');
+
+    fileReceipt(home, 'launch-1');
+    const hit = rev(home, ['startup-context', '--launch', 'launch-1']);
+    expect(hit.status, hit.stderr).toBe(0);
+    expect(JSON.parse(hit.stdout).receipts).toHaveLength(1);
+  });
+
+  it('goes red on a partial receipt, and names a receipt filed under the wrong launch', () => {
+    const home = claudeRoster();
+    fileReceipt(home, 'launch-1');
+    const ok = rev(home, ['startup-context', 'alpha']);
+    expect(ok.status, ok.stderr).toBe(0);
+    expect(JSON.parse(ok.stdout).status).toBe('ok');
+
+    // A store obstructed on every launch records `partial` forever, so leaving
+    // it green is a health probe that cannot see the failure it exists for
+    // (H-3637, finding 7). `degraded` and `failed` share the exit code; the
+    // status word on stdout is what tells them apart.
+    fileReceipt(home, 'launch-1', { recording: { state: 'partial', errors: ['the blob store refused the write'] } });
+    const partial = rev(home, ['startup-context', 'alpha']);
+    expect(partial.status).toBe(1);
+    const reading = JSON.parse(partial.stdout) as { status: string; summary: Record<string, number> };
+    expect(reading.status).toBe('degraded');
+    expect(reading.summary.partial).toBe(1);
+
+    // A receipt found under one launch's hash and naming another is a store
+    // that cannot answer by key. The refusal was right and reached the
+    // operator as a stack trace (H-3637, finding 2).
+    fileReceipt(home, 'launch-2', { launch_id: 'launch-1' });
+    const diff = rev(home, ['startup-context', 'alpha', '--diff', 'launch-2', '--b', 'launch-1']);
+    expect(diff.status).toBe(1);
+    expect(diff.stderr).toContain('names launch launch-1, not launch-2');
+    expect(diff.stderr).not.toContain('    at ');
   });
 
   it('is a dry report when told to prune, and refuses a diff it has no second half for', () => {

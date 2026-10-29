@@ -307,14 +307,30 @@ Pinned releases accept both the historical three-component layout and C1's one
   376 recorded answers, 73 are agent-kind, 25 carry a session and only 5 are
   `rev:` — so gating on `supervised()` would have refused 20 legitimate
   relays, every one a person sitting with Arthur. `revLoopIteration` reads the
-  prefix `seatId` writes (runtime/helm.ts) and nothing else writes. `lastAnswer` carries
+  prefix `seatId` writes (runtime/helm.ts) and nothing else writes.
+  It reads that stamp **alone, not `kind`** (H-3612). The session is the only
+  server-bound field outside a pooled launch — `writingActor` refuses a stated
+  session that differs from the environment's and inherits an omitted one,
+  while `name` and `kind` stay the caller's to state — so a gate that also
+  asked for agent-kind was shed by stating `orchestrator` or `human`, which
+  dropped the refusal, the `relayed_by_agent` mark and the hygiene finding at
+  once. Both shapes were measured landing an answer through the real MCP
+  server under a `rev:ward` environment. The matching `kind` binding in
+  `writingActor` was considered and NOT added: `loopActor` hardcodes
+  `kind: 'agent'` for every session-spec consumer including the meeting room,
+  and the record holds 19 orchestrator-kind relays on `desk:`, `codex:`,
+  `summon:` and `meeting:` stamps, so binding kind to the environment would
+  refuse the attended relays this gate exists to keep open. `lastAnswer` carries
   `relayed_by_agent: true` when the answering actor was agent-kind, so a
   downstream seat reads the relay off the answer instead of the event log.
   And hygiene's `agent_relayed_answer` reports, per ticket within
   `RELAYED_ANSWER_HOURS`, each agent-written answer on it: the answerer, the
   actor whose return it replies to, the session it came from, and whether the
   answerer shaped the ask it answered by filing the ticket or by writing the
-  body the question stood on. That is the one finding on live work besides
+  body the question stood on. That clause names the session and nothing more:
+  it used to call every stamped session *supervised*, which printed a desk
+  sitting Arthur was at as `from supervised session desk:ward:H-891` (H-3612).
+  No answer reaching this check is from a loop — `answerTicket` refuses those. That is the one finding on live work besides
   `spend_anomaly` that `hygiene-dispose` accepts, because a relay already
   happened and nothing done to the ticket undoes it; its disposition carries
   no `at_cost` and answers for an instant instead, so a LATER relay on the

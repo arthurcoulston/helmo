@@ -1680,7 +1680,9 @@ describe('return to human / answer', () => {
       ['a desk session named for the human', 'desk:arthur'],
       ['a voice relay', 'voice-relay-2026-09-06'],
       ['an interactive summon', 'interactive-summon'],
-      ['a bare session uuid', '01a06df4-37cb-78c2-99be-6adf6b520743'],
+      // A synthetic uuid, not a copy of a live stamp: the shape is the whole
+      // point of the case, and a fixture should be a fixture (H-3612).
+      ['a bare session uuid', '01a00000-0000-7000-8000-000000000001'],
     ])('%s stamps a session and still relays', (_who, session) => {
       const s = freshStore();
       const t = asking(s);
@@ -1698,6 +1700,22 @@ describe('return to human / answer', () => {
         expect(s.getTicket(t.id).status).toBe('awaiting_human');
       },
     );
+
+    // The stamp is the only server-bound field outside a pooled launch, so a
+    // gate that also read `kind` was shed by restating it: both of these
+    // landed an answer under a real `rev:ward` server before H-3612, and the
+    // refusal, the relay marker and the hygiene check all went with it.
+    it.each([
+      ['claiming to be an orchestrator', 'orchestrator' as const],
+      ['claiming to be the human', 'human' as const],
+    ])('a loop iteration %s is still refused', (_how, kind) => {
+      const s = freshStore();
+      const t = asking(s);
+      expect(() => s.answerTicket({ ...builder, kind }, t.id, { answer: 'Arthur settled this.', resolution: 'resume' }))
+        .toThrow(/cannot answer/);
+      expect(s.getTicket(t.id).status).toBe('awaiting_human');
+      expect(s.lastAnswer(t.id)).toBeNull();
+    });
 
     it.each([['the human', { name: 'arthur', kind: 'human' } as Actor], ['an orchestrator', orch] as const])(
       'an answer from %s carries no relay marker',
@@ -2808,6 +2826,16 @@ describe('agent-relayed answers reported and disposable (H-3591)', () => {
     const t = relayed(s);
     expect(relays(s)).toEqual([expect.objectContaining({ check: 'agent_relayed_answer', ticket_id: t.id })]);
     expect(relays(s)[0]!.detail).toMatch(/^an answer was written by an agent, not the human: mason-desk answered the ask reviewer-loop returned at .* from an attended session$/);
+  });
+
+  // The clause used to call every stamped session supervised, so a desk
+  // sitting Arthur was at read back to him as an unattended loop (H-3612).
+  it('names a stamped session without calling a desk sitting a loop', () => {
+    const s = freshStore();
+    relayed(s, { ...attended, session: 'desk:ward:H-891' });
+    expect(relays(s)[0]!.detail).toContain('from session desk:ward:H-891');
+    expect(relays(s)[0]!.detail).not.toContain('supervised');
+    expect(relays(s)[0]!.detail).not.toContain('loop iteration');
   });
 
   it('says when the answerer shaped the ask it answered — by filing it, or by writing the body it stood on', () => {

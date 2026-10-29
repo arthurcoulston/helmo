@@ -453,7 +453,11 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   the host CLI's own `session_id`, but it reaches the reader through this
   installation's launch journal, and an id that is not a session id is reported
   as a malformed join key rather than as a missing record — different repairs,
-  and the id itself is not echoed back.
+  and the id itself is not echoed back. Not by the assertion and not by the
+  document either: `historical.provider_session_id` is filled in only once the
+  id has been observed AND held to its shape, because building `historical`
+  from the journal entry first put the raw string one field away from an
+  assertion carefully reporting nothing but a character count (H-3612).
 - **Every Team read goes through `readBounded`, and that is the whole guard
   (H-3004).** The inventory includes every `CLAUDE.md` and `AGENTS.md` found
   walking up from a seat's cwd — files no roster entry names, in trees any agent

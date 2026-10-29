@@ -122,6 +122,7 @@ describe('a normal path', () => {
     expect(coverage.assertions.map((a) => a.id)).toEqual(['provider_session_id', 'host_record', 'adapter_shape', 'session_cwd', 'composition']);
     expect(coverage.historical?.host.cli_version).toBe('2.1.300');
     expect(coverage.historical?.launch_id).toBe('rev:mason:1:1:1793000000000');
+    expect(coverage.historical?.provider_session_id).toBe('aaaaaaaa-1111-2222-3333-444444444444');
     expect(coverage.id).toBe('fixture.rev:mason:claude');
     // Current and historical stay apart: the hash is today's, the prompt
     // length is that launch's.
@@ -342,6 +343,11 @@ describe('a launch with nothing to join on', () => {
     // The reading stops at the join key: no host_record assertion is reached,
     // so nothing claims a record is absent when none was ever named.
     expect(coverage.assertions.map((a) => a.id)).not.toContain('host_record');
+    // And the document agrees with the assertion beside it: the careful
+    // character-count detail was undone by `historical` carrying the raw
+    // string one field away (H-3612).
+    expect(coverage.historical?.provider_session_id).toBeNull();
+    expect(JSON.stringify(coverage)).not.toContain('outside');
   });
 
   it('is stale, with no launch rather than no account, before a path has ever run', () => {

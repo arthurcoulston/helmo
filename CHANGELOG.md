@@ -110,13 +110,17 @@ longer.
   words with a person present is ordinary and stays allowed, and an attended
   session that stamps a session string of its own (`desk:`, a voice relay, a
   bare uuid) is attended, not supervised — only the `rev:<seat>` stamp Rev
-  itself writes is refused. Where it is
+  itself writes is refused. The refusal reads that stamp and nothing else: it
+  is the one field a caller cannot state for itself, so an iteration calling
+  itself an orchestrator or the human is refused the same way. Where it is
   allowed it is now disclosed — `last_answer` carries `relayed_by_agent: true`
   whenever the answering actor was agent-kind, and a new hygiene check,
   `agent_relayed_answer`, reports each agent-written answer of the last seven
   days with the answerer, the actor whose return it replies to, the session it
   came from, and whether the answerer had shaped the ask by filing the ticket
-  or writing the body the question stood on. It is the one check besides
+  or writing the body the question stood on. It names that session plainly;
+  calling a stamped session supervised would have reported a desk sitting the
+  operator was present at as an unattended loop. It is the one check besides
   `spend_anomaly` that `helmo_dispose_hygiene_finding` accepts on live work,
   since a relay cannot be undone by working the ticket; a disposition answers
   for the relays it saw, so a later one is reported again.

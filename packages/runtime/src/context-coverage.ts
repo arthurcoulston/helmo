@@ -472,7 +472,11 @@ export function checkClaudePath(l: LoopConfig, opts: { installation?: string; in
   const historical: HistoricalEvidence = {
     launch_id: launch.launch_id, provider: session.provider, model: session.model,
     started_at: session.started_at, ended_at: session.ended_at,
-    provider_session_id: session.provider_session_id ?? null,
+    // Filled in below, once the id has been observed AND held to its shape.
+    // Copying it in here put a malformed id — `../../../outside` — into the
+    // document while the assertion beside it was carefully reporting only a
+    // character count, so the two halves of one report disagreed (H-3612).
+    provider_session_id: null,
     host: { record: null, cli_version: null, cwd: null, retained_prompt_bytes: null },
   };
   const assertions: CoverageAssertion[] = [];
@@ -498,6 +502,7 @@ export function checkClaudePath(l: LoopConfig, opts: { installation?: string; in
     });
     return done('stale', 'The join key is present and is not a host session id, so no historical evidence could be read.');
   }
+  historical.provider_session_id = session.provider_session_id;
   assertions.push({ id: 'provider_session_id', held: true, detail: `Observed: ${session.provider_session_id}.` });
 
   const host = readClaudeHostRecord(session.provider_session_id, l.cwd);

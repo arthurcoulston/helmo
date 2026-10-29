@@ -388,9 +388,18 @@ function supervised(actor: Actor): boolean {
  *  separates an unattended iteration from a relay. Measured on the live
  *  record before this was used as a gate: of 376 recorded answers, 73 are
  *  agent-kind, 25 carry a session, and only 5 are `rev:` — refusing on
- *  `supervised` would have refused 20 legitimate attended relays (H-3591). */
+ *  `supervised` would have refused 20 legitimate attended relays (H-3591).
+ *
+ *  It reads the stamp ALONE, and deliberately not `kind`. The session is the
+ *  only server-bound field outside a pooled launch: `writingActor` refuses a
+ *  stated session that differs from the environment's and inherits an omitted
+ *  one, while `name` and `kind` stay the caller's to state. So a gate that
+ *  also asked for agent-kind was shed by claiming to be an orchestrator or
+ *  the human himself — measured through the real MCP server, both landed an
+ *  answer under a `rev:ward` environment (H-3612). A `rev:` stamp is an
+ *  unattended iteration whatever the caller calls itself. */
 function revLoopIteration(actor: Actor): boolean {
-  return actor.kind === 'agent' && /^rev:/.test(actor.session?.trim() ?? '');
+  return /^rev:/.test(actor.session?.trim() ?? '');
 }
 
 /** The roadmap statuses that hold the human's go: Planned (nothing underway
@@ -2919,7 +2928,13 @@ export class Store {
           ? `${who} wrote its last body edit before the return`
           : null;
       const clause = `${who} answered ${r.returner === who ? 'its own ask' : `the ask ${r.returner ?? 'nobody on record'} returned`} at ${r.ts}`
-        + (r.session ? ` from supervised session ${r.session}` : ' from an attended session')
+        // Any session string at all, not a supervised one: a desk sitting
+        // stamps `desk:ward:H-891` as readily as a loop stamps `rev:ward`, and
+        // this clause called both supervised — telling Arthur a sitting he was
+        // at was an unattended iteration (H-3612). Nothing marks the `rev:`
+        // case, because `answerTicket` refuses it: every answer that reaches
+        // this check is one someone sat for.
+        + (r.session ? ` from session ${r.session}` : ' from an attended session')
         + (shaped ? ` — ${shaped}` : '');
       if (!relayClauses.has(r.ticket_id)) relayClauses.set(r.ticket_id, []);
       relayClauses.get(r.ticket_id)!.push(clause);

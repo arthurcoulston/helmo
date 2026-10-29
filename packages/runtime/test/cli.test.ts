@@ -289,6 +289,19 @@ version = "0.4"
     expect(result.stdout).toBe('');
   });
 
+  // The stamp the command used to only warn about: composing it would hand a
+  // consumer the seat's hold and the answer gate's read of `rev:` as an
+  // unattended iteration (H-3622). The padded spelling is refused too,
+  // because the gate trims before it tests the prefix.
+  it.each(['rev:alpha', ' rev:alpha'])('refuses --session %j, the loop seat stamp it cannot compose', (session) => {
+    const { home } = seatRoster();
+    const result = rev(home, ['session-spec', 'alpha', '--tier', 'high', '--session', session]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('rev:<seat>');
+    expect(result.stdout).toBe('');
+  });
+
   it('composes a seat with no roster loop from --cwd and --constitution, and says so', () => {
     const { home, constitution } = seatRoster();
     const result = rev(home, [

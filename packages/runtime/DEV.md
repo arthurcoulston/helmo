@@ -1362,8 +1362,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
 - What a seat's session is made of, as JSON, without running one:
   `node dist/cli.js session-spec <seat> --session <actor stamp> [--provider
   claude] [--tier high] [--model M] [--cwd P] [--constitution P] [--version V]`.
-  Reads state, writes none. `--session` is required (see `shim.ts` above), and
-  a tier resolves through the roster's providers table — a meeting can ask for
+  Reads state, writes none. `--session` is required (see `shim.ts` above) and
+  refuses a `rev:<seat>` value: that stamp is a loop's own, a loop never asks
+  for a spec, and the answer gate in `work/store.ts` reads the prefix as an
+  unattended iteration (H-3622). A tier resolves through the roster's providers table — a meeting can ask for
   `claude:high` while the seat's loop runs codex/frontier. A seat with no
   roster loop is composable by supplying `--cwd` and `--constitution`, the two
   facts rev has no business knowing; the spec then says `in_roster: false`.

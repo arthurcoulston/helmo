@@ -899,7 +899,23 @@ switch (cmd) {
     if (!session) {
       console.error(
         'session-spec needs --session: the Helm actor stamp this consumer writes under, e.g. --session meeting:<thread id>. ' +
-        "Pass --session rev:<seat> only if you ARE that seat's loop.",
+        "A `rev:<seat>` stamp is the loop's own and is refused here.",
+      );
+      process.exit(1);
+    }
+    // That used to be the whole protection, and it was prose: the command
+    // warned against the one stamp it would then compose for anyone who
+    // asked (H-3622). Nothing legitimate is lost by refusing it outright,
+    // because a loop never asks for a spec — it calls runSession, which mints
+    // the stamp there — so `rev:` arriving HERE can only be a consumer
+    // borrowing a seat's hold (H-558) and shedding the answer gate keyed on
+    // that prefix (`revLoopIteration`, work/store.ts; H-3591, H-3612). The
+    // trim matches that gate's, so a padded value cannot be refused by one
+    // and read as `rev:` by the other.
+    if (/^rev:/.test(session.trim())) {
+      console.error(
+        `--session ${session}: \`rev:<seat>\` is the loop's own stamp and session-spec never composes one — a loop calls runSession directly. ` +
+        'Sign as what this consumer is, e.g. --session meeting:<thread id>.',
       );
       process.exit(1);
     }

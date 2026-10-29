@@ -124,6 +124,14 @@ longer.
   `spend_anomaly` that `helmo_dispose_hygiene_finding` accepts on live work,
   since a relay cannot be undone by working the ticket; a disposition answers
   for the relays it saw, so a later one is reported again.
+- `rev session-spec` refuses `--session rev:<seat>` instead of only warning
+  against it. The command composes a seat's session for a consumer that is not
+  that seat's loop — a loop calls `runSession`, which mints the stamp itself —
+  so the stamp arriving there could only be a consumer borrowing the seat's
+  hold and, since the answer gate above reads that prefix alone, shedding the
+  gate by spelling. It was prose a caller could ignore in the same breath as
+  the usage line that offered it; it is now an exit 1 naming what to sign as.
+  Nothing in the estate passed it, so no caller changes.
 - The remote MCP entry (`packages/work/dist/remote.js`, not launched by any
   install step) answers `413` to a request body over 4 MiB instead of reading
   it in full, and both tool surfaces refuse a `tools/call` whose arguments

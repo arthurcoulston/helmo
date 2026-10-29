@@ -76,6 +76,20 @@ upstream's real output rather than a snapshot of it that could quietly age.
 `test/upstream.test.mjs` is the offline half: it checks the manifest, so an
 edit to generated source is a test failure.
 
+**`npm ci` reports three low-severity vulnerabilities, and that is a decision
+rather than a backlog item** (H-3581, H-3626, H-3641). All three are one root
+cause — `deepmerge`'s `mergeObject()` prototype poisoning — reached only
+through `shadcn`, which is a devDependency of `@helmo/shell` used by
+`upstream:check` and is in no served bundle: `packages/shell/dist` was
+byte-identical across releases 2026.10-28, 2026.10-29 and 2026.10-30 while the
+advisory stood. `fixAvailable` is `shadcn@1.0.0`, a semver-major jump from the
+`^4.21.3` pinned here, so taking it means re-pinning the CLI that generates
+every file `upstream.json` holds a sha256 for, and regenerating that manifest —
+a deliberate upstream refresh with its own review, not an audit fix. The pin
+stays until an `upstream:refresh` is wanted on its own merits. Re-examine if
+the advisory's severity rises, or if `shadcn` ever reaches a runtime
+dependency of a served bundle.
+
 `npm run typecheck --workspace @helmo/shell` is `tsc --build --force`, not
 `tsc --noEmit`. The generated `tsconfig.json` is a solution config —
 `"files": []` plus references to the app and node projects — so `--noEmit`

@@ -16,6 +16,7 @@ import { logEvent, occupiedPid, paceAutoRelease, pidAlive, runningStamp, sClear,
 import { ancestryBroken, ancestryStamp } from './ancestry.js';
 import { runSession } from './shim.js';
 import { GlobalConfig, LoopConfig, RunChoice } from './types.js';
+import { checkOnSettle } from './context-coverage.js';
 import { launchGroupFile, launchSessionRunning, readLaunch, recordLaunchAdmission, recordLaunchClaim, recordLaunchDispatch, recordLaunchIntent, recordLaunchSession, recordLaunchTouched, settleLaunch, unsettledLaunches } from './launch-journal.js';
 import { commandName } from './command-name.js';
 
@@ -853,6 +854,14 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
       // unsettled and never affects the run.
       try { recordLaunchTouched(l.name, journaledLaunchId, actorTickets(g, l, before.max_seq)); }
       catch (e) { logEvent(l.name, 'launch-touched-failed', `${journaledLaunchId} ${String(e).split('\n')[0]!.slice(0, 160)}`); }
+      // Is the installation's account of what this seat loads still true? The
+      // settle is the moment the evidence exists: the session id has just been
+      // journaled and the host's record of the prompt is on disk (R-45,
+      // H-3581). Cheap by construction — no tokenizer, one bounded read of the
+      // host record — and in its own block after settling, so a check that
+      // fails cannot affect the run that produced it.
+      const coverage = checkOnSettle(l, run.runtime, journaledLaunchId);
+      if (coverage) logEvent(l.name, `context-coverage-${coverage.state}`, coverage.line);
     }
     let launchTrusted = true;
 

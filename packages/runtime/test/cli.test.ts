@@ -30,6 +30,52 @@ runtime = "mock"
   return home;
 }
 
+describe('context-coverage (R-45 H-3581)', () => {
+  function claudeRoster(): string {
+    const home = mkdtempSync(join(tmpdir(), 'rev-cov-cli-'));
+    writeFileSync(join(home, 'PROFILE.md'), '---\ncap_tokens: 500\n---\nthe seat itself\n');
+    writeFileSync(join(home, 'roster.toml'), `[global]
+helmo_cli = "/tmp/helmo-cli.js"
+helmo_mcp_server = "/tmp/helmo-server.js"
+
+[loops.alpha]
+workstream = "test"
+cwd = "/tmp"
+provider = "claude"
+model = "claude-opus-5"
+constitution = "${join(home, 'PROFILE.md')}"
+`);
+    return home;
+  }
+
+  it('reports a path that has never run as stale, and leaves a non-zero status', () => {
+    const result = rev(claudeRoster(), ['context-coverage', '--no-inventory']);
+    const reading = JSON.parse(result.stdout) as {
+      schema: string; summary: Record<string, number>;
+      paths: { seat: string; runtime: string; state: string; supported: boolean }[];
+    };
+
+    // A finding is worth an exit code: whatever runs this on a timer learns it
+    // without parsing the document.
+    expect(result.status).toBe(1);
+    expect(reading.schema).toBe('helmo.context-coverage.v1');
+    expect(reading.paths.find(p => p.seat === 'alpha')).toMatchObject({ runtime: 'claude', state: 'stale', supported: true });
+    // And the gap that belongs to no seat is in the document rather than absent.
+    expect(reading.paths.find(p => p.runtime === 'summon')).toMatchObject({ state: 'unsupported', supported: false });
+    expect(reading.summary.stale).toBe(1);
+  });
+
+  it('narrows to one seat, and refuses a name the roster does not have', () => {
+    const home = claudeRoster();
+    const one = rev(home, ['context-coverage', 'alpha', '--no-inventory']);
+    expect(JSON.parse(one.stdout).paths.map((p: { runtime: string }) => p.runtime)).toEqual(['claude']);
+
+    const unknown = rev(home, ['context-coverage', 'nobody']);
+    expect(unknown.status).toBe(1);
+    expect(unknown.stderr).toContain("Unknown loop 'nobody'");
+  });
+});
+
 describe('gp-rev instance binding (H-2277)', () => {
   it('always reads ~/.rev-gp, even when the caller supplies another REV_HOME', () => {
     const home = mkdtempSync(join(tmpdir(), 'gp-rev-cli-'));

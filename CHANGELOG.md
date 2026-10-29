@@ -13,6 +13,35 @@ longer.
 
 ## Unreleased — 1.0.1
 
+### Added
+
+- `rev context-coverage [seat] [--no-inventory]` answers whether this
+  installation's account of what each agent loads is still TRUE. The Team
+  inventory says what the roster is configured to supply; it cannot say whether
+  that still matches what a session was handed, and it goes stale silently — a
+  host CLI upgrade that renames the request shape it retains, or a roster change
+  that adds a skill, invalidates part of it with nothing going red. The check
+  takes each seat's most recent settled launch on the Claude path and makes five
+  assertions, each failure carrying its own repair line: the session has an
+  observed provider session id; the host record that id names exists and parses;
+  its retained request shape is readable; its recorded working directory matches
+  the roster's; and the bytes this installation composes today are retained
+  verbatim inside that launch's prompt. It adds no collector — the roster, the
+  launch journal and the host CLI's own transcript are records that already
+  exist — and it keeps four things apart: today's sources from one launch's own
+  evidence, a supported path from an unsupported one (a Codex loop and a named
+  summon stay visible with the reason rather than absent), sources that have
+  moved on (`changed`, a normal event) from an assertion nobody could make
+  (`stale`), and an exact byte match from a resemblance — an edited file whose
+  opening survived is not the same file, and when the bytes differ the finding
+  is that they differ plus the limit that the host record retains the prompt
+  whole and no per-source hash, so WHICH source moved is not in it. The command
+  exits non-zero when any path is `stale` or `error`. The same check runs after
+  every launch settlement on that path and writes its state to the loop's event
+  trace; `state/<seat>/context-coverage.json` keeps the last SUCCESSFUL check,
+  so a failing one writes nothing and the previous success says how long the
+  account has been drifting.
+
 ### Behavior changes
 
 - `/api/v1/work` no longer carries a top-level `records` array, and

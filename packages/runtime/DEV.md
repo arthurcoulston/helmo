@@ -398,6 +398,57 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   load on the first measurement, so no command that never asks for context pays
   for them. `view.ts` adds `state()` to the document, rather than team.ts
   deriving loop state a second time and letting two surfaces disagree.
+- `context-coverage.ts` — whether that configured account is still TRUE
+  (R-45 H-3581). team.ts says what the roster would supply; it cannot say
+  whether that still matches what a session was handed, and the audit behind
+  this feature (`crew:projects/r50/CONTEXT-COVERAGE.md`, H-2952) found the
+  account goes stale silently — a host CLI upgrade that renames the retained
+  request shape, or a roster change that adds a skill, invalidates part of it
+  with nothing going red. So it is a check that runs, not prose that was true
+  once. It adds no collector: the roster, the launch journal and the host CLI's
+  own transcript are all records that already exist.
+  Five assertions against the most recent SETTLED launch on a path, in order,
+  each one's failure being its own repair instruction: the session carries an
+  `observed` `provider_session_id`; the host record that id names exists and
+  parses; its retained request shape is readable; its recorded `cwd` matches
+  the roster's; and the bytes this installation composes today are retained
+  verbatim inside that launch's prompt. The last one is an exact byte
+  containment test and never a first-line or opening-paragraph match: an
+  edited file whose opening survived would otherwise be called the same file
+  (H-3581). When the bytes differ, the finding is that they differ plus the
+  evidence limit — the host record retains the prompt whole and no per-source
+  hash, so WHICH source moved is not determinable from it, and that is what
+  R-55's per-source record answers.
+  Four distinctions, for the same reason team.ts has three. CURRENT against
+  HISTORICAL: `current` is composed from today's files and `historical` is one
+  launch's own records, as separate blocks never averaged into a verdict.
+  SUPPORTED against UNSUPPORTED: a codex loop and a named summon stay in the
+  reading as `unsupported` with the reason, because a gap that is absent reads
+  as a gap that is covered. CHANGED against STALE: sources that moved on are a
+  normal event, not a broken check — only an assertion that could not be MADE
+  is stale. And a path's runtimes come from its rotation and fallbacks, not its
+  primary: a seat configured `runtime: codex` with a claude choice runs on
+  both, and reporting only the primary is how the inventory came to omit a file
+  every Claude run receives (the audit's correction 1).
+  `last_verified_at` is the last SUCCESSFUL check, kept in
+  `state/<seat>/context-coverage.json`, so a failing check writes nothing and
+  the previous success is what says how long the account has been drifting.
+  Two entry points because it runs at two moments: `checkOnSettle` fires from
+  `loop.ts` after `recordLaunchTouched`, cheap by construction (no tokenizer,
+  one bounded read) and in its own block so a failed check cannot affect the
+  run that produced it; `coverageReading` is the whole-fleet reading and embeds
+  team.ts's own `seatContext` under `current.inventory` rather than restating
+  the cap rules — a second copy of those here would be H-3009 again. It
+  composes the prompt a second way, because `shim.systemPrompt` throws on a
+  missing source and a missing source is one of the states to report; the two
+  compositions are held byte-identical by a test, since drift between them
+  would report a change nobody made.
+  The host record is looked up by session id across `~/.claude/projects`
+  (`CLAUDE_CONFIG_DIR` when set) and not only under the computed slug: the
+  host maps both `/` and `.` to `-`, so the name is lossy both ways and a
+  present record would be reported missing. `HOST_RECORD_BYTE_CEILING` bounds
+  a transcript that holds no request shape at all; the launch's own shape is in
+  the first entries and the read stops there.
 - **Every Team read goes through `readBounded`, and that is the whole guard
   (H-3004).** The inventory includes every `CLAUDE.md` and `AGENTS.md` found
   walking up from a seat's cwd — files no roster entry names, in trees any agent
@@ -1272,6 +1323,11 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   diagnostic across Runtime launch journals and Work history. It requires a
   qualified ticket reference, emits closed metadata only, and keeps observed,
   measured-zero, not-observed, unsupported and malformed/refused distinct.
+- `node dist/cli.js context-coverage [seat] [--no-inventory]` prints the
+  coverage reading for every entry path, or one seat's. It exits non-zero when
+  any path is `stale` or `error`, so whatever runs it learns the finding
+  without reading the JSON. `--no-inventory` drops the tokenized per-file
+  measurement; the whole fleet with it measures ~2s here.
 - `npm run vendor:tokens` refreshes the vendored estate design tokens,
   `npm run vendor:avatars` the vendored crew avatar sprite, and
   `npm run vendor:reach` the vendored estate reach table; add `-- --check`

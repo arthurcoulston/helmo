@@ -25,6 +25,7 @@ import { teamResume, teamStop } from './team-control.js';
 import { buildIntakeResult, recordIntakeResult } from './intake-preparation.js';
 import { commandName, runCommand } from './command-name.js';
 import { assertTicketIdentity, readTicketLaunches, sessionTrace } from './session-trace.js';
+import { coverageReading } from './context-coverage.js';
 import { ticketHistory } from './helm.js';
 import { recordStallEpisodes } from './stalled-work.js';
 import { requestRuntimeRecovery, type RuntimeRecoveryRequest } from './runtime-recovery.js';
@@ -168,6 +169,7 @@ const COMMAND_HELP: Record<string, string> = {
   status: `usage: ${commandName} status [--json]`,
   tail: `usage: ${commandName} tail <loop>`,
   trace: `usage: ${commandName} trace <installation-qualified ticket>`,
+  'context-coverage': `usage: ${commandName} context-coverage [seat] [--no-inventory]`,
   'session-spec': `usage: ${commandName} session-spec <seat> --session <actor stamp> [--provider claude] [--tier high] [--model M] [--cwd P] [--constitution P] [--version V]`,
   team: `usage: ${commandName} team <stop|resume> <loop|role|all> [--worker]`,
   intake: `usage: ${commandName} intake result goodplumb@<40-hex-commit>`,
@@ -327,6 +329,24 @@ switch (cmd) {
       console.error(TRACE_REFUSAL);
       process.exit(1);
     }
+    break;
+  }
+  // The coverage check for R-45: it reads the roster, the launch journal and
+  // the host CLI's own record, and adds no collector. `--no-inventory` drops
+  // the tokenized per-file measurement, which is what makes it cheap enough
+  // to run from a settling loop.
+  case 'context-coverage': {
+    const seat = rest[0] && !rest[0].startsWith('--') ? knownLoop(rest[0]) : undefined;
+    // `rest.includes`, not `flag`: a valueless flag reads as an absent one
+    // through `flag`, which would silently keep the expensive path.
+    const reading = await coverageReading({ global: g, loops, providers }, {
+      inventory: !rest.includes('--no-inventory'),
+      ...(seat ? { seats: [seat] } : {}),
+    });
+    console.log(JSON.stringify(reading, null, 2));
+    // A path whose account can no longer be checked is the finding this
+    // command exists for, so it leaves a non-zero status for whatever ran it.
+    if (reading.summary.stale || reading.summary.error) process.exitCode = 1;
     break;
   }
   case 'intake': {
@@ -959,6 +979,7 @@ switch (cmd) {
                            activate a committed fix: drain after in-flight iterations, come back on the new code
   tail <loop>              print the path of the loop's event trace
   trace <ticket@install>   join one ticket to content-off launch/session metadata and Work events
+  context-coverage [seat]  is the account of what each seat loads still true? per path, with repairs
 Any command also takes --installation <name|home> (or --installation=<name|home>): it asserts which
 installation the command is about, and ANY command — reads included — refuses rather than redirects
 if that disagrees with the environment.

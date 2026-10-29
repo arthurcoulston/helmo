@@ -40,7 +40,7 @@
 // all — it is reconstructed from the per-source blobs and checked against the
 // sha256 recorded at launch.
 import { createHash } from 'node:crypto';
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, type Dirent, type Stats } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { revHome, stateDir, type Roster } from './config.js';
 import { claudeHome, readClaudeHostRecord, readSource, sourceRepos, type SourceReading } from './context-coverage.js';
@@ -57,6 +57,17 @@ import type { GlobalConfig, LoopConfig } from './types.js';
  *  past this horizon is told the policy dropped them rather than finding a
  *  silently emptier receipt. */
 export const RETENTION_DAYS = 90;
+
+/** How long an unreferenced blob is held before prune will drop it. Covers
+ *  the gap between `retain` returning and the receipt that names it being
+ *  written: inside that gap the bytes belong to a launch in flight and no
+ *  receipt references them yet. Minutes would do; an hour costs nothing
+ *  against a 90-day horizon. */
+export const PRUNE_WRITE_GRACE_MS = 3_600_000;
+
+/** How often the runtime's retention pass runs. The horizon moves in days
+ *  and the walk is O(receipts), so once a day is the whole requirement. */
+export const PRUNE_INTERVAL_MS = 86_400_000;
 
 /** The most of a receipt this reader will take off disk. Receipts carry
  *  hashes and paths, never content, so this is generous by a wide margin and
@@ -197,7 +208,19 @@ export function blobDir(): string {
   return join(revHome(), 'state', 'context-blobs');
 }
 
+/** A store entry's name is a sha256 and nothing else. Checked rather than
+ *  assumed, because the hash `blobPath` is asked for comes back off a receipt
+ *  on disk: a receipt naming `../../etc/hosts` would otherwise have the store
+ *  open any file the loop's own uid can read and report its presence (H-3637,
+ *  Ward's `probe-tamper.mjs`). Same shape discipline as `HOST_SESSION_ID` in
+ *  context-coverage.ts. */
+export const BLOB_NAME = /^[0-9a-f]{64}$/;
+
+/** Refuses a name that is not a sha256 rather than joining it. Every caller
+ *  either computed the hash here or checked `BLOB_NAME` first, so throwing is
+ *  reporting a defect, not handling untrusted input twice. */
 export function blobPath(hash: string): string {
+  if (!BLOB_NAME.test(hash)) throw new Error(`'${hash.slice(0, 80)}' is not a sha256, so it names no entry in the content store.`);
   return join(blobDir(), hash.slice(0, 2), hash);
 }
 
@@ -238,6 +261,13 @@ export function resolveContent(
   if (ref.retention !== 'retained' || !ref.sha256) {
     return { state: 'not_retained', detail: ref.reason ?? 'These bytes were not retained, and the receipt records no reason.' };
   }
+  // A receipt claiming retention under something that is not a sha256 was not
+  // written by this module. Reported as `lost` because that is what it is from
+  // the reader's side — content the record says is held and is not retrievable
+  // — and it goes red for the same reason.
+  if (!BLOB_NAME.test(ref.sha256)) {
+    return { state: 'lost', detail: `The receipt claims retention under '${ref.sha256.slice(0, 80)}', which is not a 64-character hex sha256, so no store entry can correspond to it. This receipt was written by something other than this module or edited after the fact; treat its content as lost and the receipt as untrusted.` };
+  }
   const file = blobPath(ref.sha256);
   if (existsSync(file)) return { state: 'retained', path: file, detail: `${ref.bytes.toLocaleString('en-US')} bytes under sha256 ${ref.sha256}.` };
   const ageDays = (now.getTime() - Date.parse(recordedAt)) / 86_400_000;
@@ -263,10 +293,13 @@ export function readRetained(ref: ContentRef, recordedAt: string, now = new Date
 
 // ------------------------------------------------------------------ receipts
 
+/** Pure path, deliberately: asking a seat what it was handed used to CREATE
+ *  that seat's state directory and an empty `startup/` inside it, so reading
+ *  Ward's receipts brought Ward's store into being (H-3637). A read answers;
+ *  only `writeDurable` creates. `stateDir` is not used here for the same
+ *  reason — it mkdirs too. */
 function receiptDir(seat: string): string {
-  const dir = join(stateDir(seat), 'startup');
-  mkdirSync(dir, { recursive: true });
-  return dir;
+  return join(revHome(), 'state', seat, 'startup');
 }
 
 function receiptPath(seat: string, launchId: string): string {
@@ -275,6 +308,7 @@ function receiptPath(seat: string, launchId: string): string {
 
 function writeDurable(file: string, receipt: StartupReceipt): void {
   const dir = dirname(file);
+  mkdirSync(dir, { recursive: true });
   const tmp = join(dir, `.${basename(file)}.${process.pid}.tmp`);
   try {
     const fd = openSync(tmp, 'w');
@@ -300,6 +334,22 @@ export function readReceipt(seat: string, launchId: string): StartupReceipt | nu
   // store that cannot be trusted to answer by key at all.
   if (parsed.launch_id !== launchId) throw new Error(`Startup receipt at ${file} names launch ${parsed.launch_id}, not ${launchId}.`);
   return parsed;
+}
+
+/** Seats that have a receipt directory, which is NOT the roster.
+ *
+ *  Prune's live set is built from these. A roster walk missed a seat retired
+ *  while its receipts were still inside the horizon: its blobs were dropped
+ *  and those receipts then read `lost`, reporting a store defect that was
+ *  really the prune (H-3637). The record outlives the roster entry, and the
+ *  horizon is what ages it out. */
+export function seatsWithReceipts(): string[] {
+  let entries: string[];
+  try {
+    entries = readdirSync(join(revHome(), 'state'), { withFileTypes: true })
+      .filter((e) => e.isDirectory()).map((e) => e.name);
+  } catch { return []; }
+  return entries.filter((seat) => existsSync(receiptDir(seat))).sort();
 }
 
 /** Every receipt this seat has, newest first. */
@@ -718,14 +768,38 @@ export function compareReceipts(a: StartupReceipt, b: StartupReceipt, now = new 
 
 // ------------------------------------------------------------------- reading
 
+/** What a reference resolves to NOW. Wider than the stored `Retention`,
+ *  because two of the four states can only be known at read time. */
+export type ResolvedRetention = 'retained' | 'not_retained' | 'expired' | 'lost';
+
+/** A receipt as a reading reports it: every `retention` field resolved
+ *  against the store as it is now, rather than echoing what was true when the
+ *  receipt was written. The aggregate `content_states` and the `reconstruction`
+ *  verdict were already read-time; the per-source field was not, so a reading
+ *  with one blob gone counted it under `lost` at the top while the line naming
+ *  that file still read `retained` — and the per-source line is the one a
+ *  reader uses to find out WHICH file is gone (H-3637). */
+export type ReadingReceipt = Omit<StartupReceipt, 'sources' | 'iteration_prompt'> & {
+  sources: (Omit<ReceiptSource, 'content'> & { content: Omit<ContentRef, 'retention'> & { retention: ResolvedRetention } })[];
+  iteration_prompt: Omit<StartupReceipt['iteration_prompt'], 'retention'> & { retention: ResolvedRetention };
+  content_states: Record<string, number>;
+  reconstruction: string;
+};
+
 export interface StartupReading {
   schema: 'helmo.startup-context.reading.v1';
   installation: string;
   read_at: string;
   scope: string;
+  /** One word for the whole reading, so a caller that wires this to a health
+   *  page gets the finding without parsing the summary. `failed` is a receipt
+   *  that could not be written or content lost inside the horizon; `degraded`
+   *  is a `partial` receipt — a launch recorded with part of its evidence
+   *  missing, which used to be visible only in the JSON (H-3637). */
+  status: 'ok' | 'degraded' | 'failed';
   retention: { days: number; store: string; policy: string };
-  receipts: (StartupReceipt & { content_states: Record<string, number>; reconstruction: string })[];
-  summary: { complete: number; partial: number; failed: number; settled: number; confirmed: number; unconfirmed: number; contradicted: number };
+  receipts: ReadingReceipt[];
+  summary: { complete: number; partial: number; failed: number; lost: number; settled: number; confirmed: number; unconfirmed: number; contradicted: number };
 }
 
 /** Receipts for one seat, or for the work record a launch was for.
@@ -756,8 +830,8 @@ export function startupReading(
   receipts.sort((a, b) => b.recorded_at.localeCompare(a.recorded_at));
   if (opts.limit !== undefined) receipts = receipts.slice(0, opts.limit);
 
-  const summary = { complete: 0, partial: 0, failed: 0, settled: 0, confirmed: 0, unconfirmed: 0, contradicted: 0 };
-  const annotated = receipts.map((receipt) => {
+  const summary = { complete: 0, partial: 0, failed: 0, lost: 0, settled: 0, confirmed: 0, unconfirmed: 0, contradicted: 0 };
+  const annotated: ReadingReceipt[] = receipts.map((receipt) => {
     summary[receipt.recording.state] += 1;
     if (receipt.settled) {
       summary.settled += 1;
@@ -766,13 +840,19 @@ export function startupReading(
       else summary.unconfirmed += 1;
     }
     const content_states: Record<string, number> = {};
-    for (const source of receipt.sources) {
+    const sources = receipt.sources.map((source) => {
       const state = resolveContent(source.content, receipt.recorded_at, now).state;
       content_states[state] = (content_states[state] ?? 0) + 1;
-    }
+      return { ...source, content: { ...source.content, retention: state } };
+    });
+    if (content_states['lost']) summary.lost += 1;
     const rebuilt = reconstructComposed(receipt, now);
     return {
-      ...receipt, content_states,
+      ...receipt, sources, content_states,
+      iteration_prompt: {
+        ...receipt.iteration_prompt,
+        retention: resolveContent(receipt.iteration_prompt, receipt.recorded_at, now).state,
+      },
       reconstruction: rebuilt.ok
         ? `The composed prompt rebuilds from the retained sources to sha256 ${receipt.composed.sha256}, matching what was recorded at launch.`
         : `Not reconstructable: ${rebuilt.detail}`,
@@ -782,10 +862,11 @@ export function startupReading(
   return {
     schema: 'helmo.startup-context.reading.v1',
     installation: serviceLabel(), read_at: now.toISOString(),
+    status: summary.failed || summary.lost ? 'failed' : summary.partial ? 'degraded' : 'ok',
     scope: 'One receipt per launch on a supported path, written at dispatch from the files the launcher was about to compose, and completed at settlement with the host CLI\'s own record. It covers what this installation supplied and what was present to be discovered — not what the session read, not what the host supplied of its own, and not what survived a compaction.',
     retention: {
       days: RETENTION_DAYS, store: blobDir(),
-      policy: `Content is addressed by sha256 and shared across every receipt naming it, so repeated launches of unchanged sources cost one copy. \`startup-context --prune\` drops blobs no receipt inside the ${RETENTION_DAYS}-day horizon references. Receipts themselves are never rewritten by expiry: a reader past the horizon is told the policy dropped the content.`,
+      policy: `Content is addressed by sha256 and shared across every receipt naming it, so repeated launches of unchanged sources cost one copy. The supervisor's retention pass drops blobs no receipt inside the ${RETENTION_DAYS}-day horizon references, once a day and without being asked; \`startup-context --prune\` is the same walk on demand, dry until \`--apply\`. Receipts themselves are never rewritten by expiry: a reader past the horizon is told the policy dropped the content.`,
     },
     receipts: annotated, summary,
   };
@@ -796,35 +877,77 @@ export function startupReading(
  *  Deliberately reference-counted over the receipts rather than keyed on each
  *  blob's own age: two launches 100 days apart can share one blob, and
  *  deleting it on its own mtime would empty a receipt written yesterday. */
-export function pruneBlobs(roster: Roster, opts: { now?: Date; apply?: boolean } = {}): {
-  horizon: string; referenced: number; kept: number; dropped: { sha256: string; bytes: number }[]; applied: boolean;
+export function pruneBlobs(opts: { now?: Date; apply?: boolean } = {}): {
+  horizon: string; seats: string[]; referenced: number; kept: number; held: number;
+  dropped: { sha256: string; bytes: number }[]; skipped: string[]; applied: boolean;
 } {
   const now = opts.now ?? new Date();
   const horizon = new Date(now.getTime() - RETENTION_DAYS * 86_400_000).toISOString();
+  const seats = seatsWithReceipts();
   const live = new Set<string>();
-  for (const l of Object.values(roster.loops)) {
-    for (const receipt of seatReceipts(l.name)) {
+  for (const seat of seats) {
+    for (const receipt of seatReceipts(seat)) {
       if (receipt.recorded_at < horizon) continue;
       for (const source of receipt.sources) if (source.content.sha256) live.add(source.content.sha256);
       if (receipt.iteration_prompt.sha256) live.add(receipt.iteration_prompt.sha256);
     }
   }
   const dropped: { sha256: string; bytes: number }[] = [];
+  const skipped: string[] = [];
   let kept = 0;
-  let shards: string[];
-  try { shards = readdirSync(blobDir()); } catch { shards = []; }
+  let held = 0;
+  let shards: Dirent[];
+  try { shards = readdirSync(blobDir(), { withFileTypes: true }); } catch { shards = []; }
   for (const shard of shards) {
+    // The store's own shape, and anything that is not it is left alone rather
+    // than walked or deleted: a two-hex directory holding entries whose names
+    // are sha256s beginning with it (H-3637).
+    if (!shard.isDirectory() || !/^[0-9a-f]{2}$/.test(shard.name)) { skipped.push(shard.name); continue; }
     let names: string[];
-    try { names = readdirSync(join(blobDir(), shard)); } catch { continue; }
+    try { names = readdirSync(join(blobDir(), shard.name)); } catch { continue; }
     for (const name of names) {
       if (name.endsWith('.tmp')) continue;
+      if (!BLOB_NAME.test(name) || !name.startsWith(shard.name)) { skipped.push(join(shard.name, name)); continue; }
       if (live.has(name)) { kept += 1; continue; }
-      const file = join(blobDir(), shard, name);
-      let bytes = 0;
-      try { bytes = statSync(file).size; } catch { continue; }
-      dropped.push({ sha256: name, bytes });
+      const file = join(blobDir(), shard.name, name);
+      let stat: Stats;
+      try { stat = statSync(file); } catch { continue; }
+      // `retain` returns before the receipt naming the blob is written, so a
+      // launch in flight owns bytes no receipt references yet. Automatic prune
+      // made that window matter: hold anything written inside the grace, which
+      // is orders of magnitude longer than the gap. An operator-run prune
+      // honours it too — a blob a minute old is never the one filling a disk.
+      if (now.getTime() - stat.mtimeMs < PRUNE_WRITE_GRACE_MS) { held += 1; continue; }
+      dropped.push({ sha256: name, bytes: stat.size });
       if (opts.apply) { try { rmSync(file); } catch { /* a blob that cannot be removed is reported, not fatal */ } }
     }
   }
-  return { horizon, referenced: live.size, kept, dropped, applied: opts.apply === true };
+  return { horizon, seats, referenced: live.size, kept, held, dropped, skipped, applied: opts.apply === true };
+}
+
+/** The runtime's own retention pass: what makes `RETENTION_DAYS` a horizon
+ *  rather than a number in a doc.
+ *
+ *  Until this existed, nothing but `startup-context --prune --apply` dropped
+ *  anything, so the 90-day horizon — the control the privacy clearance rests
+ *  on — held only as long as someone remembered to type the command (H-3637,
+ *  H-3642). Called from the supervisor's periodic pass, which is the one
+ *  long-lived process per installation, and throttled to once a day by a
+ *  stamp beside the store: the walk is O(receipts) and the horizon moves in
+ *  days. Never throws — retention must not be able to take the fleet down,
+ *  the same bargain `logretention.ts` makes. */
+export function pruneRetainedContent(opts: { now?: Date } = {}): { ran: boolean; dropped: number; bytes: number } {
+  const now = opts.now ?? new Date();
+  try {
+    // Beside the supervisor's own state, not inside the store: a file in
+    // `blobDir()` that is not a blob is something prune then has to explain.
+    const stamp = join(stateDir('supervisor'), 'startup-context-prune');
+    const last = existsSync(stamp) ? statSync(stamp).mtimeMs : 0;
+    if (now.getTime() - last < PRUNE_INTERVAL_MS) return { ran: false, dropped: 0, bytes: 0 };
+    writeFileSync(stamp, `${now.toISOString()}\n`);
+    const result = pruneBlobs({ now, apply: true });
+    return { ran: true, dropped: result.dropped.length, bytes: result.dropped.reduce((n, d) => n + d.bytes, 0) };
+  } catch {
+    return { ran: false, dropped: 0, bytes: 0 };
+  }
 }

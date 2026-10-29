@@ -18,6 +18,7 @@ import { loadRoster, revHome, stateDir, validateRefinementPreparationConfig } fr
 import { respawnDecide } from './ladder.js';
 import { pollUsage } from './usage.js';
 import { rotateOpenFd } from './logretention.js';
+import { pruneRetainedContent } from './startup-context.js';
 import { logEvent, occupiedPid, pidAlive, runningStamp, sClear, sGet, sHas, sSet, streakReset } from './sentinels.js';
 import { endSessionGroup, sessionGroupsOf } from './shim.js';
 import { REDEPLOY_EXIT, RedeployRequest, armRedeployWatch, readRedeploy, reportRedeployLanded } from './redeploy.js';
@@ -358,6 +359,16 @@ export function runFleet(g: GlobalConfig, loops: Record<string, LoopConfig>): Pr
         }
         drainAt = 0; // once; exit events finish the drain
       }
+      // The startup receipts' retention pass. Self-throttled to once a day,
+      // so this is a timestamp read on every other tick. Here because the
+      // 90-day horizon is the control that made retaining a second copy of
+      // each launch's context acceptable, and until this call existed nothing
+      // enforced it but an operator typing `--prune --apply` (H-3637, H-3642).
+      // Logged whenever it RUNS and not only when it drops something: a
+      // retention pass nobody can see run is halfway back to a horizon
+      // nothing enforces. Once a day, so it costs one line.
+      const pruned = pruneRetainedContent();
+      if (pruned.ran) logEvent(SUP, 'startup-context-pruned', `dropped=${pruned.dropped} bytes=${pruned.bytes}`);
       for (const s of slots.values()) {
         // Rotate the live console.log in place — a long-running loop never
         // reopens its fd, so unbounded growth is only caught here, not at

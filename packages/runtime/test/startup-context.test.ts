@@ -11,9 +11,9 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  RETENTION_DAYS, attachSettlement, blobDir, blobPath, buildReceipt, compareReceipts,
-  launchAssociation, pruneBlobs, readReceipt, reconstructComposed, recordStartupContext,
-  resolveContent, seatReceipts, startupReading,
+  PRUNE_INTERVAL_MS, PRUNE_WRITE_GRACE_MS, RETENTION_DAYS, attachSettlement, blobDir, blobPath,
+  buildReceipt, compareReceipts, launchAssociation, pruneBlobs, pruneRetainedContent, readReceipt,
+  reconstructComposed, recordStartupContext, resolveContent, retain, seatReceipts, startupReading,
 } from '../src/startup-context.js';
 import { claudeProjectSlug } from '../src/context-coverage.js';
 import { systemPrompt } from '../src/shim.js';
@@ -54,6 +54,12 @@ function loop(over: Partial<LoopConfig> = {}): LoopConfig {
 }
 
 const global = (): GlobalConfig => ({ helmo_mcp_server: '/opt/helmo/work/dist/server.js' } as GlobalConfig);
+
+/** Past the window prune holds a just-written blob in. Every fixture here
+ *  retains its content moments before it prunes, which is exactly the
+ *  in-flight launch the grace exists to protect, so a prune test has to say
+ *  which side of it it is standing on. */
+const afterGrace = (): Date => new Date(Date.now() + PRUNE_WRITE_GRACE_MS + 60_000);
 
 const roster = (loops: LoopConfig[]): Roster =>
   ({ global: global(), loops: Object.fromEntries(loops.map((l) => [l.name, l])), providers: {} } as unknown as Roster);
@@ -488,7 +494,7 @@ describe('retention', () => {
     writeFileSync(join(home, 'state', 'mason', 'startup', `${sha('old-launch')}.json`), JSON.stringify(aged, null, 1));
     capture(l, 'new-launch', { iterationPrompt: 'Loop iteration 2 for agent mason.' });
 
-    const pruned = pruneBlobs(roster([l]), { apply: true });
+    const pruned = pruneBlobs({ now: afterGrace(), apply: true });
     expect(pruned.dropped.map((d) => d.sha256)).not.toContain(old.sources[0]!.content.sha256);
     expect(existsSync(blobPath(old.sources[0]!.content.sha256!))).toBe(true);
     // The old receipt's own iteration prompt is not shared, so it goes.
@@ -502,10 +508,95 @@ describe('retention', () => {
     const aged = { ...old, recorded_at: new Date(Date.parse(old.recorded_at) - (RETENTION_DAYS + 10) * 86_400_000).toISOString() };
     writeFileSync(join(home, 'state', 'mason', 'startup', `${sha('old-launch')}.json`), JSON.stringify(aged, null, 1));
 
-    const dry = pruneBlobs(roster([l]));
+    const dry = pruneBlobs({ now: afterGrace() });
     expect(dry.applied).toBe(false);
     expect(dry.dropped.length).toBeGreaterThan(0);
     for (const d of dry.dropped) expect(existsSync(blobPath(d.sha256))).toBe(true);
+  });
+
+  it('holds a blob no receipt references yet, because a launch is still writing one', () => {
+    // `retain` returns before the receipt naming it is written. Prune used to
+    // be operator-run, so that gap never mattered; with the supervisor running
+    // it unasked, a blob dropped inside the gap would make the receipt that
+    // lands a second later read `lost` (H-3637).
+    const l = loop();
+    const orphan = retain('bytes a launch retained a moment ago, with no receipt yet.\n');
+    expect(existsSync(blobPath(orphan.sha256))).toBe(true);
+    capture(l, 'launch-1');
+
+    const now = pruneBlobs({ apply: true });
+    expect(now.dropped).toEqual([]);
+    expect(now.held).toBeGreaterThan(0);
+    expect(existsSync(blobPath(orphan.sha256))).toBe(true);
+
+    const later = pruneBlobs({ now: afterGrace(), apply: true });
+    expect(later.dropped.map((d) => d.sha256)).toContain(orphan.sha256);
+    expect(existsSync(blobPath(orphan.sha256))).toBe(false);
+  });
+
+  it('keeps a retired seat\'s blobs, because its receipts outlive its roster entry', () => {
+    // The live set used to be walked over `roster.loops`, so a seat removed
+    // from the roster lost its blobs inside the horizon and its receipts then
+    // read `lost` — a store defect reported for a prune's own doing (H-3637).
+    const retired = loop({ name: 'herald', seat: 'herald' });
+    capture(retired, 'herald-launch');
+    const receipt = readReceipt('herald', 'herald-launch')!;
+
+    // Prune with a roster that has never heard of herald.
+    const pruned = pruneBlobs({ now: afterGrace(), apply: true });
+    expect(pruned.seats).toContain('herald');
+    expect(pruned.dropped.map((d) => d.sha256)).not.toContain(receipt.sources[0]!.content.sha256);
+    expect(resolveContent(receipt.sources[0]!.content, receipt.recorded_at).state).toBe('retained');
+  });
+
+  it('runs itself once a day, which is what makes the horizon a horizon', () => {
+    // Finding 3: until this caller existed, nothing but an operator typing
+    // `--prune --apply` enforced RETENTION_DAYS (H-3642 set 2027-01-27 against
+    // it). Throttled, so the second call in a day is a timestamp read.
+    const l = loop();
+    capture(l, 'launch-1');
+    const orphan = retain('content no receipt will ever name.\n');
+
+    const first = pruneRetainedContent({ now: afterGrace() });
+    expect(first.ran).toBe(true);
+    expect(first.dropped).toBeGreaterThan(0);
+    expect(existsSync(blobPath(orphan.sha256))).toBe(false);
+
+    const again = pruneRetainedContent({ now: afterGrace() });
+    expect(again.ran).toBe(false);
+    const tomorrow = pruneRetainedContent({ now: new Date(Date.now() + PRUNE_INTERVAL_MS + PRUNE_WRITE_GRACE_MS) });
+    expect(tomorrow.ran).toBe(true);
+  });
+
+  it('leaves alone anything in the store that is not shaped like a blob', () => {
+    const l = loop();
+    capture(l, 'launch-1');
+    mkdirSync(join(blobDir(), 'not-a-shard'), { recursive: true });
+    mkdirSync(join(blobDir(), 'ab'), { recursive: true });
+    writeFileSync(join(blobDir(), 'ab', 'README'), 'put here by hand\n');
+
+    const pruned = pruneBlobs({ now: afterGrace(), apply: true });
+    expect(pruned.skipped).toContain('not-a-shard');
+    expect(pruned.skipped).toContain(join('ab', 'README'));
+    expect(existsSync(join(blobDir(), 'ab', 'README'))).toBe(true);
+  });
+});
+
+describe('a receipt that was not written by this module', () => {
+  it('refuses a sha256 that is a path, and reports the content as lost', () => {
+    // Ward's probe-tamper.mjs: a receipt naming `../../..`-anything had the
+    // store join it and report whether the file existed — an oracle inside the
+    // runtime's own trust domain (H-3637). The shape is checked now.
+    expect(() => blobPath('../../../etc/hosts')).toThrow('is not a sha256');
+    expect(() => blobPath('ABCDEF')).toThrow('is not a sha256');
+
+    const tampered = resolveContent(
+      { sha256: '../../../etc/hosts', bytes: 10, retention: 'retained' },
+      new Date().toISOString(),
+    );
+    expect(tampered.state).toBe('lost');
+    expect(tampered.detail).toContain('not a 64-character hex sha256');
+    expect(tampered.detail).toContain('untrusted');
   });
 });
 
@@ -593,5 +684,62 @@ describe('the reading', () => {
     expect(reading.retention.store).toBe(blobDir());
     expect(reading.receipts[0]!.content_states).toMatchObject({ retained: 1 });
     expect(reading.scope).toContain('not what the session read');
+  });
+
+  it('resolves each source\'s own retention field at read time, not just the aggregate', () => {
+    // The aggregate and the reconstruction verdict were already read-time; the
+    // per-source field echoed the receipt, so a reading with one blob gone
+    // counted it `lost` at the top while the line naming THAT file still said
+    // `retained` — and the per-source line is the one a reader uses to find
+    // out which file is missing (H-3637).
+    const l = loop();
+    writeFileSync(join(tree, 'SKILL.md'), 'a second composed source.\n');
+    capture(l, 'launch-1');
+    const receipt = readReceipt('mason', 'launch-1')!;
+    const gone = receipt.sources[0]!;
+    rmSync(blobPath(gone.content.sha256!));
+
+    const reading = startupReading(roster([l]));
+    const source = reading.receipts[0]!.sources.find((s) => s.path === gone.path)!;
+    expect(source.content.retention).toBe('lost');
+    expect(source.content.sha256).toBe(gone.content.sha256);
+    // The stored receipt is not rewritten: the resolution is the reading's.
+    expect(readReceipt('mason', 'launch-1')!.sources[0]!.content.retention).toBe('retained');
+    // Past the horizon the same field reads `expired`, which is the policy
+    // working rather than a defect.
+    const later = startupReading(roster([l]), { now: new Date(Date.parse(receipt.recorded_at) + (RETENTION_DAYS + 5) * 86_400_000) });
+    expect(later.receipts[0]!.sources.find((s) => s.path === gone.path)!.content.retention).toBe('expired');
+  });
+
+  it('carries one status word, and a partial receipt reddens it', () => {
+    // Finding 7: the exit code counted a failed recording and lost content and
+    // NOT a `partial` receipt, so a store obstructed on every launch recorded
+    // `partial` forever behind a green probe (H-3637). `cli.ts` reads this
+    // field, so the fix is here and the probe needs no JSON parsing.
+    const l = loop();
+    capture(l, 'launch-1');
+    expect(startupReading(roster([l])).status).toBe('ok');
+
+    // Obstruct the store before the first launch, so `partial` is the only
+    // finding in the reading: a blob removed afterwards would also be `lost`,
+    // and the point here is the one state that used to stay green on its own.
+    mkdirSync(join(home, 'state'), { recursive: true });
+    rmSync(blobDir(), { recursive: true });
+    writeFileSync(blobDir(), 'not a directory\n');
+    const alone = loop({ name: 'herald', seat: 'herald' });
+    capture(alone, 'herald-launch');
+    const obstructed = startupReading(roster([alone]));
+    expect(obstructed.summary).toMatchObject({ partial: 1, failed: 0, lost: 0 });
+    expect(obstructed.status).toBe('degraded');
+  });
+
+  it('calls content lost inside the horizon a failure, not a degradation', () => {
+    const l = loop();
+    capture(l, 'launch-1');
+    rmSync(blobPath(readReceipt('mason', 'launch-1')!.sources[0]!.content.sha256!));
+
+    const lost = startupReading(roster([l]));
+    expect(lost.summary).toMatchObject({ complete: 1, partial: 0, lost: 1 });
+    expect(lost.status).toBe('failed');
   });
 });

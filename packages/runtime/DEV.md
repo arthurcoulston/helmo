@@ -498,6 +498,12 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   resolves each reference at READ time, so a receipt is never rewritten to hide
   the difference between content the policy dropped at `RETENTION_DAYS` and
   content that went missing inside the horizon, which is a defect in the store.
+  A reading resolves EVERY `retention` field it prints, per source and for the
+  iteration prompt, not only the aggregate counts — the per-source line is the
+  one a reader uses to find out WHICH file is gone, and it used to echo the
+  receipt and say `retained` beside a top-level `lost` (H-3641). The stored
+  receipt still says what was true when it was written; the resolution is the
+  reading's, which is why `ReadingReceipt` is a separate type.
   COMPLETE against PARTIAL against FAILED recording: a recording failure must
   never take down a launch and must never pass as an absence, so it writes a
   receipt that says it failed, keeping the work association and the hashes of
@@ -513,29 +519,49 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   names and launch ids are unique only inside an installation. `pruneBlobs` is
   reference-counted over the receipts inside the horizon and never over a
   blob's own mtime: two launches 100 days apart share the constitution, and
-  dropping it on its age would empty a receipt written yesterday.
+  dropping it on its age would empty a receipt written yesterday. Its live set
+  walks the SEATS THAT HAVE RECEIPTS, not `roster.loops` — a seat retired while
+  its receipts were still inside the horizon lost its blobs to a roster walk,
+  and those receipts then read `lost`, reporting a store defect that was the
+  prune's own doing (H-3641). Two shapes it refuses rather than walks: an entry
+  in the store whose name is not a sha256, and a shard that is not two hex
+  characters, both reported under `skipped`. And `PRUNE_WRITE_GRACE_MS` holds
+  anything written in the last hour, because `retain` returns before the
+  receipt naming it exists and that gap belongs to a launch in flight.
   **Operating it** (R-55 asks for this by name). The operating owner is the
   `estate-ui` seat, which owns this module, its retention constant and its
   repair; Ward holds the posture of the blob store itself (H-3637). Capture
   asks nothing of an operator — it runs at every supported launch, and a
   launch that could not be recorded is the only launch with no receipt.
-  INSPECT with `startup-context`, which exits non-zero on exactly two
-  findings (`cli.ts`): a receipt whose recording `failed`, and content that
-  went missing inside the horizon — so whatever runs it learns those without
-  reading the JSON. `recording.errors` names what failed, and `lost` against
-  `expired` separates a defect in the store from the policy doing its job.
-  **A `partial` receipt does NOT redden the exit code**, measured, and that
-  is worth knowing before trusting this as a health probe: a store that is
-  obstructed on every launch records `partial` forever and the probe stays
-  green, so read `summary.partial` as well as the status. REPAIR is by cause
+  INSPECT with `startup-context`, which carries one `status` word for the
+  whole reading and exits non-zero on anything short of `ok` — so whatever
+  runs it learns the finding without parsing the JSON. `failed` is a receipt
+  whose recording failed or content missing inside the horizon; `degraded` is
+  a `partial` receipt. Partial counts because a store obstructed on EVERY
+  launch records `partial` forever, and a probe that stays green through that
+  cannot see the failure it exists for (H-3641 finding 7; it did stay green
+  in 2026.10-30, measured). `recording.errors` names what failed, and `lost`
+  against `expired` separates a defect in the store from the policy doing its
+  job. A selector that named one thing and matched nothing — `--launch` or
+  `--ticket` — is a one-line refusal and exit 1, not an empty reading; a bare
+  seat or installation read still exits 0 on an empty store, because zero
+  receipts is the right answer before a fleet has launched. REPAIR is by cause
   and never by back-fill: a `partial` receipt is repaired by the next launch
   once whatever obstructed the store is cleared, and the obstructed receipt
   stays as the record that it happened, because a receipt rewritten later
   would be exactly the fabricated completeness the brief forbids.
   Content that is `lost` cannot be recovered; the receipt keeps its hashes and
-  says so, which is the honest end state rather than a repair. BOUND storage
-  with `--prune --apply` — in this release nothing else enforces
-  `RETENTION_DAYS`, so content accumulates until someone runs it. ROLL BACK by
+  says so, which is the honest end state rather than a repair. STORAGE is
+  bounded by the supervisor itself: `pruneRetainedContent` runs in the
+  periodic pass, once a day, self-throttled by a stamp under
+  `state/supervisor/`, and logs `startup-context-pruned` every time it runs so
+  the control is visible in `events.log` rather than merely asserted. It never
+  throws — the same bargain `logretention.ts` makes, since retention must not
+  be able to take the fleet down. `--prune [--apply]` is the same walk on
+  demand, dry until the word. Before this caller existed nothing enforced
+  `RETENTION_DAYS` but an operator typing the command, which made the 90-day
+  horizon the privacy clearance rests on nominal (H-3641 finding 3, the bound
+  Ward set on H-3642). ROLL BACK by
   selecting the retained release and restoring its entry-point pins: a release
   without this module neither reads nor writes either store, so both are left
   behind inert and no downgrade deletes them.

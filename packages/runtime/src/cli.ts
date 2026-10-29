@@ -27,7 +27,7 @@ import { commandName, runCommand } from './command-name.js';
 import { assertTicketIdentity, readTicketLaunches, sessionTrace } from './session-trace.js';
 import { coverageReading } from './context-coverage.js';
 import { compareReceipts, pruneBlobs, readReceipt, startupReading } from './startup-context.js';
-import { ticketHistory } from './helm.js';
+import { cliError, ticketHistory } from './helm.js';
 import { recordStallEpisodes } from './stalled-work.js';
 import { requestRuntimeRecovery, type RuntimeRecoveryRequest } from './runtime-recovery.js';
 import { endedClaimEvidence, type EndedClaimRequest } from './ended-claim.js';
@@ -363,8 +363,19 @@ switch (cmd) {
         console.error(COMMAND_HELP['startup-context']);
         process.exit(1);
       }
-      const a = readReceipt(knownLoop(seatA), launchA);
-      const b = readReceipt(knownLoop(seatB), launchB);
+      // `readReceipt` THROWS on a receipt found under one launch's hash and
+      // naming another — a store that cannot answer by key. That is the right
+      // refusal and the wrong shape: uncaught it reached the operator as a
+      // stack trace (H-3637). Name it like the refusals below it.
+      let a: ReturnType<typeof readReceipt>;
+      let b: ReturnType<typeof readReceipt>;
+      try {
+        a = readReceipt(knownLoop(seatA), launchA);
+        b = readReceipt(knownLoop(seatB), launchB);
+      } catch (e) {
+        console.error(`rev: ${cliError(e)}`);
+        process.exit(1);
+      }
       if (!a || !b) {
         console.error(`No startup receipt for ${!a ? `${seatA} launch ${launchA}` : `${seatB} launch ${launchB}`}.`);
         process.exit(1);
@@ -375,7 +386,7 @@ switch (cmd) {
     if (rest.includes('--prune')) {
       // Dry by default: the destructive half of a retention policy asks for
       // the word, so that reading the policy can never delete under it.
-      console.log(JSON.stringify(pruneBlobs({ global: g, loops, providers }, { apply: rest.includes('--apply') }), null, 2));
+      console.log(JSON.stringify(pruneBlobs({ apply: rest.includes('--apply') }), null, 2));
       break;
     }
     const limit = flag('limit');
@@ -385,10 +396,23 @@ switch (cmd) {
       ...(flag('launch') ? { launch: flag('launch')! } : {}),
       limit: limit === undefined ? 20 : Number(limit),
     });
+    // A selector that named one thing and matched nothing is a refusal, not
+    // an empty reading: a script asking after a launch could not tell "no such
+    // launch" from "nothing to say" (H-3637). A bare seat or installation read
+    // keeps exiting 0 on an empty store, because zero receipts IS the right
+    // answer while a fleet has not launched. Same shape as the `--diff`
+    // refusals above.
+    if (reading.receipts.length === 0 && (flag('launch') || requestedTicket)) {
+      console.error(`No startup receipt ${flag('launch') ? `for launch ${flag('launch')}` : `naming ticket ${requestedTicket}`}${seat ? ` on seat ${seat}` : ''}.`);
+      process.exit(1);
+    }
     console.log(JSON.stringify(reading, null, 2));
-    // A receipt that could not be written, or retained content that went
-    // missing inside the horizon, is the finding this command exists for.
-    if (reading.summary.failed || reading.receipts.some((r) => r.content_states['lost'])) process.exitCode = 1;
+    // Red on anything the reading calls short of `ok`: a receipt that could
+    // not be written, retained content missing inside the horizon, or a
+    // `partial` receipt. Partial counts because a store obstructed on every
+    // launch records `partial` forever, and leaving that green is a health
+    // probe that cannot see the failure it exists for (H-3637).
+    if (reading.status !== 'ok') process.exitCode = 1;
     break;
   }
   case 'intake': {

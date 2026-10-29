@@ -100,14 +100,17 @@ longer.
 ### Security
 
 - An answer written by an agent is now held apart from the operator's own.
-  `helmo_answer_ticket` refuses a supervised worker outright — a loop
+  `helmo_answer_ticket` refuses a Rev loop iteration outright — a loop
   iteration answering a question addressed to the human writes a decision in
   his voice that every later reader takes as his — and names the two routes
   that cover what those answers were actually doing:
   `helmo_withdraw_human_return` for an ask that was mistaken, duplicated or
   already decided, and a note plus `not_before` to park the work from there.
   Attended sessions, orchestrators and the human are unaffected: relaying his
-  words with a person present is ordinary and stays allowed. Where it is
+  words with a person present is ordinary and stays allowed, and an attended
+  session that stamps a session string of its own (`desk:`, a voice relay, a
+  bare uuid) is attended, not supervised — only the `rev:<seat>` stamp Rev
+  itself writes is refused. Where it is
   allowed it is now disclosed — `last_answer` carries `relayed_by_agent: true`
   whenever the answering actor was agent-kind, and a new hygiene check,
   `agent_relayed_answer`, reports each agent-written answer of the last seven

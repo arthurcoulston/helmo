@@ -293,12 +293,21 @@ Pinned releases accept both the historical three-component layout and C1's one
   he can act on it.
   An ANSWER is the operator's decision, and `last_answer` once read the same
   whoever wrote it (H-3591). Three things now hold it apart from a relay.
-  `answerTicket` refuses a `supervised(actor)` caller outright: every
-  supervised answer found on a record written over months of real use was an
-  agent correcting its own ask, which `withdrawHumanReturn` and a note plus
+  `answerTicket` refuses a `revLoopIteration(actor)` caller outright: every
+  `rev:`-stamped answer found on a record written over months of real use was
+  an agent correcting its own ask, which `withdrawHumanReturn` and a note plus
   `not_before` now cover, and the refusal names both. Attended agents stay
   allowed, because a person sitting with him carrying his words is the
-  established way a decision reaches the record. `lastAnswer` carries
+  established way a decision reaches the record.
+  **The gate is the `rev:` prefix, not `supervised()`**, and the difference is
+  the whole correctness of it: `supervised()` asks only whether a session was
+  stamped, and attended sessions stamp one as readily as loops do. The live
+  record holds `desk:mason`, `desk:ward:H-891`, `desk:arthur`,
+  `voice-relay-2026-09-06`, `interactive-summon` and bare session uuids. Of
+  376 recorded answers, 73 are agent-kind, 25 carry a session and only 5 are
+  `rev:` — so gating on `supervised()` would have refused 20 legitimate
+  relays, every one a person sitting with Arthur. `revLoopIteration` reads the
+  prefix `seatId` writes (runtime/helm.ts) and nothing else writes. `lastAnswer` carries
   `relayed_by_agent: true` when the answering actor was agent-kind, so a
   downstream seat reads the relay off the answer instead of the event log.
   And hygiene's `agent_relayed_answer` reports, per ticket within

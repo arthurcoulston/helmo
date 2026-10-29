@@ -379,6 +379,20 @@ function supervised(actor: Actor): boolean {
   return actor.kind === 'agent' && Boolean(actor.session?.trim());
 }
 
+/** A Rev loop iteration, which is a stricter thing than `supervised` above.
+ *  `supervised` asks only whether a session was stamped, and ATTENDED
+ *  sessions stamp one too: the record carries `desk:mason`, `desk:arthur`,
+ *  `voice-relay-2026-09-06`, `interactive-summon` and bare session uuids, all
+ *  of them a person sitting with Arthur. Rev stamps `rev:<seat>` and nothing
+ *  else does (`seatId`, runtime/helm.ts), so that prefix is what actually
+ *  separates an unattended iteration from a relay. Measured on the live
+ *  record before this was used as a gate: of 376 recorded answers, 73 are
+ *  agent-kind, 25 carry a session, and only 5 are `rev:` — refusing on
+ *  `supervised` would have refused 20 legitimate attended relays (H-3591). */
+function revLoopIteration(actor: Actor): boolean {
+  return actor.kind === 'agent' && /^rev:/.test(actor.session?.trim() ?? '');
+}
+
 /** The roadmap statuses that hold the human's go: Planned (nothing underway
  *  yet) and Active, plus the pre-R-46 words a store may still carry for them
  *  (`ship_next`, `shipping`). The roadmap's own AUTHORIZED set, read raw so
@@ -4135,7 +4149,7 @@ export class Store {
       }
       if (t.status === 'awaiting_human') {
         throw new HelmoError(
-          `${t.id} is awaiting_human — its status moves when the human's answer is recorded, and helmo_answer_ticket is how you record it. IF THE HUMAN HAS ANSWERED — in a meeting, at the desk, anywhere — relay it now with helmo_answer_ticket (resolution 'done' closes it, 'resume' reopens it for whoever takes it next); that is a normal thing for an attended session to do, not a role you need, though a supervised loop iteration is refused and withdraws its own mistaken ask with helmo_withdraw_human_return instead. Quote their reasoning, not just the choice. If they have NOT answered, leave it: you may still add notes and evidence.`,
+          `${t.id} is awaiting_human — its status moves when the human's answer is recorded, and helmo_answer_ticket is how you record it. IF THE HUMAN HAS ANSWERED — in a meeting, at the desk, anywhere — relay it now with helmo_answer_ticket (resolution 'done' closes it, 'resume' reopens it for whoever takes it next); that is a normal thing for an attended session to do, not a role you need, though a Rev loop iteration is refused and withdraws its own mistaken ask with helmo_withdraw_human_return instead. Quote their reasoning, not just the choice. If they have NOT answered, leave it: you may still add notes and evidence.`,
         );
       }
       // Triage enforcement (H-56): the ready-queue withholding (H-55) is a
@@ -4602,9 +4616,9 @@ export class Store {
     // whoever typed it — so a loop iteration answering its own escalation
     // writes a decision in his voice that every later seat takes as his
     // (H-3591). Attended relays stay allowed: someone was sitting with him.
-    // Every supervised answer the record holds was an agent correcting its
+    // Every `rev:`-stamped answer the record holds was an agent correcting its
     // own ask, which is what the two routes named here are for.
-    if (supervised(actor)) {
+    if (revLoopIteration(actor)) {
       throw new HelmoError(
         `A supervised loop iteration cannot answer ${ticketId}: an answer records the human's decision, and nothing downstream can tell yours from his. If the ask was mistaken, duplicated, or already decided, withdraw it with helmo_withdraw_human_return — that hands the work to a live owner, and you can park it from there with a note and not_before. If the ask stands, leave it and take other work; notes and evidence are still open to you. If you are carrying something he actually said, record it from an attended session, where the record shows a person was present.`,
       );

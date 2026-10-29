@@ -1669,6 +1669,36 @@ describe('return to human / answer', () => {
       expect(s.lastAnswer(t.id)).toMatchObject({ chosen_option: 'pay', relayed_by_agent: true });
     });
 
+    // The shapes the live record actually holds. An attended session stamps a
+    // session string as readily as a loop does, so "has a session" is not the
+    // gate — `rev:` is. Of 376 recorded answers, 73 agent-kind and 25 with a
+    // session, only 5 were `rev:`; a gate on `supervised` would have refused
+    // the other 20, every one of them a person sitting with Arthur.
+    it.each([
+      ['a desk session', 'desk:mason'],
+      ['a desk session named for the ticket', 'desk:ward:H-891'],
+      ['a desk session named for the human', 'desk:arthur'],
+      ['a voice relay', 'voice-relay-2026-09-06'],
+      ['an interactive summon', 'interactive-summon'],
+      ['a bare session uuid', '01a06df4-37cb-78c2-99be-6adf6b520743'],
+    ])('%s stamps a session and still relays', (_who, session) => {
+      const s = freshStore();
+      const t = asking(s);
+      expect(s.answerTicket({ ...attended, session }, t.id, { answer: 'He said ship it.', resolution: 'resume' }).status).toBe('open');
+      expect(s.lastAnswer(t.id)).toMatchObject({ relayed_by_agent: true });
+    });
+
+    it.each([['a seat loop', 'rev:mason'], ['another seat loop', 'rev:bosun']])(
+      '%s is refused, which is the only session shape that is',
+      (_who, session) => {
+        const s = freshStore();
+        const t = asking(s);
+        expect(() => s.answerTicket({ ...attended, session }, t.id, { answer: 'Arthur settled this.', resolution: 'resume' }))
+          .toThrow(/cannot answer/);
+        expect(s.getTicket(t.id).status).toBe('awaiting_human');
+      },
+    );
+
     it.each([['the human', { name: 'arthur', kind: 'human' } as Actor], ['an orchestrator', orch] as const])(
       'an answer from %s carries no relay marker',
       (_who, by) => {

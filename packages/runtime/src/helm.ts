@@ -598,8 +598,14 @@ export function actorActivity(g: GlobalConfig, l: LoopConfig, sinceSeq: number):
   return (run(g, ['actor-activity', '--name', seatName(l), '--session', seatId(l), '--since-seq', String(sinceSeq), '--advancing']) as { events: number }).events;
 }
 
+/** The window groups the seat's Work events by their row id, and a recorded
+ *  test result's row id is the suite's own name — not a ticket. Those rows are
+ *  no attribution: journaled they make a sound launch look corrupt to a
+ *  reader, and ordered first they would carry a whole session's spend
+ *  (H-3574). */
 export function actorTickets(g: GlobalConfig, l: LoopConfig, sinceSeq: number): { id: string; events: number }[] {
-  return (run(g, ['actor-tickets', '--name', seatName(l), '--session', seatId(l), '--since-seq', String(sinceSeq)]) as { tickets: { id: string; events: number }[] }).tickets;
+  return (run(g, ['actor-tickets', '--name', seatName(l), '--session', seatId(l), '--since-seq', String(sinceSeq)]) as { tickets: { id: string; events: number }[] })
+    .tickets.filter((t) => /^H-\d+$/.test(t.id));
 }
 
 export interface SelfSpend {

@@ -154,7 +154,7 @@ describe('session trace diagnostic', () => {
     expect(read.launches).toEqual([]);
   });
 
-  it('refuses a measured window carrying anything but ticket ids and counts', () => {
+  it('refuses a measured window carrying anything but a row id and a count', () => {
     const home = mkdtempSync(join(tmpdir(), 'rev-trace-touched-'));
     process.env.REV_HOME = home;
     const launches = join(home, 'state', 'alpha', 'launches');
@@ -166,17 +166,54 @@ describe('session trace diagnostic', () => {
     for (const [name, touched] of [
       ['content.json', [{ id: 'H-7', events: 1, note: 'SYNTHETIC_PRIVATE_PROMPT' }]],
       ['value.json', [{ id: 'H-7', events: { credential: 'SYNTHETIC_PRIVATE_VALUE' } }]],
-      ['id.json', [{ id: 'SYNTHETIC_PRIVATE_PATH', events: 1 }]],
+      ['id.json', [{ id: { path: 'SYNTHETIC_PRIVATE_PATH' }, events: 1 }]],
+      ['empty-id.json', [{ id: '', events: 1 }]],
       ['shape.json', { 'H-7': 1 }],
     ] as [string, unknown][]) {
       writeFileSync(join(launches, name), JSON.stringify({ ...base, launch_id: `rev:alpha:${name}:1:1`, touched_tickets: touched }));
     }
     const read = readTicketLaunches(['alpha'], 'H-7');
-    expect(read.malformed).toBe(4);
+    expect(read.malformed).toBe(5);
     expect(read.launches).toEqual([]);
     const trace = JSON.stringify(sessionTrace({ ...ticket, events: [] }, read.launches, read.malformed));
     expect(trace).not.toContain('SYNTHETIC_PRIVATE_');
     expect(trace).toContain('"malformed/refused"');
+  });
+
+  it('keeps a run record whose measured window names a test result, dropping that row (H-3574)', () => {
+    const home = mkdtempSync(join(tmpdir(), 'rev-trace-test-row-'));
+    process.env.REV_HOME = home;
+    const launches = join(home, 'state', 'mason', 'launches');
+    mkdirSync(launches, { recursive: true });
+    // The live shape of a test-running session: the window groups Work events
+    // by row id, and a recorded test result's row id is the suite's own name.
+    writeFileSync(join(launches, 'tested.json'), JSON.stringify({
+      format: 1, phase: 'complete', launch_id: 'rev:mason:4901:15:1793067654984',
+      intent_at: '2026-10-28T00:00:00.000Z', dispatching_at: '2026-10-28T00:00:00.100Z',
+      completed_at: '2026-10-28T00:11:00.000Z',
+      touched_tickets: [
+        { id: 'H-7', events: 3 },
+        { id: 'test:helmo `npm test` SYNTHETIC_PRIVATE_SUITE (whole workspace)', events: 1 },
+        { id: 'H-8', events: 2 },
+      ],
+      session: {
+        provider: 'claude', model: 'claude-sonnet-5', provider_session_id_state: 'unsupported',
+        started_at: '2026-10-28T00:00:00.200Z', ended_at: '2026-10-28T00:10:59.000Z',
+        outcome: 'ok', tokens: 31668, cost_usd: 2.41,
+      },
+    }));
+    const read = readTicketLaunches(['mason'], 'H-7');
+    expect(read.malformed).toBe(0);
+    expect(read.launches).toHaveLength(1);
+    expect(read.launches[0]!.touched_tickets).toEqual([{ id: 'H-7', events: 3 }, { id: 'H-8', events: 2 }]);
+    // Both surviving ids still join, and the dropped row joins nothing.
+    expect(readTicketLaunches(['mason'], 'H-8').launches).toHaveLength(1);
+    const result = sessionTrace({ ...ticket, events: [] }, read.launches, read.malformed) as any;
+    expect(result.malformed_launch_records).toMatchObject({ state: 'measured_zero', value: 0 });
+    expect(result.launches[0].join).toMatchObject({ state: 'observed', value: { basis: 'seat_session_event_window', ticket_events: 3 } });
+    expect(result.launches[0].model.value).toBe('claude-sonnet-5');
+    expect(result.launches[0].usage.value).toEqual({ tokens: 31668, cost_usd: 2.41 });
+    expect(JSON.stringify(result)).not.toContain('SYNTHETIC_PRIVATE_');
   });
 
   it('refuses malformed Work metadata instead of rendering nested content', () => {

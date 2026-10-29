@@ -636,6 +636,7 @@ if [ -n "$ID" ]; then
   node ${HELM_CLI} update --ticket $ID --note "worked by mock"
   SIDE=$(node ${HELM_CLI} list --ready --workstream rev-test --limit 1 | node -e "process.stdin.on('data',d=>{const j=JSON.parse(d);console.log(j.tickets[0]?.id??'')})")
   HELMO_ACTOR='{"name":"traced-loop","kind":"agent","model":"mock","version":"0.1","session":"desk"}' node ${HELM_CLI} update --ticket $SIDE --note "desk note"
+  node ${HELM_CLI} test-result-record --suite "mock run of SYNTHETIC_SUITE" --failed 0 --total 1 --ref "transcript"
   echo "rev-mock-usage tokens=10 cost_usd=0.01"
 fi
 '''
@@ -649,6 +650,10 @@ fi
     expect(journal).toMatchObject({ phase: 'complete', touched_tickets: [{ id, events: 2 }] });
     expect(journal).not.toHaveProperty('ticket_id');
     expect(journal.touched_tickets.map((t: { id: string }) => t.id)).not.toContain(side);
+    // The session recorded a test result too. That event's row id is the
+    // suite's own name, not a ticket, and journaling it made the whole record
+    // read as corrupt (H-3574).
+    expect(journal.touched_tickets.map((t: { id: string }) => t.id)).toEqual([id]);
 
     process.env['REV_HOME'] = e.home;
     const read = readTicketLaunches(['traced-loop'], id);

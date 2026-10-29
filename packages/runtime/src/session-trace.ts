@@ -19,10 +19,14 @@ const sessionIdentifier = (value: unknown): value is string => typeof value === 
   && value.length <= 512 && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(value);
 const finiteUsage = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0;
 const eventCount = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
-/** The measured seat-window attribution: ticket ids and event counts only. */
-const touchedTickets = (value: unknown): value is { id: string; events: number }[] => Array.isArray(value)
-  && value.every(entry => record(entry) && ticketIdentifier(entry.id) && eventCount(entry.events)
-    && Object.keys(entry).length === 2);
+/** One row of the measured seat-window attribution: an id and an event count,
+ *  and nothing else. The id is deliberately not held to the ticket shape here
+ *  — validatedLaunch is where only ticket ids survive. */
+const touchedRow = (value: unknown): value is { id: string; events: number } => record(value)
+  && typeof value.id === 'string' && value.id.length > 0 && eventCount(value.events)
+  && Object.keys(value).length === 2;
+const touchedTickets = (value: unknown): value is { id: string; events: number }[] =>
+  Array.isArray(value) && value.every(touchedRow);
 
 const PROVIDER_SESSION_STATES = ['observed', 'unsupported'] as const;
 const SESSION_OUTCOMES = ['ok', 'transient', 'apparatus', 'failure'] as const;
@@ -67,12 +71,23 @@ function validatedLaunch(value: unknown): LaunchJournalEntry | null {
   if (value.phase === 'complete' && value.dispatching_at !== undefined && value.session === undefined) return null;
   if (value.admission_id !== undefined && !ticketIdentifier(value.ticket_id)) return null;
   if (value.session !== undefined && !validSession(value.session)) return null;
+  // Keep the record and drop the rows that are not ticket associations. A
+  // measured window groups the seat's Work events by their row id, and a
+  // recorded test result's row id is the suite's own name, not a ticket;
+  // refusing the whole launch over one threw away 37 real run records —
+  // provider, model, timing and usage with them — and counted them as
+  // corrupt. That is the H-2901 mistake one field over (H-3574). Dropping the
+  // row rather than keeping it is also what keeps a free-text suite name out
+  // of a trace.
+  const touched = touchedTickets(value.touched_tickets)
+    ? value.touched_tickets.filter(row => ticketIdentifier(row.id))
+    : undefined;
   return {
     format: 1, phase: value.phase, launch_id: value.launch_id, intent_at: value.intent_at,
     ...(value.ticket_id !== undefined ? { ticket_id: value.ticket_id } : {}),
     ...(value.claim === true ? { claim: true as const } : {}),
     ...(value.event_seq_floor !== undefined ? { event_seq_floor: value.event_seq_floor } : {}),
-    ...(value.touched_tickets !== undefined ? { touched_tickets: value.touched_tickets } : {}),
+    ...(touched !== undefined ? { touched_tickets: touched } : {}),
     ...(value.phase === 'complete' ? { completed_at: value.completed_at as string } : {}),
     ...(value.phase === 'quarantined' ? { quarantined_at: value.quarantined_at as string } : {}),
     ...(value.session !== undefined ? { session: value.session } : {}),

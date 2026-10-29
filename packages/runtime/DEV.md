@@ -514,6 +514,31 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   reference-counted over the receipts inside the horizon and never over a
   blob's own mtime: two launches 100 days apart share the constitution, and
   dropping it on its age would empty a receipt written yesterday.
+  **Operating it** (R-55 asks for this by name). The operating owner is the
+  `estate-ui` seat, which owns this module, its retention constant and its
+  repair; Ward holds the posture of the blob store itself (H-3637). Capture
+  asks nothing of an operator — it runs at every supported launch, and a
+  launch that could not be recorded is the only launch with no receipt.
+  INSPECT with `startup-context`, which exits non-zero on exactly two
+  findings (`cli.ts`): a receipt whose recording `failed`, and content that
+  went missing inside the horizon — so whatever runs it learns those without
+  reading the JSON. `recording.errors` names what failed, and `lost` against
+  `expired` separates a defect in the store from the policy doing its job.
+  **A `partial` receipt does NOT redden the exit code**, measured, and that
+  is worth knowing before trusting this as a health probe: a store that is
+  obstructed on every launch records `partial` forever and the probe stays
+  green, so read `summary.partial` as well as the status. REPAIR is by cause
+  and never by back-fill: a `partial` receipt is repaired by the next launch
+  once whatever obstructed the store is cleared, and the obstructed receipt
+  stays as the record that it happened, because a receipt rewritten later
+  would be exactly the fabricated completeness the brief forbids.
+  Content that is `lost` cannot be recovered; the receipt keeps its hashes and
+  says so, which is the honest end state rather than a repair. BOUND storage
+  with `--prune --apply` — in this release nothing else enforces
+  `RETENTION_DAYS`, so content accumulates until someone runs it. ROLL BACK by
+  selecting the retained release and restoring its entry-point pins: a release
+  without this module neither reads nor writes either store, so both are left
+  behind inert and no downgrade deletes them.
 - **Every Team read goes through `readBounded`, and that is the whole guard
   (H-3004).** The inventory includes every `CLAUDE.md` and `AGENTS.md` found
   walking up from a seat's cwd — files no roster entry names, in trees any agent

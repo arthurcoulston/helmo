@@ -170,6 +170,26 @@ longer.
   dev-server and browser-mode issues that no install path runs; the
   per-advisory reasoning for each is recorded with the release.
 
+### Fixed
+
+- **The next step of a chain no longer needs anybody's touch to start**
+  (H-3646). The self-triage rule withholds work an agent filed for itself until
+  a second pair of eyes judges it, and the sanctioned way to say "this is mine
+  and I am starting it" is to create the ticket `in_progress` — which the next
+  step of a chain cannot do, because it is filed behind the work it waits on.
+  That left it with no honest form at all: withheld from its filer by the rule
+  and from every other seat by the reservation a seated workstream gives it. On
+  H-3582 that cost two sweeps by another seat and a `needs_human` marker asking
+  the operator for a decision he had already made. Work filed already
+  blocked now releases to its filer when the last blocker it declared closes,
+  and the same close is a wake edge, so the seat learns its chain can continue.
+  Two conditions keep it from becoming a way around the rule: the blocks edge
+  must carry `at_filing`, the marker `createTicket` now puts on the edges a
+  filing declares, so standing backlog cannot be linked to an open ticket after
+  the fact; and the blocker must have been open at filing, because a dep on
+  finished work was never a wait. Edges linked before this shipped carry no
+  marker and release nothing.
+
 ## v1.0.0 — 2026-10-22
 
 This cut includes the integrated runtime, work and roadmap changes since

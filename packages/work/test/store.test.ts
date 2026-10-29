@@ -35,6 +35,17 @@ function triage(s: Store, id: string) {
   s.updateTicket(orch, { ticket_id: id, note: 'triaged in meeting: yes, worth doing' });
 }
 
+/** Closing properly: the filer may always close what it may not claim. */
+function close(s: Store, id: string) {
+  s.updateTicket(builder, {
+    ticket_id: id,
+    note: 'delivered',
+    status: 'done',
+    completion_account: { category: 'maintenance', summary: 'Closed by a test fixture.' },
+    evidence: [{ kind: 'other', ref: 'x' }],
+  });
+}
+
 describe('ids', () => {
   it('mints sequential H-n ids and never reuses them', () => {
     const s = freshStore();
@@ -2157,6 +2168,17 @@ describe('harness queries (wake cursor)', () => {
     expect(s.newlyReadySince(seq, 'alpha', builder.name)).toEqual([unlinked.id, sitting.id, moved.id]);
     expect(s.newlyReadySince(s.maxSeq(), 'alpha', builder.name)).toEqual([]);
   });
+  it("wakeCheck wakes the seat when a chain's blocker closes and releases its next step (H-3646)", () => {
+    const s = freshStore();
+    const current = create(s, { workstream: 'elsewhere', assignee: builder.name });
+    const next = create(s, { workstream: 'elsewhere', assignee: builder.name, deps: [{ to: current.id, type: 'blocks' as const }] });
+    const idleSeq = s.maxSeq();
+    expect(s.wakeCheck(idleSeq, 'alpha', builder.name).newly_ready_ids).toEqual([]);
+    close(s, current.id);
+    const woken = s.wakeCheck(idleSeq, 'alpha', builder.name);
+    expect(woken.ready_ids).toEqual([next.id]);
+    expect(woken.newly_ready_ids).toEqual([next.id]);
+  });
   it('wakeCheck reports independent triage as one readiness edge', () => {
     const s = freshStore();
     const selfFiled = create(s, { workstream: 'elsewhere', assignee: builder.name });
@@ -2636,6 +2658,50 @@ describe('triage rule enforced on claims (H-56)', () => {
     const t = create(s, { status: 'in_progress' });
     expect(t.status).toBe('in_progress');
     expect(t.assignee).toBe('builder-loop');
+  });
+  it("a chain's next step, filed behind its blocker, is released to its filer when that blocker closes (H-3646)", () => {
+    const s = freshStore();
+    const current = create(s, { title: 'Deliver R-55' });
+    const next = create(s, { title: 'Deliver R-35', deps: [{ to: current.id, type: 'blocks' as const }] });
+    expect(() => s.updateTicket(builder, { ticket_id: next.id, note: 'claiming', status: 'in_progress' })).toThrow(/second pair of eyes/);
+    expect(s.listTickets({ ready: true, caller: builder.name }).map((t) => t.id)).not.toContain(next.id);
+    close(s, current.id);
+    expect(s.listTickets({ ready: true, caller: builder.name }).map((t) => t.id)).toContain(next.id);
+    expect(s.selfFiledPending(builder.name)).not.toContain(next.id);
+    expect(s.hygiene().some((f) => f.check === 'awaiting_second_eyes' && f.ticket_id === next.id)).toBe(false);
+    expect(s.updateTicket(builder, { ticket_id: next.id, note: 'the chain continues', status: 'in_progress' }).ticket.status).toBe('in_progress');
+  });
+  it('every blocker declared at filing must clear, not just one', () => {
+    const s = freshStore();
+    const first = create(s);
+    const second = create(s);
+    const next = create(s, { deps: [{ to: first.id, type: 'blocks' as const }, { to: second.id, type: 'blocks' as const }] });
+    close(s, first.id);
+    expect(() => s.updateTicket(builder, { ticket_id: next.id, note: 'claiming', status: 'in_progress' })).toThrow(/second pair of eyes/);
+    close(s, second.id);
+    expect(s.updateTicket(builder, { ticket_id: next.id, note: 'claiming', status: 'in_progress' }).ticket.status).toBe('in_progress');
+  });
+  it('backlog linked to a blocker after filing is not released by closing it', () => {
+    const s = freshStore();
+    const blocker = create(s);
+    const backlog = create(s); // filed as backlog: no dep declared
+    s.linkTickets(builder, backlog.id, blocker.id, 'blocks', 'add');
+    close(s, blocker.id);
+    expect(() => s.updateTicket(builder, { ticket_id: backlog.id, note: 'claiming', status: 'in_progress' })).toThrow(/second pair of eyes/);
+  });
+  it('a dep on work that was already closed releases nothing — that filing could have started itself', () => {
+    const s = freshStore();
+    const finished = create(s);
+    close(s, finished.id);
+    const t = create(s, { deps: [{ to: finished.id, type: 'blocks' as const }] });
+    expect(() => s.updateTicket(builder, { ticket_id: t.id, note: 'claiming', status: 'in_progress' })).toThrow(/second pair of eyes/);
+  });
+  it('a non-blocking dep declared at filing is not a wait', () => {
+    const s = freshStore();
+    const source = create(s);
+    const found = create(s, { deps: [{ to: source.id, type: 'discovered_from' as const }] });
+    close(s, source.id);
+    expect(() => s.updateTicket(builder, { ticket_id: found.id, note: 'claiming', status: 'in_progress' })).toThrow(/second pair of eyes/);
   });
   it('an attended agent may file open work or start directed work immediately', () => {
     const s = freshStore();

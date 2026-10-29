@@ -2643,7 +2643,51 @@ export class Store {
       .get(id) as { n: number };
     if (others.n > 0 || directed.n > 0) return false;
     if (created.template) return this.selfFiledUntouched(created.template, caller);
-    return created.creator === caller;
+    if (created.creator !== caller) return false;
+    // The rule guards backlog an agent filed and later drew back, and the
+    // sanctioned form for "my own next step" is `status: 'in_progress'` — which
+    // a chain's next step cannot use, because it is filed behind the work it
+    // waits on. That left it with no honest form at all: withheld from its
+    // filer by this rule and from every other seat by the reservation the door
+    // gives it, so an authorized chain stopped on a mechanism (H-3646). What it
+    // cost on H-3582 was not time — a cultivation sweep supplied the touch
+    // 2m47s after the blocker closed — but two of another seat's passes and a
+    // needs_human marker asking Arthur for a decision he had already made,
+    // which is the opposite of what this store is for. Work filed already
+    // blocked carries the same "starting this as soon as I can" intent as an
+    // in_progress filing, so clearing the last blocker releases it.
+    if (this.filedBehindClearedBlocker(id)) return false;
+    return true;
+  }
+
+  /** True when this ticket was filed as work waiting on something else, and
+   *  everything it waited for has since closed.
+   *
+   *  Two conditions keep this from becoming a way around the rule. The blocks
+   *  edge must carry `at_filing`, the marker `createTicket` puts on the edges
+   *  a filing declares; without it, standing backlog could be linked to any
+   *  open ticket after the fact and released when that ticket closed. And the
+   *  blocker must still have been open when the ticket was filed, which is
+   *  what makes the filing a wait rather than a note about finished work —
+   *  compared on `seq`, the store's monotonic clock, because same-millisecond
+   *  writes make a `ts` comparison lie, the reason `phantom_block` uses seq
+   *  too and the reason the marker is not a ts comparison. */
+  private filedBehindClearedBlocker(id: string): boolean {
+    if (this.isBlocked(id)) return false;
+    const rows = this.db
+      .prepare(
+        `SELECT (SELECT MIN(e.seq) FROM events e
+                  WHERE e.ticket_id = ? AND e.event_type = 'linked'
+                    AND json_extract(e.payload, '$.to') = d.to_id AND json_extract(e.payload, '$.type') = 'blocks'
+                    AND json_extract(e.payload, '$.at_filing') = 1) AS declared,
+                (SELECT MAX(e2.seq) FROM events e2 WHERE e2.ticket_id = d.to_id
+                  AND ((e2.event_type = 'updated' AND json_extract(e2.payload, '$.diffs.status.to') IN ('done','cancelled'))
+                    OR (e2.event_type = 'answered' AND json_extract(e2.payload, '$.resolution') IN ('done','cancelled')))) AS freed
+         FROM deps d JOIN tickets b ON b.id = d.to_id
+         WHERE d.from_id = ? AND d.type = 'blocks' AND b.status IN ('done','cancelled')`,
+      )
+      .all(id, id) as { declared: number | null; freed: number | null }[];
+    return rows.some((r) => r.declared !== null && r.freed !== null && r.declared < r.freed);
   }
 
   /** The agent whose filing judgment governs this ticket. Scheduler instances
@@ -4031,7 +4075,15 @@ export class Store {
       this.applyCreated(ts, payload);
       for (const d of input.deps ?? []) {
         this.checkNoBlocksCycle(id, d.to, d.type);
-        this.append(ts, id, 'linked', actor, { to: d.to, type: d.type });
+        // `at_filing` marks an edge declared by the filing itself, which is
+        // what lets a chain's next step release its own triage hold when its
+        // blocker closes (H-3646, selfFiledUntouched). It has to be on the
+        // event, because nothing already in the log distinguishes this write
+        // from a `linkTickets` call: the two share a ts whenever they land in
+        // the same millisecond, which a test two statements apart reliably
+        // does. Replay ignores the key; edges linked before this shipped carry
+        // no marker and release nothing, which is the safe direction.
+        this.append(ts, id, 'linked', actor, { to: d.to, type: d.type, at_filing: true });
         this.applyLinked(id, d.to, d.type, true);
       }
       if (status === 'in_progress' && input.workflow_attempt_id) this.admitWorkflow(id, input.workflow_attempt_id, 'create_in_progress');
@@ -4174,7 +4226,7 @@ export class Store {
       // Agents only — a human or orchestrator IS the second pair of eyes.
       if (input.status === 'in_progress' && t.status === 'open' && actor.kind === 'agent' && this.selfFiledUntouched(t.id, actor.name)) {
         throw new HelmoError(
-          `${t.id} is your own filing, untouched by anyone else — executing your own discoveries takes a second pair of eyes first (the same triage rule that withholds it from your ready queue). helmo_hygiene surfaces it as awaiting_second_eyes so a reviewing seat can record that judgment. Any event by a human, an orchestrator relaying the human, or another agent releases it: a meeting answer, a note, a handoff, a priority change. takeover does not apply — it exists for stale claims, not self-triage. If this cannot wait, helmo_return_to_human with the case for urgency; if you are starting genuinely new work, create the ticket with status 'in_progress' in the same call instead of filing it and drawing it back later.`,
+          `${t.id} is your own filing, untouched by anyone else — executing your own discoveries takes a second pair of eyes first (the same triage rule that withholds it from your ready queue). helmo_hygiene surfaces it as awaiting_second_eyes so a reviewing seat can record that judgment. Any event by a human, an orchestrator relaying the human, or another agent releases it: a meeting answer, a note, a handoff, a priority change. takeover does not apply — it exists for stale claims, not self-triage. If this cannot wait, helmo_return_to_human with the case for urgency; if you are starting genuinely new work, create the ticket with status 'in_progress' in the same call instead of filing it and drawing it back later. A chain's next step needs no touch at all: file it with a 'blocks' dep on the work it waits for, and closing that blocker releases it to you.`,
         );
       }
       // Taking over a stale claim starts work as surely as claiming open work.

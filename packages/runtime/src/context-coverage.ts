@@ -589,7 +589,11 @@ export async function coverageReading(roster: Roster, opts: { inventory?: boolea
       paths.push(checkClaudePath(l, { installation, ...(opts.inventory ? { inventory: await seatContext(l, pass) } : {}) }));
     }
   }
-  if (seats.length === Object.values(roster.loops).length) paths.push(summonPath(installation));
+  // Keyed on whether a filter was ASKED for, not on whether the filtered set
+  // happens to be every seat: a one-seat installation asked for its one seat
+  // was being handed the installation-wide summon row as if it were that
+  // seat's path. A named summon belongs to no seat, so a seat reading omits it.
+  if (!opts.seats) paths.push(summonPath(installation));
   const summary: Record<CoverageState, number> = { verified: 0, changed: 0, stale: 0, unsupported: 0, error: 0 };
   for (const p of paths) summary[p.state] += 1;
   return {

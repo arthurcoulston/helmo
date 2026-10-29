@@ -406,6 +406,18 @@ describe('the whole reading', () => {
     expect(reading.schema).toBe('helmo.context-coverage.v1');
   });
 
+  // The summon row belongs to no seat, so a reading narrowed to a seat must
+  // not carry it — including on a one-seat installation, where the filtered
+  // set IS every seat and a length comparison reads as "no filter".
+  it('leaves the installation-wide summon row out of a single-seat reading', async () => {
+    const l = loop();
+    const all = await coverageReading({ global: {} as never, loops: { mason: l }, providers: {} });
+    const one = await coverageReading({ global: {} as never, loops: { mason: l }, providers: {} }, { seats: ['mason'] });
+
+    expect(all.paths.map((p) => p.runtime)).toEqual(['claude', 'summon']);
+    expect(one.paths.map((p) => p.runtime)).toEqual(['claude']);
+  });
+
   it('checks both routes of a seat whose rotation spans two adapters', () => {
     // The inventory's correction 1: a seat configured `runtime: codex` with a
     // claude choice in its rotation runs on both, and reporting only the

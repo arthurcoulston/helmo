@@ -1,9 +1,8 @@
-// VENDORED — do not edit. Source: the estate repo, avatars/crew-avatars.svg
+// VENDORED — do not edit. Source: packages/core/assets/legacy/crew-avatars.svg
 // Refresh: node scripts/vendor-estate-avatars.mjs
-// Drift is a test failure: npm test (skipped, loudly, with no estate checkout)
+// Drift is a test failure: npm test (source is included in this distribution)
 //
-// The estate shell is the source of the visual system every estate surface
-// shares (R-11); Helmo consumes it as a copy so it stays publishable alone.
+// Legacy view assets are owned and shipped by Helmo; no sibling repo is read.
 // Hues come from the vendored token file — a mark is currentColor over
 // var(--crew-<name>), so nothing here carries a colour of its own.
 

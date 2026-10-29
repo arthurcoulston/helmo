@@ -204,7 +204,7 @@ append-only event log, materialized state, `.immediate()` write transactions
   `HELMO_ACTOR`) as it does for the MCP server — a write this broad still
   records who made it.
 - The root `AGENT-INSTALL.md` is the agent-led install path a stranger's agent follows
-  (H-1386). It states the two estate drift tests as expected skips — if that
+  (H-1386). It historically stated the two estate drift tests as expected skips; those sources now ship in core and the checks always run — if that
   pair ever changes, it changes there too, or an installer reads a skip we no
   longer ship as a failure.
 
@@ -272,29 +272,19 @@ of separators. Change it here, change it there, and run `npm run viewport` in
 helmo — the spans are inert and sit inside the existing `.rtoggle` button, and
 that is what keeps `nested-interactive` (H-2447) from coming back.
 
-## The estate design tokens (R-11 H-714)
+## Legacy visual sources
 
-`../core/src/estate-tokens.generated.ts` is the **one vendored copy** of the estate shell's
-`tokens/estate-tokens.css` — the source of the visual system every estate
-surface shares. `npm run vendor:tokens` refreshes it through core (also
-`--check`); `test/estate-tokens.test.ts` fails on drift.
+Helmo owns the legacy CSS and avatar source in `packages/core/assets/legacy`.
+The embedded modules remain byte-identical in rendered content; a release
+carries everything needed to render them. `npm run vendor:tokens` and
+`npm run vendor:avatars` regenerate from those included sources. Drift tests
+always run, including in a cold clone with no sibling checkout. Missing
+sources fail instead of skipping. Explicit `ESTATE_TOKENS_CSS` and
+`ESTATE_AVATARS_SVG` overrides remain development-only options.
 
-Vendoring, not importing, is the point: the roadmap is published standalone, so
-a clone with no estate checkout beside it must build and run unchanged. That is
-also why the drift test uses `it.skipIf` rather than an early return — with no
-source to compare against it reports **skipped**, which is visible in the run
-summary, where a `console.log` from a passing test is not.
-
-**Beside WHAT.** The source path defaults to an `estate` checkout beside this
-*checkout*, which inside a workspace is beside the workspace root and not
-beside this package — `@helmo/core/checkout` resolves it, from what the tree
-declares rather than from how deep the package sits. The pre-C1 spelling
-(`<package>/../estate`) named `packages/estate`, which has never existed, so
-every one of these checks skipped for the wrong reason (H-2638). The walk for
-that root stops at the nearest enclosing `.git`: "outermost" has to mean
-outermost *within this checkout*, or a stray ancestor package.json declaring
-workspaces — one left in a home or scratch directory — silently becomes the
-root and points every one of these paths at the wrong tree (H-2647).
+These compatibility files do not govern the current application preset;
+`UI.md` remains the component and upgrade contract. The notes below describe
+the historical legacy adoption, not an external source dependency.
 
 **What was adopted, and what was not.** `view.ts` keeps every one of its own
 token names and not one of its rules changed in meaning; the aliases at the top
@@ -332,7 +322,7 @@ now asserts no seam alias resolves to itself, in this repo and in Helmo.
 
 ## The estate crew avatars (R-11 H-714)
 
-`src/estate-avatars.generated.ts` is the estate's `avatars/crew-avatars.svg`,
+`src/estate-avatars.generated.ts` embeds core's `assets/legacy/crew-avatars.svg`,
 vendored on the same seam and for the same reason as the tokens: a copy, not an
 import, because the roadmap is published standalone. The sprite is inlined into
 the page body — cross-document `<use>` is not what this page does — and drawn

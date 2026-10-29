@@ -488,8 +488,9 @@ in one of them is a defect in all three:
   never authenticated. The stores record who claimed to write; they do not
   verify real-world identity.
 - **The markup gate** at the door, rejecting mangled tool-call writes (H-71).
-- **Legacy design tokens** currently come from a vendored estate source in
-  `core`. This describes the existing views, not the UI target: UI.md requires
+- **Legacy design tokens and avatars** are owned in
+  `packages/core/assets/legacy` and embedded into the product. Regeneration
+  and mandatory drift checks need no sibling checkout. This describes the existing views, not the UI target: UI.md requires
   upstream preset styling with zero customization. Replace the estate token
   dependency as those views migrate; an estate drift check does not establish
   upstream compliance.

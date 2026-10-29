@@ -1,17 +1,7 @@
-// The vendored estate crew avatar sprite (R-11 H-714). Same seam as
-// test/estate-tokens.test.ts, and the same one skip: a clone with no estate
-// checkout beside it has no source to compare against, so the verbatim test
-// uses `it.skipIf` and is counted as skipped rather than passing quietly.
-//
-// What makes this set worth having is that almost everything it guards fails
-// SILENTLY. A `<use>` pointing at a symbol that is not in the sprite draws
-// nothing — no error in the console, no failed request, no red anywhere; the
-// page just serves actors with no marks and looks like a design choice. So the
-// checks below are all aimed at that one shape: the id the view builds, the
-// symbols the sprite actually carries, and the sprite reaching the page at all.
+// Legacy visual sources ship with Helmo. Their drift checks must run in a cold clone.
 
 import { describe, expect, it } from 'vitest';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { SOURCE, VENDORED, index, render } from '../scripts/vendor-estate-avatars.mjs';
 import { AVATAR_KINDS, AVATAR_MARKS } from '../src/estate-avatars.generated.js';
 import { ACTOR_KINDS } from '../src/types.js';
@@ -19,9 +9,8 @@ import { ACTOR_KINDS } from '../src/types.js';
 const view = readFileSync(new URL('../src/view.ts', import.meta.url), 'utf8');
 
 describe('vendored estate avatars', () => {
-  const haveSource = existsSync(SOURCE);
 
-  it.skipIf(!haveSource)('is the estate sprite verbatim', () => {
+  it('is the estate sprite verbatim', () => {
     expect(readFileSync(VENDORED, 'utf8')).toBe(render(readFileSync(SOURCE, 'utf8')));
   });
 

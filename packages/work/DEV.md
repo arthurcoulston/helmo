@@ -1204,35 +1204,19 @@ and together a public API commitment — resist widening past them:
   is gone. The `goal` column and historical `workstream_set` payloads remain
   for exact replay; nothing reads them.
 
-## The estate design tokens (R-11 H-714)
+## Legacy visual sources
 
-`../core/src/estate-tokens.generated.ts` is the **one vendored copy** of the estate shell's
-`tokens/estate-tokens.css` — the source of the visual system every estate
-surface shares. `npm run vendor:tokens` refreshes it through core (also
-`--check`); `test/estate-tokens.test.ts` fails on drift.
+Helmo owns the legacy CSS and avatar source in `packages/core/assets/legacy`.
+The embedded modules remain byte-identical in rendered content; a release
+carries everything needed to render them. `npm run vendor:tokens` and
+`npm run vendor:avatars` regenerate from those included sources. Drift tests
+always run, including in a cold clone with no sibling checkout. Missing
+sources fail instead of skipping. Explicit `ESTATE_TOKENS_CSS` and
+`ESTATE_AVATARS_SVG` overrides remain development-only options.
 
-Vendoring, not importing, is the point: Helmo is published standalone, so a
-clone with no estate checkout beside it must build and run unchanged. That is
-also why the drift test uses `it.skipIf` rather than an early return — with no
-source to compare against it reports **skipped**, which is visible in the run
-summary, where a `console.log` from a passing test is not. The runs that judge
-the copy are Arthur's machine and estate CI.
-
-**Beside WHAT.** The source path defaults to an `estate` checkout beside this
-*checkout*, which inside a workspace is beside the workspace root and not
-beside this package — `@helmo/core/checkout` resolves it, from what the tree
-declares rather than from how deep the package sits. The pre-C1 spelling
-(`<package>/../estate`) named `packages/estate`, which has never existed, so
-every one of these checks skipped for the wrong reason (H-2638). The walk for
-that root stops at the nearest enclosing `.git`: "outermost" has to mean
-outermost *within this checkout*, or a stray ancestor package.json declaring
-workspaces — one left in a home or scratch directory — silently becomes the
-root and points every one of these paths at the wrong tree (H-2647).
-
-The copy is verbatim, and the script refuses a source containing a backtick or
-`${` rather than escaping it. If a token file ever needs translating to be
-usable here, that is a change to make in the estate's generator, once — not
-four times in four products.
+These compatibility files do not govern the current application preset;
+`UI.md` remains the component and upgrade contract. The notes below describe
+the historical legacy adoption, not an external source dependency.
 
 **What was adopted, and what was not.** `view.ts` keeps every one of its own
 token names and not one of its ~90 rules changed; the aliases at the top of
@@ -1279,7 +1263,7 @@ lost their dark half.
 ## The crew avatars (R-11 H-714)
 
 `src/estate-avatars.generated.ts` is a second vendored copy, on the same seam
-and for the same reason: the estate's `avatars/crew-avatars.svg`, refreshed by
+and for the same reason: core's `assets/legacy/crew-avatars.svg`, refreshed by
 `scripts/vendor-estate-avatars.mjs`, checked by `test/estate-avatars.test.ts`.
 The sprite is inlined into the page body and referenced with
 `<use href="#crew-mason-agent">`. No colours come with it — a mark is

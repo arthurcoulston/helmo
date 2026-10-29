@@ -1,42 +1,18 @@
 #!/usr/bin/env node
-/* Vendors the estate's crew avatar sprite into src/estate-avatars.generated.ts
-   (R-11 H-714).
-
-   Same seam as scripts/vendor-estate-tokens.mjs and for the same reason: rev
-   is published standalone and stays free of estate imports, so it copies the
-   asset in rather than reaching for a sibling checkout at runtime.
-   The estate's own DEV.md names this as the supported path for a product view
-   — inline the sprite, then `<use href="#crew-mason-agent">`.
-
-   The copy is verbatim. What is derived is only the *index*: MARKS and KINDS
-   are parsed back out of the composed symbol ids that are actually in the
-   sprite, so this file can never claim a mark the sprite does not carry. That
-   matters because the failure it prevents is silent — a `<use>` pointing at a
-   missing symbol renders nothing at all, no error anywhere.
-
-   Usage:
-     node scripts/vendor-estate-avatars.mjs           # refresh the copy
-     node scripts/vendor-estate-avatars.mjs --check   # exit 1 on drift
-
-   ESTATE_AVATARS_SVG overrides the source path; it defaults to a checkout
-   beside this one — beside the WORKSPACE root when this package sits in a
-   workspace, which is NOT the directory beside the package (F4, H-2638).
-   --check with no source present exits 2 and says so — a check that
-   goes quiet when its input is missing is the one shape that can never go red.
-   The test that wraps it (test/estate-avatars.test.ts) is the thing allowed to
-   skip, and it skips aloud.
-*/
+/* Generates the embedded legacy avatars module from sources shipped inside
+   this Helmo distribution. Runtime views consume the committed module; source
+   regeneration and drift checks need no sibling checkout. The explicit
+   ESTATE_AVATARS_SVG override remains available for deliberate development. */
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { besideCheckout } from '@helmo/core/checkout';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 export const SOURCE =
   process.env.ESTATE_AVATARS_SVG ??
-  besideCheckout(ROOT, 'estate', 'avatars', 'crew-avatars.svg');
+  join(ROOT, '..', 'core', 'assets', 'legacy', 'crew-avatars.svg');
 export const VENDORED = join(ROOT, 'src', 'estate-avatars.generated.ts');
 
 /** Marks and kinds, read from the composed `crew-<mark>-<kind>` symbols.
@@ -97,9 +73,9 @@ export function render(svg) {
   const { marks, kinds } = index(svg);
   const list = (xs) => xs.map((x) => JSON.stringify(x)).join(', ');
   return [
-    '// VENDORED — do not edit. Source: the estate repo, avatars/crew-avatars.svg',
+    '// VENDORED — do not edit. Source: packages/core/assets/legacy/crew-avatars.svg',
     '// Refresh: node scripts/vendor-estate-avatars.mjs',
-    '// Drift is a test failure: npm test (skipped, loudly, with no estate checkout)',
+    '// Drift is a test failure: npm test (source is included in this distribution)',
     '//',
     '// The estate shell is the source of the visual system every estate surface',
     '// shares (R-11); rev consumes it as a copy so it stays publishable alone.',
@@ -125,7 +101,7 @@ function run() {
   try {
     svg = readFileSync(SOURCE, 'utf8');
   } catch {
-    console.error(`no estate avatar sprite at ${SOURCE} — set ESTATE_AVATARS_SVG or clone the estate repo beside this checkout`);
+    console.error(`no estate avatar sprite at ${SOURCE} — set ESTATE_AVATARS_SVG or restore the asset included in packages/core/assets/legacy`);
     process.exit(2);
   }
   const want = render(svg);

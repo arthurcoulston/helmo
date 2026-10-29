@@ -1,30 +1,12 @@
-// The vendored estate design tokens (R-11 H-714). src/estate-tokens.generated.ts
-// is a copy of a file another repo owns, so the only thing that can go wrong
-// here is the copy going stale — and it would go stale invisibly, because a
-// stale copy still compiles and still renders a page.
-//
-// One test here is allowed to skip, and that is the interesting part. The
-// roadmap is published standalone: a clone with no estate checkout beside it
-// has no source to compare against, and failing there would make the product
-// depend on a repo it is not allowed to depend on. So the skip is deliberate —
-// but it must be visible, because a check that quietly passes when its input is
-// missing is a check that can never go red. `it.skipIf` is what makes it
-// visible: the run summary counts it as skipped rather than passed. An early
-// `return` with a console.log does NOT — vitest swallows console output from a
-// passing test, which was measured on the Helmo adoption, not assumed.
-//
-// The run that matters is Arthur's machine and estate CI, where the sibling
-// checkout exists. The other two tests never skip: they read the vendored copy
-// alone, which is the file that actually ships.
+// Legacy visual sources ship with Helmo. Their drift checks must run in a cold clone.
 
 import { describe, expect, it } from 'vitest';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { SOURCE, VENDORED, render } from '../../core/scripts/vendor-estate-tokens.mjs';
 
 describe('vendored estate tokens', () => {
-  const haveSource = existsSync(SOURCE);
 
-  it.skipIf(!haveSource)('is the estate token file verbatim', () => {
+  it('is the estate token file verbatim', () => {
     expect(readFileSync(VENDORED, 'utf8')).toBe(render(readFileSync(SOURCE, 'utf8')));
   });
 

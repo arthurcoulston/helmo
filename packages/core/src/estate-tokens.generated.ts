@@ -1,10 +1,9 @@
-// VENDORED — do not edit. Source: the estate repo, tokens/estate-tokens.css
+// VENDORED — do not edit. Source: packages/core/assets/legacy/estate-tokens.css
 // Refresh: node scripts/vendor-estate-tokens.mjs
-// Drift is a test failure: npm test (skipped, loudly, with no estate checkout)
+// Drift is a test failure: npm test (source is included in this distribution)
 // shadcn-derived values retain their MIT notice in THIRD_PARTY_NOTICES.md.
 //
-// The estate shell is the source of the visual system every estate surface
-// shares (R-11); Helmo consumes it as a copy so it stays publishable alone.
+// Legacy view assets are owned and shipped by Helmo; no sibling repo is read.
 
 export const ESTATE_TOKENS = `
 /* GENERATED — do not edit. Source: src/index.css (shadcn radix-nova, neutral) + MARK_HUE and STATUS in tools/generate.mjs

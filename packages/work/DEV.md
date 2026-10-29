@@ -318,7 +318,7 @@ Pinned releases accept both the historical three-component layout and C1's one
   server under a `rev:ward` environment. The matching `kind` binding in
   `writingActor` was considered and NOT added: `loopActor` hardcodes
   `kind: 'agent'` for every session-spec consumer including the meeting room,
-  and the record holds 19 orchestrator-kind relays on `desk:`, `codex:`,
+  and the record holds 16 orchestrator-kind relays on `desk:`, `codex:`,
   `summon:` and `meeting:` stamps, so binding kind to the environment would
   refuse the attended relays this gate exists to keep open. `lastAnswer` carries
   `relayed_by_agent: true` when the answering actor was agent-kind, so a

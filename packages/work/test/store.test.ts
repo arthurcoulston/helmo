@@ -12,6 +12,9 @@ const builder: Actor = { name: 'builder-loop', kind: 'agent', model: 'claude-son
 const reviewer: Actor = { name: 'reviewer-loop', kind: 'agent', model: 'gpt-6-codex', version: '2.1', session: 'rev:reviewer-loop' };
 const orch: Actor = { name: 'helmo-orchestrator', kind: 'orchestrator', model: 'claude-fable-5', version: '0.1' };
 const relayedHuman: Actor = { name: 'builder-loop', kind: 'orchestrator', model: 'claude-fable-5', version: '0.1' };
+/** An agent with a person sitting in it: no session stamp (H-1382), so it is
+ *  not a supervised worker and may still carry Arthur's words (H-3591). */
+const attended: Actor = { name: 'mason-desk', kind: 'agent', model: 'claude-opus-5', version: '0.7' };
 
 function freshStore(): Store {
   return new Store(':memory:');
@@ -1521,7 +1524,9 @@ describe('return to human / answer', () => {
 
     it('counts only an original human answer, not a relay or an agent', () => {
       const s = freshStore();
-      for (const by of [orch, builder]) {
+      // An attended agent stands for 'an agent' here: a supervised one cannot
+      // answer at all since H-3591.
+      for (const by of [orch, attended]) {
         const source = answered(s, 'Arthur approved it.', ask(), by);
         expect(s.returnToHuman(builder, follow(s, source.id).id, ask()).status).toBe('awaiting_human');
       }
@@ -1622,6 +1627,57 @@ describe('return to human / answer', () => {
     const s = freshStore();
     const t = create(s);
     expect(() => s.answerTicket(orch, t.id, { answer: 'x', resolution: 'resume' })).toThrow(/not awaiting_human/);
+  });
+
+  // H-3591. Every supervised answer the record held was an agent correcting
+  // its own ask — parking against a decision already made, closing a
+  // duplicate, moving a question elsewhere — so the refusal has to leave each
+  // of those a route that does not write in Arthur's voice.
+  describe('a supervised loop iteration cannot answer (H-3591)', () => {
+    const asking = (s: Store) => {
+      const t = create(s);
+      s.returnToHuman(builder, t.id, q);
+      return t;
+    };
+
+    it('refuses the answer and writes nothing', () => {
+      const s = freshStore();
+      const t = asking(s);
+      const before = s.getEvents(t.id).length;
+      expect(() => s.answerTicket(builder, t.id, { answer: 'Arthur already settled this on H-99.', resolution: 'resume' }))
+        .toThrow(/supervised loop iteration cannot answer/);
+      expect(s.getEvents(t.id)).toHaveLength(before);
+      expect(s.getTicket(t.id).status).toBe('awaiting_human');
+      expect(s.lastAnswer(t.id)).toBeNull();
+    });
+
+    it('withdrawal retires a mistaken, duplicated or already-decided ask, and the work parks from there', () => {
+      const s = freshStore();
+      const t = asking(s);
+      const fingerprint = questionFingerprint(s.getTicket(t.id).question!);
+      expect(s.withdrawHumanReturn(builder, t.id, fingerprint, builder.name, 'Arthur settled this on H-99; the ask was mine to retire.'))
+        .toMatchObject({ status: 'open', assignee: builder.name, question: null });
+      const parked = s.updateTicket(builder, { ticket_id: t.id, note: 'parked against the H-99 decision', not_before: '2099-01-01' });
+      expect(parked.ticket.not_before).toContain('2099-01-01');
+      expect(s.lastAnswer(t.id)).toBeNull();
+    });
+
+    it('an attended session still relays, and the answer discloses that an agent wrote it', () => {
+      const s = freshStore();
+      const t = asking(s);
+      expect(s.answerTicket(attended, t.id, { answer: 'Pay it — he said the date matters more than the money.', chosen_option: 'pay', resolution: 'resume' }).status).toBe('open');
+      expect(s.lastAnswer(t.id)).toMatchObject({ chosen_option: 'pay', relayed_by_agent: true });
+    });
+
+    it.each([['the human', { name: 'arthur', kind: 'human' } as Actor], ['an orchestrator', orch] as const])(
+      'an answer from %s carries no relay marker',
+      (_who, by) => {
+        const s = freshStore();
+        const t = asking(s);
+        s.answerTicket(by as Actor, t.id, { answer: 'Pay it.', resolution: 'resume' });
+        expect(s.lastAnswer(t.id)).not.toHaveProperty('relayed_by_agent');
+      },
+    );
   });
 });
 
@@ -2699,6 +2755,97 @@ describe('hygiene checks (deterministic, read-only)', () => {
   });
 });
 
+describe('agent-relayed answers reported and disposable (H-3591)', () => {
+  const ask = {
+    situation: 'The renewal quote is drafted and hosting costs rose.',
+    question: 'Send it at the higher fee?',
+    recommendation: 'yes — the contract allows one change a year',
+  };
+  /** A question returned by one agent and answered by another, attended. */
+  function relayed(s: Store, answerer: Actor = attended, returner: Actor = reviewer) {
+    const t = s.createTicket(returner, { title: 'Send the renewal', body: 'Goal: send it.', workstream: 'helmo-dev', type: 'ops', project: 'R-1' });
+    triage(s, t.id);
+    s.updateTicket(returner, { ticket_id: t.id, note: 'claimed', status: 'in_progress' });
+    s.returnToHuman(returner, t.id, ask);
+    s.answerTicket(answerer, t.id, { answer: 'He said send it.', resolution: 'resume' });
+    return t;
+  }
+  const relays = (s: Store) => s.hygiene().filter((f) => f.check === 'agent_relayed_answer');
+  const hrs = (h: number) => new Date(Date.now() + h * 3_600_000);
+
+  it('names the answerer, the actor who returned the question, and the session it came from', () => {
+    const s = freshStore();
+    const t = relayed(s);
+    expect(relays(s)).toEqual([expect.objectContaining({ check: 'agent_relayed_answer', ticket_id: t.id })]);
+    expect(relays(s)[0]!.detail).toMatch(/^an answer was written by an agent, not the human: mason-desk answered the ask reviewer-loop returned at .* from an attended session$/);
+  });
+
+  it('says when the answerer shaped the ask it answered — by filing it, or by writing the body it stood on', () => {
+    const s = freshStore();
+    const filed = relayed(s, attended, attended); // attended returned its own filing and answered it
+    expect(relays(s).find((f) => f.ticket_id === filed.id)!.detail).toMatch(/mason-desk answered its own ask .* — mason-desk created the ticket/);
+
+    const edited = relayed(s, attended, reviewer);
+    // The clause above wins when both hold, so take the creator out of it: a
+    // ticket filed by someone else, whose body the answerer last rewrote.
+    expect(relays(s).find((f) => f.ticket_id === edited.id)!.detail).not.toMatch(/created the ticket/);
+  });
+
+  it('reports a body edit the answerer made before the return', () => {
+    const s = freshStore();
+    const t = s.createTicket(reviewer, { title: 'Send the renewal', body: 'Goal: send it.', workstream: 'helmo-dev', type: 'ops', project: 'R-1' });
+    triage(s, t.id);
+    s.updateTicket(attended, { ticket_id: t.id, note: 'restating the decision this turns on', body_append: '\n\nUpdate: the fee rise is the whole question.' });
+    s.returnToHuman(reviewer, t.id, ask);
+    s.answerTicket(attended, t.id, { answer: 'He said send it.', resolution: 'resume' });
+    expect(relays(s)[0]!.detail).toMatch(/mason-desk wrote its last body edit before the return/);
+  });
+
+  it('does not report the human, an orchestrator, or an answer older than the window', () => {
+    const s = freshStore();
+    relayed(s, { name: 'arthur', kind: 'human' });
+    relayed(s, orch);
+    expect(relays(s)).toEqual([]);
+    const old = freshStore();
+    relayed(old);
+    expect(relays(old)).toHaveLength(1);
+    expect(old.hygiene(hrs(169)).filter((f) => f.check === 'agent_relayed_answer')).toEqual([]);
+  });
+
+  it('groups several relays on one ticket into the finding a disposition is keyed to', () => {
+    const s = freshStore();
+    const t = relayed(s);
+    s.returnToHuman(reviewer, t.id, { ...ask, question: 'And the one after it?' });
+    s.answerTicket(attended, t.id, { answer: 'Same again.', resolution: 'resume' });
+    expect(relays(s)).toHaveLength(1);
+    expect(relays(s)[0]!.detail).toMatch(/^2 answers were written by an agent, not the human: .*; .*$/);
+  });
+
+  it('is disposable on live work, and a later relay is news again', () => {
+    const s = freshStore();
+    const t = relayed(s);
+    expect(s.getTicket(t.id).status).toBe('open'); // live: the relay resumed it
+    s.disposeHygieneFinding(reviewer, { check: 'agent_relayed_answer', ticket_id: t.id, reason: 'Arthur confirmed he said it in the 10-29 sitting' });
+    expect(relays(s)).toEqual([]);
+    // A disposition answers for the relays it saw; it does not cover the next.
+    expect(() => s.disposeHygieneFinding(reviewer, { check: 'agent_relayed_answer', ticket_id: t.id, reason: 'again' }))
+      .toThrow(/already disposed .* no agent has answered it since/);
+    s.returnToHuman(reviewer, t.id, { ...ask, question: 'And the one after it?' });
+    s.answerTicket(attended, t.id, { answer: 'Same again.', resolution: 'resume' });
+    expect(relays(s)).toHaveLength(1);
+    s.disposeHygieneFinding(reviewer, { check: 'agent_relayed_answer', ticket_id: t.id, reason: 'that one too' });
+    expect(relays(s)).toEqual([]);
+  });
+
+  it('is not acknowledged at a spend figure — the judgment answers for an instant, not a cost', () => {
+    const s = freshStore();
+    const t = relayed(s);
+    s.disposeHygieneFinding(reviewer, { check: 'agent_relayed_answer', ticket_id: t.id, reason: 'recognised' });
+    s.recordSpend(builder, t.id, { cost_usd: 500, note: 'metered' });
+    expect(relays(s)).toEqual([]);
+  });
+});
+
 describe('hygiene dispositions (H-81)', () => {
   function doneWithoutEvidence(s: Store) {
     const t = create(s);
@@ -2719,11 +2866,11 @@ describe('hygiene dispositions (H-81)', () => {
     s.disposeHygieneFinding(reviewer, { check: 'done_without_evidence', ticket_id: t.id, reason: 'deliverable was conversational; accepted by the human in the 08-06 meeting' });
     expect(s.hygiene().map((f) => f.check)).toEqual(['spend_anomaly']);
   });
-  it('every check but spend_anomaly is terminal-only — a live ticket clears by acting on it', () => {
+  it('a check that clears by acting on the ticket is terminal-only', () => {
     const s = freshStore();
     const t = create(s);
     expect(() => s.disposeHygieneFinding(reviewer, { check: 'stale_claim', ticket_id: t.id, reason: 'x' })).toThrow(
-      /only 'spend_anomaly' can be acknowledged/,
+      /only 'spend_anomaly' and 'agent_relayed_answer' can be acknowledged/,
     );
   });
   it('rejects unknown checks, empty reasons, and double disposal', () => {

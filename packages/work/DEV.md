@@ -291,6 +291,25 @@ Pinned releases accept both the historical three-component layout and C1's one
   A question in `awaiting_human` is not demoted this way even with an open
   blocker: answering it is how the operator clears the block, so it stays where
   he can act on it.
+  An ANSWER is the operator's decision, and `last_answer` once read the same
+  whoever wrote it (H-3591). Three things now hold it apart from a relay.
+  `answerTicket` refuses a `supervised(actor)` caller outright: every
+  supervised answer found on a record written over months of real use was an
+  agent correcting its own ask, which `withdrawHumanReturn` and a note plus
+  `not_before` now cover, and the refusal names both. Attended agents stay
+  allowed, because a person sitting with him carrying his words is the
+  established way a decision reaches the record. `lastAnswer` carries
+  `relayed_by_agent: true` when the answering actor was agent-kind, so a
+  downstream seat reads the relay off the answer instead of the event log.
+  And hygiene's `agent_relayed_answer` reports, per ticket within
+  `RELAYED_ANSWER_HOURS`, each agent-written answer on it: the answerer, the
+  actor whose return it replies to, the session it came from, and whether the
+  answerer shaped the ask it answered by filing the ticket or by writing the
+  body the question stood on. That is the one finding on live work besides
+  `spend_anomaly` that `hygiene-dispose` accepts, because a relay already
+  happened and nothing done to the ticket undoes it; its disposition carries
+  no `at_cost` and answers for an instant instead, so a LATER relay on the
+  same ticket is reported, and disposable, again.
   A caller that is about to return a concrete external operation may name an
   immutable `operation_manifest_id`. An operation manifest is complete only
   when it fixes target, recipient, tenant, data class, visibility, cost,
@@ -713,8 +732,8 @@ Pinned releases accept both the historical three-component layout and C1's one
   cannot answer the new question in the human's name. A response outside the
   offered set is still a meeting. Dashboard answers render marked as such. Everything else
   stays disclosure toggles and evidence links; add no other write affordance. Shows the
-  needs-grooming strip from `store.hygiene()` (H-23) — twelve deterministic
-  record checks. `awaiting_second_eyes` (H-1069) makes every currently ready,
+  needs-grooming strip from `store.hygiene()` (H-23) — the deterministic
+  record checks `HYGIENE_CHECKS` names. `awaiting_second_eyes` (H-1069) makes every currently ready,
   self-filed ticket visible store-wide until another actor judges it; this
   closes the gap where reservation to the filer hid the work from both the
   filer and the cultivating seat. `silent_assignee` (H-61) watches unblocked

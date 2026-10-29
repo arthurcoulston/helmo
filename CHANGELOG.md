@@ -99,6 +99,24 @@ longer.
 
 ### Security
 
+- An answer written by an agent is now held apart from the operator's own.
+  `helmo_answer_ticket` refuses a supervised worker outright — a loop
+  iteration answering a question addressed to the human writes a decision in
+  his voice that every later reader takes as his — and names the two routes
+  that cover what those answers were actually doing:
+  `helmo_withdraw_human_return` for an ask that was mistaken, duplicated or
+  already decided, and a note plus `not_before` to park the work from there.
+  Attended sessions, orchestrators and the human are unaffected: relaying his
+  words with a person present is ordinary and stays allowed. Where it is
+  allowed it is now disclosed — `last_answer` carries `relayed_by_agent: true`
+  whenever the answering actor was agent-kind, and a new hygiene check,
+  `agent_relayed_answer`, reports each agent-written answer of the last seven
+  days with the answerer, the actor whose return it replies to, the session it
+  came from, and whether the answerer had shaped the ask by filing the ticket
+  or writing the body the question stood on. It is the one check besides
+  `spend_anomaly` that `helmo_dispose_hygiene_finding` accepts on live work,
+  since a relay cannot be undone by working the ticket; a disposition answers
+  for the relays it saw, so a later one is reported again.
 - The remote MCP entry (`packages/work/dist/remote.js`, not launched by any
   install step) answers `413` to a request body over 4 MiB instead of reading
   it in full, and both tool surfaces refuse a `tools/call` whose arguments

@@ -9,7 +9,7 @@ import { assertIncident, blankIncident, incidentNoticeBoard, replayIncidents, ty
 import type { HistoryInput } from './history.js';
 import {
   ActionReport, ActionRequest, Actor, ActorKind, ACTOR_KINDS, Answer, AnswerEvent, BlastRadius, BLAST_RADII, CapacityHold, CompletionAccount, CompletionAccountInput, COMPLETION_CATEGORIES, COMPLETION_SUMMARY_MAX, Confidence, Dep, DepType, Evidence, EVIDENCE_ROLES,
-  AcceptanceCoverage, ActivityEvents, CauseOnset, CoveringCompletion, EventType, HelmoError, HelmoEvent, HumanRequest, Notice, ProductAcceptance, ProductArtifact, Question, QuestionInput, ReleaseHandoff, Status, Ticket, TicketProgress, UnresolvedCompletion, VerdictEvent, Workstream, WorkstreamInfo,
+  AcceptanceCoverage, ActivityEvents, CauseOnset, CoveringCompletion, EventType, HelmoError, HelmoEvent, HumanRequest, LastAnswer, Notice, ProductAcceptance, ProductArtifact, Question, QuestionInput, ReleaseHandoff, Status, Ticket, TicketProgress, UnresolvedCompletion, VerdictEvent, Workstream, WorkstreamInfo,
 } from './types.js';
 
 const STALE_CLAIM_HOURS = 24;
@@ -18,6 +18,7 @@ const SPEND_ANOMALY_FACTOR = 3; // flag cost > 3x the workstream norm (needs >= 
 const SPEND_ACK_REGROWTH = 1.5; // an acknowledged spend anomaly returns once the ticket has cost half as much again (H-1715)
 const BUDGET_PRESSURE_RATIO = 0.8; // surface a workstream budget once 80% is spent
 const SILENT_ASSIGNEE_HOURS = 168; // 7d without the assignee writing anywhere: a reservation that will not wake on its own
+const RELAYED_ANSWER_HOURS = 168; // 7d of agent-written answers: a week is what Arthur reads a digest over, and calibrating relays needs the set, not the latest one (H-3591)
 // Streams whose work accounts for itself: keeping the estate safe is never
 // discretionary, so a security ticket needs no project or objective behind it
 // (H-1126). Deliberately tiny — everything else says what it is for.
@@ -151,7 +152,15 @@ export const HYGIENE_CHECKS = [
   'stale_claim', 'done_without_evidence', 'phantom_block', 'aging_question',
   'spend_anomaly', 'priority_inversion', 'budget_pressure', 'silent_assignee',
   'orphan_ticket', 'unseated_pool', 'awaiting_second_eyes', 'unaccounted_work',
-  'self_triage_off', 'leader_named',] as const;
+  'self_triage_off', 'leader_named', 'agent_relayed_answer',] as const;
+
+/** The two checks a human can acknowledge while the ticket is still live, for
+ *  opposite reasons: a spend anomaly IS the ticket's current state and grows
+ *  out of its own acknowledgement (H-1715), while a relayed answer is a past
+ *  event that nothing done to the ticket can undo (H-3591). Every other
+ *  finding clears by working the ticket, so acknowledging it would hide live
+ *  work from the only reading that reports it. */
+const LIVE_DISPOSABLE_CHECKS = new Set(['spend_anomaly', 'agent_relayed_answer']);
 
 /** Installation-level settings are not a ticket, so their events are recorded
  *  under a namespaced pseudo-id, as `issue:`, `ws:` and `test:` already are
@@ -2066,11 +2075,16 @@ export class Store {
     }));
   }
 
-  lastAnswer(ticketId: string): Answer | null {
+  lastAnswer(ticketId: string): LastAnswer | null {
     const row = this.db
-      .prepare("SELECT payload FROM events WHERE ticket_id = ? AND event_type = 'answered' ORDER BY seq DESC LIMIT 1")
-      .get(ticketId) as { payload: string } | undefined;
-    return row ? (JSON.parse(row.payload) as Answer) : null;
+      .prepare("SELECT actor, payload FROM events WHERE ticket_id = ? AND event_type = 'answered' ORDER BY seq DESC LIMIT 1")
+      .get(ticketId) as { actor: string; payload: string } | undefined;
+    if (!row) return null;
+    const answer = JSON.parse(row.payload) as Answer;
+    // The payload cannot say who wrote it, so a reader acting on the answer
+    // could not tell the human's own words from a relay without opening the
+    // event log (H-3591). Agent-kind is the tell; the log holds the name.
+    return (JSON.parse(row.actor) as Actor).kind === 'agent' ? { ...answer, relayed_by_agent: true } : answer;
   }
 
   /** Every ask on this ticket the human has already answered, keyed by the
@@ -2622,6 +2636,36 @@ export class Store {
     return created.template ? this.filingCreator(created.template) : created.creator;
   }
 
+  /** Agent-written answers recorded on this ticket after `since` — what tells
+   *  a relay disposition that has been outlived from one that still stands. */
+  private relayedAnswersSince(id: string, since: string): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM events
+         WHERE ticket_id = ? AND event_type = 'answered' AND json_extract(actor, '$.kind') = 'agent' AND ts > ?`,
+      )
+      .get(id, since) as { n: number };
+    return row.n;
+  }
+
+  /** Who last rewrote this ticket's body before event `beforeSeq` — the body a
+   *  question returned at that seq was standing on. All three body modes land
+   *  in the same `diffs.body`, so this sees an append and a patch as well as a
+   *  whole-field replace. Null when nothing had edited it, or when there is no
+   *  event to stand before. */
+  private lastBodyAuthorBefore(id: string, beforeSeq: number | null): string | null {
+    if (beforeSeq == null) return null;
+    const row = this.db
+      .prepare(
+        `SELECT json_extract(actor, '$.name') AS who FROM events
+         WHERE ticket_id = ? AND seq < ? AND event_type = 'updated'
+           AND json_extract(payload, '$.diffs.body') IS NOT NULL
+         ORDER BY seq DESC LIMIT 1`,
+      )
+      .get(id, beforeSeq) as { who: string | null } | undefined;
+    return row?.who ?? null;
+  }
+
   /** The tickets the triage rule is withholding from `caller`'s ready queue —
    *  returned alongside the queue so the filer sees why, instead of wondering
    *  where their ticket went. */
@@ -2688,6 +2732,9 @@ export class Store {
    *  Pure read — never mutates. `nowTs` is injectable for tests. */
   hygiene(nowTs: Date = new Date()): HygieneFinding[] {
     const findings: HygieneFinding[] = [];
+    // The newest agent-written answer per ticket, kept for the dispose filter
+    // at the foot of this method: a relay disposition stands for what it saw.
+    const relayedAt = new Map<string, string>();
     const hoursAgo = (h: number) => new Date(nowTs.getTime() - h * 3_600_000).toISOString();
     const age = (iso: string) => Math.floor((nowTs.getTime() - new Date(iso).getTime()) / 3_600_000);
 
@@ -2820,6 +2867,57 @@ export class Store {
       .all(hoursAgo(AGING_QUESTION_HOURS)) as { id: string; updated_at: string; question: string | null }[]) {
       const kind = r.question && (JSON.parse(r.question) as HumanRequest).kind === 'action' ? 'action' : 'question';
       findings.push({ check: 'aging_question', ticket_id: r.id, detail: `${kind} waiting ${Math.floor(age(r.updated_at) / 24)}d` });
+    }
+
+    // Answers an agent wrote rather than the human. A relay from an attended
+    // session is legitimate and ordinary — his words reaching the record
+    // through whoever was sitting with him — but it carries his weight to
+    // every later reader, and until H-3591 the only way to see one was to
+    // open the event log, which is where a relay stayed until someone went
+    // looking. Reported per ticket because that is how a disposition is keyed;
+    // what it names is each relay on it.
+    const relayClauses = new Map<string, string[]>();
+    for (const r of this.db
+      .prepare(
+        `SELECT a.seq, a.ts, a.ticket_id,
+                json_extract(a.actor, '$.name') AS answerer,
+                json_extract(a.actor, '$.session') AS session,
+                (SELECT json_extract(q.actor, '$.name') FROM events q
+                  WHERE q.ticket_id = a.ticket_id AND q.event_type = 'returned' AND q.seq < a.seq
+                  ORDER BY q.seq DESC LIMIT 1) AS returner,
+                (SELECT q.seq FROM events q
+                  WHERE q.ticket_id = a.ticket_id AND q.event_type = 'returned' AND q.seq < a.seq
+                  ORDER BY q.seq DESC LIMIT 1) AS returned_seq
+         FROM events a
+         WHERE a.event_type = 'answered' AND json_extract(a.actor, '$.kind') = 'agent' AND a.ts >= ?
+         ORDER BY a.seq`,
+      )
+      .all(hoursAgo(RELAYED_ANSWER_HOURS)) as {
+      ts: string; ticket_id: string; answerer: string | null; session: string | null; returner: string | null; returned_seq: number | null;
+    }[]) {
+      const who = r.answerer ?? '?';
+      // Whether the answerer shaped the ask it then answered. Filing the
+      // ticket and writing the body the question stands on are the two ways,
+      // and either turns carrying a decision into completing one's own loop.
+      const shaped = this.filingCreator(r.ticket_id) === who
+        ? `${who} created the ticket`
+        : this.lastBodyAuthorBefore(r.ticket_id, r.returned_seq) === who
+          ? `${who} wrote its last body edit before the return`
+          : null;
+      const clause = `${who} answered ${r.returner === who ? 'its own ask' : `the ask ${r.returner ?? 'nobody on record'} returned`} at ${r.ts}`
+        + (r.session ? ` from supervised session ${r.session}` : ' from an attended session')
+        + (shaped ? ` — ${shaped}` : '');
+      if (!relayClauses.has(r.ticket_id)) relayClauses.set(r.ticket_id, []);
+      relayClauses.get(r.ticket_id)!.push(clause);
+      const seen = relayedAt.get(r.ticket_id);
+      if (!seen || r.ts > seen) relayedAt.set(r.ticket_id, r.ts);
+    }
+    for (const [id, clauses] of relayClauses) {
+      findings.push({
+        check: 'agent_relayed_answer',
+        ticket_id: id,
+        detail: `${clauses.length === 1 ? 'an answer was' : `${clauses.length} answers were`} written by an agent, not the human: ${clauses.join('; ')}`,
+      });
     }
 
     // Spend anomalies: cost far above the workstream norm (H-19 made cost real).
@@ -2961,18 +3059,24 @@ export class Store {
     // half as much again.
     const disposed = new Map(
       (
-        this.db.prepare('SELECT check_name, ticket_id, at_cost FROM hygiene_dispositions').all() as {
+        this.db.prepare('SELECT check_name, ticket_id, at_cost, ts FROM hygiene_dispositions').all() as {
           check_name: string;
           ticket_id: string;
           at_cost: number | null;
+          ts: string;
         }[]
-      ).map((d) => [`${d.check_name}:${d.ticket_id}`, d.at_cost]),
+      ).map((d) => [`${d.check_name}:${d.ticket_id}`, d]),
     );
     return findings.filter((f) => {
-      if (!f.ticket_id || !disposed.has(`${f.check}:${f.ticket_id}`)) return true;
-      const at = disposed.get(`${f.check}:${f.ticket_id}`);
-      if (at == null) return false; // terminal-ticket disposition: stands
-      return (costs.get(f.ticket_id) ?? 0) > at * SPEND_ACK_REGROWTH;
+      if (!f.ticket_id) return true;
+      const d = disposed.get(`${f.check}:${f.ticket_id}`);
+      if (!d) return true;
+      // A relay finding reports events, not a state the ticket can be worked
+      // out of, so the judgment stands for the relays it could see and a
+      // later one is news again (H-3591).
+      if (f.check === 'agent_relayed_answer') return (relayedAt.get(f.ticket_id) ?? '') > d.ts;
+      if (d.at_cost == null) return false; // terminal-ticket disposition: stands
+      return (costs.get(f.ticket_id) ?? 0) > d.at_cost * SPEND_ACK_REGROWTH;
     });
   }
 
@@ -4031,7 +4135,7 @@ export class Store {
       }
       if (t.status === 'awaiting_human') {
         throw new HelmoError(
-          `${t.id} is awaiting_human — its status moves when the human's answer is recorded, and helmo_answer_ticket is how you record it. IF THE HUMAN HAS ANSWERED — in a meeting, at the desk, anywhere — relay it now with helmo_answer_ticket (resolution 'done' closes it, 'resume' reopens it for whoever takes it next); that is a normal thing for any agent to do, not a role you need. Quote their reasoning, not just the choice. If they have NOT answered, leave it: you may still add notes and evidence.`,
+          `${t.id} is awaiting_human — its status moves when the human's answer is recorded, and helmo_answer_ticket is how you record it. IF THE HUMAN HAS ANSWERED — in a meeting, at the desk, anywhere — relay it now with helmo_answer_ticket (resolution 'done' closes it, 'resume' reopens it for whoever takes it next); that is a normal thing for an attended session to do, not a role you need, though a supervised loop iteration is refused and withdraws its own mistaken ask with helmo_withdraw_human_return instead. Quote their reasoning, not just the choice. If they have NOT answered, leave it: you may still add notes and evidence.`,
         );
       }
       // Triage enforcement (H-56): the ready-queue withholding (H-55) is a
@@ -4318,23 +4422,38 @@ export class Store {
     rejectSwallowedMarkup({ reason: input.reason });
     const t = this.getTicket(input.ticket_id);
     const live = t.status !== 'done' && t.status !== 'cancelled';
-    if (live && input.check !== 'spend_anomaly') {
-      throw new HelmoError(`${t.id} is ${t.status} — on live work only 'spend_anomaly' can be acknowledged. A '${input.check}' finding clears by acting on the ticket itself.`);
+    if (live && !LIVE_DISPOSABLE_CHECKS.has(input.check)) {
+      throw new HelmoError(`${t.id} is ${t.status} — on live work only ${[...LIVE_DISPOSABLE_CHECKS].map((c) => `'${c}'`).join(' and ')} can be acknowledged. A '${input.check}' finding clears by acting on the ticket itself.`);
     }
     const existing = this.db
-      .prepare('SELECT reason, at_cost FROM hygiene_dispositions WHERE check_name = ? AND ticket_id = ?')
-      .get(input.check, t.id) as { reason: string; at_cost: number | null } | undefined;
-    if (existing && (existing.at_cost == null || t.cost_usd_total <= existing.at_cost * SPEND_ACK_REGROWTH)) {
-      throw new HelmoError(
-        existing.at_cost == null
-          ? `'${input.check}' on ${t.id} is already disposed ("${existing.reason}") — nothing to record.`
-          : `'${input.check}' on ${t.id} is already acknowledged at $${existing.at_cost.toFixed(2)} ("${existing.reason}") and the finding is not being reported — nothing to record. It returns above $${(existing.at_cost * SPEND_ACK_REGROWTH).toFixed(2)}.`,
-      );
+      .prepare('SELECT reason, at_cost, ts FROM hygiene_dispositions WHERE check_name = ? AND ticket_id = ?')
+      .get(input.check, t.id) as { reason: string; at_cost: number | null; ts: string } | undefined;
+    if (existing) {
+      // Each disposition answers for what the finding said when it was
+      // written, so re-recording is refused until the finding is being
+      // reported again: spend by growing past the figure acknowledged
+      // (H-1715), a relay by a newer one arriving (H-3591).
+      const reported = input.check === 'agent_relayed_answer'
+        ? this.relayedAnswersSince(t.id, existing.ts) > 0
+        : existing.at_cost != null && t.cost_usd_total > existing.at_cost * SPEND_ACK_REGROWTH;
+      if (!reported) {
+        throw new HelmoError(
+          input.check === 'agent_relayed_answer'
+            ? `'${input.check}' on ${t.id} is already disposed ("${existing.reason}") and no agent has answered it since — nothing to record.`
+            : existing.at_cost == null
+              ? `'${input.check}' on ${t.id} is already disposed ("${existing.reason}") — nothing to record.`
+              : `'${input.check}' on ${t.id} is already acknowledged at $${existing.at_cost.toFixed(2)} ("${existing.reason}") and the finding is not being reported — nothing to record. It returns above $${(existing.at_cost * SPEND_ACK_REGROWTH).toFixed(2)}.`,
+        );
+      }
     }
     this.db.transaction(() => {
       const ts = now();
       const payload: Record<string, unknown> = { check: input.check, reason: input.reason };
-      if (live) payload['at_cost'] = t.cost_usd_total;
+      // The acknowledged figure is what a spend disposition answers for. A
+      // relay disposition answers for an instant instead, and that is the
+      // row's own `ts` — carrying a cost here would make the finding return
+      // on spend the judgment never spoke to.
+      if (live && input.check === 'spend_anomaly') payload['at_cost'] = t.cost_usd_total;
       this.append(ts, t.id, 'hygiene_disposed', actor, payload);
       this.applyHygieneDisposed(ts, t.id, actor, payload);
     }).immediate();
@@ -4479,6 +4598,17 @@ export class Store {
    *  for, not to the ticket id (H-1053). */
   answerTicket(actor: Actor, ticketId: string, a: Answer, expectQuestion?: string): Ticket {
     validateActor(actor);
+    // An answer is the human's decision, and `last_answer` reads the same
+    // whoever typed it — so a loop iteration answering its own escalation
+    // writes a decision in his voice that every later seat takes as his
+    // (H-3591). Attended relays stay allowed: someone was sitting with him.
+    // Every supervised answer the record holds was an agent correcting its
+    // own ask, which is what the two routes named here are for.
+    if (supervised(actor)) {
+      throw new HelmoError(
+        `A supervised loop iteration cannot answer ${ticketId}: an answer records the human's decision, and nothing downstream can tell yours from his. If the ask was mistaken, duplicated, or already decided, withdraw it with helmo_withdraw_human_return — that hands the work to a live owner, and you can park it from there with a note and not_before. If the ask stands, leave it and take other work; notes and evidence are still open to you. If you are carrying something he actually said, record it from an attended session, where the record shows a person was present.`,
+      );
+    }
     const t = this.getTicket(ticketId);
     if (t.status !== 'awaiting_human') {
       throw new HelmoError(`${t.id} is ${t.status}, not awaiting_human — there is no pending question to answer.`);

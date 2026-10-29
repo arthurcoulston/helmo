@@ -318,6 +318,15 @@ export interface Answer {
   resolution: 'resume' | 'done' | 'cancelled';
 }
 
+/** A recorded answer as a reader gets it back, carrying the one thing the
+ *  stored payload cannot say: an agent wrote this, relaying rather than
+ *  deciding. Absent means the human or an orchestrator recorded it. A
+ *  downstream seat reads the answer, not the event log, so the distinction
+ *  has to travel with it (H-3591). */
+export interface LastAnswer extends Answer {
+  relayed_by_agent?: true;
+}
+
 /** One recorded answer, as the sweep and any auditor read it back: who
  *  wrote it, on what, and what they said. The actor's session is carried
  *  because it is the channel — 'dashboard' answers arrive without a meeting. */

@@ -4635,7 +4635,7 @@ export class Store {
     // own ask, which is what the two routes named here are for.
     if (revLoopIteration(actor)) {
       throw new HelmoError(
-        `A supervised loop iteration cannot answer ${ticketId}: an answer records the human's decision, and nothing downstream can tell yours from his. If the ask was mistaken, duplicated, or already decided, withdraw it with helmo_withdraw_human_return — that hands the work to a live owner, and you can park it from there with a note and not_before. If the ask stands, leave it and take other work; notes and evidence are still open to you. If you are carrying something he actually said, record it from an attended session, where the record shows a person was present.`,
+        `A Rev loop iteration cannot answer ${ticketId}: an answer records the human's decision, and nothing downstream can tell yours from his. If the ask was mistaken, duplicated, or already decided, withdraw it with helmo_withdraw_human_return — that hands the work to a live owner, and you can park it from there with a note and not_before. If the ask stands, leave it and take other work; notes and evidence are still open to you. If you are carrying something he actually said, record it from an attended session, where the record shows a person was present.`,
       );
     }
     const t = this.getTicket(ticketId);

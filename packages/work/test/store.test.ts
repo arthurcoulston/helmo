@@ -1633,7 +1633,7 @@ describe('return to human / answer', () => {
   // its own ask — parking against a decision already made, closing a
   // duplicate, moving a question elsewhere — so the refusal has to leave each
   // of those a route that does not write in Arthur's voice.
-  describe('a supervised loop iteration cannot answer (H-3591)', () => {
+  describe('a Rev loop iteration cannot answer (H-3591)', () => {
     const asking = (s: Store) => {
       const t = create(s);
       s.returnToHuman(builder, t.id, q);
@@ -1645,7 +1645,7 @@ describe('return to human / answer', () => {
       const t = asking(s);
       const before = s.getEvents(t.id).length;
       expect(() => s.answerTicket(builder, t.id, { answer: 'Arthur already settled this on H-99.', resolution: 'resume' }))
-        .toThrow(/supervised loop iteration cannot answer/);
+        .toThrow(/Rev loop iteration cannot answer/);
       expect(s.getEvents(t.id)).toHaveLength(before);
       expect(s.getTicket(t.id).status).toBe('awaiting_human');
       expect(s.lastAnswer(t.id)).toBeNull();

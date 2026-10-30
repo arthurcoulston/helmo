@@ -73,7 +73,7 @@ export function claudeRecord(over: { blobs?: boolean; compaction?: boolean } = {
  *  list, so a call after one holds the host's `replacement_history` and none of
  *  the items before it — which is the wrong fixture for anything about how a
  *  call's own window is bounded. */
-export function codexRecord(over: { full?: boolean; encryptedReasoning?: boolean; secondCall?: boolean; compaction?: boolean } = {}): unknown[] {
+export function codexRecord(over: { full?: boolean; encryptedReasoning?: boolean; secondCall?: boolean; compaction?: boolean; attachment?: boolean } = {}): unknown[] {
   const entries: unknown[] = [
     {
       type: 'session_meta', timestamp: '2026-10-29T04:00:00.000Z', ordinal: 0,
@@ -116,6 +116,23 @@ export function codexRecord(over: { full?: boolean; encryptedReasoning?: boolean
       type: 'response_item', timestamp: '2026-10-29T04:00:03.000Z', ordinal: 4,
       payload: { type: 'message', role: 'user', content: [{ type: 'text', text: 'the first ask' }] },
     },
+    // A message carrying an image the way the host writes one: a line of text
+    // naming the file, then the whole image as a base64 data URL. One real
+    // carried-in message here holds two of them, 537,630 and 223,746
+    // characters, and the model was given them as image tokens.
+    ...(over.attachment === true
+      ? [{
+        type: 'response_item', timestamp: '2026-10-29T04:00:03.200Z', ordinal: 4,
+        payload: {
+          type: 'message', role: 'user',
+          content: [
+            { type: 'input_text', text: '<image name=[Image #1] path="/tmp/shot.png">' },
+            { type: 'input_image', image_url: `data:image/png;base64,${'QUJD'.repeat(64)}`, detail: 4 },
+            { type: 'input_text', text: '</image>' },
+          ],
+        },
+      }]
+      : []),
     // Every reasoning item in a real rollout looks like this: an empty
     // `summary` and the content only as provider-encrypted text. The item was
     // in the call's context; what it said is not on this machine.
@@ -279,12 +296,77 @@ export function claudeTranscriptRecord(over: { retained?: unknown[]; sidechain?:
  *  `opensCompacted: true` puts a single boundary at item 0 and call 0 — a
  *  resumed session, 2 of the 20 compacted rollouts on this machine — where
  *  there is no call before the boundary to measure the drop against. */
-export function codexCompactionsRecord(over: { opensCompacted?: boolean; continuesThread?: boolean; emptyBase?: boolean; withoutBoundary?: boolean } = {}): unknown[] {
+/** The thread's EARLIER segment: the record a continuation picks up after.
+ *
+ *  `cut` is how many of these entries are before the history base's byte
+ *  offset. The entries after it are the shape all three real parents have — an
+ *  aborted turn written seconds before the resume, 9 to 11 entries of it — and
+ *  they were in no call of the child, which is why the join is read by bytes
+ *  and not by the ordinal (ward on H-3771).
+ *
+ *  `compacted` gives this segment a boundary of its own, so the context it
+ *  hands on is its replacement list plus what it recorded after it, and NOT
+ *  every item in the file: 2 of the 3 real parents are that shape, one holding
+ *  476 items in its prefix of which 101 were live.
+ *
+ *  `continues` makes this segment a continuation in its turn, for a thread read
+ *  through more than one hop. */
+export function codexThreadParentRecord(over: { thread?: string; compacted?: boolean; continues?: { thread_id: string; entries_before: number; byte_offset: number } } = {}): { entries: unknown[]; cut: number } {
+  const thread = over.thread ?? '01a18468-eb66-7892-841e-3bc876b47680';
+  const item = (text: string, at: string) => ({
+    type: 'response_item', timestamp: at,
+    payload: { type: 'message', role: 'user', content: [{ type: 'text', text }] },
+  });
+  const before: unknown[] = [
+    {
+      type: 'session_meta', timestamp: '2026-10-28T14:27:10.000Z',
+      payload: {
+        session_id: thread, cwd: '/tmp/seat', base_instructions: { text: 'You are Codex.' }, history_mode: 'paginated',
+        ...(over.continues === undefined
+          ? {}
+          : { history_base: { thread_id: over.continues.thread_id, end_ordinal_exclusive: over.continues.entries_before, end_byte_offset: over.continues.byte_offset } }),
+      },
+    },
+    {
+      type: 'world_state', timestamp: '2026-10-28T14:27:11.000Z',
+      payload: { full: true, state: { agents_md: { directory: '/tmp/seat', text: 'the repository rules' }, tools: { clock: 'a clock' } } },
+    },
+    { type: 'turn_context', timestamp: '2026-10-28T14:27:12.000Z', payload: { turn_id: 'turn-0', model: 'gpt-6-astra' } },
+    item('earlier ask 1', '2026-10-28T14:27:13.000Z'),
+    { type: 'token_usage_record', timestamp: '2026-10-28T14:27:14.000Z', payload: { response_id: 'early_0', turn_id: 'turn-0', usage: { input_tokens: 60, cached_input_tokens: 0 } } },
+    item('earlier ask 2', '2026-10-28T14:27:15.000Z'),
+    ...(over.compacted === true
+      ? [{
+          type: 'compacted', timestamp: '2026-10-28T14:27:16.000Z',
+          payload: {
+            message: 'auto', window_id: 'w0', compaction_response_id: 'resp_w0',
+            replacement_history: [{ type: 'message', role: 'user', content: [{ type: 'text', text: 'the summary of the earlier segment' }] }],
+            retained_context: { user_messages: [{}], assistant_messages: [{}], incomplete: false },
+            latest_token_usage_record: { usage: { input_tokens: 60 }, turn_token_usage: { input_tokens: 90 } },
+          },
+        }]
+      : []),
+    item('earlier ask 3', '2026-10-28T14:27:17.000Z'),
+    { type: 'token_usage_record', timestamp: '2026-10-28T14:27:18.000Z', payload: { response_id: 'early_1', turn_id: 'turn-0', usage: { input_tokens: 120, cached_input_tokens: 0 } } },
+  ];
+  // Written after the cut: the aborted turn every real parent ends with.
+  const after: unknown[] = [
+    { type: 'event_msg', timestamp: '2026-10-28T21:04:47.000Z', payload: { type: 'task_started' } },
+    item('an aborted turn the child never saw', '2026-10-28T21:04:48.000Z'),
+    { type: 'event_msg', timestamp: '2026-10-28T21:04:48.500Z', payload: { type: 'turn_aborted' } },
+  ];
+  return { entries: [...before, ...after], cut: before.length };
+}
+
+export function codexCompactionsRecord(over: { opensCompacted?: boolean; continuesThread?: boolean | { thread_id: string; entries_before: number; byte_offset: number }; emptyBase?: boolean; withoutBoundary?: boolean } = {}): unknown[] {
   // A rollout the host wrote as a CONTINUATION of a thread opens at the
   // history base's own ordinal rather than at 0, which is how the three such
   // records on this machine are shaped.
-  const base = 1_065;
-  let ordinal = over.continuesThread === true ? base : 0;
+  const stated = typeof over.continuesThread === 'object'
+    ? over.continuesThread
+    : { thread_id: '01a18468-eb66-7892-841e-3bc876b47680', entries_before: 1_065, byte_offset: 4_150_695 };
+  const base = stated.entries_before;
+  let ordinal = over.continuesThread ? base : 0;
   const next = (): number => ordinal++;
   const ask = (n: number, at: string) => ({
     type: 'response_item', timestamp: at, ordinal: next(),
@@ -318,8 +400,8 @@ export function codexCompactionsRecord(over: { opensCompacted?: boolean; continu
         // positive `end_ordinal_exclusive` means entries exist that this file
         // does not hold. The ordinary case carries the mode and no base.
         history_mode: 'paginated',
-        ...(over.continuesThread === true
-          ? { history_base: { thread_id: '01a18468-eb66-7892-841e-3bc876b47680', end_ordinal_exclusive: base, end_byte_offset: 4_150_695 } }
+        ...(over.continuesThread
+          ? { history_base: { thread_id: stated.thread_id, end_ordinal_exclusive: base, end_byte_offset: stated.byte_offset } }
           // A base the host wrote for a thread this file DID open: no entries
           // precede it, so there is nothing to say. No record on this machine
           // carries this shape — every one of the 867 either omits the field

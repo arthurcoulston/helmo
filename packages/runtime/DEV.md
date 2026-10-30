@@ -771,6 +771,50 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   a record instead of `observed`. `end_ordinal_exclusive` is read with its
   sign: a base of zero names no entries before this file, and reading it
   without the sign would put the caveat on all 867 records instead of 3.
+  That earlier segment is RESOLVED and READ rather than named, because a thread
+  id is not a path and requirement 6 wants a part followable to its origin.
+  `readCodexBaseSegment` identifies it by the CUT and nothing else: the base
+  carries a byte offset as well as an ordinal, and the parent's own byte length
+  through exactly the entries this file picks up after equals that offset on 3
+  of 3 here. Neither a name nor a session id can do it — every segment of a
+  thread carries the thread id as its `session_meta.session_id`, and the
+  filename match fits the child itself — and the parent file runs PAST the cut,
+  by 10, 11 and 9 entries of an aborted turn written seconds before the resume,
+  so ordinals at and after the base exist in both files with different content.
+  A candidate that does not hold exactly that cut is refused by name, and two
+  that both do are refused rather than chosen between: a reading spliced from
+  the wrong record would be worse than the stated gap it replaces.
+  What is carried in is the segment's LIVE items — its last replacement list
+  plus what it recorded after that boundary — by the same two rules a call's
+  context is read by here, because a parent that compacted holds items its own
+  boundary already dropped: 476 in the prefix of one of the three, of which 101
+  were live. `codexBaseInForce` stays the structural fact and `codexBaseShort`
+  is the fact PLUS no reading, so every "cannot be counted here" now fires only
+  where nothing was resolved. `--at` lists those items in their slots with the
+  record they were read from on each part, `codexPartsAt` counts them (so a
+  later boundary's drop figure is the real one), `--find` searches them with
+  their span, and the timeline says they are context on its first row and not
+  additions. Measured on the three: `--at 0` went from 0, 5 and 2 parts to 415,
+  106 and 103, and ward's own probe over all 33 compacted boundaries reads
+  `bad=0` where two rows previously refused their drop. A chain is followed to
+  `BASE_HOPS` segments and names what is still outside it; a hop that does not
+  resolve leaves `short` saying so rather than presenting what was read as the
+  whole context.
+  A part's BYTES are still what the host wrote for it, and on these three the
+  live items sum to 1.0, 1.4 and 1.5MB against its own per-call figures of
+  243,044, 91,273 and 77,407 input tokens. The host's figure stays the only
+  size of a context: an image is one proven reason, since a carried-in message
+  here holds two base64 data URLs of 537,630 and 223,746 characters that reach
+  the model as image tokens. Such a part is NAMED with its size by
+  `contentPart` and never printed as its data — the same rule as the
+  `compaction` item's ciphertext, one level down, inside a message that is
+  otherwise readable.
+  `findCodexRecord` names the LATEST segment of a thread, because a resumed
+  thread's later rollout is the one the run went on in and the earlier ones are
+  reachable from it; `findCodexRecords` is the whole list. Both segments of one
+  thread here sit in the same day directory, so the previous ordering, the
+  directory's own, named no winner between a run's record and the record it
+  continued.
   `preserved_messages` is what the HOST lists as preserved at a boundary, by
   its own count, and is never called what the next call carried: on claude it
   is a transcript-level list of entries, and against the one compacted record

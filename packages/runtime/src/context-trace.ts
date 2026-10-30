@@ -46,7 +46,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { claudeHome, readClaudeHostRecord } from './context-coverage.js';
 import type { LaunchJournalEntry } from './launch-journal.js';
 import { readBounded } from './team.js';
@@ -207,8 +207,13 @@ export interface ContextTrace {
      *  in a different record of the same thread, so the categories below are
      *  about a TAIL of the thread and not about all of it. `null` where the
      *  host writes no such field, which is every claude transcript and every
-     *  codex rollout that opened its own thread. */
-    history_base: { thread_id: string | null; entries_before: number; byte_offset: number | null } | null;
+     *  codex rollout that opened its own thread.
+     *
+     *  `record` is the earlier segment itself, resolved by the cut the base
+     *  states (`readCodexBaseSegment`), so a --json consumer has a path to
+     *  follow and not only a thread id; `resolution` says how it was found, or
+     *  why it was not. */
+    history_base: { thread_id: string | null; entries_before: number; byte_offset: number | null; record: string | null; resolution: string } | null;
   };
   shapes: TraceShape[];
   invocations: TraceInvocation[];
@@ -750,7 +755,7 @@ function codexTrace(entries: Record<string, unknown>[], source: TraceSource): Co
   let provider: string | null = null;
   let revision: string | null = null;
   let baseInstructions: TraceBlock | null = null;
-  let historyBase: { thread_id: string | null; entries_before: number; byte_offset: number | null } | null = null;
+  let historyBase: { thread_id: string | null; entries_before: number; byte_offset: number | null; record: string | null; resolution: string } | null = null;
   let items = 0;
   let additionalTools = false;
   const usage = new Map<string, number>();
@@ -773,7 +778,15 @@ function codexTrace(entries: Record<string, unknown>[], source: TraceSource): Co
       // mode, and only a positive ordinal means entries exist that this file
       // does not have.
       if (base !== null && before !== null && before > 0) {
-        historyBase = { thread_id: str(base['thread_id']), entries_before: before, byte_offset: num(base['end_byte_offset']) };
+        const stated = { thread_id: str(base['thread_id']), entries_before: before, byte_offset: num(base['end_byte_offset']) };
+        // Resolved here rather than named: requirement 6 wants a part
+        // followable to its origin, and a thread id is not a path. The reader
+        // in context-query.ts splices the earlier segment's own context from
+        // the same cut; this trace reports only that it resolves and where to.
+        const earlier = readCodexBaseSegment(source.path, stated);
+        historyBase = 'why' in earlier
+          ? { ...stated, record: null, resolution: `not resolved: ${earlier.why}` }
+          : { ...stated, record: earlier.path, resolution: `resolved to ${earlier.path}: its first ${stated.byte_offset} bytes are exactly the ${before} entries this record picks up after${earlier.rejected.length === 0 ? '' : `, where ${earlier.rejected.length} other record(s) naming the thread were not that cut`}` };
       }
       const instructions = record(payload['base_instructions']) ? (payload['base_instructions'] as Record<string, unknown>) : null;
       const text = instructions ? str(instructions['text']) : str(payload['base_instructions']);
@@ -897,14 +910,14 @@ function codexTrace(entries: Record<string, unknown>[], source: TraceSource): Co
         // `observed` over a TAIL. The items are each whole, and the sequence is
         // not: the thread's earlier entries are in another record (ward on
         // H-3763).
-        : state('additions', 'partial', `${items} items in recorded order, each with its content — but this record CONTINUES thread ${historyBase.thread_id ?? '(unnamed)'} from ordinal ${historyBase.entries_before}, so it holds the thread's additions only from there, and the ${historyBase.entries_before} entries before it are in a different record of the same thread`),
+        : state('additions', 'partial', `${items} items in recorded order, each with its content — but this record CONTINUES thread ${historyBase.thread_id ?? '(unnamed)'} from ordinal ${historyBase.entries_before}, so it holds the thread's additions only from there, and the ${historyBase.entries_before} entries before it are in a different record of the same thread. ${historyBase.record === null ? `That record was not resolved here, so what this one holds is all there is to read: ${historyBase.resolution}` : `That record is ${historyBase.record}, and the read surface splices the context it held at the cut, so a call's parts there are whole; the ADDITIONS counted here are still this segment's own`}`),
     compactions.length === 0
       ? historyBase === null
         ? state('evolution', 'observed', 'no compaction in this session: the evolution is additions only, and that is a reading, not an absence of coverage')
         // The starkest reading of a continuation segment: an evolution stated
         // whole for a session whose context began in another file, with no
         // boundary anywhere in this one to rebase it.
-        : state('evolution', 'partial', `no compaction in this record, and it continues thread ${historyBase.thread_id ?? '(unnamed)'} from ordinal ${historyBase.entries_before}: with no boundary to replace the context, EVERY call here was given the thread's earlier entries, which are in a different record. The evolution readable here is this segment's additions, not the session's`)
+        : state('evolution', 'partial', `no compaction in this record, and it continues thread ${historyBase.thread_id ?? '(unnamed)'} from ordinal ${historyBase.entries_before}: with no boundary to replace the context, EVERY call here was given the thread's earlier entries, which are in a different record. The evolution readable here is this segment's additions, not the session's${historyBase.record === null ? '' : `, and what those calls carried in is readable from ${historyBase.record}`}`)
       : state('evolution', 'partial', `${compactions.length} compaction(s) with the window chain, the replacement response id and the retained user and assistant messages. The host states no dropped-token figure, and marks its retained set's completeness itself, so a count here is a floor`),
     usage.size === 0
       ? state('sizes', 'partial', 'no token_usage_record entries; byte sizes here are of the retained JSON, measured with Buffer.byteLength')
@@ -1040,30 +1053,143 @@ export function codexHome(): string {
   return configured && configured.trim() ? configured : join(homedir(), '.codex');
 }
 
-/** Find a codex rollout by session id. The filename embeds a timestamp as well
- *  as the id and the directory is the session's own date, so the id alone
- *  cannot be turned into a path: the day directories are walked instead, newest
- *  first, and the id is matched as a filename component. */
-export function findCodexRecord(sessionId: string): string | null {
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)) return null;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Every codex rollout whose filename carries this id, LATEST SEGMENT FIRST.
+ *  The filename embeds a timestamp as well as the id and the directory is the
+ *  session's own date, so the id alone cannot be turned into a path: the day
+ *  directories are walked instead and the id is matched as a filename
+ *  component.
+ *
+ *  An id can name more than one file. A thread the host RESUMED is written as
+ *  several rollouts, and each segment carries the thread id as its own
+ *  `session_meta.session_id` — parent and child are indistinguishable by that
+ *  field — differing only by a trailing segment id in the name. Both segments
+ *  of one thread here sit in the same day directory, so the previous ordering,
+ *  the directory's own, named no winner between them. Day directories and
+ *  filenames both begin with the host's own timestamp, so lexicographic
+ *  descending is chronological. */
+export function findCodexRecords(id: string): string[] {
+  if (!UUID.test(id)) return [];
   const root = join(codexHome(), 'sessions');
-  if (!existsSync(root)) return null;
-  const walk = (dir: string, depth: number): string | null => {
+  if (!existsSync(root)) return [];
+  const hits: string[] = [];
+  const walk = (dir: string, depth: number): void => {
     let names: string[];
-    try { names = readdirSync(dir, { withFileTypes: true }).map((d) => (d.isDirectory() ? `d:${d.name}` : `f:${d.name}`)); } catch { return null; }
+    try { names = readdirSync(dir, { withFileTypes: true }).map((d) => (d.isDirectory() ? `d:${d.name}` : `f:${d.name}`)); } catch { return; }
     if (depth === 3) {
-      for (const name of names) {
-        if (!name.startsWith('f:')) continue;
-        const file = name.slice(2);
-        if (file.endsWith('.jsonl') && file.includes(sessionId)) return join(dir, file);
+      for (const name of names.filter((n) => n.startsWith('f:')).map((n) => n.slice(2)).sort().reverse()) {
+        if (name.endsWith('.jsonl') && name.includes(id)) hits.push(join(dir, name));
       }
-      return null;
+      return;
     }
-    for (const name of names.filter((n) => n.startsWith('d:')).sort().reverse()) {
-      const hit = walk(join(dir, name.slice(2)), depth + 1);
-      if (hit) return hit;
-    }
-    return null;
+    for (const name of names.filter((n) => n.startsWith('d:')).sort().reverse()) walk(join(dir, name.slice(2)), depth + 1);
   };
-  return walk(root, 0);
+  walk(root, 0);
+  return hits;
+}
+
+/** The record one session id names: the latest segment of its thread. Where a
+ *  thread was resumed that is the segment the run went on in, and the earlier
+ *  ones are reachable FROM it through its own `history_base`
+ *  (`readCodexBaseSegment`); the reverse is not true, so the latest is the only
+ *  choice from which the whole thread can be read. */
+export function findCodexRecord(sessionId: string): string | null {
+  return findCodexRecords(sessionId)[0] ?? null;
+}
+
+/** Other rollouts beside this one, for a record read from outside the host
+ *  store — a copied or archived segment keeps its siblings next to it, and the
+ *  store walk above would not see either. */
+function codexSiblings(recordPath: string, id: string): string[] {
+  const dir = dirname(recordPath);
+  try {
+    return readdirSync(dir, { withFileTypes: true })
+      .filter((d) => !d.isDirectory() && d.name.endsWith('.jsonl') && d.name.includes(id))
+      .map((d) => join(dir, d.name))
+      .sort()
+      .reverse();
+  } catch { return []; }
+}
+
+/** The entries of the earlier record a continuation segment picks up FROM.
+ *
+ *  `session_meta.history_base` carries a byte offset as well as an ordinal, and
+ *  the offset is what makes the join exact. The parent file runs PAST the cut —
+ *  10, 11 and 9 entries past it on the three such threads on this machine, each
+ *  an aborted turn written seconds before the resume — so ordinals
+ *  base..base+10 exist in BOTH files with different content, and the ordinal
+ *  alone would splice a tail that was never in the child's context. The
+ *  parent's byte length through exactly `end_ordinal_exclusive` entries equals
+ *  `end_byte_offset` on 3 of 3 (ward's measurement on H-3771).
+ *
+ *  So the cut IS the identification: the parent is the one candidate whose
+ *  first `end_byte_offset` bytes are exactly `end_ordinal_exclusive` whole
+ *  entries. `session_id` cannot do it — every segment of a thread carries the
+ *  thread id as its own — and a filename match alone would accept the child
+ *  itself. Anything else is refused by name rather than guessed at: a reading
+ *  spliced from the wrong file would be worse than the stated gap it replaces. */
+export interface CodexBaseSegment {
+  path: string;
+  entries: Record<string, unknown>[];
+  /** Candidates that carried the thread id but were not the cut, with what each
+   *  gave instead — so a refusal can be followed. */
+  rejected: string[];
+}
+
+export function readCodexBaseSegment(
+  recordPath: string,
+  base: { thread_id: string | null; entries_before: number; byte_offset: number | null },
+): CodexBaseSegment | { why: string } {
+  if (base.thread_id === null) {
+    return { why: 'the history_base names no thread id, so there is nothing to look the earlier record up by' };
+  }
+  if (base.byte_offset === null) {
+    return { why: `the history_base for thread ${base.thread_id} carries no end_byte_offset, and the ordinal alone is not a cut: the earlier record runs past it, so ordinals at and after ${base.entries_before} exist in both files with different content` };
+  }
+  if (base.byte_offset > TRACE_BYTE_CEILING) {
+    return { why: `the cut is at byte ${base.byte_offset} of the earlier record, past the ${TRACE_BYTE_CEILING}-byte ceiling this reads to, so its prefix is not read` };
+  }
+  const self = resolve(recordPath);
+  const candidates = [...new Set([...codexSiblings(recordPath, base.thread_id), ...findCodexRecords(base.thread_id)])]
+    .filter((p) => resolve(p) !== self);
+  if (candidates.length === 0) {
+    return { why: `no other rollout under ${join(codexHome(), 'sessions')} or beside this record names thread ${base.thread_id}. The host store is the host's: it is not versioned with our releases and nothing stops it being pruned` };
+  }
+  const rejected: string[] = [];
+  const found: CodexBaseSegment[] = [];
+  for (const path of candidates) {
+    const read = readBounded(path, base.byte_offset);
+    if (!read.ok) { rejected.push(`${path}: ${read.error}`); continue; }
+    if (bytes(read.text) !== base.byte_offset) {
+      rejected.push(`${path}: ${bytes(read.text)} bytes in all, short of the cut at ${base.byte_offset}`);
+      continue;
+    }
+    // The cut is byte-exact on every real one, so a prefix that does not end a
+    // line is not this thread's earlier record however well its name matches.
+    if (!read.text.endsWith('\n')) {
+      rejected.push(`${path}: byte ${base.byte_offset} falls inside an entry rather than at the end of one`);
+      continue;
+    }
+    const lines = read.text.split('\n').filter((l) => l !== '');
+    const entries: Record<string, unknown>[] = [];
+    let unparseable = 0;
+    for (const line of lines) {
+      try {
+        const parsed: unknown = JSON.parse(line);
+        if (record(parsed)) entries.push(parsed); else unparseable++;
+      } catch { unparseable++; }
+    }
+    if (unparseable > 0) { rejected.push(`${path}: ${unparseable} of its first ${lines.length} entries did not parse`); continue; }
+    if (entries.length !== base.entries_before) {
+      rejected.push(`${path}: ${entries.length} entries up to the cut, not the ${base.entries_before} the base names`);
+      continue;
+    }
+    found.push({ path, entries, rejected: [] });
+  }
+  if (found.length === 1) return { ...found[0]!, rejected };
+  if (found.length > 1) {
+    return { why: `${found.length} records name thread ${base.thread_id} and hold exactly ${base.entries_before} entries in their first ${base.byte_offset} bytes (${found.map((f) => f.path).join(', ')}), so which one this segment continues is not readable from the record, and none is read` };
+  }
+  return { why: `${candidates.length} record(s) name thread ${base.thread_id}, and none holds exactly ${base.entries_before} entries in its first ${base.byte_offset} bytes, which is the cut the base states: ${rejected.join('; ')}` };
 }

@@ -15,8 +15,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { contextTrace, findCodexRecord, harnessOf, TRACE_CATEGORIES, type ContextTrace } from '../src/context-trace.js';
-import { claudeRecord, claudeTranscriptRecord, codexCompactionsRecord, codexRecord } from './fixtures/host-records.js';
+import { contextTrace, findCodexRecord, findCodexRecords, harnessOf, TRACE_CATEGORIES, type ContextTrace } from '../src/context-trace.js';
+import { claudeRecord, claudeTranscriptRecord, codexCompactionsRecord, codexRecord, codexThreadParentRecord } from './fixtures/host-records.js';
 
 let dir: string;
 const saved: Record<string, string | undefined> = {};
@@ -24,6 +24,10 @@ const saved: Record<string, string | undefined> = {};
 beforeEach(() => {
   saved['CODEX_HOME'] = process.env['CODEX_HOME'];
   dir = mkdtempSync(join(tmpdir(), 'rev-trace-'));
+  // A history base is RESOLVED against the host store now, and a fixture
+  // carrying a real thread id and byte offset reached the operator's own
+  // ~/.codex and resolved to a real record. Each case reads its own directory.
+  process.env['CODEX_HOME'] = join(dir, 'no-store');
 });
 
 afterEach(() => {
@@ -254,9 +258,12 @@ describe('a codex rollout, per turn', () => {
 
     expect(own.identity.history_base).toBeNull();
     expect(stateOf(own, 'additions')).toBe('observed');
-    expect(tail.identity.history_base).toEqual({
-      thread_id: '01a18468-eb66-7892-841e-3bc876b47680', entries_before: 1_065, byte_offset: 4_150_695,
+    expect(tail.identity.history_base).toMatchObject({
+      thread_id: '01a18468-eb66-7892-841e-3bc876b47680', entries_before: 1_065, byte_offset: 4_150_695, record: null,
     });
+    // No record beside it or in the store holds that cut, and the reason is
+    // the operator's only lead to the earlier segment.
+    expect(tail.identity.history_base?.resolution).toContain('not resolved: no other rollout under');
     expect(stateOf(tail, 'additions')).toBe('partial');
     expect(reasonOf(tail, 'additions')).toContain('CONTINUES thread 01a18468-eb66-7892-841e-3bc876b47680 from ordinal 1065');
     expect(reasonOf(tail, 'additions')).toContain('in a different record of the same thread');
@@ -338,6 +345,46 @@ describe('finding a codex rollout by session id', () => {
   it('refuses an id that is not a uuid, so no id can become a path', () => {
     process.env['CODEX_HOME'] = join(dir, 'codex');
     expect(findCodexRecord('../../../outside')).toBeNull();
+  });
+
+  // Mutation: return the first match in directory order. An id names MORE than
+  // one file whenever the host resumed the thread: every segment carries the
+  // thread id as its own session_meta.session_id, and both segments of one
+  // thread here sit in the same day directory, so directory order named no
+  // winner between a run's record and the record it continued.
+  it('names the latest segment where a resumed thread has more than one', () => {
+    const home = join(dir, 'codex');
+    mkdirSync(join(home, 'sessions', '2026', '10', '28'), { recursive: true });
+    const id = '01a18468-eb66-7892-841e-3bc876b47680';
+    const earlier = join(home, 'sessions', '2026', '10', '28', `rollout-2026-10-28T14-27-10-${id}.jsonl`);
+    const later = join(home, 'sessions', '2026', '10', '28', `rollout-2026-10-28T21-04-49-${id}_01a185d4-f73f-7db2-a4db-63438f35543e.jsonl`);
+    writeFileSync(earlier, '');
+    writeFileSync(later, '');
+    process.env['CODEX_HOME'] = home;
+
+    expect(findCodexRecords(id)).toEqual([later, earlier]);
+    expect(findCodexRecord(id)).toBe(later);
+  });
+
+  // Mutation: name the thread id and stop. Requirement 6 wants a part
+  // followable to its origin, and a thread id is not a path: the earlier
+  // segment is identified by the CUT the base states, which is the one thing
+  // that distinguishes it from the child and from a second segment.
+  it('resolves the earlier segment of a thread by the byte the base names', () => {
+    const thread = '01a18468-eb66-7892-841e-3bc876b47680';
+    const { entries, cut } = codexThreadParentRecord({ thread });
+    const parent = write(`rollout-2026-10-28T14-27-10-${thread}.jsonl`, entries);
+    const offset = Buffer.byteLength(entries.slice(0, cut).map((e) => JSON.stringify(e)).join('\n') + '\n', 'utf8');
+    const child = trace(write(
+      `rollout-2026-10-28T21-04-49-${thread}_01a185d4-f73f-7db2-a4db-63438f35543e.jsonl`,
+      codexCompactionsRecord({ continuesThread: { thread_id: thread, entries_before: cut, byte_offset: offset } }),
+    ));
+
+    expect(child.identity.history_base?.record).toBe(parent);
+    expect(child.identity.history_base?.resolution).toContain(`its first ${offset} bytes are exactly the ${cut} entries this record picks up after`);
+    // Still partial: the additions counted here are this segment's own.
+    expect(stateOf(child, 'additions')).toBe('partial');
+    expect(reasonOf(child, 'additions')).toContain(`That record is ${parent}`);
   });
 });
 

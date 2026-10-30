@@ -40,6 +40,7 @@ import {
   harnessOf,
   indexClaude,
   parseTraceRecord,
+  readCodexBaseSegment,
   visibleControls,
   type ClaudeIndex,
   type ClaudeReconstruction,
@@ -636,7 +637,58 @@ interface CodexIndex {
    *  the 867 on the machine this was built against open their own thread at
    *  ordinal 0. */
   historyBase: { thread_id: string | null; entries_before: number; byte_offset: number | null } | null;
+  /** The thread's earlier segment, read. Set only where `historyBase` is, and
+   *  only by `indexCodexRecord`: `indexCodex` is pure over the entries it is
+   *  given, and resolving a base is a read of another file. */
+  base: CodexBase | null;
+  /** Why there is no `base` to read, where there is a `historyBase`. */
+  baseWhy: string | null;
   baseInstructions: { bytes: number; sha256: string; text: string } | null;
+}
+
+/** The thread's earlier segment, reduced to the context it held at the cut.
+ *  Those items were in every call of this segment until a compaction replaced
+ *  them, so they are the first slots of each such call's context rather than a
+ *  gap in it. */
+export interface CodexBase {
+  /** The earlier record itself, so an operator can go and read it. */
+  record: string;
+  thread_id: string | null;
+  /** Entries of it before the cut — the base's own ordinal. */
+  entries: number;
+  /** Its live items at the cut: the last replacement list it holds plus what it
+   *  recorded after that boundary. Read by the same two rules a call's context
+   *  is read by here, because a parent that compacted carries items its own
+   *  boundary had already dropped — one of the three real ones holds 476 items
+   *  in its prefix, of which 101 were live. */
+  items: CodexItem[];
+  /** Every earlier segment this followed, nearest first. */
+  chain: string[];
+  /** What is STILL outside the reading: the earlier segment is itself a
+   *  continuation whose own base did not resolve. */
+  short: string | null;
+}
+
+/** One part of a message's content. Text is its text; a part that is NOT text
+ *  is named with its size, never printed as its own data. One carried-in
+ *  message on this machine holds two `input_image` parts of 537,630 and
+ *  223,746 characters of base64 data URL: printed as the message's text, they
+ *  are half a megabyte of base64 presented as what the model was told, which
+ *  is the same defect as dumping a compaction item's ciphertext (ward on
+ *  H-3750, finding 2). The image WAS in the context, and its own size is the
+ *  readable fact about it — the model was given it as image tokens, which no
+ *  byte count here converts to. */
+function contentPart(c: unknown): string {
+  if (!rec(c)) return String(c);
+  const text = str(c['text']) ?? str(c['output']);
+  if (text !== null) return text;
+  const kind = str(c['type']) ?? 'part';
+  const url = str(c['image_url']) ?? (rec(c['image_url']) ? str((c['image_url'] as Record<string, unknown>)['url']) : null);
+  if (url !== null) {
+    const inline = /^data:/.test(url);
+    return `[${kind}: ${inline ? `${Buffer.byteLength(url, 'utf8')} bytes of inline image data (${url.slice(0, url.indexOf(',') + 1 || 32)}…)` : url}, not text]`;
+  }
+  return JSON.stringify(c);
 }
 
 /** The text one response item carries, or `null` where this record holds none
@@ -647,13 +699,13 @@ interface CodexIndex {
 function itemText(payload: Record<string, unknown>): string | null {
   const content = payload['content'];
   if (Array.isArray(content)) {
-    return content.map((c) => (rec(c) ? str(c['text']) ?? str(c['output']) ?? JSON.stringify(c) : String(c))).join('\n');
+    return content.map(contentPart).join('\n');
   }
   if (typeof content === 'string') return content;
   for (const key of ['text', 'output', 'arguments', 'summary', 'message']) {
     const v = payload[key];
     if (typeof v === 'string') return v;
-    if (Array.isArray(v)) return v.map((c) => (rec(c) ? str(c['text']) ?? JSON.stringify(c) : String(c))).join('\n');
+    if (Array.isArray(v)) return v.map(contentPart).join('\n');
   }
   return null;
 }
@@ -688,7 +740,7 @@ function codexItem(at: string | null, payload: Record<string, unknown>): CodexIt
 }
 
 function indexCodex(entries: Record<string, unknown>[]): CodexIndex {
-  const ix: CodexIndex = { sessionId: null, cwd: null, turns: [], calls: [], items: [], instructions: [], deltas: [], compactions: [], historyBase: null, baseInstructions: null };
+  const ix: CodexIndex = { sessionId: null, cwd: null, turns: [], calls: [], items: [], instructions: [], deltas: [], compactions: [], historyBase: null, base: null, baseWhy: null, baseInstructions: null };
   for (const e of entries) {
     const type = str(e['type']);
     const at = str(e['timestamp']);
@@ -789,6 +841,72 @@ const CODEX_GAPS = [
   'the message array sent on each API call: the rollout records turns and items, so a call\'s context here is the items recorded before it, in order — this reader\'s arithmetic, not a list the host wrote',
 ];
 
+/** The items a rollout's context held at the END of it: the last replacement
+ *  list it recorded, plus the items recorded after that boundary. The same two
+ *  rules `codexAt` reads a call's context by, and they matter most here — a
+ *  thread's earlier segment that compacted holds items its own boundary had
+ *  already dropped, 476 in the prefix of one of the three real ones against
+ *  101 that were live. */
+const codexLiveItems = (ix: CodexIndex): CodexItem[] => {
+  const last = ix.compactions.at(-1) ?? null;
+  return [...(last?.replacement_items ?? []), ...ix.items.slice(last?.index ?? 0)];
+};
+
+/** How many earlier segments of one thread this will follow. A chain longer
+ *  than this is a store shape nothing here has seen, and a reading that walked
+ *  it unbounded would be reading a loop. */
+const BASE_HOPS = 8;
+
+/** Read the thread's earlier segment, and its own earlier segment behind that,
+ *  into the context it handed on.
+ *
+ *  Resolution is `readCodexBaseSegment`'s, which identifies the parent by the
+ *  CUT rather than by its name: the base's byte offset is the parent's own byte
+ *  length through exactly the entries this file picks up after. What is added
+ *  here is the reading — the parent's live items, which is what the calls of
+ *  this segment were actually given, and not every item its file holds. */
+function resolveCodexBase(
+  path: string,
+  base: NonNullable<CodexIndex['historyBase']>,
+  seen: string[],
+): CodexBase | { why: string } {
+  const read = readCodexBaseSegment(path, base);
+  if ('why' in read) return read;
+  if (seen.includes(read.path)) {
+    return { why: `the thread's segments lead back to ${read.path}, which this reading has already followed, so the chain is not followed round again` };
+  }
+  const ix = indexCodex(read.entries);
+  const items = codexLiveItems(ix);
+  const segment: CodexBase = { record: read.path, thread_id: base.thread_id, entries: base.entries_before, items, chain: [read.path], short: null };
+  // The earlier segment may be a continuation too. Its own base is in force at
+  // its end only if it recorded no compaction — a boundary there replaced the
+  // context with a list the file itself holds, which is why `codexLiveItems`
+  // starts from it.
+  if (ix.historyBase === null || ix.compactions.length > 0) return segment;
+  if (seen.length + 1 >= BASE_HOPS) {
+    return { ...segment, short: `${read.path} continues thread ${ix.historyBase.thread_id ?? '(unnamed)'} from ordinal ${ix.historyBase.entries_before} in its turn, and this reading stops at ${BASE_HOPS} segments, so what that segment carried in is not read` };
+  }
+  const up = resolveCodexBase(read.path, ix.historyBase, [...seen, read.path]);
+  if ('why' in up) {
+    return { ...segment, short: `${read.path} continues thread ${ix.historyBase.thread_id ?? '(unnamed)'} from ordinal ${ix.historyBase.entries_before} in its turn, and that segment did not resolve: ${up.why}` };
+  }
+  return { ...segment, items: [...up.items, ...items], chain: [...segment.chain, ...up.chain], short: up.short };
+}
+
+/** One codex record, indexed, with the thread's earlier segment read where it
+ *  names one. The two steps are separate functions because the first is pure
+ *  over the entries handed to it and the second reads another file: a caller
+ *  holding entries from somewhere other than a path keeps the index it can
+ *  have. */
+function indexCodexRecord(path: string, entries: Record<string, unknown>[]): CodexIndex {
+  const ix = indexCodex(entries);
+  if (ix.historyBase === null) return ix;
+  const resolved = resolveCodexBase(path, ix.historyBase, [path]);
+  if ('why' in resolved) ix.baseWhy = resolved.why;
+  else ix.base = resolved;
+  return ix;
+}
+
 /** The ordinal of the first call recorded AFTER a compaction — the first one
  *  whose context was the host's replacement list. Read off the counts the
  *  rollout had reached at the boundary, so a rollout with no usage records is
@@ -804,6 +922,21 @@ const afterCompaction = (c: CodexIndex['compactions'][number], byUsage: boolean)
 const codexBaseInForce = (ix: CodexIndex, ordinal: number, byUsage: boolean): boolean =>
   ix.historyBase !== null && ordinal >= 0 && !ix.compactions.some((c) => afterCompaction(c, byUsage) <= ordinal);
 
+/** Whether that context is also UNREADABLE — the base is in force and no
+ *  earlier segment was resolved for it. The two were one predicate until the
+ *  earlier record could be read: a call whose context ran back into the
+ *  thread's earlier segment is no longer short of anything once that segment
+ *  is spliced in, and every "cannot be counted here" was keyed on the
+ *  structural fact rather than on the reading. */
+const codexBaseShort = (ix: CodexIndex, ordinal: number, byUsage: boolean): boolean =>
+  ix.base === null && codexBaseInForce(ix, ordinal, byUsage);
+
+/** The earlier segment's items, where they were part of this call's context:
+ *  the base in force, and a segment read for it. The first slots of the call,
+ *  in the order the thread recorded them. */
+const codexBaseItems = (ix: CodexIndex, ordinal: number, byUsage: boolean): CodexItem[] =>
+  ix.base !== null && codexBaseInForce(ix, ordinal, byUsage) ? ix.base.items : [];
+
 /** What a rollout that CONTINUES a thread does not hold, and until when.
  *  Every reading here listed what the file has as if it were the whole
  *  context. On the three such records on this machine that was `--at 0`
@@ -818,9 +951,17 @@ const codexHistoryBaseSays = (ix: CodexIndex): string | null => {
   const of = byUsage ? ix.calls.length : ix.turns.length;
   const first = ix.compactions[0];
   const until = first === undefined ? null : afterCompaction(first, byUsage);
-  return `this rollout CONTINUES thread ${base.thread_id ?? '(unnamed)'} rather than opening it: its session_meta carries a history_base at ordinal ${base.entries_before}${base.byte_offset === null ? '' : `, byte ${base.byte_offset}`}, and this file's own entries begin there, so the ${base.entries_before} entries the thread recorded before it are in a different rollout of the same thread id and in no part of this one. ${until === null || until >= of
-    ? `No compaction replaced the context at a call this record holds, so EVERY one of its ${of} calls was given context this record cannot list`
-    : `Every call before the compaction on call ${until} was given context this record cannot list; from that boundary on the host wrote its replacement list into this file, so the context there is whole`}`;
+  const span = until === null || until >= of
+    ? `No compaction replaced the context at a call this record holds, so EVERY one of its ${of} calls was given the thread's earlier entries`
+    : `Every call before the compaction on call ${until} was given the thread's earlier entries; from that boundary on the host wrote its replacement list into this file`;
+  // Where the earlier segment resolves, the reading is no longer short: its
+  // live items are the first slots of each of those calls. Where it does not,
+  // the reason is the operator's only lead, so it is quoted rather than
+  // summarised.
+  const read = ix.base !== null
+    ? `Those entries are in ${ix.base.record}, read here: the ${ix.base.items.length} items the thread held at the cut are listed as the first parts of each of those calls${ix.base.chain.length > 1 ? `, through ${ix.base.chain.length} segments of the thread` : ''}${ix.base.short === null ? '' : `. ${ix.base.short}`}`
+    : `No earlier record was read for them, so what this file holds is all this answer has: ${ix.baseWhy ?? 'no reason was recorded, which is itself a defect'}`;
+  return `this rollout CONTINUES thread ${base.thread_id ?? '(unnamed)'} rather than opening it: its session_meta carries a history_base at ordinal ${base.entries_before}${base.byte_offset === null ? '' : `, byte ${base.byte_offset}`}, and this file's own entries begin there, so the ${base.entries_before} entries the thread recorded before it are in a different rollout of the same thread id and in no part of this one. ${span}. ${read}`;
 };
 
 /** How many parts one call's context actually held: the replacement list in
@@ -840,10 +981,13 @@ const codexPartsAt = (ix: CodexIndex, ordinal: number, byUsage: boolean): number
   // a floor — it is a wrong figure. It reported `the 0 parts the call before it
   // held left the context` on a boundary whose own token pair, on the same
   // row, says 243,044 → 24,819 (ward on H-3763).
-  if (codexBaseInForce(ix, ordinal, byUsage)) return null;
+  if (codexBaseShort(ix, ordinal, byUsage)) return null;
   const before = byUsage ? (window as CodexIndex['calls'][number]).inputs : window.before;
   const inForce = ix.compactions.filter((c) => afterCompaction(c, byUsage) <= ordinal).at(-1) ?? null;
-  return (inForce?.replacement_items.length ?? 0) + Math.max(0, before - (inForce?.index ?? 0));
+  // The earlier segment's live items where the base is in force and was read:
+  // the same items `codexAt` puts in the first slots, so the count and the
+  // listing cannot drift.
+  return codexBaseItems(ix, ordinal, byUsage).length + (inForce?.replacement_items.length ?? 0) + Math.max(0, before - (inForce?.index ?? 0));
 };
 
 function codexInstructionsAt(ix: CodexIndex, index: number, chars: number): QueryInstructions | null {
@@ -896,7 +1040,15 @@ function codexAt(ix: CodexIndex, ordinal: number, chars: number): ContextAt | { 
   // parts for a call the host's own figures put at 204,655 input tokens.
   const compaction = ix.compactions.filter((c) => afterCompaction(c, byUsage) <= ordinal).at(-1) ?? null;
   const entered = compaction === null ? null : afterCompaction(compaction, byUsage);
+  // The thread's earlier segment, where this rollout continues one and the
+  // segment was read. Before the replacement list and before this file's own
+  // items, because that is the order the thread recorded them in; and never
+  // together with a replacement list, since a compaction at or before this call
+  // is exactly what takes the base out of force.
+  const carried = codexBaseItems(ix, ordinal, byUsage);
+  const carriedFrom = ix.base?.record ?? null;
   const held: { item: CodexItem; via: string; index: number | null }[] = [
+    ...carried.map((item, k) => ({ item, via: `earlier item ${k}`, index: null })),
     ...(compaction?.replacement_items ?? []).map((item, k) => ({ item, via: `replacement ${k}`, index: null })),
     ...ix.items.slice(compaction?.index ?? 0, call.before).map((item, k) => {
       const index = (compaction?.index ?? 0) + k;
@@ -905,6 +1057,13 @@ function codexAt(ix: CodexIndex, ordinal: number, chars: number): ContextAt | { 
   ];
   const parts: QueryPart[] = held.map(({ item, via, index }, slot) => {
     const { text, truncated } = clip(item.text, chars);
+    // A part the thread carried in entered before this file: no call here is
+    // its first, and `entered call 0` would say it arrived at the call it was
+    // already in the context of.
+    const fromEarlier = via.startsWith('earlier item ');
+    const carriedCaveat = fromEarlier && carriedFrom !== null
+      ? `carried in from the thread's earlier segment at ${carriedFrom}, where it was recorded; it entered before this record, so no call here is the one it arrived at`
+      : null;
     return {
       slot,
       role: item.role ?? item.kind,
@@ -914,14 +1073,16 @@ function codexAt(ix: CodexIndex, ordinal: number, chars: number): ContextAt | { 
       bytes: item.bytes,
       // A replacement item entered at the boundary; a recorded item at the
       // call whose window first reached it.
-      entered: index === null
+      entered: fromEarlier
+        ? null
+        : index === null
         ? entered
         : byUsage
           ? ix.calls.findIndex((c) => c.inputs > index) === -1 ? null : ix.calls.findIndex((c) => c.inputs > index)
           : ix.turns.filter((t) => t.before <= index).length,
       text: item.opaque === null ? text : null,
       truncated: item.opaque === null ? truncated : false,
-      caveat: item.opaque,
+      caveat: carriedCaveat === null ? item.opaque : item.opaque === null ? carriedCaveat : `${carriedCaveat}. ${item.opaque}`,
     };
   });
   // What the boundary DROPPED is what the call before it held, not the file's
@@ -932,7 +1093,7 @@ function codexAt(ix: CodexIndex, ordinal: number, chars: number): ContextAt | { 
   // call before it at all, a boundary whose preceding call this record cannot
   // count because the thread's earlier segment is elsewhere, and a countable
   // one.
-  const droppedUnreadable = compaction !== null && entered !== null && entered > 0 && codexBaseInForce(ix, entered - 1, byUsage);
+  const droppedUnreadable = compaction !== null && entered !== null && entered > 0 && codexBaseShort(ix, entered - 1, byUsage);
   const droppedSays = dropped !== null
     ? `the ${dropped} part${dropped === 1 ? '' : 's'} the call before the compaction at ${compaction?.at ?? 'an unrecorded time'} held ${dropped === 1 ? 'is' : 'are'}`
     : droppedUnreadable
@@ -982,8 +1143,19 @@ function codexAt(ix: CodexIndex, ordinal: number, chars: number): ContextAt | { 
       // own input figure for the call is the measure of how much of a tail:
       // 0 parts against 243,044 input tokens, 242,432 of them cached, was read
       // as an empty context (ward on H-3763).
-      ...(codexBaseInForce(ix, ordinal, byUsage)
+      ...(codexBaseShort(ix, ordinal, byUsage)
         ? [`${codexHistoryBaseSays(ix)}. The ${parts.length} part${parts.length === 1 ? '' : 's'} above ${parts.length === 1 ? 'is' : 'are'} only what this file records before this call${parts.length === 0 ? ', which is none of its context at all: the whole of it is outside this record' : ''}${usage === null || usage.input === null ? '' : `, against the host's own ${usage.input} input tokens for it${usage.cached === null ? '' : `, ${usage.cached} of them cached`} — a figure that counts the context this record does not hold`}`]
+        : []),
+      // Read, not merely named: the first slots above are the earlier
+      // segment's own items. What is still not the host's is their SIZE — the
+      // bytes are what it wrote to the record, and on the three real
+      // continuation segments here the live items sum to 1.0, 1.4 and 1.5MB
+      // against its own per-call figures of 243,044, 91,273 and 77,407 input
+      // tokens. An image is one proven reason: one carried-in message holds
+      // two base64 data URLs of 537,630 and 223,746 characters, which reach
+      // the model as image tokens and not as their bytes.
+      ...(carried.length > 0 && carriedFrom !== null
+        ? [`the first ${carried.length} part${carried.length === 1 ? '' : 's'} above ${carried.length === 1 ? 'was' : 'were'} read from ${carriedFrom}, the thread's earlier segment, at the byte the host's own history_base names; ${codexHistoryBaseSays(ix)}. The host's own input figure for this call${usage === null || usage.input === null ? ' is not recorded' : ` is ${usage.input} tokens${usage.cached === null ? '' : `, ${usage.cached} of them cached`}`}, and it stays the only size of this context: a part's bytes here are what the host WROTE for it, which on an attachment carried as a base64 data URL and on a tool output recorded in full is more than what it sent`]
         : []),
       ...(byUsage && (window as CodexIndex['calls'][number]).before > (window as CodexIndex['calls'][number]).inputs
         ? [`the ${(window as CodexIndex['calls'][number]).before - (window as CodexIndex['calls'][number]).inputs} items this call itself produced — its reasoning, its reply, its tool request — are NOT listed above: the host writes the usage record after the call, so they sit inside its window without ever having been in its input. An item kind this reader does not recognise counts as input, so the list errs long rather than short`]
@@ -1068,7 +1240,7 @@ function codexEvolution(ix: CodexIndex, chars: number): ContextEvolution {
           // Counting only the parts this file holds said `the 0 parts the call
           // before it held left the context` on a row whose own token pair
           // says 243,044 → 24,819 (ward on H-3763).
-          : `what left cannot be counted here: this rollout continues thread ${ix.historyBase?.thread_id ?? '(unnamed)'} from ordinal ${ix.historyBase?.entries_before ?? '?'}, so the call before the boundary held context this file does not hold, and the host's own per-call figures below are the only measure of the drop`;
+          : `what left cannot be counted here: this rollout continues thread ${ix.historyBase?.thread_id ?? '(unnamed)'} from ordinal ${ix.historyBase?.entries_before ?? '?'}, the call before the boundary held context this file does not hold, and no earlier segment was read for it (${ix.baseWhy ?? 'no reason recorded'}), so the host's own per-call figures below are the only measure of the drop`;
       notable.push(`compaction (${compacted.trigger}): this is the first call whose context was the host's replacement list. ${left}; ${compacted.replacement_items.length > 0 ? `the host wrote ${compacted.replacement_items.length} items as its replacement_history, and they are the first ${compacted.replacement_items.length} slots of this call` : 'this record holds no replacement_history for the boundary, so what the host put in their place cannot be read here'}`);
       // The boundary's own two figures are BOTH pre-compaction on codex:
       // `pre_tokens` is the turn's cumulative input and `post_tokens` the
@@ -1133,7 +1305,12 @@ function codexEvolution(ix: CodexIndex, chars: number): ContextEvolution {
   // scrolling 189 rows of a continuation segment lands in the middle of one.
   const firstShort = changes.find((c) => codexBaseInForce(ix, c.ordinal, byUsage));
   if (firstShort !== undefined) {
-    firstShort.notable.unshift(`${codexHistoryBaseSays(ix)}. The additions on this row and on every row until then are what this file records, not the whole of what those calls were given`);
+    firstShort.notable.unshift(ix.base === null
+      ? `${codexHistoryBaseSays(ix)}. The additions on this row and on every row until then are what this file records, not the whole of what those calls were given`
+      // The carried-in items are not ADDITIONS on this row: they were in the
+      // context before the first call here, which is why they are listed by
+      // `--at` and counted in its parts, and not here.
+      : `${codexHistoryBaseSays(ix)}. They are not listed as additions on this row or on any row until then: they were in the context before the first call here, so ask --at for a call to see them in their slots`);
   }
   return {
     harness: 'codex',
@@ -1199,6 +1376,17 @@ function codexFind(ix: CodexIndex, needle: string, chars: number): ContextFind {
   // at call 67 (ward on H-3750, finding 3).
   const byUsage = ix.calls.length > 0;
   const spans: { item: CodexItem; ref: string; from: number | null; to: number | null }[] = [];
+  // The thread's earlier segment, where it was read. Those items were in the
+  // context from the first call here until the first compaction replaced them,
+  // which is the same span rule the file's own items are read by — and the
+  // reason a nil result used to be "not in this segment" when the needle was
+  // in the thread's earlier one.
+  if (ix.base !== null) {
+    const until = ix.compactions.map((c) => afterCompaction(c, byUsage)).filter((o) => o >= 0).sort((a, b) => a - b)[0];
+    for (const [k, item] of ix.base.items.entries()) {
+      spans.push({ item, ref: `earlier item ${k}`, from: 0, to: until === undefined ? lastCall : until - 1 });
+    }
+  }
   for (const [i, item] of ix.items.entries()) {
     const dropped = ix.compactions.find((c) => c.index > i) ?? null;
     spans.push({
@@ -1251,7 +1439,14 @@ function codexFind(ix: CodexIndex, needle: string, chars: number): ContextFind {
       // The false negative this structure creates: a needle that was in the
       // thread's earlier segment is not in this file, and `no hits` would
       // otherwise read as "was not in the context".
-      ...(codexHistoryBaseSays(ix) === null ? [] : [`${codexHistoryBaseSays(ix)}. Only what this file records was searched, so a nil result here is "not in this segment", never "not in the context"`]),
+      ...(codexHistoryBaseSays(ix) === null
+        ? []
+        : ix.base === null
+          ? [`${codexHistoryBaseSays(ix)}. Only what this file records was searched, so a nil result here is "not in this segment", never "not in the context"`]
+          // Searched, and still not the whole thread: the earlier segment's own
+          // dropped items were in ITS calls' contexts and in none here, so they
+          // are not searched — reading that record directly is what finds them.
+          : [`${codexHistoryBaseSays(ix)}. Its ${ix.base.items.length} carried-in items were searched too, so a nil result here is "in no context of this segment's calls". Items that segment's OWN compaction had already dropped were in no call here and are not searched: --record ${ix.base.record} searches them`]),
       ...(searched.unreadable > 0
         ? [`${searched.unreadable} items hold no plaintext in this record — a reasoning item is carried as provider-encrypted text, and so is the compaction item a resumed rollout opens with — so a match inside one would not appear here: a nil result is "not found in what is readable", never "was not in the context"`]
         : []),
@@ -1284,7 +1479,7 @@ export function contextAt(path: string, ordinal: number, options: QueryOptions =
   const r = read(path);
   if ('error' in r) return r;
   const chars = options.chars ?? PREVIEW_CHARS;
-  const answer = r.harness === 'claude' ? claudeAt(indexClaude(r.entries), ordinal, chars) : codexAt(indexCodex(r.entries), ordinal, chars);
+  const answer = r.harness === 'claude' ? claudeAt(indexClaude(r.entries), ordinal, chars) : codexAt(indexCodexRecord(path, r.entries), ordinal, chars);
   return 'error' in answer ? { error: answer.error, source: r.source } : { ...answer, source: r.source };
 }
 
@@ -1294,7 +1489,7 @@ export function contextEvolution(path: string, options: QueryOptions = {}): (Con
   const r = read(path);
   if ('error' in r) return r;
   const chars = options.chars ?? PREVIEW_CHARS;
-  const answer = r.harness === 'claude' ? claudeEvolution(indexClaude(r.entries), chars) : codexEvolution(indexCodex(r.entries), chars);
+  const answer = r.harness === 'claude' ? claudeEvolution(indexClaude(r.entries), chars) : codexEvolution(indexCodexRecord(path, r.entries), chars);
   return { ...answer, source: r.source };
 }
 
@@ -1306,7 +1501,7 @@ export function contextFind(path: string, needle: string, options: QueryOptions 
   if ('error' in r) return r;
   if (needle === '') return { error: 'nothing to look for: pass the text to find', source: r.source };
   const chars = options.chars ?? PREVIEW_CHARS;
-  const answer = r.harness === 'claude' ? claudeFind(indexClaude(r.entries), needle, chars) : codexFind(indexCodex(r.entries), needle, chars);
+  const answer = r.harness === 'claude' ? claudeFind(indexClaude(r.entries), needle, chars) : codexFind(indexCodexRecord(path, r.entries), needle, chars);
   return { ...answer, source: r.source };
 }
 
@@ -1348,7 +1543,10 @@ function renderPart(p: QueryPart, chars: number): string[] {
   const named = only !== null && /^[0-9a-f]{16,}$/.test(only);
   const where = p.origin === 'reconstructed'
     ? `via ${p.via.map((v) => short(v, 8)).join(',')}`
-    : `${named ? (p.origin === 'retained' ? 'blob ' : 'hash ') : ''}${short(only)}`;
+    // Eight characters is a hash prefix, not a name: it printed `replacem…`
+    // for `replacement 12`, and `earlier item 3` names which record a part was
+    // read from.
+    : `${named ? (p.origin === 'retained' ? 'blob ' : 'hash ') : ''}${short(only, named ? 8 : 20)}`;
   out.push(`  #${String(p.slot).padEnd(4)} ${p.role.padEnd(10)} ${p.origin.padEnd(14)} ${p.entered === null ? 'entered ?' : `entered call ${p.entered}`.padEnd(16)} ${p.bytes === null ? '-' : `${n(p.bytes)}B`.padStart(10)}  ${where}`);
   if (chars > 0 && p.text !== null) out.push(indent(p.text + (p.truncated ? ' […]' : '')));
   if (p.text === null) out.push('      (no content on this machine)');

@@ -27,11 +27,23 @@ import {
   type ContextEvolution,
   type ContextFind,
 } from '../src/context-query.js';
-import { claudeRecord, claudeTranscriptRecord, codexCompactionsRecord, codexRecord } from './fixtures/host-records.js';
+import { claudeRecord, claudeTranscriptRecord, codexCompactionsRecord, codexRecord, codexThreadParentRecord } from './fixtures/host-records.js';
 
 let dir: string;
-beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'rev-query-')); });
-afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+let savedCodexHome: string | undefined;
+beforeEach(() => {
+  dir = mkdtempSync(join(tmpdir(), 'rev-query-'));
+  // A continuation segment's history base is RESOLVED against the host store
+  // now, so a fixture carrying a real thread id and byte offset reached the
+  // operator's own ~/.codex and spliced a real record into six assertions.
+  // Every case here reads its own tmp directory and nothing else.
+  savedCodexHome = process.env['CODEX_HOME'];
+  process.env['CODEX_HOME'] = join(dir, 'no-store');
+});
+afterEach(() => {
+  rmSync(dir, { recursive: true, force: true });
+  if (savedCodexHome === undefined) delete process.env['CODEX_HOME']; else process.env['CODEX_HOME'] = savedCodexHome;
+});
 
 const write = (name: string, entries: unknown[]): string => {
   const path = join(dir, name);
@@ -392,6 +404,22 @@ describe('the codex rollout', () => {
     expect(reasoning.caveat).toContain('provider-encrypted text');
     expect(reasoning.caveat).toContain("it was in the call's context all the same");
     expect(a.totals).toMatchObject({ retained: 3, unreadable: 1 });
+  });
+
+  // Mutation: fall back to the content part's own JSON. An image is not text,
+  // and its data URL is not what the message said: printing it dumps a base64
+  // blob as the context, which is the defect ward found on a compaction item
+  // one level down (H-3750, finding 2). One real carried-in message holds two
+  // of them, 537,630 and 223,746 characters.
+  it('names an image in a message with its size rather than printing its data', () => {
+    const a = at(write('attachment.jsonl', codexRecord({ attachment: true, secondCall: true, compaction: false })), 1);
+
+    const message = a.parts.find((p) => p.text?.includes('<image name='))!;
+    expect(message.text).toContain('[input_image: 278 bytes of inline image data (data:image/png;base64,…), not text]');
+    expect(message.text).not.toContain('QUJDQUJD');
+    // Readable, and its own recorded size is unchanged: the image WAS in the
+    // context, and the part is not reported unreadable for not being text.
+    expect(message.origin).toBe('retained');
   });
 
   // Mutation: read a `full: false` world_state as a configuration. One such
@@ -868,7 +896,7 @@ describe('what a rollout that continues a thread does not hold', () => {
     expect(gaps).toContain('CONTINUES thread 01a18468-eb66-7892-841e-3bc876b47680');
     expect(gaps).toContain('history_base at ordinal 1065, byte 4150695');
     expect(gaps).toContain('the 1065 entries the thread recorded before it are in a different rollout');
-    expect(gaps).toContain('Every call before the compaction on call 2 was given context this record cannot list');
+    expect(gaps).toContain('Every call before the compaction on call 2 was given the thread\'s earlier entries');
     expect(gaps).toContain('are only what this file records before this call, against the host\'s own 200 input tokens for it');
   });
 
@@ -929,7 +957,7 @@ describe('what a rollout that continues a thread does not hold', () => {
   it('says every call is short where the record holds no boundary at all', () => {
     const path = write('no-boundary.jsonl', codexCompactionsRecord({ continuesThread: true, withoutBoundary: true }));
 
-    expect(at(path, 0).gaps.join(' ')).toContain('No compaction replaced the context at a call this record holds, so EVERY one of its 2 calls was given context this record cannot list');
+    expect(at(path, 0).gaps.join(' ')).toContain('No compaction replaced the context at a call this record holds, so EVERY one of its 2 calls was given the thread\'s earlier entries');
     expect(at(path, 1).gaps.join(' ')).toContain('EVERY one of its 2 calls');
     expect(evolution(path).changes[1]!.compaction).toBeNull();
   });
@@ -943,5 +971,201 @@ describe('what a rollout that continues a thread does not hold', () => {
     expect(f.hits).toHaveLength(0);
     expect(f.gaps.join(' ')).toContain('CONTINUES thread 01a18468-eb66-7892-841e-3bc876b47680');
     expect(f.gaps.join(' ')).toContain('a nil result here is "not in this segment", never "not in the context"');
+  });
+
+  // Mutation: resolve the earlier record by its NAME. Both segments of a
+  // thread carry the thread id in the filename and the thread id as their own
+  // session_meta.session_id, so a name match alone accepts the child itself
+  // and a second segment equally.
+  it('names the reason no earlier record was read, rather than leaving the thread id as the lead', () => {
+    const gaps = at(tail(), 1).gaps.join(' ');
+
+    expect(gaps).toContain('No earlier record was read for them');
+    expect(gaps).toContain('no other rollout under');
+    expect(gaps).toContain('names thread 01a18468-eb66-7892-841e-3bc876b47680');
+  });
+});
+
+// The earlier segment, READ. `history_base` carries a byte offset as well as
+// an ordinal, and the offset is what identifies the parent: on all three real
+// threads the parent file runs 9 to 11 entries PAST the cut — an aborted turn
+// written seconds before the resume — so ordinals at and after the base exist
+// in both files with different content, while the parent's byte length through
+// exactly the base's entries equals the offset on 3 of 3 (ward on H-3771).
+describe('the thread segment a continuation picks up from', () => {
+  /** A thread written as two records: the earlier segment, and the
+   *  continuation that picks up after its `cut` entries. The byte offset is
+   *  measured off the parent's own bytes, which is how the host writes it and
+   *  the only thing that identifies it. */
+  const writeThread = (over: {
+    thread?: string;
+    compacted?: boolean;
+    withoutBoundary?: boolean;
+    continues?: { thread_id: string; entries_before: number; byte_offset: number };
+    /** Move the stated cut off the parent's real entry boundary. */
+    offBy?: number;
+    /** Write the earlier segment twice, under two names that both carry the
+     *  thread id. */
+    twice?: boolean;
+  } = {}): { child: string; parent: string; offset: number; cut: number } => {
+    const thread = over.thread ?? '01a18468-eb66-7892-841e-3bc876b47680';
+    const { entries, cut } = codexThreadParentRecord({ thread, compacted: over.compacted, continues: over.continues });
+    const parent = write(`rollout-2026-10-28T14-27-10-${thread}.jsonl`, entries);
+    if (over.twice === true) write(`rollout-2026-10-28T09-00-00-${thread}.jsonl`, entries);
+    const offset = Buffer.byteLength(entries.slice(0, cut).map((e) => JSON.stringify(e)).join('\n') + '\n', 'utf8');
+    const child = write(
+      `rollout-2026-10-28T21-04-49-${thread}_01a185d4-f73f-7db2-a4db-63438f35543e.jsonl`,
+      codexCompactionsRecord({
+        continuesThread: { thread_id: thread, entries_before: cut, byte_offset: offset + (over.offBy ?? 0) },
+        withoutBoundary: over.withoutBoundary,
+      }),
+    );
+    return { child, parent, offset, cut };
+  };
+
+  // Mutation: do not prepend the earlier segment's items. This is the whole
+  // of the finding: `--at 0` listed 0 parts for a call the host's own usage
+  // record puts at 243,044 input tokens, 242,432 of them cached.
+  it('lists the items it carried in as the first parts of a call before the boundary', () => {
+    const { child, parent } = writeThread();
+    const a = at(child, 0);
+
+    expect(a.parts.map((p) => p.text)).toEqual(['earlier ask 1', 'earlier ask 2', 'earlier ask 3', 'ask 1']);
+    expect(a.parts.slice(0, 3).map((p) => p.via[0])).toEqual(['earlier item 0', 'earlier item 1', 'earlier item 2']);
+    expect(a.totals.parts).toBe(4);
+    expect(a.gaps.join(' ')).toContain(`the first 3 parts above were read from ${parent}`);
+    // The parts are the record's; their SIZE is not the host's. On the three
+    // real segments the live items sum to 1.0, 1.4 and 1.5MB against its own
+    // per-call figures of 243,044, 91,273 and 77,407 input tokens — an image
+    // carried as a base64 data URL being one proven reason — so the host's
+    // own figure stays the only size of the context.
+    expect(a.gaps.join(' ')).toContain("The host's own input figure for this call is 100 tokens, 0 of them cached, and it stays the only size of this context");
+    // Carried in, so no call in this record is the one they arrived at.
+    expect(a.parts.slice(0, 3).map((p) => p.entered)).toEqual([null, null, null]);
+    expect(a.parts[0]!.caveat).toContain("carried in from the thread's earlier segment");
+  });
+
+  // Mutation: read the parent by its ordinal — its first `entries_before`
+  // entries — instead of its first `byte_offset` bytes. The ordinals collide:
+  // the real parents run 9 to 11 entries past the cut, and an aborted turn
+  // nobody saw would be spliced into the child's context.
+  it('stops at the byte the base names, so the parent own tail is not in the context', () => {
+    const { child } = writeThread();
+
+    expect(at(child, 0).parts.map((p) => p.text).join(' ')).not.toContain('an aborted turn');
+    expect(find(child, 'an aborted turn').hits).toHaveLength(0);
+  });
+
+  // Mutation: prepend every item in the parent's prefix. A parent that
+  // compacted holds items its OWN boundary had already dropped — 476 in the
+  // prefix of one real one, of which 101 were live — and the context it hands
+  // on is its replacement list plus what it recorded after it.
+  it('hands on what the earlier segment held at the cut, not every item in it', () => {
+    const { child } = writeThread({ compacted: true });
+    const a = at(child, 0);
+
+    expect(a.parts.map((p) => p.text)).toEqual(['the summary of the earlier segment', 'earlier ask 3', 'ask 1']);
+    expect(a.parts.map((p) => p.text).join(' ')).not.toContain('earlier ask 1');
+  });
+
+  // Mutation: accept a candidate whose name matches without confirming the
+  // cut. A reading spliced from the wrong file is worse than the stated gap it
+  // replaces, so a cut that falls inside an entry is refused by name.
+  it('refuses a record that carries the thread id but is not the cut', () => {
+    const { child, offset } = writeThread({ offBy: -1 });
+    const gaps = at(child, 0).gaps.join(' ');
+
+    expect(at(child, 0).parts.map((p) => p.text)).toEqual(['ask 1']);
+    expect(gaps).toContain('No earlier record was read for them');
+    expect(gaps).toContain(`none holds exactly 8 entries in its first ${offset - 1} bytes`);
+    expect(gaps).toContain('falls inside an entry rather than at the end of one');
+  });
+
+  // Mutation: take the first candidate that holds the cut. Which segment a
+  // thread continues is then decided by directory order.
+  it('refuses to choose between two records that both hold the cut', () => {
+    const { child } = writeThread({ twice: true });
+    const gaps = at(child, 0).gaps.join(' ');
+
+    expect(at(child, 0).parts.map((p) => p.text)).toEqual(['ask 1']);
+    expect(gaps).toContain('2 records name thread 01a18468-eb66-7892-841e-3bc876b47680 and hold exactly 8 entries');
+    expect(gaps).toContain('which one this segment continues is not readable from the record, and none is read');
+  });
+
+  // Mutation: count only the items this file holds for what a later boundary
+  // dropped. The carried-in items were in that call's context, so they left it
+  // at the boundary too — and the count has to be the same two rules the
+  // listing uses, or the row and `--at` disagree.
+  it('counts what it carried in among the parts a later boundary dropped', () => {
+    const { child } = writeThread();
+    const row = evolution(child).changes[2]!;
+
+    expect(row.compaction).not.toBeNull();
+    expect(row.notable.join(' ')).toContain('the 5 parts the call before it held left the context');
+    expect(at(child, 1).totals.parts).toBe(5);
+  });
+
+  // Mutation: carry the splice past the first boundary. A compaction ENDS the
+  // carry: the host wrote its replacement list into THIS file, so nothing from
+  // the earlier segment is in that call's context.
+  it('stops carrying the earlier segment in at the first boundary', () => {
+    const { child } = writeThread();
+
+    expect(at(child, 2).parts.map((p) => p.via[0])).toEqual(['replacement 0']);
+    expect(at(child, 2).gaps.join(' ')).not.toContain('read from');
+  });
+
+  // Mutation: do not search the carried-in items. A needle that was in the
+  // thread's earlier segment was reported "not in this segment" when it is in
+  // this segment's every call until the boundary.
+  it('finds a needle in the earlier segment, with the calls it was in context for', () => {
+    const { child, parent } = writeThread();
+    const f = find(child, 'earlier ask 2');
+
+    expect(f.hits).toHaveLength(1);
+    expect(f.hits[0]).toMatchObject({ ref: 'earlier item 1', first_invocation: 0, last_invocation: 1, invocations: 2 });
+    expect(f.gaps.join(' ')).toContain('Its 3 carried-in items were searched too');
+    expect(f.gaps.join(' ')).toContain(`--record ${parent} searches them`);
+  });
+
+  // Mutation: follow one hop and stop. A segment's parent can be a
+  // continuation in its turn, and the context the child was given runs back
+  // through all of them.
+  it('follows a thread through more than one earlier segment', () => {
+    const grand = codexThreadParentRecord({ thread: '01a16f05-7c9f-7560-9ed7-0ffe9849c581' });
+    write(`rollout-2026-10-24T10-46-33-01a16f05-7c9f-7560-9ed7-0ffe9849c581.jsonl`, grand.entries);
+    const offset = Buffer.byteLength(grand.entries.slice(0, grand.cut).map((e) => JSON.stringify(e)).join('\n') + '\n', 'utf8');
+    const { child } = writeThread({ continues: { thread_id: '01a16f05-7c9f-7560-9ed7-0ffe9849c581', entries_before: grand.cut, byte_offset: offset } });
+    const a = at(child, 0);
+
+    expect(a.parts.map((p) => p.text)).toEqual([
+      'earlier ask 1', 'earlier ask 2', 'earlier ask 3',
+      'earlier ask 1', 'earlier ask 2', 'earlier ask 3',
+      'ask 1',
+    ]);
+    expect(a.gaps.join(' ')).toContain('through 2 segments of the thread');
+  });
+
+  // Mutation: report the chain whole when a hop in it did not resolve. What is
+  // read is then presented as the context, and what is still outside it is not
+  // said anywhere.
+  it('says what is still outside the reading when an earlier hop did not resolve', () => {
+    const { child } = writeThread({ continues: { thread_id: '01a1ffff-0000-7000-8000-000000000000', entries_before: 9, byte_offset: 4_096 } });
+    const a = at(child, 0);
+
+    expect(a.parts.map((p) => p.text)).toEqual(['earlier ask 1', 'earlier ask 2', 'earlier ask 3', 'ask 1']);
+    expect(a.gaps.join(' ')).toContain('continues thread 01a1ffff-0000-7000-8000-000000000000 from ordinal 9 in its turn, and that segment did not resolve');
+  });
+
+  // Mutation: list the carried-in items as the first row's additions. They
+  // were in the context before the first call here, so counting them as
+  // entering at call 0 says the thread began where this file does.
+  it('does not report what it carried in as additions on the first row', () => {
+    const { child } = writeThread();
+    const e = evolution(child);
+
+    expect(e.changes[0]!.added.map((p) => p.text)).toEqual(['ask 1']);
+    expect(e.changes[0]!.notable[0]).toContain('the 3 items the thread held at the cut are listed as the first parts of each of those calls');
+    expect(e.changes[0]!.notable[0]).toContain('They are not listed as additions on this row or on any row until then');
   });
 });

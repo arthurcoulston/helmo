@@ -41,6 +41,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { LoopConfig } from './types.js';
 import { claudeHome, claudeProjectSlug } from './context-coverage.js';
+import { visibleControls } from './context-trace.js';
 import { journalEntries } from './launch-journal.js';
 import { readBounded } from './team.js';
 
@@ -201,7 +202,11 @@ interface Opener { text: string; at: string | null; cwd: string | null }
 /** The first thing the operator said, from the head of a record. */
 export function firstUserText(head: string): Opener | null {
   for (const line of head.split('\n')) {
-    if (!line.includes('"type":"user"')) continue;
+    // The prefilter is on the VALUE alone, not on `"type":"user"`: the host
+    // writes compact JSON today, and keying on that spelling made a record
+    // written with a space after the colon report no opener at all — a silent
+    // miss, not a refusal. The parsed entry's own type is what decides.
+    if (!line.includes('"user"')) continue;
     let entry: Record<string, unknown>;
     try { entry = JSON.parse(line) as Record<string, unknown>; } catch { continue; }
     if (entry['type'] !== 'user') continue;
@@ -238,7 +243,7 @@ export function roleNamedByOperator(opener: string, roster: SummonRole[]): strin
  *  in the context, not that the session was that role. */
 export function canaryReproduced(text: string, roster: SummonRole[]): string | null {
   for (const line of text.split('\n')) {
-    if (!line.includes('"type":"assistant"')) continue;
+    if (!line.includes('"assistant"')) continue;
     let entry: Record<string, unknown>;
     try { entry = JSON.parse(line) as Record<string, unknown>; } catch { continue; }
     if (entry['type'] !== 'assistant') continue;
@@ -466,9 +471,9 @@ export function renderSummonScan(scan: SummonScan, limit = 20): string {
   out.push('');
   for (const a of named.slice(0, limit)) {
     out.push(`${a.opened_at ?? '(no timestamp)'}  ${a.role ?? '(no role)'}  [${a.role_basis}, protocol ${a.protocol}]`);
-    out.push(`  "${a.opener}"`);
+    out.push(`  "${visibleControls(a.opener ?? '')}"`);
     out.push(`  ${a.records.length} record${a.records.length === 1 ? '' : 's'}: ${a.records[0]}${a.records.length > 1 ? ` (+${a.records.length - 1} resumed)` : ''}`);
-    out.push(`  ${a.why}`);
+    out.push(`  ${visibleControls(a.why)}`);
     out.push('');
   }
   if (named.length > limit) out.push(`… ${named.length - limit} older summons not shown; --limit takes a number.`);
@@ -476,7 +481,7 @@ export function renderSummonScan(scan: SummonScan, limit = 20): string {
     out.push('');
     out.push(`SPOKE AS A ROLE, CAUSE UNRECORDED — ${inferred.length} sittings. A summon the operator phrased without naming a role, or a session something other than this installation launched under a seat's own directory. One observable cannot tell those apart:`);
     for (const a of inferred.slice(0, Math.min(limit, 8))) {
-      out.push(`  ${a.opened_at ?? '(no timestamp)'}  ${a.role}  "${a.opener?.slice(0, 60)}"  ${a.cwd ?? ''}`);
+      out.push(`  ${a.opened_at ?? '(no timestamp)'}  ${a.role}  "${visibleControls(a.opener?.slice(0, 60) ?? '')}"  ${visibleControls(a.cwd ?? '')}`);
     }
     if (inferred.length > 8) out.push(`  … ${inferred.length - 8} more`);
     out.push('');

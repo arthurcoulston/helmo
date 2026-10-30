@@ -16,8 +16,9 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { recordLaunchDispatch, recordLaunchIntent, recordLaunchSession } from '../src/launch-journal.js';
+import { visibleControls } from '../src/context-trace.js';
 import {
-  summonAssociations, summonRoster, summonRoots, rolesWithoutSeat, roleNamedByOperator, canaryReproduced,
+  summonAssociations, renderSummonScan, summonRoster, summonRoots, rolesWithoutSeat, roleNamedByOperator, canaryReproduced,
   ITERATION_PROMPT_OPENING, CANARY_BYTE_CEILING, type SummonScan,
 } from '../src/summon-trace.js';
 import type { LoopConfig } from '../src/types.js';
@@ -343,5 +344,53 @@ describe('what the scan looked at, so a nil answer is not read as an absence', (
     // And carries the named blind spot with them: ward has a profile here and
     // no seat, so a summon of ward cannot be recognised by name.
     expect(s.roles_without_seat.map((r) => r.role)).toEqual(['ward']);
+  });
+});
+
+describe('text read out of a host record is attacker-controlled', () => {
+  it('renders control bytes visibly rather than letting them reach the terminal', () => {
+    // A record holds whatever a session's tool results held, pages included.
+    // Measured on this very renderer before it shipped: 3 ESC and 2 BEL bytes
+    // in the rendered opener. ward's review of the read surface failed
+    // increment 3 for the same class (H-3750 finding 1).
+    const hostile = 'summon mason\u001b]0;PWNED\u0007 \u001b[2J\u001b]52;c;cGF5bG9hZA==\u0007';
+    record(crew, '77777777-2222-3333-4444-555555555555',
+      [userEntry(hostile, '2026-10-20T10:00:00.000Z', crew), assistantSaying(CANARY)]);
+    const s = scan({ mason: loop('mason') });
+    expect(s.associations).toHaveLength(1);
+
+    const rendered = renderSummonScan(s);
+    expect(rendered).not.toMatch(/[\u001b\u0007]/);
+    expect(rendered).toContain('\\u001b');
+    // And the bytes are SHOWN, not stripped: they were in the context.
+    expect(rendered).toContain('PWNED');
+    // The reading itself keeps the record's own text — only the renderer
+    // makes it safe to print, so --json stays the record's bytes.
+    expect(s.associations[0]!.opener).toContain('\u001b');
+  });
+
+  it('leaves ordinary text alone', () => {
+    expect(visibleControls('summon mason — plainly')).toBe('summon mason — plainly');
+    expect(visibleControls('two\nlines\tand a tab')).toBe('two\nlines\tand a tab');
+  });
+});
+
+describe('the prefilter is not the decision', () => {
+  it('finds the opener in a record whose JSON is spaced differently', () => {
+    // Keying the prefilter on `"type":"user"` made a record written with a
+    // space after the colon report NO opener — counted as a session that said
+    // nothing, which is a silent miss rather than a refusal.
+    const dir = join(home, 'projects', crew.replace(/[/.]/g, '-'));
+    mkdirSync(dir, { recursive: true });
+    const spaced = [
+      { type: 'user', timestamp: '2026-10-20T10:00:00.000Z', cwd: crew, message: { role: 'user', content: [{ type: 'text', text: 'summon mason' }] } },
+      assistantSaying(CANARY),
+    ].map((e) => JSON.stringify(e, null, 1).replace(/\n\s*/g, ' ')).join('\n');
+    writeFileSync(join(dir, '88888888-2222-3333-4444-555555555555.jsonl'), spaced + '\n');
+
+    const s = scan({ mason: loop('mason') });
+    expect(s.associations).toHaveLength(1);
+    expect(s.associations[0]!.role).toBe('mason');
+    expect(s.associations[0]!.protocol).toBe('performed');
   });
 });

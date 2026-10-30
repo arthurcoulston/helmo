@@ -895,6 +895,28 @@ function codexTrace(entries: Record<string, unknown>[], source: TraceSource): Co
   };
 }
 
+/** Control bytes rendered visibly, for any text read out of a host record and
+ *  printed to a terminal.
+ *
+ *  A record holds whatever a session's tool results held — including pages an
+ *  agent fetched — so an escape sequence in it is attacker-controlled text,
+ *  and printing it raw lets that text rewrite what the operator's terminal
+ *  DISPLAYS of a context: retitle the window, clear the screen, write the
+ *  clipboard. Reported by ward's security review of the read surface (H-3750
+ *  finding 1) and measured again on this module's own renderer before it
+ *  shipped: 3 ESC and 2 BEL bytes reached stdout from a crafted opener.
+ *
+ *  Visible, not stripped: the bytes were in the context, so an answer that
+ *  removed them would be a less true reading than one that shows them as
+ *  what they are. JSON output needs none of this — the encoder escapes them —
+ *  which is why this belongs in the renderers and not in the readers. */
+export function visibleControls(text: string): string {
+  // C0 minus tab and newline, DEL, and the C1 range. \u001b becomes the
+  // six characters a reader can see.
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, (c) => `\\u${c.codePointAt(0)!.toString(16).padStart(4, '0')}`);
+}
+
 /** Read one host record into a trace. The harness is decided by what the
  *  record contains; a path neither adapter recognises is refused by name
  *  rather than read as the other one. */

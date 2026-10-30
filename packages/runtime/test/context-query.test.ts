@@ -277,6 +277,19 @@ describe('where a string came from', () => {
     expect(f.hits[0]!.excerpt).toContain('host block one');
   });
 
+  // Mutation: report a configured hit as held by no call. An instruction block
+  // in force for every call of a session read `invocations: 0`, which is the
+  // answer for a part that was never in the context.
+  it('says which calls a configured hit was in force for, not none', () => {
+    const one = find(write('join.jsonl', claudeTranscriptRecord()), 'host block one');
+    expect(one.hits[0]).toMatchObject({ first_invocation: 0, last_invocation: 2, invocations: 3 });
+
+    // Two shapes: the block is in both, so each hit spans only its own calls.
+    const two = find(write('shapes.jsonl', twoShapeRecord()), 'host block one');
+    expect(two.hits.map((h) => [h.first_invocation, h.last_invocation, h.invocations]))
+      .toEqual([[0, 1, 2], [2, 2, 1]]);
+  });
+
   // Mutation: report a hit without its span. "It is in the context" leaves the
   // operator to find out when it entered and whether it is still there.
   it('says which calls held a message hit, and how many', () => {

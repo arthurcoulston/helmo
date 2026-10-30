@@ -494,16 +494,22 @@ function claudeFind(ix: ClaudeIndex, needle: string, chars: number): ContextFind
   for (const [ref, texts] of ix.shapeTexts) {
     const shape = ix.shapes.get(ref);
     const since = shape && shape.first_invocation !== -1 ? shape.first_invocation : null;
+    // Which calls actually ran under this configuration. Reported as 0 it read
+    // as "held by no call", of a block that was in every call of the session.
+    const under = ix.requests
+      .map((r, i) => (str(r['shapeHash']) === ref ? i : -1))
+      .filter((i) => i !== -1);
+    const span = { first_invocation: since, last_invocation: under.at(-1) ?? null, invocations: under.length };
     for (const [k, text] of texts.system.entries()) {
       searched.instructions++;
       if (!text.toLowerCase().includes(lower)) continue;
-      hits.push({ where: 'instructions', ref: `${ref.slice(0, 12)} block ${k}`, origin: 'configured', role: 'system', first_invocation: since, last_invocation: null, invocations: 0, excerpt: excerpt(text) });
+      hits.push({ where: 'instructions', ref: `${ref.slice(0, 12)} block ${k}`, origin: 'configured', role: 'system', ...span, excerpt: excerpt(text) });
     }
     for (const t of texts.tools) {
       searched.tools++;
       const text = `${t.name} ${t.description ?? ''}`;
       if (!text.toLowerCase().includes(lower)) continue;
-      hits.push({ where: 'tool', ref: t.name, origin: 'configured', role: 'tool', first_invocation: since, last_invocation: null, invocations: 0, excerpt: excerpt(text) });
+      hits.push({ where: 'tool', ref: t.name, origin: 'configured', role: 'tool', ...span, excerpt: excerpt(text) });
     }
   }
   for (const [hash, invocations] of held) {
@@ -906,17 +912,27 @@ function codexFind(ix: CodexIndex, needle: string, chars: number): ContextFind {
     const of = ix.calls.length > 0 ? ix.calls.length : ix.turns.length;
     return where === -1 ? (of === 0 ? null : of - 1) : where;
   };
-  for (const state of ix.instructions) {
+  const lastCall = (ix.calls.length > 0 ? ix.calls.length : ix.turns.length) - 1;
+  for (const [n, state] of ix.instructions.entries()) {
+    // In force until the next FULL world_state, or to the end of the rollout.
+    const next = ix.instructions[n + 1];
+    const from = turnOf(state.index);
+    const until = next === undefined ? lastCall : Math.max(from ?? 0, (turnOf(next.index) ?? 0) - 1);
+    const span = {
+      first_invocation: from,
+      last_invocation: until < 0 ? null : until,
+      invocations: from === null || until < from ? 0 : until - from + 1,
+    };
     for (const [k, b] of state.blocks.entries()) {
       searched.instructions++;
       if (!b.text.toLowerCase().includes(lower)) continue;
-      hits.push({ where: 'instructions', ref: `${b.sha256.slice(0, 12)} block ${k}`, origin: 'configured', role: 'system', first_invocation: turnOf(state.index), last_invocation: null, invocations: 0, excerpt: excerpt(b.text) });
+      hits.push({ where: 'instructions', ref: `${b.sha256.slice(0, 12)} block ${k}`, origin: 'configured', role: 'system', ...span, excerpt: excerpt(b.text) });
     }
     for (const t of state.tools) {
       searched.tools++;
       const text = `${t.name} ${t.description ?? ''}`;
       if (!text.toLowerCase().includes(lower)) continue;
-      hits.push({ where: 'tool', ref: t.name, origin: 'configured', role: 'tool', first_invocation: turnOf(state.index), last_invocation: null, invocations: 0, excerpt: excerpt(text) });
+      hits.push({ where: 'tool', ref: t.name, origin: 'configured', role: 'tool', ...span, excerpt: excerpt(text) });
     }
   }
   for (const [i, item] of ix.items.entries()) {
@@ -1104,9 +1120,12 @@ export function renderContextEvolution(e: ContextEvolution & { source: TraceSour
 
 export function renderContextFind(f: ContextFind & { source: TraceSource }): string {
   const out: string[] = [];
+  const span = (h: QueryHit): string => (h.first_invocation === null
+    ? 'in no call'
+    : h.invocations <= 1 ? `call ${h.first_invocation}` : `calls ${h.first_invocation}–${h.last_invocation} (${h.invocations})`);
   const where = (h: QueryHit): string => (h.where === 'message'
-    ? `message ${h.ref}  ${h.role ?? '?'} ${h.origin}  ${h.first_invocation === null ? 'in no call' : h.invocations <= 1 ? `call ${h.first_invocation}` : `calls ${h.first_invocation}–${h.last_invocation} (${h.invocations})`}`
-    : `${h.where} ${h.ref}  ${h.first_invocation === null ? 'call unrecorded' : `from call ${h.first_invocation}`}`);
+    ? `message ${h.ref}  ${h.role ?? '?'} ${h.origin}  ${span(h)}`
+    : `${h.where} ${h.ref}  ${h.origin}  ${span(h)}`);
   out.push(`"${f.needle}" in ${f.harness} session ${short(f.session_id, 8)} — ${f.hits.length} hit${f.hits.length === 1 ? '' : 's'}`);
   out.push(`searched ${f.searched.instructions} instruction blocks, ${f.searched.tools} tool schemas, ${f.searched.parts} readable parts${f.searched.unreadable > 0 ? `, and ${f.searched.unreadable} parts that could not be read` : ''}`);
   out.push('');

@@ -911,4 +911,24 @@ describe('what the run fetched, as a frequency row of its own', () => {
     // Whatever that command printed. Never claimed.
     expect(item(seat, 'command uname -a').supplier).toBe('unknown');
   });
+
+  // Mutation: claim every `file` kind as ours. A path is ours because it is ON
+  // the seat's configured source list, not because it is a path — the fetch
+  // above reads a file the list DOES carry, so that case alone stays green
+  // under this mutation and the rule reads as "a file is ours". Ward and proof
+  // both found this gap on H-3844 by mutating the reader, and both confirmed
+  // the code was already right; this is the assertion that was missing.
+  it('claims a fetched file only when the seat configures that path, not because it is a file', () => {
+    const seat = only(inventory([
+      fetchingRun('L2', [[
+        read('the memory index'),
+        { tool: 'Read', input: { file_path: '/tmp/elsewhere/NOTES.md' }, out: 'somebody else\'s file' },
+      ]]),
+    ], { acquired: true, named: { mason: source('/tmp/seat/MEMORY.md', 'a body nothing in this run carried, long enough not to be a token\n'.repeat(20)) } }));
+
+    expect(item(seat, 'file /tmp/seat/MEMORY.md').supplier).toBe('us');
+    // The same tool, the same kind, a path this installation configures for
+    // nobody. The join read a name; it did not read that file's author.
+    expect(item(seat, 'file /tmp/elsewhere/NOTES.md').supplier).toBe('unknown');
+  });
 });

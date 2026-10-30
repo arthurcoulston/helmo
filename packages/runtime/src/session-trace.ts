@@ -127,7 +127,28 @@ export function assertTicketIdentity(ticket: Record<string, unknown>, requested:
     }, requestedInstallation)) throw new Error('mismatched ticket history');
 }
 
-export function sessionTrace(ticket: Record<string, unknown>, launches: LaunchJournalEntry[], malformed: number): object {
+/** Evidence about a launch that this projection cannot read for itself.
+ *
+ *  `sessionTrace` is a pure reading of the work record and the launch journal,
+ *  and the journal has never carried a repository revision or an account of
+ *  what a launch was served — so both fields reported `unsupported`, which was
+ *  true of the journal and false of the estate: the codex rollout holds the
+ *  revision and this installation's own startup receipt holds the composition.
+ *  The caller, which knows the seats and their working directories, looks
+ *  those up and passes what it FOUND. Absence stays `unsupported` here, so a
+ *  caller that passes nothing gets exactly the old reading.
+ */
+export interface LaunchEvidence {
+  source_revision?: { value: string; source: string };
+  served_context?: { value: object; source: string };
+}
+
+export function sessionTrace(
+  ticket: Record<string, unknown>,
+  launches: LaunchJournalEntry[],
+  malformed: number,
+  evidence: Record<string, LaunchEvidence> = {},
+): object {
   const installationValue = ticket['installation'];
   const installation = record(installationValue) && name(installationValue.label) ? installationValue.label : null;
   const id = ticketIdentifier(ticket['id']) ? ticket['id'] : null;
@@ -170,6 +191,7 @@ export function sessionTrace(ticket: Record<string, unknown>, launches: LaunchJo
       // measured over the seat's Work events since this launch opened, and
       // is reported as that and never as an exact key (H-2901).
       const touched = launch.touched_tickets?.find(value => value.id === id);
+      const found = evidence[launch.launch_id];
       const basis = launch.ticket_id === id ? 'launch_claim_identity' : touched ? 'seat_session_event_window' : null;
       return {
         launch_id: field('observed', launch.launch_id, 'runtime:launch-journal'),
@@ -183,8 +205,12 @@ export function sessionTrace(ticket: Record<string, unknown>, launches: LaunchJo
         outcome: field(session ? 'observed' : 'not_observed', session?.outcome ?? null, 'runtime:launch-journal'),
         usage: field(session?.tokens === 0 && session?.cost_usd === 0 ? 'measured_zero' : session && (session.tokens !== undefined || session.cost_usd !== undefined) ? 'observed' : 'not_observed', session ? { tokens: session.tokens ?? null, cost_usd: session.cost_usd ?? null } : null, 'runtime:launch-journal'),
         work_event: field(event ? 'observed' : 'not_observed', event ? { seq: event.seq, type: event.event_type, at: event.ts } : null, event ? `work:event:${event.seq}` : 'work:event'),
-        source_revision: field('unsupported', null, 'runtime:launch-journal'),
-        served_context: field('unsupported', null, 'runtime:launch-journal'),
+        source_revision: found?.source_revision
+          ? field('observed', found.source_revision.value, found.source_revision.source)
+          : field('unsupported', null, 'runtime:launch-journal'),
+        served_context: found?.served_context
+          ? field('observed', found.served_context.value, found.served_context.source)
+          : field('unsupported', null, 'runtime:launch-journal'),
       };
     }),
   };

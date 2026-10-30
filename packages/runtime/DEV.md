@@ -1525,6 +1525,14 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   diagnostic across Runtime launch journals and Work history. It requires a
   qualified ticket reference, emits closed metadata only, and keeps observed,
   measured-zero, not-observed, unsupported and malformed/refused distinct.
+  `sessionTrace` stays a pure reading of what it is handed, so the two fields
+  the launch journal has never carried come from the CALLER, which knows the
+  seats and their working directories: `source_revision` from the codex
+  rollout's own `session_meta.git` where there is one and from this
+  installation's startup receipt `repos` otherwise, and `served_context` from
+  that receipt's composition hash and supplied/discovered split. The state does
+  not say which — the `source` string does. A launch the caller found nothing
+  for still reports `unsupported`, so the default reading is unchanged.
 - `node dist/cli.js context-coverage [seat] [--no-inventory]` prints the
   coverage reading for every entry path, or one seat's. It exits non-zero when
   any path is `stale` or `error`, so whatever runs it learns the finding

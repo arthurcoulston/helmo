@@ -24,9 +24,9 @@ import { runFleet } from './supervisor.js';
 import { teamResume, teamStop } from './team-control.js';
 import { buildIntakeResult, recordIntakeResult } from './intake-preparation.js';
 import { commandName, runCommand } from './command-name.js';
-import { assertTicketIdentity, readTicketLaunches, sessionTrace } from './session-trace.js';
+import { assertTicketIdentity, readTicketLaunches, sessionTrace, type LaunchEvidence } from './session-trace.js';
 import { coverageReading } from './context-coverage.js';
-import { contextTrace, recordForLaunch } from './context-trace.js';
+import { contextTrace, recordForLaunch, sourceRevisionForLaunch } from './context-trace.js';
 import { readLaunch } from './launch-journal.js';
 import { latestSettledLaunch, pathProviders, pathRuntimes } from './context-coverage.js';
 import { compareReceipts, pruneBlobs, readReceipt, startupReading } from './startup-context.js';
@@ -330,7 +330,46 @@ switch (cmd) {
       const ticket = ticketHistory(g, ticketRef);
       assertTicketIdentity(ticket, ticketRef);
       const read = readTicketLaunches(Object.keys(loops), String(ticket['id']));
-      console.log(JSON.stringify(sessionTrace(ticket, read.launches, read.malformed), null, 2));
+      // The launch journal carries neither the repository revision a session
+      // started against nor an account of what it was served, so the trace
+      // reported both `unsupported` — true of the journal, and false of the
+      // estate: the codex rollout holds the revision, and this installation's
+      // own startup receipt holds both the composition and the repos it read.
+      // The lookup belongs here, where the seats and their working
+      // directories are known, and the projection stays a pure reading of
+      // what it is handed (H-3724).
+      const evidence: Record<string, LaunchEvidence> = {};
+      for (const launch of read.launches) {
+        const seat = launch.launch_id.split(':')[1];
+        const loop = seat === undefined ? undefined : loops[seat];
+        if (seat === undefined || !loop) continue;
+        // A receipt can refuse its own key (H-3637). That is a fault for
+        // `startup-context` to diagnose, not for a projection to re-diagnose:
+        // here it leaves the field exactly as unsupported as it was before.
+        let receipt: ReturnType<typeof readReceipt> = null;
+        try { receipt = readReceipt(seat, launch.launch_id); } catch { receipt = null; }
+        const host = sourceRevisionForLaunch(launch, loop.cwd);
+        const repo = receipt?.repos.find((r) => r.dir === receipt?.cwd) ?? receipt?.repos[0];
+        const revision = host.revision !== null ? { value: host.revision, source: host.why }
+          : repo?.commit ? { value: repo.commit, source: `runtime:startup-receipt:repos:${repo.dir}` }
+            : undefined;
+        evidence[launch.launch_id] = {
+          ...(revision === undefined ? {} : { source_revision: revision }),
+          ...(receipt === null ? {} : {
+            served_context: {
+              value: {
+                receipt: receipt.id,
+                composed: { sha256: receipt.composed.sha256, bytes: receipt.composed.bytes, reconstructable: receipt.composed.reconstructable },
+                supplied: receipt.sources.filter((r) => r.claim === 'supplied').length,
+                discovered: receipt.sources.filter((r) => r.claim === 'discovered').length,
+                recording: receipt.recording.state,
+              },
+              source: `runtime:startup-receipt:${receipt.id}`,
+            },
+          }),
+        };
+      }
+      console.log(JSON.stringify(sessionTrace(ticket, read.launches, read.malformed, evidence), null, 2));
     } catch (e) {
       console.error(TRACE_REFUSAL);
       process.exit(1);

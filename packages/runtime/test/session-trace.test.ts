@@ -43,6 +43,43 @@ describe('session trace diagnostic', () => {
     expect(result.malformed_launch_records).toMatchObject({ state: 'malformed/refused', value: 2 });
   });
 
+  it('reports evidence the caller found, and says which record it came from', () => {
+    // The journal carries neither field, so the projection reported both
+    // unsupported. It now reports what the caller looked up — and the source
+    // string, not the state, is what says whether that was the host's own
+    // record or this installation's receipt.
+    const launch = {
+      format: 1, phase: 'complete', launch_id: 'rev:mason:1', ticket_id: 'H-7', intent_at: '2026-10-05T00:00:00.000Z',
+      completed_at: '2026-10-05T00:00:04.000Z',
+      session: { provider: 'codex', model: 'fixture', provider_session_id: 'thread-1', provider_session_id_state: 'observed', started_at: '2026-10-05T00:00:01.000Z', ended_at: '2026-10-05T00:00:02.000Z', outcome: 'ok' },
+    } as const;
+    const result = sessionTrace(ticket, [launch], 0, {
+      'rev:mason:1': {
+        source_revision: { value: 'abc1234', source: 'session_meta.git.commit_hash in /tmp/rollout.jsonl' },
+        served_context: { value: { receipt: 'dev.rev:mason:rev:mason:1', supplied: 3, discovered: 2 }, source: 'runtime:startup-receipt:dev.rev:mason:rev:mason:1' },
+      },
+    }) as any;
+    expect(result.launches[0].source_revision).toMatchObject({ state: 'observed', value: 'abc1234' });
+    expect(result.launches[0].source_revision.source).toContain('session_meta.git.commit_hash');
+    expect(result.launches[0].served_context).toMatchObject({ state: 'observed', value: { supplied: 3, discovered: 2 } });
+  });
+
+  it('leaves a launch the caller found nothing for exactly as unsupported as before', () => {
+    // Evidence is per launch: one launch having a revision must not make the
+    // next one appear to have the same, which is the way a shared default
+    // would fail.
+    const launches = [
+      { format: 1, phase: 'complete', launch_id: 'rev:mason:1', ticket_id: 'H-7', intent_at: '2026-10-05T00:00:00.000Z', completed_at: '2026-10-05T00:00:04.000Z' },
+      { format: 1, phase: 'complete', launch_id: 'rev:mason:2', ticket_id: 'H-7', intent_at: '2026-10-05T00:00:05.000Z', completed_at: '2026-10-05T00:00:06.000Z' },
+    ] as const;
+    const result = sessionTrace(ticket, [...launches], 0, {
+      'rev:mason:1': { source_revision: { value: 'abc1234', source: 'session_meta.git.commit_hash in /tmp/rollout.jsonl' } },
+    }) as any;
+    expect(result.launches[0].source_revision.state).toBe('observed');
+    expect(result.launches[1].source_revision).toMatchObject({ state: 'unsupported', value: null, source: 'runtime:launch-journal' });
+    expect(result.launches[0].served_context.state).toBe('unsupported');
+  });
+
   it('refuses malformed nested values and incomplete complete records', () => {
     const home = mkdtempSync(join(tmpdir(), 'rev-trace-'));
     process.env.REV_HOME = home;

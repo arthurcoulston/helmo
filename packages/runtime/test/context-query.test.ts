@@ -27,7 +27,7 @@ import {
   type ContextEvolution,
   type ContextFind,
 } from '../src/context-query.js';
-import { claudeRecord, claudeTranscriptRecord, codexRecord } from './fixtures/host-records.js';
+import { claudeRecord, claudeTranscriptRecord, codexCompactionsRecord, codexRecord } from './fixtures/host-records.js';
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'rev-query-')); });
@@ -582,10 +582,14 @@ describe('what it shows is what was supplied', () => {
     const a = at(write('rollout.jsonl', codexRecord({ secondCall: true })), 1);
 
     const gaps = a.gaps.join(' ');
-    expect(gaps).toContain('2 items recorded before the compaction');
-    expect(gaps).toContain("are NOT in this call's context");
+    // The figure is what the call before the boundary HELD — not the file's
+    // item count, which on a second boundary counts items an earlier one
+    // already took out, and here counts the first call's own tool request,
+    // which was never in any call's input (ward on H-3757, finding 3c).
+    expect(gaps).toContain('the 1 part the call before the compaction');
+    expect(gaps).toContain("NOT in this call's context");
     expect(gaps).toContain('2 items it wrote as its replacement_history');
-    expect(gaps).toContain('Ask --at 0 for the last call that held the dropped items');
+    expect(gaps).toContain('Ask --at 0 for that call, which is the last one that held them');
   });
 
   // Mutation: report a boundary with no replacement list as one that replaced
@@ -643,8 +647,10 @@ describe('what it shows is what was supplied', () => {
     const e = evolution(write('rollout.jsonl', codexRecord({ secondCall: true })));
 
     const notable = e.changes.find((c) => c.compaction !== null)!.notable.join(' ');
-    expect(notable).toContain('the 2 items recorded before it left the context');
-    expect(notable).toContain('replaced by the 2 the host wrote as its replacement_history');
+    // Same re-aiming as the gap above: the count is the parts the previous
+    // call held, and the row is the first call on the replacement list.
+    expect(notable).toContain('the 1 part the call before it held left the context');
+    expect(notable).toContain('the host wrote 2 items as its replacement_history');
   });
 
   // Mutation: choose the compaction by its item index rather than by the
@@ -695,5 +701,131 @@ describe('what it shows is what was supplied', () => {
     expect(notable).not.toContain('messages carried across');
     expect(notable).toContain('the host lists 3 transcript entries as preserved');
     expect(notable).toContain('not the message array of the next call, which is the parts figure above');
+  });
+});
+
+// What ward's re-judgement of that remediation found (H-3757, acceptance FAIL
+// against helmo@370c887): findings 1, 2 and 4 closed, and finding 3 closed in
+// `--at` and `--find` — but `--changes`, the mode built for "when did the
+// context shrink", still put a codex boundary on the wrong call and stated its
+// size from the wrong pair of figures. Three defects, one kind: the timeline
+// said something other than what the host's own record says.
+describe('what the timeline says about a codex compaction', () => {
+  const two = (): string => write('two-boundaries.jsonl', codexCompactionsRecord());
+
+  // Mutation: choose the row by the boundary's item index. The `compacted`
+  // entry is written straight after a usage record, so its item index IS the
+  // previous call's window and `index <= turn.before` lands on the call
+  // BEFORE — the call `--at` still shows holding all 216 dropped items on
+  // 01a1651a-98d5, while the first call on the replacement list showed no
+  // compaction at all.
+  it('puts a boundary on the first call whose context was the replacement list', () => {
+    const e = evolution(two());
+
+    expect(e.changes.filter((c) => c.compaction !== null).map((c) => c.ordinal)).toEqual([2, 5]);
+    // The call before each boundary still held everything, and says nothing.
+    expect(e.changes[1]!.compaction).toBeNull();
+    expect(e.changes[4]!.compaction).toBeNull();
+    // ...and it is the same call `--at` reads the replacement list at.
+    expect(at(two(), 2).parts.map((p) => p.via[0])).toEqual(['replacement 0']);
+  });
+
+  // Mutation: list only the items recorded since the boundary as the row's
+  // additions. On every real boundary that reads "+0 added" on the one row
+  // where the entire context was replaced, because the host writes the
+  // replacement list and no new item between the two.
+  it('counts the host replacement items as what entered at that row', () => {
+    const e = evolution(two());
+
+    const first = e.changes[2]!;
+    expect(first.added.map((p) => p.via[0])).toEqual(['replacement 0']);
+    expect(first.added.map((p) => p.entered)).toEqual([2]);
+    const second = e.changes[5]!;
+    expect(second.added.map((p) => p.via[0])).toEqual(['replacement 0', 'replacement 1']);
+  });
+
+  // Mutation: keep the item index as an added part's slot. A slot is a
+  // position in THAT call's message list, and after a boundary the file's
+  // item index is past the end of it: call 68 of 01a1651a-98d5 held 29 parts
+  // and its two additions were labelled slots 216 and 217.
+  it('numbers an added part by its place in that call context, not by its item index', () => {
+    const path = two();
+    const e = evolution(path);
+
+    // Call 3 holds the replacement item then item 2: slots 0 and 1.
+    expect(e.changes[3]!.added.map((p) => [p.via[0], p.slot])).toEqual([['item 2', 1]]);
+    expect(e.changes[4]!.added.map((p) => [p.via[0], p.slot])).toEqual([['item 3', 2]]);
+    const held = at(path, 4).parts.map((p) => p.via[0]);
+    expect(held).toEqual(['replacement 0', 'item 2', 'item 3']);
+    // Every added slot is a slot that call really has.
+    expect(e.changes[4]!.added.every((p) => p.slot < held.length)).toBe(true);
+  });
+
+  // Mutation: quote the boundary's own pre_tokens → post_tokens as the
+  // shrink. On codex both are pre-compaction — the turn's cumulative input
+  // and the call the usage record was written after — so the row read
+  // "404925 → 204655" while 24,837, the host's figure for that very call, sat
+  // on the next row down. Two contradicting figures on one screen.
+  it('states the drop from the host per-call figures either side of the boundary', () => {
+    const e = evolution(two());
+
+    const notable = e.changes[2]!.notable.join(' ');
+    expect(notable).toContain('200 → 20 input tokens, the host\'s own per-call figures');
+    expect(notable).not.toMatch(/300 → 200/);
+    // The boundary's own two figures are still reported, as what they are.
+    expect(notable).toContain('300 input tokens for the TURN so far and 200 for the call its usage record was written after');
+    expect(notable).toContain('both pre-compaction');
+    // They are the pair the record holds, so a --json reader is not misled.
+    expect(e.changes[2]!.compaction).toMatchObject({ pre_tokens: 300, post_tokens: 200 });
+  });
+
+  // Mutation: count the file's items as what a boundary dropped. At a SECOND
+  // boundary that count includes everything the first one already took out:
+  // on 01a1651a-98d5 the row said "the 400 items recorded before it", where
+  // the call before it held 211 parts and 216 of those 400 had left at call
+  // 67. 8 of the 20 compacted rollouts on this machine have two or more.
+  it('counts a later boundary drop as the parts the call before it held', () => {
+    const path = two();
+    const e = evolution(path);
+
+    expect(at(path, 4).totals.parts).toBe(3);
+    // The file has recorded 4 items by the second boundary; 2 of them left at
+    // the first, and the replacement item that replaced them also leaves.
+    expect(e.changes[5]!.compaction!.index).toBe(4);
+    expect(e.changes[5]!.notable.join(' ')).toContain('the 3 parts the call before it held left the context');
+    expect(e.changes[5]!.notable.join(' ')).not.toContain('the 4 parts');
+    // ...and `--at` says the same thing about the same boundary.
+    expect(at(path, 5).gaps.join(' ')).toContain('the 3 parts the call before the compaction');
+    expect(at(path, 5).gaps.join(' ')).toContain('Ask --at 4 for that call, which is the last one that held them');
+  });
+
+  // Mutation: require a call before the boundary. A resumed rollout opens
+  // with its boundary — 2 of the 20 compacted rollouts here — and `index >
+  // from` is false at item 0, so the boundary was reported by no row at all.
+  it('reports a boundary a rollout opens with, and does not invent a drop for it', () => {
+    const path = write('opens-compacted.jsonl', codexCompactionsRecord({ opensCompacted: true }));
+    const e = evolution(path);
+
+    const first = e.changes[0]!;
+    expect(first.compaction).not.toBeNull();
+    expect(first.added.map((p) => p.via[0])).toEqual(['replacement 0', 'replacement 1', 'item 0']);
+    expect(first.notable.join(' ')).toContain('it opens compacted, which is how a resumed session starts');
+    expect(first.notable.join(' ')).toContain('no size is stated for the drop');
+    expect(first.notable.join(' ')).not.toMatch(/\d+ parts the call before it held/);
+    expect(at(path, 0).totals.parts).toBe(3);
+  });
+
+  // Mutation: report a boundary only where a row carries it. A boundary the
+  // rollout records after its last call belongs to no row's context, and
+  // pinning rows by order would drop it from the timeline silently.
+  it('names a boundary recorded after the last call rather than omitting it', () => {
+    const entries = codexCompactionsRecord();
+    const last = entries.findIndex((e) => (e as { payload?: { response_id?: string } }).payload?.response_id === 'resp_5');
+    entries.splice(last + 1, 0, entries[entries.findIndex((e) => (e as { type?: string }).type === 'compacted')]!);
+    const e = evolution(write('trailing.jsonl', entries));
+
+    expect(e.changes).toHaveLength(6);
+    expect(e.changes.at(-1)!.notable.join(' ')).toContain('AFTER this last call');
+    expect(e.changes.at(-1)!.notable.join(' ')).toContain('were never given to a call this rollout records');
   });
 });

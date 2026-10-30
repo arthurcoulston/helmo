@@ -778,6 +778,23 @@ const CODEX_GAPS = [
 const afterCompaction = (c: CodexIndex['compactions'][number], byUsage: boolean): number =>
   (byUsage ? c.calls_before : c.turns_before);
 
+/** How many parts one call's context actually held: the replacement list in
+ *  force plus the items recorded since that boundary. This is the figure for
+ *  what a LATER boundary dropped — never the file's item count, which counts
+ *  items earlier boundaries had already taken out. At the second boundary of
+ *  01a1651a-98d5 the file had recorded 400 items and the call before it held
+ *  211 parts; 216 of those 400 left at the first boundary (ward on H-3757,
+ *  finding 3c). Built by the same two rules as `codexAt`'s `held`, so the two
+ *  readings cannot drift. */
+const codexPartsAt = (ix: CodexIndex, ordinal: number, byUsage: boolean): number | null => {
+  if (ordinal < 0) return null;
+  const window = byUsage ? ix.calls[ordinal] : ix.turns[ordinal];
+  if (window === undefined) return null;
+  const before = byUsage ? (window as CodexIndex['calls'][number]).inputs : window.before;
+  const inForce = ix.compactions.filter((c) => afterCompaction(c, byUsage) <= ordinal).at(-1) ?? null;
+  return (inForce?.replacement_items.length ?? 0) + Math.max(0, before - (inForce?.index ?? 0));
+};
+
 function codexInstructionsAt(ix: CodexIndex, index: number, chars: number): QueryInstructions | null {
   const applicable = ix.instructions.filter((s) => s.index <= index).at(-1) ?? ix.instructions[0];
   if (!applicable) return null;
@@ -856,6 +873,13 @@ function codexAt(ix: CodexIndex, ordinal: number, chars: number): ContextAt | { 
       caveat: item.opaque,
     };
   });
+  // What the boundary DROPPED is what the call before it held, not the file's
+  // item count: on a second boundary that count includes items an earlier
+  // boundary had already taken out (ward on H-3757, finding 3c).
+  const dropped = compaction === null || entered === null ? null : codexPartsAt(ix, entered - 1, byUsage);
+  const droppedSays = dropped === null
+    ? `every part the context held before the compaction at ${compaction?.at ?? 'an unrecorded time'} is`
+    : `the ${dropped} part${dropped === 1 ? '' : 's'} the call before the compaction at ${compaction?.at ?? 'an unrecorded time'} held ${dropped === 1 ? 'is' : 'are'}`;
   const deltasBefore = ix.deltas.filter((d) => d.index <= call.before);
   const readable = parts.filter((p) => p.origin === 'retained');
   const usage = byUsage ? (window as CodexIndex['calls'][number]) : null;
@@ -885,12 +909,12 @@ function codexAt(ix: CodexIndex, ordinal: number, chars: number): ContextAt | { 
       ...CODEX_GAPS,
       ...(compaction === null ? [] : [
         compaction.replacement_items.length > 0
-          ? `the ${compaction.index} items recorded before the compaction at ${compaction.at ?? 'an unrecorded time'} are NOT in this call's context and are not listed above: the host replaced them with the ${compaction.replacement_items.length} items it wrote as its replacement_history, which are the first ${compaction.replacement_items.length} slots here${entered === null || entered < 1 ? '' : `. Ask --at ${entered - 1} for the last call that held the dropped items`}`
+          ? `${droppedSays} NOT in this call's context, and not listed above: the host replaced them with the ${compaction.replacement_items.length} items it wrote as its replacement_history, which are the first ${compaction.replacement_items.length} slots here${entered === null || entered < 1 ? '' : `. Ask --at ${entered - 1} for that call, which is the last one that held them`}`
           // Every one of the 33 compacted entries on the machine this was
           // built against carries a replacement list. A host that writes none
           // leaves the post-boundary context unreadable rather than short,
           // and the difference has to be said.
-          : `the ${compaction.index} items recorded before the compaction at ${compaction.at ?? 'an unrecorded time'} are NOT in this call's context, and this record holds no replacement_history for that boundary: the ${parts.length} part${parts.length === 1 ? '' : 's'} above ${parts.length === 1 ? 'is' : 'are'} only what was recorded SINCE it, and what the host put in place of the dropped items cannot be read here`,
+          : `${droppedSays} NOT in this call's context, and this record holds no replacement_history for that boundary: the ${parts.length} part${parts.length === 1 ? '' : 's'} above ${parts.length === 1 ? 'is' : 'are'} only what was recorded SINCE it, and what the host put in place of the dropped items cannot be read here`,
       ]),
       ...(byUsage && (window as CodexIndex['calls'][number]).before > (window as CodexIndex['calls'][number]).inputs
         ? [`the ${(window as CodexIndex['calls'][number]).before - (window as CodexIndex['calls'][number]).inputs} items this call itself produced — its reasoning, its reply, its tool request — are NOT listed above: the host writes the usage record after the call, so they sit inside its window without ever having been in its input. An item kind this reader does not recognise counts as input, so the list errs long rather than short`]
@@ -911,13 +935,42 @@ function codexEvolution(ix: CodexIndex, chars: number): ContextEvolution {
     : ix.turns.map((t) => ({ at: t.at, before: t.before, input: null }));
   for (const [i, turn] of boundaries.entries()) {
     const from = i === 0 ? 0 : boundaries[i - 1]!.before;
-    const added: QueryPart[] = ix.items.slice(from, turn.before).map((item, k) => {
+    // WHICH ROW a boundary belongs to is the rollout's own order, not an item
+    // index. The row IS the first call whose context was the replacement
+    // list, which is where claude's timeline puts its boundary and where
+    // `codexAt` reads it from. Chosen by item index it sat on the call
+    // BEFORE — the one `--at` still shows holding every item the boundary
+    // dropped — and a boundary written at item 0, which is how a resumed
+    // rollout opens (2 of the 20 compacted rollouts on this machine), landed
+    // on no row at all because `index > from` is false at 0 (ward on H-3757,
+    // finding 3a). `.at(-1)` for the same reason `codexAt` uses it: two
+    // boundaries with no call between them leave the later one in force.
+    const landed = ix.compactions.filter((c) => afterCompaction(c, byUsage) === i).at(-1) ?? null;
+    const inForce = ix.compactions.filter((c) => afterCompaction(c, byUsage) <= i).at(-1) ?? null;
+    // Slots are positions in THIS call's context, by the same two rules as
+    // `codexAt`: the replacement list in force, then the items recorded since
+    // its boundary. An added item's own index stays on it, in `via`.
+    const base = inForce?.index ?? 0;
+    const firstNew = Math.max(from, base);
+    const entering: { item: CodexItem; via: string; slot: number }[] = [
+      // The replacement list entered on the row the boundary landed on, and
+      // nowhere else: it is the context the host put in place of what it
+      // dropped, and listing only the items recorded since read "+0 added"
+      // on the one row where the whole context changed.
+      ...(landed?.replacement_items ?? []).map((item, k) => ({ item, via: `replacement ${k}`, slot: k })),
+      ...ix.items.slice(firstNew, turn.before).map((item, k) => ({
+        item,
+        via: `item ${firstNew + k}`,
+        slot: (inForce?.replacement_items.length ?? 0) + (firstNew - base) + k,
+      })),
+    ];
+    const added: QueryPart[] = entering.map(({ item, via, slot }) => {
       const { text, truncated } = clip(item.text, chars);
       return {
-        slot: from + k,
+        slot,
         role: item.role ?? item.kind,
         origin: item.opaque === null ? 'retained' : 'unreadable',
-        via: [`item ${from + k}`],
+        via: [via],
         types: [item.kind],
         bytes: item.bytes,
         entered: i,
@@ -926,14 +979,34 @@ function codexEvolution(ix: CodexIndex, chars: number): ContextEvolution {
         caveat: item.opaque,
       };
     });
-    const compacted = ix.compactions.find((c) => c.index > from && c.index <= turn.before) ?? null;
+    const compacted = landed;
     const state = ix.instructions.find((s) => s.index > from && s.index <= turn.before);
     const previous = state ? ix.instructions.filter((s) => s.index <= from).at(-1) : undefined;
     const delta = ix.deltas.filter((d) => d.index > from && d.index <= turn.before);
     const notable: string[] = [];
     if (compacted) {
-      notable.push(`compaction (${compacted.trigger}): ${compacted.pre_tokens ?? '?'} → ${compacted.post_tokens ?? '?'} input tokens by the host's own usage record; the ${compacted.index} items recorded before it left the context, replaced by the ${compacted.replacement_items.length} the host wrote as its replacement_history`);
-      notable.push(`the host's retained set at that boundary lists ${compacted.preserved_messages ?? '?'} messages${/INCOMPLETE/.test(compacted.basis) ? ', and marks it INCOMPLETE, so that count is a floor' : ''} — the host's own list, not the item array of the next call`);
+      // What LEFT is what the call before this one held. The file's item
+      // count says 400 at the second boundary of 01a1651a-98d5, where the
+      // call before it held 211 parts: 216 of those 400 had already left at
+      // the first boundary, and telling the operator to ask --at for "the
+      // dropped items" was wrong for every one of them.
+      const dropped = codexPartsAt(ix, i - 1, byUsage);
+      const before = i === 0 ? null : boundaries[i - 1]!.input;
+      const left = dropped === null
+        ? 'this rollout records no call before the boundary — it opens compacted, which is how a resumed session starts — so what left cannot be counted here'
+        : `the ${dropped} part${dropped === 1 ? '' : 's'} the call before it held left the context`;
+      notable.push(`compaction (${compacted.trigger}): this is the first call whose context was the host's replacement list. ${left}; ${compacted.replacement_items.length > 0 ? `the host wrote ${compacted.replacement_items.length} items as its replacement_history, and they are the first ${compacted.replacement_items.length} slots of this call` : 'this record holds no replacement_history for the boundary, so what the host put in their place cannot be read here'}`);
+      // The boundary's own two figures are BOTH pre-compaction on codex:
+      // `pre_tokens` is the turn's cumulative input and `post_tokens` the
+      // last call before the boundary. Printed as "404925 → 204655" they read
+      // as the shrink, while 24,837 — the host's figure for this very call —
+      // sat on the next row down. Two contradicting figures on one screen is
+      // the pattern of ward's finding 4 (H-3757, finding 3b).
+      const boundaryFigures = `the boundary's own record holds ${compacted.pre_tokens ?? '?'} input tokens for the TURN so far and ${compacted.post_tokens ?? '?'} for the call its usage record was written after`;
+      notable.push(before === null || turn.input === null
+        ? `no size is stated for the drop: the host records no per-call input token figure on both sides of this boundary. ${boundaryFigures}, and neither is the size of the new context`
+        : `${n(before)} → ${n(turn.input)} input tokens, the host's own per-call figures for the calls either side of the boundary; ${boundaryFigures}, both pre-compaction, which is why neither is quoted here as the new size`);
+      notable.push(`the host's retained set at that boundary lists ${compacted.preserved_messages ?? '?'} messages${/INCOMPLETE/.test(compacted.basis) ? ', and marks it INCOMPLETE, so that count is a floor' : ''} — the host's own list, not the item array of this call, which is the parts figure on this row`);
     }
     let instructions: ContextChange['instructions'] = null;
     if (state) {
@@ -970,6 +1043,17 @@ function codexEvolution(ix: CodexIndex, chars: number): ContextEvolution {
       host_input_tokens: turn.input,
       notable,
     });
+  }
+  // A boundary the rollout recorded with no call after it: no row's context
+  // was its replacement list, so pinning rows by order would report it
+  // nowhere. Named on the last row instead, as the boundary it is rather than
+  // as that call's own.
+  const trailing = ix.compactions.filter((c) => afterCompaction(c, byUsage) >= boundaries.length);
+  const last = changes.at(-1);
+  if (last !== undefined) {
+    for (const c of trailing) {
+      last.notable.push(`a compaction (${c.trigger}) was recorded at ${c.at ?? 'an unrecorded time'}, AFTER this last call: the ${codexPartsAt(ix, changes.length - 1, byUsage) ?? '?'} parts above are what this call held, and the ${c.replacement_items.length} items the host wrote as its replacement_history were never given to a call this rollout records`);
+    }
   }
   return {
     harness: 'codex',

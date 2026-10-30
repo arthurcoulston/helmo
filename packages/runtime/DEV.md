@@ -729,6 +729,23 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   of the one after it. A part a boundary dropped before any call had been given
   it — one call's own output — is reported as in no call, in the structure and
   not only in the rendering.
+  The TIMELINE reads a boundary by that same order, and three things follow
+  from it. The row carrying a compaction is the first call whose context was
+  the replacement list, which is where claude's timeline puts its boundary
+  too; by item index it sat on the call before — the one `--at` still shows
+  holding every dropped item — and a boundary written at item 0, which is how
+  a resumed rollout opens, landed on no row at all. The replacement items are
+  that row's ADDITIONS, and an added part's slot is its place in that call's
+  context rather than its index in the file, which after a boundary is past
+  the end of it. And the drop is stated from the host's own per-call input
+  figures either side of the boundary, because both figures the host writes AT
+  a boundary are pre-compaction — `pre_tokens` is the turn's cumulative input
+  and `post_tokens` the call its usage record was written after — so quoting
+  them read as the shrink while the host's figure for that very call sat on
+  the next row down. What a boundary dropped is counted as the parts the call
+  before it HELD, never the file's item count: at a second boundary that count
+  includes everything an earlier boundary already took out, and 8 of the 20
+  compacted rollouts on this machine have two or more.
   `preserved_messages` is what the HOST lists as preserved at a boundary, by
   its own count, and is never called what the next call carried: on claude it
   is a transcript-level list of entries, and against the one compacted record

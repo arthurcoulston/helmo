@@ -263,3 +263,80 @@ export function claudeTranscriptRecord(over: { retained?: unknown[]; sidechain?:
   ];
 }
 
+
+/** A codex rollout with TWO compaction boundaries, in the shape the real ones
+ *  on this machine have: the `compacted` entry is written straight after a
+ *  usage record with no item between, so the boundary's item index equals the
+ *  previous call's own window. That is what made the item-index reading put
+ *  the boundary on the call BEFORE it — the call `--at` still shows holding
+ *  every item the boundary dropped (ward on H-3757, finding 3a).
+ *
+ *  Six calls, each with its own input token figure, so the pair quoted either
+ *  side of a boundary is checkable; and the second boundary's file item count
+ *  (4) differs from the parts the call before it held (3), which is the
+ *  arithmetic finding 3c is about.
+ *
+ *  `opensCompacted: true` puts a single boundary at item 0 and call 0 — a
+ *  resumed session, 2 of the 20 compacted rollouts on this machine — where
+ *  there is no call before the boundary to measure the drop against. */
+export function codexCompactionsRecord(over: { opensCompacted?: boolean } = {}): unknown[] {
+  let ordinal = 0;
+  const next = (): number => ordinal++;
+  const ask = (n: number, at: string) => ({
+    type: 'response_item', timestamp: at, ordinal: next(),
+    payload: { type: 'message', role: 'user', content: [{ type: 'text', text: `ask ${n}` }] },
+  });
+  // No model-produced item in a call's window, so `inputs` is `before` and the
+  // boundary written next lands on exactly that index.
+  const call = (id: string, turn: string, input: number, at: string) => ({
+    type: 'token_usage_record', timestamp: at, ordinal: next(),
+    payload: { response_id: id, turn_id: turn, usage: { input_tokens: input, cached_input_tokens: 0 } },
+  });
+  const boundary = (id: string, items: string[], call_input: number, turn_input: number, at: string) => ({
+    type: 'compacted', timestamp: at, ordinal: next(),
+    payload: {
+      message: '', window_id: id, compaction_response_id: `resp_${id}`,
+      replacement_history: items.map((text) => ({ type: 'message', role: 'user', content: [{ type: 'text', text }] })),
+      retained_context: { user_messages: [{}], assistant_messages: [{}], incomplete: false },
+      // Both figures the host writes at a boundary are pre-compaction: the
+      // turn's cumulative input, and the call its usage record was written
+      // after. Kept far apart from the per-call figures so a reading that
+      // quotes the wrong pair is unmistakable.
+      latest_token_usage_record: { usage: { input_tokens: call_input }, turn_token_usage: { input_tokens: turn_input } },
+    },
+  });
+  const head: unknown[] = [
+    {
+      type: 'session_meta', timestamp: '2026-10-22T12:00:00.000Z', ordinal: next(),
+      payload: { session_id: '01a1651a-98d5-7873-9600-1e5d6f5fa28d', cwd: '/tmp/seat', base_instructions: { text: 'You are Codex.' } },
+    },
+    {
+      type: 'world_state', timestamp: '2026-10-22T12:00:01.000Z', ordinal: next(),
+      payload: { full: true, state: { agents_md: { directory: '/tmp/seat', text: 'the repository rules' }, tools: { clock: 'a clock' } } },
+    },
+    { type: 'turn_context', timestamp: '2026-10-22T12:00:02.000Z', ordinal: next(), payload: { turn_id: 'turn-1', model: 'gpt-6-astra' } },
+  ];
+  if (over.opensCompacted === true) {
+    return [
+      ...head,
+      boundary('w1', ['the summary of a previous session', 'and its second item'], 23_223, 23_223, '2026-10-22T12:00:03.000Z'),
+      ask(1, '2026-10-22T12:00:04.000Z'),
+      call('resp_0', 'turn-1', 34_041, '2026-10-22T12:00:05.000Z'),
+    ];
+  }
+  return [
+    ...head,
+    ask(1, '2026-10-22T12:00:03.000Z'),
+    call('resp_0', 'turn-1', 100, '2026-10-22T12:00:04.000Z'),
+    ask(2, '2026-10-22T12:00:05.000Z'),
+    call('resp_1', 'turn-1', 200, '2026-10-22T12:00:06.000Z'),
+    boundary('w1', ['the summary of asks one and two'], 200, 300, '2026-10-22T12:00:07.000Z'),
+    call('resp_2', 'turn-1', 20, '2026-10-22T12:00:08.000Z'),
+    ask(3, '2026-10-22T12:00:09.000Z'),
+    call('resp_3', 'turn-1', 30, '2026-10-22T12:00:10.000Z'),
+    ask(4, '2026-10-22T12:00:11.000Z'),
+    call('resp_4', 'turn-1', 40, '2026-10-22T12:00:12.000Z'),
+    boundary('w2', ['the summary so far', 'and what is still open'], 40, 70, '2026-10-22T12:00:13.000Z'),
+    call('resp_5', 'turn-1', 15, '2026-10-22T12:00:14.000Z'),
+  ];
+}

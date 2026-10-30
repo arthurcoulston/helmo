@@ -651,6 +651,48 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   journal's `provider_session_id` and therefore only resolves a SETTLED launch:
   a dispatching entry carries no id, and saying a live run has no trace is the
   honest answer rather than reading the previous run's file.
+  `indexClaude` is exported for the module below, which answers over the SAME
+  index: a read surface with its own parse of the record could answer over a
+  different join from the one `recovery` measures, and the measurement is the
+  only reason to trust the half of a session the host retains no blob for.
+- `context-query.ts` — the operator read surface over that trace (R-55 H-3724
+  requirement 6). The module above answers the INVENTORY question: what does
+  this record hold, per required category, with a state and a reason. That had
+  to be settled first — a view built over an unknown boundary shows gaps it
+  cannot explain — but it is not the question an operator asks. Three functions
+  for the three that are: `contextAt` (what was in THIS call's context, and
+  where did each part come from), `contextEvolution` (what entered, what the
+  host dropped, when the instructions or the tool inventory moved, what a
+  compaction replaced), `contextFind` (which part of which call's context held
+  this string, and when did it enter).
+  It SHOWS content and STORES none: a part is read out of the host record at
+  read time and printed, so there is no new store to redact and the exposure is
+  exactly the operator's own existing read access to their own record. Parts are
+  bounded to `PREVIEW_CHARS` unless asked for in full, and every truncation
+  says so on the part.
+  Three readings it will not give. A reconstructed part is LABELLED, with this
+  session's own measured accuracy for that part's ROLE beside it — averaged
+  over roles, a session would tell an operator its user reconstruction had been
+  checked when the only slot that could be checked was an assistant one. A part
+  nothing on this machine can read is `unreadable` with its reason, never shown
+  blank: the standing case is a codex `reasoning` item, which carries
+  `summary: []` and the content only as provider-encrypted text, so the item
+  WAS in the call's context and what it said is not here. And a nil `contextFind`
+  reports what it searched and what it could not read, because "not found in
+  what is readable" is not "was not in the context".
+  Two readings the timeline would get wrong without saying so. A compaction
+  does not appear in the host's own keep count at all — it REBASES rather than
+  truncating, so `removed` reads 0 while sixty parts leave, and `held`/
+  `previously` are what the drop is actually read against. And the first shape
+  of a session is the CONFIGURATION, not a change to one; reported as a change
+  it reads as twelve tools having been added at call 0.
+  On codex a turn's context is every item recorded before it, in order, which
+  is this reader's arithmetic and is stated as such on every answer: the
+  rollout records turns and items, never the array sent on one API call.
+  The renderers are pure functions in the same module, so what an operator sees
+  is what the acceptance asserts. They print each distinct caveat ONCE with how
+  many parts carry it — a call with 72 reconstructed parts printed the same two
+  sentences 72 times, which is how a real qualification comes to be skipped.
 - **Every Team read goes through `readBounded`, and that is the whole guard
   (H-3004).** The inventory includes every `CLAUDE.md` and `AGENTS.md` found
   walking up from a seat's cwd — files no roster entry names, in trees any agent
@@ -1548,6 +1590,19 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   reads that launch's own journal entry, and the bare seat form takes the
   newest settled launch across every route the seat can launch under, not the
   primary's providers alone.
+  With `--at <call>`, `--changes` or `--find <text>` the same command answers
+  as the operator read surface instead: the parts of one call's context with
+  their origins, the timeline of what entered and left, or where a string came
+  from. `--changes --notable` keeps only the calls with something to report
+  (three of 132 in one real session). `--chars <n>` and `--full` set how much
+  of each part comes back — the default is a bounded preview, because a 132-call
+  session's parts are the 30MB the JSON reading already was. `--json` hands over
+  the structure. Two questions at once is refused rather than answered as one,
+  and a call the session never made is refused with the range it did.
+  Note the dev tree cannot drive this command against a pinned installation:
+  the release-coherence gate refuses before any projection runs. `env -u
+  INSTALLATION_RELEASE node packages/runtime/dist/cli.js …` is the read-only way
+  to exercise it against real records.
 - `node dist/cli.js startup-context [seat] [--launch <id>] [--ticket <id>]
   [--limit <n>]` prints the startup receipts: one per launch, newest first,
   each with its content resolved now and whether its composition still rebuilds.

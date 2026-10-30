@@ -1,0 +1,1021 @@
+// The read surface over a context trace: what an operator asks, answered from
+// the host's own record (H-3724 requirement 6).
+//
+// context-trace.ts says what a session's record HOLDS, per required category,
+// with a state and a reason. That is the inventory question, and it was the
+// first thing to settle, because a view built over an unknown boundary shows
+// gaps it cannot explain. It is not the operator's question. The operator's
+// question is one of three:
+//
+//   - WHAT WAS IN THE CONTEXT of this call, and where did each part come from?
+//     (`contextAt`)
+//   - WHAT CHANGED through the run — what entered, what the host dropped, when
+//     the instructions or the tool inventory moved, what a compaction replaced?
+//     (`contextEvolution`)
+//   - WHERE DID THIS COME FROM — this string I can see in a reply or a report:
+//     which part of which call's context held it, and when did it enter?
+//     (`contextFind`)
+//
+// Three properties this module is built to keep, because the answer is worth
+// nothing if an operator has to discount it:
+//
+//   - IT SHOWS CONTENT, AND STORES NONE. A part is read out of the host record
+//     at read time and printed; nothing is written anywhere. So there is no new
+//     store to redact, and the exposure is exactly the operator's own existing
+//     read access to their own record.
+//   - A RECONSTRUCTED PART IS LABELLED, WITH THIS SESSION'S OWN MEASURED
+//     ACCURACY beside it. The host retains a blob for about two parts in five;
+//     the rest are joined from the record's transcript by each assistant
+//     entry's `requestRef`. That join is an inference, and context-trace.ts
+//     measures it against the slots where both exist. A query repeats the
+//     measurement rather than the assurance.
+//   - A PART NOTHING CAN READ IS SAID TO BE UNREADABLE. Never shown empty: a
+//     blank part reads as a part that was blank.
+//
+// One index, shared with the trace (`indexClaude`), so a query can never
+// answer over a different join than the one that was measured.
+import { createHash } from 'node:crypto';
+import {
+  TRACE_BYTE_CEILING,
+  harnessOf,
+  indexClaude,
+  parseTraceRecord,
+  type ClaudeIndex,
+  type ClaudeReconstruction,
+  type TraceCompaction,
+  type TraceSource,
+} from './context-trace.js';
+
+/** How much of a part's text an answer carries unless asked for all of it.
+ *  A context part can be a 200KB tool result; an operator reading a call's
+ *  context wants to recognise each part, and asks for the one they want in
+ *  full. Every truncation says so on the part itself. */
+export const PREVIEW_CHARS = 400;
+
+export type PartOrigin = 'retained' | 'reconstructed' | 'unreadable';
+
+/** One message in one call's context. */
+export interface QueryPart {
+  /** Position in that call's message list, as the host built it. */
+  slot: number;
+  role: string;
+  origin: PartOrigin;
+  /** Where the content came from: the host's own blob hash, or the transcript
+   *  entries it was assembled from. Identity, so an operator can go and look. */
+  via: string[];
+  types: string[];
+  /** Of the retained message, or of the reconstruction where that is what was
+   *  read. `null` when nothing could be read. */
+  bytes: number | null;
+  /** The first call whose context held this exact slot — so a part that has
+   *  been carried for forty calls is distinguishable from one that just
+   *  arrived. */
+  entered: number | null;
+  text: string | null;
+  truncated: boolean;
+  /** What to discount this part by, where anything. */
+  caveat: string | null;
+}
+
+/** The host instructions, repository and role rules, and tool schemas in force
+ *  for a call — the part of the context that is not a message. */
+export interface QueryInstructions {
+  ref: string | null;
+  /** The invocation this configuration first appeared at. */
+  since: number | null;
+  blocks: { bytes: number; sha256: string; text: string | null; truncated: boolean }[];
+  tools: { name: string; bytes: number; description: string | null }[];
+  bytes: number;
+  tools_bytes: number;
+}
+
+export interface ContextAt {
+  harness: 'claude' | 'codex';
+  session_id: string | null;
+  /** Which call, and how many the session made. */
+  ordinal: number;
+  of: number;
+  at: string | null;
+  model: string | null;
+  instructions: QueryInstructions | null;
+  parts: QueryPart[];
+  totals: {
+    parts: number;
+    retained: number;
+    reconstructed: number;
+    unreadable: number;
+    /** Of the parts that could be read; the unreadable ones are not counted as
+     *  zero. */
+    part_bytes: number;
+  };
+  /** What this answer cannot say. Never empty: the provider ceiling is on
+   *  every one. */
+  gaps: string[];
+}
+
+export interface ContextChange {
+  ordinal: number;
+  at: string | null;
+  /** The parts this call added to its predecessor's context. */
+  added: QueryPart[];
+  /** How many of the predecessor's parts it dropped, by the host's own keep
+   *  count. */
+  removed: number | null;
+  /** How many parts this call's context held, and the previous call's. A
+   *  compaction does not show up in `removed` at all: the host REBASES rather
+   *  than truncating, so its keep count is of a new chain and reads 0 while
+   *  sixty parts leave. These two are what a drop is actually read against. */
+  held: number | null;
+  previously: number | null;
+  instructions: null | {
+    from: string | null;
+    to: string;
+    tools_added: string[];
+    tools_removed: string[];
+    blocks_changed: number;
+  };
+  compaction: null | (TraceCompaction & { replacement_text: string | null; replacement_truncated: boolean });
+  /** Why this call is worth an operator's attention, in their terms. Empty on
+   *  an ordinary turn. */
+  notable: string[];
+}
+
+export interface ContextEvolution {
+  harness: 'claude' | 'codex';
+  session_id: string | null;
+  changes: ContextChange[];
+  gaps: string[];
+}
+
+export interface QueryHit {
+  where: 'instructions' | 'tool' | 'message';
+  /** The shape block, tool name, or message slot it was found in. */
+  ref: string;
+  origin: PartOrigin | 'configured';
+  role: string | null;
+  /** The first and last calls whose context held it, and how many did. */
+  first_invocation: number | null;
+  last_invocation: number | null;
+  invocations: number;
+  excerpt: string;
+}
+
+export interface ContextFind {
+  harness: 'claude' | 'codex';
+  session_id: string | null;
+  needle: string;
+  hits: QueryHit[];
+  searched: { instructions: number; tools: number; parts: number; unreadable: number };
+  gaps: string[];
+}
+
+export interface QueryOptions {
+  /** Characters of each part's text to carry. `Infinity` for all of it. */
+  chars?: number;
+}
+
+const sha256 = (text: string): string => createHash('sha256').update(text, 'utf8').digest('hex');
+const rec = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
+const str = (v: unknown): string | null => (typeof v === 'string' ? v : null);
+const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+
+/** The ceilings every answer carries. The first is the same on both harnesses
+ *  and is the hard one: a provider's own handling of a request is in no file on
+ *  this machine. The second is the one most easily forgotten when reading a
+ *  context: it is what was SUPPLIED. */
+const UNIVERSAL_GAPS = [
+  'anything the provider adds, rewrites, caches or drops inside its own service: no record on this machine observes it',
+  'whether the model attended to any of this: every part here is what was supplied to the call, not what was used',
+];
+
+/** A part's text, from the content blocks the record holds. A block whose
+ *  payload is not text is rendered as what it IS — a tool call with its input,
+ *  a result with its output — rather than skipped, because an operator reading
+ *  a context needs the tool traffic most of all. */
+function partText(parts: unknown[]): string {
+  const out: string[] = [];
+  for (const b of parts) {
+    if (typeof b === 'string') { out.push(b); continue; }
+    if (!rec(b)) continue;
+    const type = str(b['type']);
+    if (type === 'text') out.push(str(b['text']) ?? '');
+    else if (type === 'thinking') out.push(`[thinking] ${str(b['thinking']) ?? ''}`);
+    else if (type === 'tool_use') out.push(`[tool_use ${str(b['name']) ?? '(unnamed)'}] ${JSON.stringify(b['input'])}`);
+    else if (type === 'tool_result') {
+      const content = b['content'];
+      out.push(`[tool_result ${str(b['tool_use_id']) ?? ''}] ${typeof content === 'string' ? content : partText(Array.isArray(content) ? content : [content])}`);
+    } else if (type === 'image') out.push('[image]');
+    else out.push(`[${type ?? 'untyped'}] ${JSON.stringify(b)}`);
+  }
+  return out.join('\n');
+}
+
+function clip(text: string, chars: number): { text: string; truncated: boolean } {
+  if (text.length <= chars) return { text, truncated: false };
+  return { text: text.slice(0, chars), truncated: true };
+}
+
+/** The accuracy of a reconstruction of this role, measured on this session's
+ *  own validation set — the slots where the host retained a blob AND the
+ *  transcript reconstructs one, so the two can be compared. Said per part,
+ *  because it is the figure that decides how far to trust the part in front of
+ *  you, and a session's overall rate hides that a user message is the inexact
+ *  one. */
+function reconstructionCaveat(ix: ClaudeIndex, role: string): string {
+  const measured = ix.recovery.by_role[role];
+  const where = 'assembled from this record\'s transcript by the request id its reply carries, not retained by the host';
+  if (!measured || measured.checked === 0) {
+    return `${where}; no slot of this role in this session had both a retained blob and a reconstruction, so there is nothing to measure it against here`;
+  }
+  if (measured.exact === measured.checked) {
+    return `${where}; ${measured.exact} of ${measured.checked} ${role} slots in this session that could be checked reconstruct byte for byte`;
+  }
+  const modes = Object.entries(ix.recovery.modes).map(([why, n]) => `${n}× ${why}`).join('; ');
+  return `${where}; ${measured.exact} of ${measured.checked} ${role} slots in this session that could be checked reconstruct byte for byte — the rest differ because of what the host did on the way out (${modes}), so this is the payload it wrote down, not the last form of it`;
+}
+
+function claudePart(
+  ix: ClaudeIndex,
+  hash: string,
+  slot: number,
+  entered: number | null,
+  chars: number,
+): QueryPart {
+  const blob = ix.blobs.get(hash);
+  if (blob !== undefined) {
+    const { text, truncated } = clip(partText(blob.parts), chars);
+    return {
+      slot,
+      role: blob.role,
+      origin: 'retained',
+      via: [hash],
+      types: blob.types,
+      bytes: blob.bytes,
+      entered,
+      text,
+      truncated,
+      caveat: null,
+    };
+  }
+  const made: ClaudeReconstruction | undefined = ix.reconstructedFor.get(hash);
+  if (made !== undefined) {
+    const { text, truncated } = clip(partText(made.parts), chars);
+    return {
+      slot,
+      role: made.role,
+      origin: 'reconstructed',
+      via: made.via,
+      types: made.types,
+      bytes: Buffer.byteLength(JSON.stringify({ role: made.role, content: made.parts }), 'utf8'),
+      entered,
+      text,
+      truncated,
+      caveat: reconstructionCaveat(ix, made.role),
+    };
+  }
+  // Named, with its hash, rather than omitted or shown blank. The host
+  // referenced this message in the call; nothing on this machine holds it.
+  return {
+    slot,
+    role: '(unknown)',
+    origin: 'unreadable',
+    via: [hash],
+    types: [],
+    bytes: null,
+    entered,
+    text: null,
+    truncated: false,
+    caveat: 'the call referenced this message by hash; the host retained no blob for it and the transcript does not reconstruct it, so its content is not on this machine',
+  };
+}
+
+/** Which call first held each slot, across the whole session. */
+function enteredAt(ix: ClaudeIndex): Map<string, number> {
+  const first = new Map<string, number>();
+  for (const [i, r] of ix.requests.entries()) {
+    for (const h of ix.listFor(r) ?? []) if (!first.has(h)) first.set(h, i);
+  }
+  return first;
+}
+
+function claudeInstructions(ix: ClaudeIndex, ref: string | null, chars: number): QueryInstructions | null {
+  if (ref === null) return null;
+  const shape = ix.shapes.get(ref);
+  const texts = ix.shapeTexts.get(ref);
+  if (!shape || !texts) return null;
+  return {
+    ref,
+    since: shape.first_invocation === -1 ? null : shape.first_invocation,
+    blocks: shape.system_blocks.map((b, i) => {
+      const { text, truncated } = clip(texts.system[i] ?? '', chars);
+      return { bytes: b.bytes, sha256: b.sha256, text, truncated };
+    }),
+    tools: texts.tools,
+    bytes: shape.system_bytes,
+    tools_bytes: shape.tools_bytes,
+  };
+}
+
+const CLAUDE_GAPS = [
+  'what the host appended to or wrapped a reconstructed part with on the way out: `caveat` carries this session\'s own measured rate for the role',
+];
+
+function claudeAt(ix: ClaudeIndex, ordinal: number, chars: number): ContextAt | { error: string } {
+  const r = ix.requests[ordinal];
+  if (r === undefined) {
+    return { error: `this session made ${ix.requests.length} model calls, numbered 0 to ${Math.max(0, ix.requests.length - 1)}` };
+  }
+  const list = ix.listFor(r);
+  const first = enteredAt(ix);
+  const params = rec(r['params']) ? (r['params'] as Record<string, unknown>) : null;
+  const shapeRef = str(r['shapeHash']);
+  const parts = (list ?? []).map((h, i) => claudePart(ix, h, i, first.get(h) ?? null, chars));
+  const count = (o: PartOrigin) => parts.filter((p) => p.origin === o).length;
+  return {
+    harness: 'claude',
+    session_id: ix.sessionId,
+    ordinal,
+    of: ix.requests.length,
+    at: str(r['timestamp']),
+    model: params ? str(params['model']) : null,
+    instructions: claudeInstructions(ix, shapeRef, chars),
+    parts,
+    totals: {
+      parts: parts.length,
+      retained: count('retained'),
+      reconstructed: count('reconstructed'),
+      unreadable: count('unreadable'),
+      part_bytes: parts.reduce((t, p) => t + (p.bytes ?? 0), 0),
+    },
+    gaps: [
+      ...(list === null
+        ? ['this call names a base message list this record does not hold, so the parts below start at the gap rather than at the beginning of the call']
+        : []),
+      ...CLAUDE_GAPS,
+      ...UNIVERSAL_GAPS,
+    ],
+  };
+}
+
+function claudeEvolution(ix: ClaudeIndex, chars: number): ContextEvolution {
+  const first = enteredAt(ix);
+  const changes: ContextChange[] = [];
+  // A compaction is placed at the first call after the boundary's timestamp:
+  // the host writes the boundary into the transcript, not into a request, so
+  // the call it affected is the next one.
+  const pending = [...ix.compactions];
+  let previousShape: string | null = null;
+  for (const [i, r] of ix.requests.entries()) {
+    const at = str(r['timestamp']);
+    const tail = Array.isArray(r['tail']) ? r['tail'].filter((h): h is string => typeof h === 'string') : [];
+    const list = ix.listFor(r);
+    const baseId = str(r['base']);
+    const base = baseId !== null ? ix.byId.get(baseId) : undefined;
+    const baseLength = base ? ix.listFor(base)?.length ?? null : baseId === null ? 0 : null;
+    const keep = num(r['keep']);
+    const removed = baseLength !== null && keep !== null ? Math.max(0, baseLength - keep) : null;
+    const shapeRef = str(r['shapeHash']);
+    const added = tail.map((h, k) => claudePart(ix, h, (list?.length ?? tail.length) - tail.length + k, first.get(h) ?? null, chars));
+
+    let instructions: ContextChange['instructions'] = null;
+    if (shapeRef !== null && shapeRef !== previousShape) {
+      const now = ix.shapeTexts.get(shapeRef);
+      const was = previousShape === null ? undefined : ix.shapeTexts.get(previousShape);
+      // The first shape of a session is not a change; it is the configuration.
+      if (previousShape !== null || i === 0) {
+        const nowTools = (now?.tools ?? []).map((t) => t.name);
+        const wasTools = (was?.tools ?? []).map((t) => t.name);
+        const nowBlocks = (now?.system ?? []).map((t) => sha256(t));
+        const wasBlocks = (was?.system ?? []).map((t) => sha256(t));
+        instructions = {
+          from: previousShape,
+          to: shapeRef,
+          tools_added: nowTools.filter((t) => !wasTools.includes(t)),
+          tools_removed: wasTools.filter((t) => !nowTools.includes(t)),
+          blocks_changed: nowBlocks.filter((h, k) => wasBlocks[k] !== h).length + Math.max(0, wasBlocks.length - nowBlocks.length),
+        };
+      }
+      previousShape = shapeRef;
+    }
+
+    let compaction: ContextChange['compaction'] = null;
+    if (pending.length > 0 && at !== null && (pending[0]!.at === null || pending[0]!.at <= at)) {
+      const c = pending.shift()!;
+      const { text, truncated } = clip(ix.summaryText ?? '', chars);
+      compaction = {
+        ...c,
+        replacement_text: ix.summaryText === null ? null : text,
+        replacement_truncated: ix.summaryText === null ? false : truncated,
+      };
+    }
+
+    const notable: string[] = [];
+    if (compaction !== null) {
+      notable.push(`compaction (${compaction.trigger ?? 'trigger unrecorded'}): ${compaction.pre_tokens ?? '?'} → ${compaction.post_tokens ?? '?'} tokens by the host's own count, ${compaction.preserved_messages ?? '?'} messages carried across${compaction.replacement_text === null ? ', and this record holds no replacement summary' : ''}`);
+    }
+    if ((removed ?? 0) > 0 && compaction === null) {
+      notable.push(`${removed} parts the previous call held were dropped, with no compaction boundary in this record: what replaced them is unknown`);
+    }
+    if (instructions !== null && instructions.from === null) {
+      // The first shape of a session is the configuration, not a change to
+      // one. Called a change, it reads as twelve tools having been ADDED at
+      // call 0, which is the opposite of what the entry says.
+      const shape = ix.shapeTexts.get(instructions.to);
+      notable.push(`initial configuration: ${shape?.system.length ?? 0} instruction block(s), ${shape?.tools.length ?? 0} tools`);
+    } else if (instructions !== null) {
+      if (instructions.tools_added.length > 0 || instructions.tools_removed.length > 0) {
+        notable.push(`tool inventory changed${instructions.tools_added.length > 0 ? `, +${instructions.tools_added.join(', +')}` : ''}${instructions.tools_removed.length > 0 ? `, -${instructions.tools_removed.join(', -')}` : ''}`);
+      }
+      if (instructions.blocks_changed > 0) notable.push(`${instructions.blocks_changed} instruction block(s) changed`);
+    }
+    if (list === null) notable.push('this call names a base this record does not hold, so its own context cannot be listed in full');
+    const previousList = i === 0 ? null : ix.listFor(ix.requests[i - 1]!)?.length ?? null;
+    if (list !== null && previousList !== null && list.length < previousList) {
+      notable.push(`this call's context holds ${list.length} parts where the previous call's held ${previousList}: ${previousList - list.length} left it${(removed ?? 0) === 0 ? ', and the host rebased rather than truncating, so its own keep count reads 0' : ''}`);
+    }
+    changes.push({ ordinal: i, at, added, removed, held: list?.length ?? null, previously: previousList, instructions, compaction, notable });
+  }
+  // A boundary after the last call still happened, and dropping it would lose
+  // the one compaction a session that ended on it ever had.
+  for (const c of pending) {
+    const { text, truncated } = clip(ix.summaryText ?? '', chars);
+    changes.push({
+      ordinal: ix.requests.length,
+      at: c.at,
+      added: [],
+      removed: null,
+      held: null,
+      previously: null,
+      instructions: null,
+      compaction: { ...c, replacement_text: ix.summaryText === null ? null : text, replacement_truncated: ix.summaryText === null ? false : truncated },
+      notable: [`compaction (${c.trigger ?? 'trigger unrecorded'}) after the last model call in this record`],
+    });
+  }
+  return {
+    harness: 'claude',
+    session_id: ix.sessionId,
+    changes,
+    gaps: [...CLAUDE_GAPS, ...UNIVERSAL_GAPS],
+  };
+}
+
+function claudeFind(ix: ClaudeIndex, needle: string, chars: number): ContextFind {
+  const lower = needle.toLowerCase();
+  const held = new Map<string, number[]>();
+  for (const [i, r] of ix.requests.entries()) {
+    for (const h of ix.listFor(r) ?? []) {
+      const seen = held.get(h);
+      if (seen) seen.push(i);
+      else held.set(h, [i]);
+    }
+  }
+  const hits: QueryHit[] = [];
+  const searched = { instructions: 0, tools: 0, parts: 0, unreadable: 0 };
+  const excerpt = (text: string): string => {
+    const at = text.toLowerCase().indexOf(lower);
+    const from = Math.max(0, at - Math.floor(chars / 2));
+    return `${from > 0 ? '…' : ''}${text.slice(from, from + chars)}${from + chars < text.length ? '…' : ''}`;
+  };
+  for (const [ref, texts] of ix.shapeTexts) {
+    const shape = ix.shapes.get(ref);
+    const since = shape && shape.first_invocation !== -1 ? shape.first_invocation : null;
+    for (const [k, text] of texts.system.entries()) {
+      searched.instructions++;
+      if (!text.toLowerCase().includes(lower)) continue;
+      hits.push({ where: 'instructions', ref: `${ref.slice(0, 12)} block ${k}`, origin: 'configured', role: 'system', first_invocation: since, last_invocation: null, invocations: 0, excerpt: excerpt(text) });
+    }
+    for (const t of texts.tools) {
+      searched.tools++;
+      const text = `${t.name} ${t.description ?? ''}`;
+      if (!text.toLowerCase().includes(lower)) continue;
+      hits.push({ where: 'tool', ref: t.name, origin: 'configured', role: 'tool', first_invocation: since, last_invocation: null, invocations: 0, excerpt: excerpt(text) });
+    }
+  }
+  for (const [hash, invocations] of held) {
+    const part = claudePart(ix, hash, -1, invocations[0] ?? null, Infinity);
+    if (part.text === null) { searched.unreadable++; continue; }
+    searched.parts++;
+    if (!part.text.toLowerCase().includes(lower)) continue;
+    hits.push({
+      where: 'message',
+      ref: hash.slice(0, 12),
+      origin: part.origin,
+      role: part.role,
+      first_invocation: invocations[0] ?? null,
+      last_invocation: invocations.at(-1) ?? null,
+      invocations: invocations.length,
+      excerpt: excerpt(part.text),
+    });
+  }
+  hits.sort((a, b) => (a.first_invocation ?? -1) - (b.first_invocation ?? -1));
+  return {
+    harness: 'claude',
+    session_id: ix.sessionId,
+    needle,
+    hits,
+    searched,
+    gaps: [
+      ...(searched.unreadable > 0
+        ? [`${searched.unreadable} referenced parts could not be read at all, so a match inside one of them would not appear here: a nil result is "not found in what is readable", never "was not in the context"`]
+        : []),
+      ...CLAUDE_GAPS,
+      ...UNIVERSAL_GAPS,
+    ],
+  };
+}
+
+// --- codex ------------------------------------------------------------------
+//
+// The rollout holds every item's content inline, so nothing is reconstructed
+// and nothing needs measuring. What it does NOT hold is the message array sent
+// on each API call: it records turns and items. So a turn's context here is
+// every item recorded before it, in order — which is this reader's arithmetic
+// and is labelled as such on every answer, rather than presented as the host's
+// own list.
+
+interface CodexIndex {
+  sessionId: string | null;
+  cwd: string | null;
+  /** Each turn_context, in order. */
+  turns: { at: string | null; model: string | null; turn_id: string | null; before: number }[];
+  /** Each response_item, in order, with the text it carries — or the reason
+   *  this record holds no plaintext for it. */
+  items: { at: string | null; kind: string; role: string | null; text: string; bytes: number; opaque: string | null }[];
+  /** The last `full: true` world_state at or before each item index. */
+  instructions: { at: string | null; index: number; blocks: { bytes: number; sha256: string; text: string }[]; tools: { name: string; bytes: number; description: string | null }[] }[];
+  /** `full: false` entries: a delta, naming only the keys that moved. Read as
+   *  a configuration one reports every absent key as empty — the trap the
+   *  first reading of this record fell into. */
+  deltas: { at: string | null; index: number; keys: string[] }[];
+  compactions: (TraceCompaction & { index: number })[];
+  baseInstructions: { bytes: number; sha256: string; text: string } | null;
+}
+
+function itemText(payload: Record<string, unknown>): string {
+  const kind = str(payload['type']) ?? '(untyped)';
+  const content = payload['content'];
+  if (Array.isArray(content)) {
+    return content.map((c) => (rec(c) ? str(c['text']) ?? str(c['output']) ?? JSON.stringify(c) : String(c))).join('\n');
+  }
+  if (typeof content === 'string') return content;
+  for (const key of ['text', 'output', 'arguments', 'summary', 'message']) {
+    const v = payload[key];
+    if (typeof v === 'string') return v;
+    if (Array.isArray(v)) return v.map((c) => (rec(c) ? str(c['text']) ?? JSON.stringify(c) : String(c))).join('\n');
+  }
+  return `[${kind}] ${JSON.stringify(payload)}`;
+}
+
+function indexCodex(entries: Record<string, unknown>[]): CodexIndex {
+  const ix: CodexIndex = { sessionId: null, cwd: null, turns: [], items: [], instructions: [], deltas: [], compactions: [], baseInstructions: null };
+  for (const e of entries) {
+    const type = str(e['type']);
+    const at = str(e['timestamp']);
+    const payload = rec(e['payload']) ? (e['payload'] as Record<string, unknown>) : null;
+    if (type === 'session_meta' && payload) {
+      ix.sessionId = str(payload['session_id']) ?? str(payload['id']);
+      ix.cwd = str(payload['cwd']);
+      const base = rec(payload['base_instructions']) ? (payload['base_instructions'] as Record<string, unknown>) : null;
+      const text = base ? str(base['text']) : str(payload['base_instructions']);
+      if (text !== null) ix.baseInstructions = { bytes: Buffer.byteLength(text, 'utf8'), sha256: sha256(text), text };
+    } else if (type === 'world_state' && payload) {
+      const state = rec(payload['state']) ? (payload['state'] as Record<string, unknown>) : null;
+      if (!state) continue;
+      if (payload['full'] !== true) {
+        ix.deltas.push({ at, index: ix.items.length, keys: Object.keys(state) });
+        continue;
+      }
+      const blocks: { bytes: number; sha256: string; text: string }[] = [];
+      if (ix.baseInstructions) blocks.push(ix.baseInstructions);
+      for (const key of ['agents_md', 'host_skills']) {
+        const block = rec(state[key]) ? (state[key] as Record<string, unknown>) : null;
+        const text = block ? str(block['text']) ?? str(block['body']) : null;
+        if (text !== null) blocks.push({ bytes: Buffer.byteLength(text, 'utf8'), sha256: sha256(text), text });
+      }
+      const tools: { name: string; bytes: number; description: string | null }[] = [];
+      for (const key of ['tools', 'top_level_tools']) {
+        const map = rec(state[key]) ? (state[key] as Record<string, unknown>) : null;
+        if (!map) continue;
+        for (const [name, value] of Object.entries(map)) {
+          tools.push({
+            name,
+            bytes: Buffer.byteLength(JSON.stringify(value), 'utf8'),
+            description: typeof value === 'string' ? value : rec(value) ? str(value['description']) : null,
+          });
+        }
+      }
+      ix.instructions.push({ at, index: ix.items.length, blocks, tools });
+    } else if (type === 'turn_context' && payload) {
+      ix.turns.push({ at, model: str(payload['model']), turn_id: str(payload['turn_id']), before: ix.items.length });
+    } else if (type === 'response_item' && payload) {
+      const kind = str(payload['type']) ?? '(untyped)';
+      const text = itemText(payload);
+      // An item whose plaintext this record does not hold. The reasoning items
+      // are the standing case and they are not an edge: the host writes
+      // `summary: []` and an `encrypted_content` blob, so the item WAS in the
+      // call's context and what it said is not on this machine. Shown as the
+      // empty string it parses to, it would read as a part that was blank.
+      const encrypted = typeof payload['encrypted_content'] === 'string';
+      const opaque = text.trim() !== ''
+        ? null
+        : encrypted
+          ? `the host records this ${kind} item's content only as provider-encrypted text (encrypted_content), so what it said is not on this machine — it was in the call's context all the same`
+          : `this ${kind} item carries no text in any field this reader knows (keys: ${Object.keys(payload).join(', ')})`;
+      ix.items.push({
+        at,
+        kind,
+        role: str(payload['role']),
+        text,
+        bytes: Buffer.byteLength(JSON.stringify(payload), 'utf8'),
+        opaque,
+      });
+    } else if (type === 'compacted' && payload) {
+      const retained = rec(payload['retained_context']) ? (payload['retained_context'] as Record<string, unknown>) : null;
+      const latest = rec(payload['latest_token_usage_record']) ? (payload['latest_token_usage_record'] as Record<string, unknown>) : null;
+      const turnUsage = latest && rec(latest['turn_token_usage']) ? (latest['turn_token_usage'] as Record<string, unknown>) : null;
+      const callUsage = latest && rec(latest['usage']) ? (latest['usage'] as Record<string, unknown>) : null;
+      const user = retained && Array.isArray(retained['user_messages']) ? retained['user_messages'].length : null;
+      const assistant = retained && Array.isArray(retained['assistant_messages']) ? retained['assistant_messages'].length : null;
+      const incomplete = retained
+        ? retained['incomplete'] === true || retained['user_messages_incomplete'] === true || retained['assistant_messages_incomplete'] === true
+        : false;
+      ix.compactions.push({
+        index: ix.items.length,
+        at,
+        trigger: str(payload['message']) || 'unrecorded',
+        pre_tokens: turnUsage ? num(turnUsage['input_tokens']) : null,
+        post_tokens: callUsage ? num(callUsage['input_tokens']) : null,
+        dropped_tokens: null,
+        preserved_messages: user === null && assistant === null ? null : (user ?? 0) + (assistant ?? 0),
+        replacement: str(payload['compaction_response_id']),
+        basis: `the host's own usage record at the boundary${incomplete ? '; the host marks its retained set INCOMPLETE, so the preserved count is a floor' : ''}`,
+      });
+    }
+  }
+  return ix;
+}
+
+const CODEX_GAPS = [
+  'the message array sent on each API call: the rollout records turns and items, so a turn\'s context here is every item recorded before it in order — this reader\'s arithmetic, not a list the host wrote',
+];
+
+function codexInstructionsAt(ix: CodexIndex, index: number, chars: number): QueryInstructions | null {
+  const applicable = ix.instructions.filter((s) => s.index <= index).at(-1) ?? ix.instructions[0];
+  if (!applicable) return null;
+  return {
+    ref: sha256(JSON.stringify(applicable.blocks.map((b) => b.sha256))).slice(0, 16),
+    since: null,
+    blocks: applicable.blocks.map((b) => {
+      const { text, truncated } = clip(b.text, chars);
+      return { bytes: b.bytes, sha256: b.sha256, text, truncated };
+    }),
+    tools: applicable.tools,
+    bytes: applicable.blocks.reduce((t, b) => t + b.bytes, 0),
+    tools_bytes: applicable.tools.reduce((t, b) => t + b.bytes, 0),
+  };
+}
+
+function codexAt(ix: CodexIndex, ordinal: number, chars: number): ContextAt | { error: string } {
+  const turn = ix.turns[ordinal];
+  if (turn === undefined) {
+    return { error: `this rollout records ${ix.turns.length} turns, numbered 0 to ${Math.max(0, ix.turns.length - 1)}` };
+  }
+  const parts: QueryPart[] = ix.items.slice(0, turn.before).map((item, i) => {
+    const { text, truncated } = clip(item.text, chars);
+    return {
+      slot: i,
+      role: item.role ?? item.kind,
+      origin: item.opaque === null ? 'retained' : 'unreadable',
+      via: [`item ${i}`],
+      types: [item.kind],
+      bytes: item.bytes,
+      entered: ix.turns.filter((t) => t.before <= i).length,
+      text: item.opaque === null ? text : null,
+      truncated: item.opaque === null ? truncated : false,
+      caveat: item.opaque,
+    };
+  });
+  const deltasBefore = ix.deltas.filter((d) => d.index <= turn.before);
+  const readable = parts.filter((p) => p.origin === 'retained');
+  return {
+    harness: 'codex',
+    session_id: ix.sessionId,
+    ordinal,
+    of: ix.turns.length,
+    at: turn.at,
+    model: turn.model,
+    instructions: codexInstructionsAt(ix, turn.before, chars),
+    parts,
+    totals: {
+      parts: parts.length,
+      retained: readable.length,
+      reconstructed: 0,
+      unreadable: parts.length - readable.length,
+      part_bytes: readable.reduce((t, p) => t + (p.bytes ?? 0), 0),
+    },
+    gaps: [
+      ...CODEX_GAPS,
+      ...(deltasBefore.length > 0
+        ? [`${deltasBefore.length} world_state deltas were recorded before this turn (keys: ${[...new Set(deltasBefore.flatMap((d) => d.keys))].join(', ')}); the instructions above are the last FULL state, so a key a delta moved since then is stale here`]
+        : []),
+      ...UNIVERSAL_GAPS,
+    ],
+  };
+}
+
+function codexEvolution(ix: CodexIndex, chars: number): ContextEvolution {
+  const changes: ContextChange[] = [];
+  for (const [i, turn] of ix.turns.entries()) {
+    const from = i === 0 ? 0 : ix.turns[i - 1]!.before;
+    const added: QueryPart[] = ix.items.slice(from, turn.before).map((item, k) => {
+      const { text, truncated } = clip(item.text, chars);
+      return {
+        slot: from + k,
+        role: item.role ?? item.kind,
+        origin: item.opaque === null ? 'retained' : 'unreadable',
+        via: [`item ${from + k}`],
+        types: [item.kind],
+        bytes: item.bytes,
+        entered: i,
+        text: item.opaque === null ? text : null,
+        truncated: item.opaque === null ? truncated : false,
+        caveat: item.opaque,
+      };
+    });
+    const compacted = ix.compactions.find((c) => c.index > from && c.index <= turn.before) ?? null;
+    const state = ix.instructions.find((s) => s.index > from && s.index <= turn.before);
+    const previous = state ? ix.instructions.filter((s) => s.index <= from).at(-1) : undefined;
+    const delta = ix.deltas.filter((d) => d.index > from && d.index <= turn.before);
+    const notable: string[] = [];
+    if (compacted) notable.push(`compaction (${compacted.trigger}): ${compacted.pre_tokens ?? '?'} → ${compacted.post_tokens ?? '?'} input tokens by the host's own usage record, ${compacted.preserved_messages ?? '?'} messages retained (a floor where the host marks its set incomplete)`);
+    let instructions: ContextChange['instructions'] = null;
+    if (state) {
+      const nowTools = state.tools.map((t) => t.name);
+      const wasTools = (previous?.tools ?? []).map((t) => t.name);
+      const initial = previous === undefined;
+      instructions = {
+        from: previous ? sha256(JSON.stringify(previous.blocks.map((b) => b.sha256))).slice(0, 16) : null,
+        to: sha256(JSON.stringify(state.blocks.map((b) => b.sha256))).slice(0, 16),
+        tools_added: nowTools.filter((t) => !wasTools.includes(t)),
+        tools_removed: wasTools.filter((t) => !nowTools.includes(t)),
+        blocks_changed: state.blocks.filter((b, k) => previous?.blocks[k]?.sha256 !== b.sha256).length,
+      };
+      if (initial) notable.push(`initial configuration: ${state.blocks.length} instruction block(s), ${state.tools.length} tools`);
+      else {
+        if (instructions.tools_added.length > 0 || instructions.tools_removed.length > 0) {
+          notable.push(`tool inventory changed${instructions.tools_added.length > 0 ? `, +${instructions.tools_added.join(', +')}` : ''}${instructions.tools_removed.length > 0 ? `, -${instructions.tools_removed.join(', -')}` : ''}`);
+        }
+        if (instructions.blocks_changed > 0) notable.push(`${instructions.blocks_changed} instruction block(s) changed`);
+      }
+    }
+    if (delta.length > 0) notable.push(`${delta.length} world_state delta(s): ${[...new Set(delta.flatMap((d) => d.keys))].join(', ')} moved, and a delta names only what changed`);
+    changes.push({
+      ordinal: i,
+      at: turn.at,
+      added,
+      // The rollout states no per-call list, so it states no removal either.
+      // Nothing is inferred from an item count that only grows.
+      removed: null,
+      held: null,
+      previously: null,
+      instructions,
+      compaction: compacted ? { ...compacted, replacement_text: null, replacement_truncated: false } : null,
+      notable,
+    });
+  }
+  return {
+    harness: 'codex',
+    session_id: ix.sessionId,
+    changes,
+    gaps: [
+      ...CODEX_GAPS,
+      'what a compaction DROPPED: the host names its replacement response and its retained set, never a dropped figure, so no removal count appears above',
+      ...UNIVERSAL_GAPS,
+    ],
+  };
+}
+
+function codexFind(ix: CodexIndex, needle: string, chars: number): ContextFind {
+  const lower = needle.toLowerCase();
+  const hits: QueryHit[] = [];
+  const searched = { instructions: 0, tools: 0, parts: 0, unreadable: 0 };
+  const excerpt = (text: string): string => {
+    const at = text.toLowerCase().indexOf(lower);
+    const from = Math.max(0, at - Math.floor(chars / 2));
+    return `${from > 0 ? '…' : ''}${text.slice(from, from + chars)}${from + chars < text.length ? '…' : ''}`;
+  };
+  const turnOf = (index: number): number | null => {
+    const found = ix.turns.findIndex((t) => t.before > index);
+    return found === -1 ? (ix.turns.length === 0 ? null : ix.turns.length - 1) : found;
+  };
+  for (const state of ix.instructions) {
+    for (const [k, b] of state.blocks.entries()) {
+      searched.instructions++;
+      if (!b.text.toLowerCase().includes(lower)) continue;
+      hits.push({ where: 'instructions', ref: `${b.sha256.slice(0, 12)} block ${k}`, origin: 'configured', role: 'system', first_invocation: turnOf(state.index), last_invocation: null, invocations: 0, excerpt: excerpt(b.text) });
+    }
+    for (const t of state.tools) {
+      searched.tools++;
+      const text = `${t.name} ${t.description ?? ''}`;
+      if (!text.toLowerCase().includes(lower)) continue;
+      hits.push({ where: 'tool', ref: t.name, origin: 'configured', role: 'tool', first_invocation: turnOf(state.index), last_invocation: null, invocations: 0, excerpt: excerpt(text) });
+    }
+  }
+  for (const [i, item] of ix.items.entries()) {
+    if (item.opaque !== null) { searched.unreadable++; continue; }
+    searched.parts++;
+    if (!item.text.toLowerCase().includes(lower)) continue;
+    const entered = turnOf(i);
+    hits.push({
+      where: 'message',
+      ref: `item ${i}`,
+      origin: 'retained',
+      role: item.role ?? item.kind,
+      first_invocation: entered,
+      last_invocation: ix.turns.length === 0 ? null : ix.turns.length - 1,
+      invocations: entered === null ? 0 : ix.turns.length - entered,
+      excerpt: excerpt(item.text),
+    });
+  }
+  return {
+    harness: 'codex',
+    session_id: ix.sessionId,
+    needle,
+    hits,
+    searched,
+    gaps: [
+      ...(searched.unreadable > 0
+        ? [`${searched.unreadable} items hold no plaintext in this record — reasoning items are carried as provider-encrypted text — so a match inside one would not appear here: a nil result is "not found in what is readable", never "was not in the context"`]
+        : []),
+      ...CODEX_GAPS,
+      ...UNIVERSAL_GAPS,
+    ],
+  };
+}
+
+// --- the three questions ----------------------------------------------------
+
+function read(path: string): { entries: Record<string, unknown>[]; source: TraceSource; harness: 'claude' | 'codex' } | { error: string; source: TraceSource } {
+  const parsed = parseTraceRecord(path);
+  if (parsed.error !== undefined) return { error: parsed.error, source: parsed.source };
+  const harness = harnessOf(parsed.entries);
+  if (harness === null) {
+    return {
+      error: `no entry in ${path} identifies the host that wrote it, so there is no reader for it${parsed.source.truncated ? ` (read stopped at the ${TRACE_BYTE_CEILING}-byte ceiling)` : ''}`,
+      source: parsed.source,
+    };
+  }
+  return { entries: parsed.entries, source: parsed.source, harness };
+}
+
+/** What was in the context of one model call, and where each part came from. */
+export function contextAt(path: string, ordinal: number, options: QueryOptions = {}): (ContextAt & { source: TraceSource }) | { error: string; source: TraceSource } {
+  const r = read(path);
+  if ('error' in r) return r;
+  const chars = options.chars ?? PREVIEW_CHARS;
+  const answer = r.harness === 'claude' ? claudeAt(indexClaude(r.entries), ordinal, chars) : codexAt(indexCodex(r.entries), ordinal, chars);
+  return 'error' in answer ? { error: answer.error, source: r.source } : { ...answer, source: r.source };
+}
+
+/** What changed through the run: what each call added, what the host dropped,
+ *  when the instructions or tools moved, and what a compaction replaced. */
+export function contextEvolution(path: string, options: QueryOptions = {}): (ContextEvolution & { source: TraceSource }) | { error: string; source: TraceSource } {
+  const r = read(path);
+  if ('error' in r) return r;
+  const chars = options.chars ?? PREVIEW_CHARS;
+  const answer = r.harness === 'claude' ? claudeEvolution(indexClaude(r.entries), chars) : codexEvolution(indexCodex(r.entries), chars);
+  return { ...answer, source: r.source };
+}
+
+/** Where a string came from: which part of which call's context held it, and
+ *  when it entered. A nil result means "not found in what is readable", which
+ *  is why `searched` and `gaps` are part of the answer. */
+export function contextFind(path: string, needle: string, options: QueryOptions = {}): (ContextFind & { source: TraceSource }) | { error: string; source: TraceSource } {
+  const r = read(path);
+  if ('error' in r) return r;
+  if (needle === '') return { error: 'nothing to look for: pass the text to find', source: r.source };
+  const chars = options.chars ?? PREVIEW_CHARS;
+  const answer = r.harness === 'claude' ? claudeFind(indexClaude(r.entries), needle, chars) : codexFind(indexCodex(r.entries), needle, chars);
+  return { ...answer, source: r.source };
+}
+
+// --- rendering --------------------------------------------------------------
+//
+// The read surface is TEXT, because the operator question behind this work was
+// asked of a JSON dump and could not be answered from one: a 132-call session
+// with 362 parts is a 30MB object, and `--json` stays available for a consumer
+// that wants it. These renderers are pure, so what an operator sees is what a
+// test asserts.
+
+const n = (v: number | null): string => (v === null ? '?' : v.toLocaleString('en-US'));
+const clock = (at: string | null): string => (at === null ? '--:--:--' : (at.split('T')[1] ?? at).replace(/\.\d+Z?$/, '').replace('Z', ''));
+const short = (id: string | null, to = 8): string => (id === null ? '(none)' : id.length <= to ? id : `${id.slice(0, to)}…`);
+/** One line of a part's text, for a timeline. Newlines in a part would break
+ *  the alignment the timeline is read by. */
+const oneLine = (text: string | null, to = 90): string => {
+  if (text === null) return '(unreadable)';
+  const flat = text.replace(/\s+/g, ' ').trim();
+  return flat.length <= to ? flat : `${flat.slice(0, to)}…`;
+};
+const indent = (text: string, by = '      '): string => text.split('\n').map((l) => `${by}${l}`).join('\n');
+
+function renderPart(p: QueryPart, chars: number): string[] {
+  const out: string[] = [];
+  const only = p.via[0] ?? null;
+  // A claude slot is named by a 64-hex hash and a codex one by its item
+  // index; `blob <index>` would read as a store that does not exist.
+  const named = only !== null && /^[0-9a-f]{16,}$/.test(only);
+  const where = p.origin === 'reconstructed'
+    ? `via ${p.via.map((v) => short(v, 8)).join(',')}`
+    : `${named ? (p.origin === 'retained' ? 'blob ' : 'hash ') : ''}${short(only)}`;
+  out.push(`  #${String(p.slot).padEnd(4)} ${p.role.padEnd(10)} ${p.origin.padEnd(14)} ${p.entered === null ? 'entered ?' : `entered call ${p.entered}`.padEnd(16)} ${p.bytes === null ? '-' : `${n(p.bytes)}B`.padStart(10)}  ${where}`);
+  if (chars > 0 && p.text !== null) out.push(indent(p.text + (p.truncated ? ' […]' : '')));
+  if (p.text === null) out.push('      (no content on this machine)');
+  return out;
+}
+
+/** The caveats of a set of parts, each said ONCE with how many parts carry it.
+ *  Every part keeps its own `caveat` in the structure, because a consumer
+ *  reading one part needs it there — but a call with 72 reconstructed parts
+ *  printed the same two sentences 72 times, which is how a real qualification
+ *  comes to be skipped. */
+function renderCaveats(parts: QueryPart[]): string[] {
+  const counts = new Map<string, number>();
+  for (const p of parts) if (p.caveat !== null) counts.set(p.caveat, (counts.get(p.caveat) ?? 0) + 1);
+  if (counts.size === 0) return [];
+  const out = ['', 'discount these parts by:'];
+  for (const [caveat, count] of counts) out.push(`  ! ${count} part${count === 1 ? '' : 's'}: ${caveat}`);
+  return out;
+}
+
+export function renderContextAt(a: ContextAt & { source: TraceSource }, chars = PREVIEW_CHARS): string {
+  const out: string[] = [];
+  out.push(`context of call ${a.ordinal} of ${a.of} — ${a.harness} session ${short(a.session_id, 8)} at ${a.at ?? 'an unrecorded time'}, model ${a.model ?? 'unrecorded'}`);
+  out.push(`record: ${a.source.path} (${n(a.source.read_bytes)}B read of ${n(a.source.bytes)}B, ${n(a.source.lines)} entries${a.source.truncated ? ', TRUNCATED at the read ceiling' : ''}${a.source.unparseable > 0 ? `, ${a.source.unparseable} unparseable` : ''})`);
+  out.push('');
+  if (a.instructions === null) {
+    out.push('instructions: none in this record for this call');
+  } else {
+    const i = a.instructions;
+    out.push(`instructions (${short(i.ref, 12)}${i.since === null ? '' : `, in force since call ${i.since}`}) — ${i.blocks.length} blocks, ${n(i.bytes)}B; ${i.tools.length} tools, ${n(i.tools_bytes)}B`);
+    for (const [k, b] of i.blocks.entries()) {
+      out.push(`  [${k}] ${n(b.bytes)}B sha256 ${short(b.sha256, 12)}`);
+      if (chars > 0 && b.text !== null) out.push(indent(b.text + (b.truncated ? ' […]' : '')));
+    }
+    if (i.tools.length > 0) out.push(`  tools: ${i.tools.map((t) => t.name).join(', ')}`);
+  }
+  out.push('');
+  const t = a.totals;
+  out.push(`parts: ${t.parts} — ${t.retained} retained, ${t.reconstructed} reconstructed, ${t.unreadable} unreadable, ${n(t.part_bytes)}B readable`);
+  for (const p of a.parts) out.push(...renderPart(p, chars));
+  out.push(...renderCaveats(a.parts));
+  out.push('');
+  out.push('this answer cannot say:');
+  for (const g of a.gaps) out.push(`  - ${g}`);
+  return out.join('\n');
+}
+
+export function renderContextEvolution(e: ContextEvolution & { source: TraceSource }, chars = PREVIEW_CHARS, notableOnly = false): string {
+  const out: string[] = [];
+  const shown = notableOnly ? e.changes.filter((c) => c.notable.length > 0) : e.changes;
+  out.push(`context evolution — ${e.harness} session ${short(e.session_id, 8)}, ${e.changes.length} calls${notableOnly ? `, ${shown.length} with something to report` : ''}`);
+  out.push(`record: ${e.source.path} (${n(e.source.read_bytes)}B read of ${n(e.source.bytes)}B${e.source.truncated ? ', TRUNCATED at the read ceiling' : ''})`);
+  out.push('');
+  for (const c of shown) {
+    const moved = `${c.added.length > 0 ? `+${c.added.length}` : '  '}${(c.removed ?? 0) > 0 ? ` -${c.removed}` : ''}`;
+    const held = c.held === null ? '' : c.previously !== null && c.previously !== c.held ? `${c.previously}→${c.held} parts` : `${c.held} parts`;
+    out.push(`call ${String(c.ordinal).padStart(4)}  ${clock(c.at)}  ${moved.padEnd(8)} ${held}`);
+    for (const note of c.notable) out.push(`    ! ${note}`);
+    if (c.compaction?.replacement_text) {
+      out.push(`    replacement summary (${n(c.compaction.replacement_text.length)} chars shown${c.compaction.replacement_truncated ? ', truncated' : ''}):`);
+      out.push(indent(c.compaction.replacement_text, '      '));
+    }
+    if (chars > 0) {
+      for (const p of c.added) out.push(`    ${p.role.padEnd(10)} ${p.origin.padEnd(14)} ${oneLine(p.text)}`);
+    }
+  }
+  out.push(...renderCaveats(shown.flatMap((c) => c.added)));
+  out.push('');
+  out.push('this answer cannot say:');
+  for (const g of e.gaps) out.push(`  - ${g}`);
+  return out.join('\n');
+}
+
+export function renderContextFind(f: ContextFind & { source: TraceSource }): string {
+  const out: string[] = [];
+  const where = (h: QueryHit): string => (h.where === 'message'
+    ? `message ${h.ref}  ${h.role ?? '?'} ${h.origin}  ${h.first_invocation === null ? 'in no call' : h.invocations <= 1 ? `call ${h.first_invocation}` : `calls ${h.first_invocation}–${h.last_invocation} (${h.invocations})`}`
+    : `${h.where} ${h.ref}  ${h.first_invocation === null ? 'call unrecorded' : `from call ${h.first_invocation}`}`);
+  out.push(`"${f.needle}" in ${f.harness} session ${short(f.session_id, 8)} — ${f.hits.length} hit${f.hits.length === 1 ? '' : 's'}`);
+  out.push(`searched ${f.searched.instructions} instruction blocks, ${f.searched.tools} tool schemas, ${f.searched.parts} readable parts${f.searched.unreadable > 0 ? `, and ${f.searched.unreadable} parts that could not be read` : ''}`);
+  out.push('');
+  for (const h of f.hits) {
+    out.push(`  ${where(h)}`);
+    out.push(indent(h.excerpt));
+  }
+  if (f.hits.length === 0) out.push('  no match in what is readable — which is not the same as absent from the context; see below');
+  out.push('');
+  out.push('this answer cannot say:');
+  for (const g of f.gaps) out.push(`  - ${g}`);
+  return out.join('\n');
+}

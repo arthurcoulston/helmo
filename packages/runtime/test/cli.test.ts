@@ -772,4 +772,59 @@ constitution = "${join(dir, 'PROFILE.md')}"
     expect(rev(dir, ['context-trace', 'nobody']).stderr).toContain("Unknown loop 'nobody'");
     expect(rev(dir, ['context-trace']).stderr).toContain('usage: rev context-trace');
   });
+
+  // The three operator questions (requirement 6). Their own acceptance is in
+  // context-query.test.ts; what is only observable here is that each flag
+  // reaches its renderer rather than falling through to the whole-record
+  // reading, which is what a JSON dump of a 30MB record would be.
+  const session = 'aaaaaaaa-1111-2222-3333-444444444444';
+  const queryable = (dir: string): string => record(dir, [
+    {
+      type: 'api-request-shape', sessionId: session, shapeHash: 's0', version: '2.1.300',
+      timestamp: '2026-10-29T08:00:00.000Z',
+      shape: { system: [{ type: 'text', text: 'the host instructions' }], tools: [{ name: 'Bash' }] },
+    },
+    { type: 'api-request-blob', sessionId: session, hash: 'm0', message: { role: 'user', content: [{ type: 'text', text: 'the iteration prompt' }] } },
+    {
+      type: 'api-request', sessionId: session, id: 'r0', shapeHash: 's0', version: '2.1.300',
+      timestamp: '2026-10-29T08:00:01.000Z', keep: 0, tail: ['m0'], params: { model: 'claude-opus-5' },
+    },
+  ]);
+
+  it('reads one call context as a view an operator can read, not as the record', () => {
+    const dir = home();
+    const result = rev(dir, ['context-trace', '--record', queryable(dir), '--at', '0']);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('context of call 0 of 1');
+    expect(result.stdout).toContain('the host instructions');
+    expect(result.stdout).toContain('the iteration prompt');
+    expect(result.stdout).not.toContain('"coverage"');
+  });
+
+  it('renders the timeline and the find, and hands over the structure when asked', () => {
+    const dir = home();
+    const path = queryable(dir);
+
+    expect(rev(dir, ['context-trace', '--record', path, '--changes']).stdout).toContain('context evolution');
+    expect(rev(dir, ['context-trace', '--record', path, '--find', 'iteration']).stdout).toContain('1 hit');
+    const asJson = rev(dir, ['context-trace', '--record', path, '--at', '0', '--json']);
+    expect((JSON.parse(asJson.stdout) as { parts: { origin: string }[] }).parts[0]!.origin).toBe('retained');
+  });
+
+  it('refuses two questions at once rather than answering one of them', () => {
+    const dir = home();
+    const result = rev(dir, ['context-trace', '--record', queryable(dir), '--at', '0', '--changes']);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('one question at a time');
+  });
+
+  it('refuses a call the session never made, and still exits non-zero', () => {
+    const dir = home();
+    const result = rev(dir, ['context-trace', '--record', queryable(dir), '--at', '7']);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('1 model calls, numbered 0 to 0');
+  });
 });

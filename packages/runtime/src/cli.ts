@@ -27,6 +27,7 @@ import { commandName, runCommand } from './command-name.js';
 import { assertTicketIdentity, readTicketLaunches, sessionTrace, type LaunchEvidence } from './session-trace.js';
 import { coverageReading } from './context-coverage.js';
 import { contextTrace, recordForLaunch, sourceRevisionForLaunch } from './context-trace.js';
+import { contextAt, contextEvolution, contextFind, renderContextAt, renderContextEvolution, renderContextFind, PREVIEW_CHARS } from './context-query.js';
 import { readLaunch } from './launch-journal.js';
 import { latestSettledLaunch, pathProviders, pathRuntimes } from './context-coverage.js';
 import { compareReceipts, pruneBlobs, readReceipt, startupReading } from './startup-context.js';
@@ -174,7 +175,13 @@ const COMMAND_HELP: Record<string, string> = {
   tail: `usage: ${commandName} tail <loop>`,
   trace: `usage: ${commandName} trace <installation-qualified ticket>`,
   'context-coverage': `usage: ${commandName} context-coverage [seat] [--no-inventory]`,
-  'context-trace': `usage: ${commandName} context-trace <seat> [--launch <id>]\n   or: ${commandName} context-trace --record <path to a host record>`,
+  'context-trace': `usage: ${commandName} context-trace <seat> [--launch <id>] [--record <path>]\n`
+    + `       the whole record's reading, per required category\n`
+    + `   or: --at <call>      what was in that call's context, and where each part came from\n`
+    + `   or: --changes        what entered, what was dropped, when instructions or tools moved, what a compaction replaced\n`
+    + `                        [--notable] only the calls with something to report\n`
+    + `   or: --find <text>    which part of which call's context held it, and when it entered\n`
+    + `       [--chars <n>|--full|--json]`,
   'startup-context': `usage: ${commandName} startup-context [seat] [--launch <id>] [--ticket <id>] [--limit <n>]\n   or: ${commandName} startup-context --diff <launch> --b <launch> [--a-seat <seat>] [--b-seat <seat>]\n   or: ${commandName} startup-context --prune [--apply]`,
   'session-spec': `usage: ${commandName} session-spec <seat> --session <actor stamp> [--provider claude] [--tier high] [--model M] [--cwd P] [--constitution P] [--version V]`,
   team: `usage: ${commandName} team <stop|resume> <loop|role|all> [--worker]`,
@@ -438,6 +445,39 @@ switch (cmd) {
         process.exit(1);
       }
       path = found.path;
+    }
+    // The three operator questions, over the same record and the same join the
+    // reading above measures (H-3724 requirement 6). Without one of these
+    // flags this stays the whole-record reading it has always been: that is
+    // the inventory question, and it is not the one an operator asks.
+    const at = flag('at');
+    const find = flag('find');
+    const changes = rest.includes('--changes');
+    const asJson = rest.includes('--json');
+    if (at !== undefined || find !== undefined || changes) {
+      const chars = rest.includes('--full') ? Infinity : Number(flag('chars') ?? PREVIEW_CHARS);
+      if (!Number.isFinite(chars) && chars !== Infinity) {
+        console.error('--chars takes a number of characters per part; --full takes none and carries all of it');
+        process.exit(1);
+      }
+      if ([at !== undefined, find !== undefined, changes].filter(Boolean).length > 1) {
+        console.error('one question at a time: --at, --changes or --find');
+        process.exit(1);
+      }
+      const answer = at !== undefined
+        ? contextAt(path, Number(at), { chars })
+        : changes
+          ? contextEvolution(path, { chars })
+          : contextFind(path, find!, { chars });
+      if ('error' in answer) {
+        console.error(answer.error);
+        process.exit(1);
+      }
+      if (asJson) console.log(JSON.stringify(answer, null, 2));
+      else if (at !== undefined) console.log(renderContextAt(answer as Parameters<typeof renderContextAt>[0], chars));
+      else if (changes) console.log(renderContextEvolution(answer as Parameters<typeof renderContextEvolution>[0], chars, rest.includes('--notable')));
+      else console.log(renderContextFind(answer as Parameters<typeof renderContextFind>[0]));
+      break;
     }
     const t = contextTrace(path);
     console.log(JSON.stringify(t, null, 2));
@@ -1158,6 +1198,7 @@ switch (cmd) {
   trace <ticket@install>   join one ticket to content-off launch/session metadata and Work events
   context-coverage [seat]  is the account of what each seat loads still true? per path, with repairs
   context-trace <seat>     what one session's context was, per model invocation, from the host's own ledger
+                           --at <call> | --changes | --find <text> read it as an operator: parts and their origins
 Any command also takes --installation <name|home> (or --installation=<name|home>): it asserts which
 installation the command is about, and ANY command — reads included — refuses rather than redirects
 if that disagrees with the environment.

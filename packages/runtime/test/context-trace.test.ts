@@ -16,7 +16,7 @@ import { mkdtempSync, writeFileSync, rmSync, mkdirSync, symlinkSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { contextTrace, findCodexRecord, harnessOf, TRACE_CATEGORIES, type ContextTrace } from '../src/context-trace.js';
-import { claudeRecord, claudeTranscriptRecord, codexRecord } from './fixtures/host-records.js';
+import { claudeRecord, claudeTranscriptRecord, codexCompactionsRecord, codexRecord } from './fixtures/host-records.js';
 
 let dir: string;
 const saved: Record<string, string | undefined> = {};
@@ -227,6 +227,54 @@ describe('a codex rollout, per turn', () => {
     });
     expect(t.compactions[0]!.basis).toMatch(/INCOMPLETE/);
     expect(stateOf(t, 'evolution')).toBe('partial');
+  });
+
+  // Mutation: name what each figure is and stop. `pre → post` invites exactly
+  // one reading — the shrink — and both figures are pre-compaction, so the
+  // reading is wrong by the whole of the drop. The timeline says so in prose;
+  // a --json consumer has this string and nothing else (ward on H-3763).
+  it('says on the compaction itself that both host figures are pre-compaction', () => {
+    const t = trace(write('codex.jsonl', codexRecord()));
+    const basis = t.compactions[0]!.basis;
+
+    expect(basis).toContain('BOTH figures are pre-compaction');
+    expect(basis).toContain("pre is the TURN's cumulative input tokens and post is the last call before the boundary");
+    expect(basis).toContain('their difference is not a drop and neither is the size of the new context');
+    expect(basis).toContain('read from its per-call input figures either side of the boundary');
+  });
+
+  // A rollout the host wrote as a CONTINUATION of a thread holds only its
+  // tail. Three of the 867 codex records on this machine are one, and this
+  // trace called their additions `observed` and, where no compaction was
+  // recorded, their evolution `observed` too — over a record whose context
+  // began in a different file (ward on H-3763).
+  it('carries the history base, and stops calling a tail of a thread observed', () => {
+    const own = trace(write('own-thread.jsonl', codexCompactionsRecord()));
+    const tail = trace(write('continues.jsonl', codexCompactionsRecord({ continuesThread: true })));
+
+    expect(own.identity.history_base).toBeNull();
+    expect(stateOf(own, 'additions')).toBe('observed');
+    expect(tail.identity.history_base).toEqual({
+      thread_id: '01a18468-eb66-7892-841e-3bc876b47680', entries_before: 1_065, byte_offset: 4_150_695,
+    });
+    expect(stateOf(tail, 'additions')).toBe('partial');
+    expect(reasonOf(tail, 'additions')).toContain('CONTINUES thread 01a18468-eb66-7892-841e-3bc876b47680 from ordinal 1065');
+    expect(reasonOf(tail, 'additions')).toContain('in a different record of the same thread');
+  });
+
+  // The starkest reading: an evolution stated whole for a session whose
+  // context began elsewhere, with no boundary anywhere in this file to rebase
+  // it (2026-10-25T15-37-49 here, 14 calls, no compaction).
+  it('refuses to call an evolution complete on a continuation segment with no boundary', () => {
+    const own = trace(write('own-no-comp.jsonl', codexCompactionsRecord({ withoutBoundary: true })));
+    const tail = trace(write('tail-no-comp.jsonl', codexCompactionsRecord({ continuesThread: true, withoutBoundary: true })));
+
+    expect(own.compactions).toHaveLength(0);
+    expect(stateOf(own, 'evolution')).toBe('observed');
+    expect(tail.compactions).toHaveLength(0);
+    expect(stateOf(tail, 'evolution')).toBe('partial');
+    expect(reasonOf(tail, 'evolution')).toContain('with no boundary to replace the context, EVERY call here was given the thread\'s earlier entries');
+    expect(reasonOf(tail, 'evolution')).toContain("not the session's");
   });
 
   it('counts items by the kind the rollout distinguishes', () => {

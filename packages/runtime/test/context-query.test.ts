@@ -829,3 +829,119 @@ describe('what the timeline says about a codex compaction', () => {
     expect(e.changes.at(-1)!.notable.join(' ')).toContain('were never given to a call this rollout records');
   });
 });
+
+// A rollout the host wrote as a CONTINUATION of a thread holds only its tail:
+// `session_meta.history_base` names the thread and the ordinal this file picks
+// up at, and the entries before it are in a different record. Three of the 867
+// codex records on this machine are such a tail, and every reading of them
+// showed what the file holds as if it were the whole context: `--at 0` listed
+// 5 parts for a call the host's own usage record puts at 91,273 input tokens
+// (88,192 cached), 2 against 77,407, and 0 against 243,044 — and the boundary
+// row said "the 0 parts the call before it held left the context" on a row
+// whose own token pair reads 243,044 → 24,819 (ward on H-3763).
+describe('what a rollout that continues a thread does not hold', () => {
+  const tail = (name = 'continues.jsonl'): string => write(name, codexCompactionsRecord({ continuesThread: true }));
+
+  // Mutation: read `history_base` without requiring a positive ordinal. Every
+  // rollout carries `history_mode: paginated`, so a base of zero or an absent
+  // one is the ordinary case and claiming a shortfall there would put the
+  // caveat on all 867 records instead of 3.
+  it('says nothing about a base on a rollout that opened its own thread', () => {
+    for (const path of [
+      write('own-thread.jsonl', codexCompactionsRecord()),
+      // The same, with the field present and its ordinal 0: a base naming no
+      // entries before this file is not a shortfall.
+      write('empty-base.jsonl', codexCompactionsRecord({ emptyBase: true })),
+    ]) {
+      expect(at(path, 1).gaps.join(' ')).not.toContain('CONTINUES thread');
+      expect(evolution(path).gaps.join(' ')).not.toContain('CONTINUES thread');
+      expect(find(path, 'ask 1').gaps.join(' ')).not.toContain('CONTINUES thread');
+    }
+  });
+
+  // Mutation: list the parts and say nothing. The parts are each real; the
+  // context they are presented as is not, and the host's own input figure for
+  // the call is the measure of how much of a tail they are.
+  it('names the base and the host own figure on a call before the first boundary', () => {
+    const gaps = at(tail(), 1).gaps.join(' ');
+
+    expect(gaps).toContain('CONTINUES thread 01a18468-eb66-7892-841e-3bc876b47680');
+    expect(gaps).toContain('history_base at ordinal 1065, byte 4150695');
+    expect(gaps).toContain('the 1065 entries the thread recorded before it are in a different rollout');
+    expect(gaps).toContain('Every call before the compaction on call 2 was given context this record cannot list');
+    expect(gaps).toContain('are only what this file records before this call, against the host\'s own 200 input tokens for it');
+  });
+
+  // Mutation: carry the shortfall to the end of the record. A compaction ENDS
+  // it: the host writes its replacement list into THIS file, so from the first
+  // boundary on the context is wholly here, and saying otherwise would report
+  // a gap that is not there on 2 of this machine's 3 such records.
+  it('stops claiming the shortfall at the first boundary', () => {
+    const path = tail();
+
+    expect(at(path, 1).gaps.join(' ')).toContain('CONTINUES thread');
+    expect(at(path, 2).gaps.join(' ')).not.toContain('CONTINUES thread');
+    expect(at(path, 5).gaps.join(' ')).not.toContain('CONTINUES thread');
+  });
+
+  // Mutation: count the parts this file holds as what the boundary dropped.
+  // That is not a floor, it is a wrong figure: 0 parts on a boundary whose own
+  // row says 243,044 → 24,819, and 262 on one that says 244,416 → 29,097.
+  it('refuses to count a drop against a call whose own context is elsewhere', () => {
+    const path = tail();
+    const e = evolution(path);
+
+    const row = e.changes[2]!;
+    expect(row.compaction).not.toBeNull();
+    expect(row.notable.join(' ')).toContain('what left cannot be counted here: this rollout continues thread 01a18468-eb66-7892-841e-3bc876b47680 from ordinal 1065');
+    expect(row.notable.join(' ')).not.toMatch(/\d+ parts? the call before it held left the context/);
+    // The host's own per-call pair is still the measure, and still on the row.
+    expect(row.notable.join(' ')).toContain('200 → 20 input tokens');
+    // The second boundary has a readable call before it, and still counts.
+    expect(e.changes[5]!.notable.join(' ')).toContain('the 3 parts the call before it held left the context');
+  });
+
+  // Mutation: keep the cross-reference. "Ask --at 1 for that call, which is
+  // the last one that held them" sends the operator to a call that lists none
+  // of them, which is the same wrong reading one step further away.
+  it('does not send the operator to a call that lists none of the dropped items', () => {
+    const gaps = at(tail(), 2).gaps.join(' ');
+
+    expect(gaps).toContain('which this record cannot count, because it continues thread');
+    expect(gaps).toContain('--at 1 is that call, and it lists none of them');
+    expect(gaps).not.toContain('Ask --at 1 for that call');
+  });
+
+  // Mutation: put the note on every short row. A reader scrolling 189 rows of
+  // a continuation segment lands in the middle of one, so it goes on the row
+  // the shortfall begins at and names where it ends — once, not 77 times.
+  it('carries the statement on the timeline and on the row it begins at', () => {
+    const e = evolution(tail());
+
+    expect(e.gaps.join(' ')).toContain('CONTINUES thread 01a18468-eb66-7892-841e-3bc876b47680');
+    expect(e.changes.filter((c) => c.notable.join(' ').includes('CONTINUES thread')).map((c) => c.ordinal)).toEqual([0]);
+    expect(e.changes[0]!.notable[0]).toContain('not the whole of what those calls were given');
+  });
+
+  // Mutation: require a compaction before saying anything. The starkest case
+  // has none: 14 calls, every one of them given the thread's earlier entries,
+  // and no boundary anywhere in the file to rebase them.
+  it('says every call is short where the record holds no boundary at all', () => {
+    const path = write('no-boundary.jsonl', codexCompactionsRecord({ continuesThread: true, withoutBoundary: true }));
+
+    expect(at(path, 0).gaps.join(' ')).toContain('No compaction replaced the context at a call this record holds, so EVERY one of its 2 calls was given context this record cannot list');
+    expect(at(path, 1).gaps.join(' ')).toContain('EVERY one of its 2 calls');
+    expect(evolution(path).changes[1]!.compaction).toBeNull();
+  });
+
+  // Mutation: let a nil search result stand as "not in the context". On a
+  // continuation segment the needle may be in the thread's earlier entries,
+  // which is a different answer from absence.
+  it('says a search miss is only a miss in this segment', () => {
+    const f = find(tail(), 'a string in the earlier segment');
+
+    expect(f.hits).toHaveLength(0);
+    expect(f.gaps.join(' ')).toContain('CONTINUES thread 01a18468-eb66-7892-841e-3bc876b47680');
+    expect(f.gaps.join(' ')).toContain('a nil result here is "not in this segment", never "not in the context"');
+  });
+});

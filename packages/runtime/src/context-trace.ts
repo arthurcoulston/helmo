@@ -201,6 +201,14 @@ export interface ContextTrace {
      *  records it. context-coverage reports this `unsupported` from the launch
      *  journal alone; the codex rollout has it for free. */
     source_revision: string | null;
+    /** Where this file picks up in its thread, when the host wrote it as a
+     *  CONTINUATION of one: the codex `session_meta.history_base`, whose
+     *  ordinal the file's own first entry carries. The entries before it are
+     *  in a different record of the same thread, so the categories below are
+     *  about a TAIL of the thread and not about all of it. `null` where the
+     *  host writes no such field, which is every claude transcript and every
+     *  codex rollout that opened its own thread. */
+    history_base: { thread_id: string | null; entries_before: number; byte_offset: number | null } | null;
   };
   shapes: TraceShape[];
   invocations: TraceInvocation[];
@@ -716,7 +724,7 @@ function claudeTrace(entries: Record<string, unknown>[], source: TraceSource): C
   return {
     harness: 'claude',
     source,
-    identity: { session_id: sessionId, cli_version: cliVersion, cwd, models: [...models], provider: null, source_revision: null },
+    identity: { session_id: sessionId, cli_version: cliVersion, cwd, models: [...models], provider: null, source_revision: null, history_base: null },
     shapes: [...shapes.values()],
     invocations,
     retained: { referenced: referenced.size, recoverable: recoverableTotal, by_role: byRole },
@@ -742,6 +750,7 @@ function codexTrace(entries: Record<string, unknown>[], source: TraceSource): Co
   let provider: string | null = null;
   let revision: string | null = null;
   let baseInstructions: TraceBlock | null = null;
+  let historyBase: { thread_id: string | null; entries_before: number; byte_offset: number | null } | null = null;
   let items = 0;
   let additionalTools = false;
   const usage = new Map<string, number>();
@@ -758,8 +767,16 @@ function codexTrace(entries: Record<string, unknown>[], source: TraceSource): Co
       provider = str(payload['model_provider']);
       const git = record(payload['git']) ? (payload['git'] as Record<string, unknown>) : null;
       revision = git ? str(git['commit_hash']) : null;
-      const base = record(payload['base_instructions']) ? (payload['base_instructions'] as Record<string, unknown>) : null;
-      const text = base ? str(base['text']) : str(payload['base_instructions']);
+      const base = record(payload['history_base']) ? (payload['history_base'] as Record<string, unknown>) : null;
+      const before = base ? num(base['end_ordinal_exclusive']) : null;
+      // Zero is not a base: every rollout is written in `paginated` history
+      // mode, and only a positive ordinal means entries exist that this file
+      // does not have.
+      if (base !== null && before !== null && before > 0) {
+        historyBase = { thread_id: str(base['thread_id']), entries_before: before, byte_offset: num(base['end_byte_offset']) };
+      }
+      const instructions = record(payload['base_instructions']) ? (payload['base_instructions'] as Record<string, unknown>) : null;
+      const text = instructions ? str(instructions['text']) : str(payload['base_instructions']);
       if (text !== null) baseInstructions = { bytes: bytes(text), sha256: sha256(text) };
     } else if (type === 'world_state' && payload) {
       // The origins record: the host writes each source either as its text or
@@ -837,7 +854,14 @@ function codexTrace(entries: Record<string, unknown>[], source: TraceSource): Co
         dropped_tokens: null,
         preserved_messages: userMessages === null && assistantMessages === null ? null : (userMessages ?? 0) + (assistantMessages ?? 0),
         replacement: str(payload['compaction_response_id']),
-        basis: `the host's own usage record at the boundary: pre is the turn's input tokens, post is the compacting call's own, and the difference is not a drop figure the host states${incomplete ? '. The host marks its retained set INCOMPLETE, so the preserved count is a floor' : ''}`,
+        // BOTH figures are pre-compaction, which is the reading `pre → post`
+        // invites and gets wrong: `pre_tokens` is the TURN's cumulative input
+        // and `post_tokens` the call its usage record was written after, so
+        // `404925 → 204655` read as the shrink while 24,837 — the host's figure
+        // for the compacting call itself — sat on the next row of the timeline.
+        // Said here because a --json reader has this string and not the row
+        // (ward on H-3763).
+        basis: `the host's own usage record at the boundary, and BOTH figures are pre-compaction: pre is the TURN's cumulative input tokens and post is the last call before the boundary, so their difference is not a drop and neither is the size of the new context. The host states no dropped figure, and the shrink is read from its per-call input figures either side of the boundary, which the timeline quotes${incomplete ? '. The host marks its retained set INCOMPLETE, so the preserved count is a floor' : ''}`,
       });
     } else if (type === 'response_item' && payload) {
       items++;
@@ -868,9 +892,19 @@ function codexTrace(entries: Record<string, unknown>[], source: TraceSource): Co
       : state('tools', 'partial', `${[...shapes.values()][0]?.tools.length ?? 0} tools named. Server descriptions are present as text; top-level tool schemas are present as the host's own hashes, so their sizes are not measurable from this record${additionalTools ? ', and an additional_tools item means the inventory changed mid-session' : ''}`),
     items === 0
       ? state('additions', 'unavailable', 'no response_item entries, so nothing says what was added during the session')
-      : state('additions', 'observed', `${items} items in recorded order: messages, reasoning, tool calls and tool outputs, each with its content`),
+      : historyBase === null
+        ? state('additions', 'observed', `${items} items in recorded order: messages, reasoning, tool calls and tool outputs, each with its content`)
+        // `observed` over a TAIL. The items are each whole, and the sequence is
+        // not: the thread's earlier entries are in another record (ward on
+        // H-3763).
+        : state('additions', 'partial', `${items} items in recorded order, each with its content — but this record CONTINUES thread ${historyBase.thread_id ?? '(unnamed)'} from ordinal ${historyBase.entries_before}, so it holds the thread's additions only from there, and the ${historyBase.entries_before} entries before it are in a different record of the same thread`),
     compactions.length === 0
-      ? state('evolution', 'observed', 'no compaction in this session: the evolution is additions only, and that is a reading, not an absence of coverage')
+      ? historyBase === null
+        ? state('evolution', 'observed', 'no compaction in this session: the evolution is additions only, and that is a reading, not an absence of coverage')
+        // The starkest reading of a continuation segment: an evolution stated
+        // whole for a session whose context began in another file, with no
+        // boundary anywhere in this one to rebase it.
+        : state('evolution', 'partial', `no compaction in this record, and it continues thread ${historyBase.thread_id ?? '(unnamed)'} from ordinal ${historyBase.entries_before}: with no boundary to replace the context, EVERY call here was given the thread's earlier entries, which are in a different record. The evolution readable here is this segment's additions, not the session's`)
       : state('evolution', 'partial', `${compactions.length} compaction(s) with the window chain, the replacement response id and the retained user and assistant messages. The host states no dropped-token figure, and marks its retained set's completeness itself, so a count here is a floor`),
     usage.size === 0
       ? state('sizes', 'partial', 'no token_usage_record entries; byte sizes here are of the retained JSON, measured with Buffer.byteLength')
@@ -880,7 +914,7 @@ function codexTrace(entries: Record<string, unknown>[], source: TraceSource): Co
   return {
     harness: 'codex',
     source,
-    identity: { session_id: sessionId, cli_version: cliVersion, cwd, models: [...models], provider, source_revision: revision },
+    identity: { session_id: sessionId, cli_version: cliVersion, cwd, models: [...models], provider, source_revision: revision, history_base: historyBase },
     shapes: [...shapes.values()],
     invocations,
     // Every response item carries its own content inline, so an item counted

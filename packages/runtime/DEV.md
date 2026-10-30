@@ -742,10 +742,35 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   a boundary are pre-compaction — `pre_tokens` is the turn's cumulative input
   and `post_tokens` the call its usage record was written after — so quoting
   them read as the shrink while the host's figure for that very call sat on
-  the next row down. What a boundary dropped is counted as the parts the call
+  the next row down. The compaction's own `basis` says BOTH are pre-compaction
+  and where the real pair is, because a `--json` consumer has that string and
+  not the row. What a boundary dropped is counted as the parts the call
   before it HELD, never the file's item count: at a second boundary that count
   includes everything an earlier boundary already took out, and 8 of the 20
   compacted rollouts on this machine have two or more.
+  A rollout can be a TAIL of its thread rather than the whole of it. The host
+  writes every record in `paginated` history mode, and three of the 867 codex
+  records on this machine carry a `session_meta.history_base`: it names the
+  thread and the ordinal this file picks up at — the file's own first entry
+  carries that same ordinal — so the entries before it are in a different
+  rollout of the same thread id and no part of this one holds them. Every
+  reading showed what the file has as if it were the whole context: `--at 0`
+  listed 5 parts for a call the host's own usage record puts at 91,273 input
+  tokens (88,192 of them cached), 2 parts against 77,407, and 0 parts against
+  243,044, and the boundary row said `the 0 parts the call before it held left
+  the context` on a row whose own token pair reads 243,044 -> 24,819. A
+  compaction ENDS the shortfall rather than deepening it — the host writes its
+  replacement list into THIS file, so from the first boundary on the context is
+  wholly here — which is why one rule, `codexBaseInForce`, both states the gap
+  and makes `codexPartsAt` refuse to count a drop against a call whose own
+  context is elsewhere: counting the parts the file holds is not a floor there,
+  it is a wrong figure. The statement is on all three readings (the call, the
+  row it begins at plus the timeline's gaps, and a search, where a miss is "not
+  in this segment" and not an absence), and the trace reports `additions` and —
+  where the record holds no boundary at all — `evolution` as `partial` on such
+  a record instead of `observed`. `end_ordinal_exclusive` is read with its
+  sign: a base of zero names no entries before this file, and reading it
+  without the sign would put the caveat on all 867 records instead of 3.
   `preserved_messages` is what the HOST lists as preserved at a boundary, by
   its own count, and is never called what the next call carried: on claude it
   is a transcript-level list of entries, and against the one compacted record

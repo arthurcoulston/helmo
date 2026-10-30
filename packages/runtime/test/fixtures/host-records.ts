@@ -279,8 +279,12 @@ export function claudeTranscriptRecord(over: { retained?: unknown[]; sidechain?:
  *  `opensCompacted: true` puts a single boundary at item 0 and call 0 — a
  *  resumed session, 2 of the 20 compacted rollouts on this machine — where
  *  there is no call before the boundary to measure the drop against. */
-export function codexCompactionsRecord(over: { opensCompacted?: boolean } = {}): unknown[] {
-  let ordinal = 0;
+export function codexCompactionsRecord(over: { opensCompacted?: boolean; continuesThread?: boolean; emptyBase?: boolean; withoutBoundary?: boolean } = {}): unknown[] {
+  // A rollout the host wrote as a CONTINUATION of a thread opens at the
+  // history base's own ordinal rather than at 0, which is how the three such
+  // records on this machine are shaped.
+  const base = 1_065;
+  let ordinal = over.continuesThread === true ? base : 0;
   const next = (): number => ordinal++;
   const ask = (n: number, at: string) => ({
     type: 'response_item', timestamp: at, ordinal: next(),
@@ -308,7 +312,24 @@ export function codexCompactionsRecord(over: { opensCompacted?: boolean } = {}):
   const head: unknown[] = [
     {
       type: 'session_meta', timestamp: '2026-10-22T12:00:00.000Z', ordinal: next(),
-      payload: { session_id: '01a1651a-98d5-7873-9600-1e5d6f5fa28d', cwd: '/tmp/seat', base_instructions: { text: 'You are Codex.' } },
+      payload: {
+        session_id: '01a1651a-98d5-7873-9600-1e5d6f5fa28d', cwd: '/tmp/seat', base_instructions: { text: 'You are Codex.' },
+        // Every rollout is written in `paginated` history mode; only a
+        // positive `end_ordinal_exclusive` means entries exist that this file
+        // does not hold. The ordinary case carries the mode and no base.
+        history_mode: 'paginated',
+        ...(over.continuesThread === true
+          ? { history_base: { thread_id: '01a18468-eb66-7892-841e-3bc876b47680', end_ordinal_exclusive: base, end_byte_offset: 4_150_695 } }
+          // A base the host wrote for a thread this file DID open: no entries
+          // precede it, so there is nothing to say. No record on this machine
+          // carries this shape — every one of the 867 either omits the field
+          // or names a positive ordinal — so the fixture is its only evidence,
+          // and it is here because `end_ordinal_exclusive` read without its
+          // sign would put the caveat on all 867.
+          : over.emptyBase === true
+            ? { history_base: { thread_id: '01a1651a-98d5-7873-9600-1e5d6f5fa28d', end_ordinal_exclusive: 0, end_byte_offset: 0 } }
+            : {}),
+      },
     },
     {
       type: 'world_state', timestamp: '2026-10-22T12:00:01.000Z', ordinal: next(),
@@ -316,6 +337,18 @@ export function codexCompactionsRecord(over: { opensCompacted?: boolean } = {}):
     },
     { type: 'turn_context', timestamp: '2026-10-22T12:00:02.000Z', ordinal: next(), payload: { turn_id: 'turn-1', model: 'gpt-6-astra' } },
   ];
+  // Calls and additions, and no boundary anywhere: on a continuation segment
+  // this is the record whose EVERY call was given context it does not hold,
+  // with nothing in it to rebase them (2026-10-25T15-37-49 here, 14 calls).
+  if (over.withoutBoundary === true) {
+    return [
+      ...head,
+      ask(1, '2026-10-22T12:00:03.000Z'),
+      call('resp_0', 'turn-1', 77_407, '2026-10-22T12:00:04.000Z'),
+      ask(2, '2026-10-22T12:00:05.000Z'),
+      call('resp_1', 'turn-1', 84_839, '2026-10-22T12:00:06.000Z'),
+    ];
+  }
   if (over.opensCompacted === true) {
     return [
       ...head,

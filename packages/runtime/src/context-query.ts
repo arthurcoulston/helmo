@@ -627,6 +627,15 @@ interface CodexIndex {
    *  context, and the items it dropped can be named as dropped instead of
    *  listed as still present. */
   compactions: (TraceCompaction & { index: number; calls_before: number; turns_before: number; replacement_items: CodexItem[] })[];
+  /** Where this file picks up in its thread, when the host wrote it as a
+   *  CONTINUATION of one. `session_meta.history_base` names the thread and the
+   *  ordinal this rollout begins at — the file's own first entry carries that
+   *  same ordinal — so the entries before it are in a different rollout of the
+   *  same thread id and no part of this one holds them. `null` is the ordinary
+   *  case: every codex record carries `history_mode: paginated`, and 864 of
+   *  the 867 on the machine this was built against open their own thread at
+   *  ordinal 0. */
+  historyBase: { thread_id: string | null; entries_before: number; byte_offset: number | null } | null;
   baseInstructions: { bytes: number; sha256: string; text: string } | null;
 }
 
@@ -679,7 +688,7 @@ function codexItem(at: string | null, payload: Record<string, unknown>): CodexIt
 }
 
 function indexCodex(entries: Record<string, unknown>[]): CodexIndex {
-  const ix: CodexIndex = { sessionId: null, cwd: null, turns: [], calls: [], items: [], instructions: [], deltas: [], compactions: [], baseInstructions: null };
+  const ix: CodexIndex = { sessionId: null, cwd: null, turns: [], calls: [], items: [], instructions: [], deltas: [], compactions: [], historyBase: null, baseInstructions: null };
   for (const e of entries) {
     const type = str(e['type']);
     const at = str(e['timestamp']);
@@ -687,6 +696,15 @@ function indexCodex(entries: Record<string, unknown>[]): CodexIndex {
     if (type === 'session_meta' && payload) {
       ix.sessionId = str(payload['session_id']) ?? str(payload['id']);
       ix.cwd = str(payload['cwd']);
+      const history = rec(payload['history_base']) ? (payload['history_base'] as Record<string, unknown>) : null;
+      const before = history ? num(history['end_ordinal_exclusive']) : null;
+      // Zero is not a base. Every rollout is written in `paginated` history
+      // mode, and a session that opened its own thread names no ordinal to
+      // pick up from; only a positive one means entries exist that this file
+      // does not have.
+      if (history !== null && before !== null && before > 0) {
+        ix.historyBase = { thread_id: str(history['thread_id']), entries_before: before, byte_offset: num(history['end_byte_offset']) };
+      }
       const base = rec(payload['base_instructions']) ? (payload['base_instructions'] as Record<string, unknown>) : null;
       const text = base ? str(base['text']) : str(payload['base_instructions']);
       if (text !== null) ix.baseInstructions = { bytes: Buffer.byteLength(text, 'utf8'), sha256: sha256(text), text };
@@ -778,6 +796,33 @@ const CODEX_GAPS = [
 const afterCompaction = (c: CodexIndex['compactions'][number], byUsage: boolean): number =>
   (byUsage ? c.calls_before : c.turns_before);
 
+/** Whether a call was given context this record does not hold: the rollout
+ *  continues a thread from a history base, and no compaction has replaced the
+ *  context since. A compaction ENDS the shortfall rather than deepening it —
+ *  the host writes its replacement list into THIS file, so from the first
+ *  boundary on the context is wholly here. */
+const codexBaseInForce = (ix: CodexIndex, ordinal: number, byUsage: boolean): boolean =>
+  ix.historyBase !== null && ordinal >= 0 && !ix.compactions.some((c) => afterCompaction(c, byUsage) <= ordinal);
+
+/** What a rollout that CONTINUES a thread does not hold, and until when.
+ *  Every reading here listed what the file has as if it were the whole
+ *  context. On the three such records on this machine that was `--at 0`
+ *  showing 5 parts for a call the host's own usage record puts at 91,273 input
+ *  tokens (88,192 of them cached), 2 parts against 77,407, and 0 parts against
+ *  243,044 — the last of which ward found, with nothing on the answer or the
+ *  boundary row reconciling the two (H-3763). */
+const codexHistoryBaseSays = (ix: CodexIndex): string | null => {
+  const base = ix.historyBase;
+  if (base === null) return null;
+  const byUsage = ix.calls.length > 0;
+  const of = byUsage ? ix.calls.length : ix.turns.length;
+  const first = ix.compactions[0];
+  const until = first === undefined ? null : afterCompaction(first, byUsage);
+  return `this rollout CONTINUES thread ${base.thread_id ?? '(unnamed)'} rather than opening it: its session_meta carries a history_base at ordinal ${base.entries_before}${base.byte_offset === null ? '' : `, byte ${base.byte_offset}`}, and this file's own entries begin there, so the ${base.entries_before} entries the thread recorded before it are in a different rollout of the same thread id and in no part of this one. ${until === null || until >= of
+    ? `No compaction replaced the context at a call this record holds, so EVERY one of its ${of} calls was given context this record cannot list`
+    : `Every call before the compaction on call ${until} was given context this record cannot list; from that boundary on the host wrote its replacement list into this file, so the context there is whole`}`;
+};
+
 /** How many parts one call's context actually held: the replacement list in
  *  force plus the items recorded since that boundary. This is the figure for
  *  what a LATER boundary dropped — never the file's item count, which counts
@@ -790,6 +835,12 @@ const codexPartsAt = (ix: CodexIndex, ordinal: number, byUsage: boolean): number
   if (ordinal < 0) return null;
   const window = byUsage ? ix.calls[ordinal] : ix.turns[ordinal];
   if (window === undefined) return null;
+  // A call whose context ran back into the thread's earlier segment held parts
+  // this record cannot count, and counting only the ones the file holds is not
+  // a floor — it is a wrong figure. It reported `the 0 parts the call before it
+  // held left the context` on a boundary whose own token pair, on the same
+  // row, says 243,044 → 24,819 (ward on H-3763).
+  if (codexBaseInForce(ix, ordinal, byUsage)) return null;
   const before = byUsage ? (window as CodexIndex['calls'][number]).inputs : window.before;
   const inForce = ix.compactions.filter((c) => afterCompaction(c, byUsage) <= ordinal).at(-1) ?? null;
   return (inForce?.replacement_items.length ?? 0) + Math.max(0, before - (inForce?.index ?? 0));
@@ -877,9 +928,16 @@ function codexAt(ix: CodexIndex, ordinal: number, chars: number): ContextAt | { 
   // item count: on a second boundary that count includes items an earlier
   // boundary had already taken out (ward on H-3757, finding 3c).
   const dropped = compaction === null || entered === null ? null : codexPartsAt(ix, entered - 1, byUsage);
-  const droppedSays = dropped === null
-    ? `every part the context held before the compaction at ${compaction?.at ?? 'an unrecorded time'} is`
-    : `the ${dropped} part${dropped === 1 ? '' : 's'} the call before the compaction at ${compaction?.at ?? 'an unrecorded time'} held ${dropped === 1 ? 'is' : 'are'}`;
+  // Three different things, and the reason has to say which: a boundary with no
+  // call before it at all, a boundary whose preceding call this record cannot
+  // count because the thread's earlier segment is elsewhere, and a countable
+  // one.
+  const droppedUnreadable = compaction !== null && entered !== null && entered > 0 && codexBaseInForce(ix, entered - 1, byUsage);
+  const droppedSays = dropped !== null
+    ? `the ${dropped} part${dropped === 1 ? '' : 's'} the call before the compaction at ${compaction?.at ?? 'an unrecorded time'} held ${dropped === 1 ? 'is' : 'are'}`
+    : droppedUnreadable
+      ? `what the call before the compaction at ${compaction?.at ?? 'an unrecorded time'} held — which this record cannot count, because it continues thread ${ix.historyBase?.thread_id ?? '(unnamed)'} from ordinal ${ix.historyBase?.entries_before ?? '?'} and that call's context ran back into entries this file does not hold — is`
+      : `every part the context held before the compaction at ${compaction?.at ?? 'an unrecorded time'} is`;
   const deltasBefore = ix.deltas.filter((d) => d.index <= call.before);
   const readable = parts.filter((p) => p.origin === 'retained');
   const usage = byUsage ? (window as CodexIndex['calls'][number]) : null;
@@ -909,13 +967,24 @@ function codexAt(ix: CodexIndex, ordinal: number, chars: number): ContextAt | { 
       ...CODEX_GAPS,
       ...(compaction === null ? [] : [
         compaction.replacement_items.length > 0
-          ? `${droppedSays} NOT in this call's context, and not listed above: the host replaced them with the ${compaction.replacement_items.length} items it wrote as its replacement_history, which are the first ${compaction.replacement_items.length} slots here${entered === null || entered < 1 ? '' : `. Ask --at ${entered - 1} for that call, which is the last one that held them`}`
+          ? `${droppedSays} NOT in this call's context, and not listed above: the host replaced them with the ${compaction.replacement_items.length} items it wrote as its replacement_history, which are the first ${compaction.replacement_items.length} slots here${entered === null || entered < 1
+            ? ''
+            : droppedUnreadable
+              ? `. --at ${entered - 1} is that call, and it lists none of them: its own context ran back into the thread's earlier segment, which this record does not hold`
+              : `. Ask --at ${entered - 1} for that call, which is the last one that held them`}`
           // Every one of the 33 compacted entries on the machine this was
           // built against carries a replacement list. A host that writes none
           // leaves the post-boundary context unreadable rather than short,
           // and the difference has to be said.
           : `${droppedSays} NOT in this call's context, and this record holds no replacement_history for that boundary: the ${parts.length} part${parts.length === 1 ? '' : 's'} above ${parts.length === 1 ? 'is' : 'are'} only what was recorded SINCE it, and what the host put in place of the dropped items cannot be read here`,
       ]),
+      // The parts above are a TAIL on a continuation segment, and the host's
+      // own input figure for the call is the measure of how much of a tail:
+      // 0 parts against 243,044 input tokens, 242,432 of them cached, was read
+      // as an empty context (ward on H-3763).
+      ...(codexBaseInForce(ix, ordinal, byUsage)
+        ? [`${codexHistoryBaseSays(ix)}. The ${parts.length} part${parts.length === 1 ? '' : 's'} above ${parts.length === 1 ? 'is' : 'are'} only what this file records before this call${parts.length === 0 ? ', which is none of its context at all: the whole of it is outside this record' : ''}${usage === null || usage.input === null ? '' : `, against the host's own ${usage.input} input tokens for it${usage.cached === null ? '' : `, ${usage.cached} of them cached`} — a figure that counts the context this record does not hold`}`]
+        : []),
       ...(byUsage && (window as CodexIndex['calls'][number]).before > (window as CodexIndex['calls'][number]).inputs
         ? [`the ${(window as CodexIndex['calls'][number]).before - (window as CodexIndex['calls'][number]).inputs} items this call itself produced — its reasoning, its reply, its tool request — are NOT listed above: the host writes the usage record after the call, so they sit inside its window without ever having been in its input. An item kind this reader does not recognise counts as input, so the list errs long rather than short`]
         : []),
@@ -992,9 +1061,14 @@ function codexEvolution(ix: CodexIndex, chars: number): ContextEvolution {
       // dropped items" was wrong for every one of them.
       const dropped = codexPartsAt(ix, i - 1, byUsage);
       const before = i === 0 ? null : boundaries[i - 1]!.input;
-      const left = dropped === null
-        ? 'this rollout records no call before the boundary — it opens compacted, which is how a resumed session starts — so what left cannot be counted here'
-        : `the ${dropped} part${dropped === 1 ? '' : 's'} the call before it held left the context`;
+      const left = dropped !== null
+        ? `the ${dropped} part${dropped === 1 ? '' : 's'} the call before it held left the context`
+        : i === 0
+          ? 'this rollout records no call before the boundary — it opens compacted, which is how a resumed session starts — so what left cannot be counted here'
+          // Counting only the parts this file holds said `the 0 parts the call
+          // before it held left the context` on a row whose own token pair
+          // says 243,044 → 24,819 (ward on H-3763).
+          : `what left cannot be counted here: this rollout continues thread ${ix.historyBase?.thread_id ?? '(unnamed)'} from ordinal ${ix.historyBase?.entries_before ?? '?'}, so the call before the boundary held context this file does not hold, and the host's own per-call figures below are the only measure of the drop`;
       notable.push(`compaction (${compacted.trigger}): this is the first call whose context was the host's replacement list. ${left}; ${compacted.replacement_items.length > 0 ? `the host wrote ${compacted.replacement_items.length} items as its replacement_history, and they are the first ${compacted.replacement_items.length} slots of this call` : 'this record holds no replacement_history for the boundary, so what the host put in their place cannot be read here'}`);
       // The boundary's own two figures are BOTH pre-compaction on codex:
       // `pre_tokens` is the turn's cumulative input and `post_tokens` the
@@ -1055,11 +1129,18 @@ function codexEvolution(ix: CodexIndex, chars: number): ContextEvolution {
       last.notable.push(`a compaction (${c.trigger}) was recorded at ${c.at ?? 'an unrecorded time'}, AFTER this last call: the ${codexPartsAt(ix, changes.length - 1, byUsage) ?? '?'} parts above are what this call held, and the ${c.replacement_items.length} items the host wrote as its replacement_history were never given to a call this rollout records`);
     }
   }
+  // On the row where the shortfall begins, not only in the gaps: a reader
+  // scrolling 189 rows of a continuation segment lands in the middle of one.
+  const firstShort = changes.find((c) => codexBaseInForce(ix, c.ordinal, byUsage));
+  if (firstShort !== undefined) {
+    firstShort.notable.unshift(`${codexHistoryBaseSays(ix)}. The additions on this row and on every row until then are what this file records, not the whole of what those calls were given`);
+  }
   return {
     harness: 'codex',
     session_id: ix.sessionId,
     changes,
     gaps: [
+      ...(codexHistoryBaseSays(ix) === null ? [] : [codexHistoryBaseSays(ix)!]),
       ...(byUsage
         ? ["a call below is one token_usage_record — the host's own per-call entry, carrying its response id and input token count — and the items between two of them are that call's additions by this reader's arithmetic, counted up to the first item the call itself produced"]
         : ['this rollout has no per-call usage record, so a line below is a user TURN, which is many model calls']),
@@ -1167,6 +1248,10 @@ function codexFind(ix: CodexIndex, needle: string, chars: number): ContextFind {
     hits,
     searched,
     gaps: [
+      // The false negative this structure creates: a needle that was in the
+      // thread's earlier segment is not in this file, and `no hits` would
+      // otherwise read as "was not in the context".
+      ...(codexHistoryBaseSays(ix) === null ? [] : [`${codexHistoryBaseSays(ix)}. Only what this file records was searched, so a nil result here is "not in this segment", never "not in the context"`]),
       ...(searched.unreadable > 0
         ? [`${searched.unreadable} items hold no plaintext in this record — a reasoning item is carried as provider-encrypted text, and so is the compaction item a resumed rollout opens with — so a match inside one would not appear here: a nil result is "not found in what is readable", never "was not in the context"`]
         : []),

@@ -591,20 +591,39 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   changes, so a session's instruction and tool timeline is readable: one mason
   loop session grew from 12 tools at 23KB to 24 at 75KB as deferred schemas
   loaded. What it does NOT hold is the content of every message it references —
-  measured at 36-49% across recent loop sessions. The retained blobs skew to
-  what the host SYNTHESIZES (system reminders, recalled memory, injected
-  instruction files), and ordinary turns are left to the transcript's own
-  `user` and `assistant` entries, which carry no request hash. The host's
-  canonicalization is not reproducible from the record, so that join is
-  positional — an inference, and `additions` reports `partial` with the measured
-  fraction rather than asserting it.
+  measured at 41% of 3,332 referenced messages across fourteen loop sessions.
+  The retained blobs skew to what the host SYNTHESIZES (system reminders,
+  recalled memory, injected instruction files), and ordinary turns are left to
+  the transcript's own `user` and `assistant` entries.
+  The first reading of this record called that remainder joinable "only by
+  position" and declined the join. It was wrong, and `recovery` is the
+  correction: every assistant transcript entry carries `requestRef`, the
+  api-request id whose reply it is, so what a request ADDED is the PREVIOUS
+  request's reply group — its assistant message assembled from that group's
+  blocks in `apiBlockIndex` order, then the user message built from the tool
+  results that followed. An EXPLICIT key, not a position. On those fourteen
+  sessions it resolves 1,957 of 1,957 unretained messages, so a session is
+  100% readable rather than 41%.
+  It is still an inference, and the record carries its own validation set: the
+  host retains a blob for SOME of those slots too, so each reconstruction is
+  compared against what actually went out, block hash by block hash. Measured:
+  the reply-group slot count agreed on every group of all fourteen sessions, an
+  ASSISTANT message reconstructs byte for byte 154 times out of 154, and a USER
+  message does so 65 times out of 97 — because the host appends system-reminder
+  text to a user message, and sometimes wraps a block, on the way out. Those
+  are counted by failure mode in `recovery.modes`, and two of them are why
+  `additions` stays `partial` even when nothing is unresolved: a reconstruction
+  is what the host wrote down, not what it sent. One more trap the validation
+  set caught — the transcript keeps a tool call as the MODEL wrote it, and the
+  host rewrites some inputs before the wire and records that form beside it in
+  `wireToolInputs`; reconstructing from the model's form reports a command the
+  next call's context never held.
   **Codex** (`session_meta`, `world_state`, `turn_context`, `response_item`,
   `token_usage_record`, `compacted`) is the mirror image: every item's content
   is inline, the host's own prompt is verbatim in `base_instructions`, the cwd
-  repository's revision comes free in `session_meta.git` — the field
-  session-trace.ts still reports `unsupported` — and each source arrives as
-  text or as the host's own hash, which is the immutable reference the brief
-  asks for. What it does not hold is the message array of each underlying API
+  repository's revision comes free in `session_meta.git`, and each source
+  arrives as text or as the host's own hash, which is the immutable reference
+  the brief asks for. What it does not hold is the message array of each underlying API
   call: it records turns and items, so `invocations` is `partial` and no
   per-call count is computed. A `world_state` with `full: false` is a DELTA
   carrying only the keys that moved; the first version of this reader read one
@@ -612,7 +631,9 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   delta is recorded as a change point and never read as an inventory.
   Five distinctions, the same discipline as its two neighbours. INVOCATION vs
   SESSION: every figure is per call, and no session total is presented as what
-  one call received. PRESENT vs RECOVERABLE, above. ADDED vs REMOVED vs
+  one call received. PRESENT vs RECOVERABLE vs
+  RECONSTRUCTED, above: retained content and a transcript reconstruction are
+  separate fields with separate states, never one fraction. ADDED vs REMOVED vs
   COMPACTED: a shorter list is a removal, and only a removal the host
   accompanies with a replacement summary is a compaction — a drop with no
   boundary reports `partial` with "what replaced them is unknown" rather than
@@ -1514,9 +1535,11 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   trace from the host CLI's own record. It exits non-zero when a required
   category is `unavailable` or the record cannot be attributed to a harness,
   which are the two findings it exists for; a category that is `partial` is a
-  reading and does not. The seat form resolves only the most recent SETTLED
-  launch, because that is the only one the launch journal carries a host
-  session id for.
+  reading and does not. Only a SETTLED launch is traceable, because that is the
+  only one the launch journal carries a host session id for: `--launch <id>`
+  reads that launch's own journal entry, and the bare seat form takes the
+  newest settled launch across every route the seat can launch under, not the
+  primary's providers alone.
 - `node dist/cli.js startup-context [seat] [--launch <id>] [--ticket <id>]
   [--limit <n>]` prints the startup receipts: one per launch, newest first,
   each with its content resolved now and whether its composition still rebuilds.

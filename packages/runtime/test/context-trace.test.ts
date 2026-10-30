@@ -409,3 +409,176 @@ describe('finding a codex rollout by session id', () => {
     expect(findCodexRecord('../../../outside')).toBeNull();
   });
 });
+
+/** A claude record holding the half of a session's context the host leaves to
+ *  its own transcript: r1 and r2 each add messages no blob is retained for,
+ *  and the transcript's assistant entries carry the `requestRef` that joins
+ *  them to the request they answered.
+ *
+ *  m5 IS retained, which makes it the validation slot — the one place the
+ *  reconstruction can be compared against what the host actually sent.
+ *
+ *  Shapes from real records: one assistant entry per content block with an
+ *  `apiBlockIndex`, written in the file in a DIFFERENT order from the one they
+ *  were sent in; `wireToolInputs` keyed by tool_use id, holding the input as
+ *  rewritten for the wire; and user tool_result entries carrying no ref.
+ */
+function claudeTranscriptRecord(over: { retained?: unknown[]; sidechain?: boolean; brokenGroup?: boolean } = {}): unknown[] {
+  const session = 'aaaaaaaa-1111-2222-3333-444444444444';
+  const wireInput = { command: 'cd /tmp/seat && printf two > out' };
+  const sent = over.retained ?? [
+    { type: 'text', text: 'now the write' },
+    { type: 'tool_use', id: 't2', name: 'Bash', input: wireInput },
+  ];
+  const blob = (hash: string, role: string, content: unknown[]) => ({
+    type: 'api-request-blob', sessionId: session, hash, message: { role, content },
+  });
+  const req = (id: string, base: string | null, keep: number, tail: string[], at: string) => ({
+    type: 'api-request', sessionId: session, id, timestamp: at, version: '2.1.300',
+    shapeHash: 'shape0', params: { model: 'claude-opus-5' },
+    ...(base === null ? {} : { base }), keep, tail, requestDigest: `digest-${id}`,
+  });
+  const turn = (uuid: string, ref: string, index: number, content: unknown[], wire?: Record<string, unknown>) => ({
+    type: 'assistant', sessionId: session, uuid, requestRef: ref, apiBlockIndex: index,
+    timestamp: '2026-10-29T08:00:02.000Z', isSidechain: false,
+    message: { role: 'assistant', id: `msg-${ref}`, content },
+    ...(wire === undefined ? {} : { wireToolInputs: wire }),
+  });
+  const result = (uuid: string, id: string, text: string) => ({
+    type: 'user', sessionId: session, uuid, timestamp: '2026-10-29T08:00:02.500Z', isSidechain: false,
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: text }] },
+  });
+  return [
+    {
+      type: 'api-request-shape', sessionId: session, shapeHash: 'shape0',
+      timestamp: '2026-10-29T08:00:00.000Z', version: '2.1.300',
+      shape: { system: [{ type: 'text', text: 'host block one' }], tools: [{ name: 'Bash' }] },
+    },
+    blob('m0', 'user', [{ type: 'text', text: 'the iteration prompt' }]),
+    blob('m1', 'system', [{ type: 'text', text: '<system-reminder>one</system-reminder>' }]),
+    // m2 and m3 are r0's reply: the host retains no blob for either.
+    blob('m4', 'system', [{ type: 'text', text: '<system-reminder>two</system-reminder>' }]),
+    blob('m5', 'assistant', sent),
+    // m6 is r1's tool result: no blob.
+    blob('m7', 'system', [{ type: 'text', text: '<system-reminder>three</system-reminder>' }]),
+    req('r0', null, 0, ['m0', 'm1'], '2026-10-29T08:00:01.000Z'),
+    req('r1', 'r0', 2, ['m2', 'm3', 'm4'], '2026-10-29T08:00:02.000Z'),
+    req('r2', 'r1', 5, ['m5', 'm6', 'm7'], '2026-10-29T08:00:03.000Z'),
+    // The transcript. The prompt comes before any assistant entry and so
+    // belongs to no reply group.
+    {
+      type: 'user', sessionId: session, uuid: 'u0', timestamp: '2026-10-29T08:00:00.500Z',
+      isSidechain: false, message: { role: 'user', content: 'the iteration prompt' },
+    },
+    turn('a0', 'r0', 0, [{ type: 'text', text: 'I will look' }]),
+    turn('a1', 'r0', 1, [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls' } }], { t1: { command: 'cd /tmp/seat && ls' } }),
+    result('u1', 't1', 'two files'),
+    ...(over.sidechain === true
+      // A subagent's own turn, in the same file, answering a request this
+      // stream never made.
+      ? [{
+        type: 'assistant', sessionId: session, uuid: 'sc0', requestRef: 'r1', apiBlockIndex: 0,
+        timestamp: '2026-10-29T08:00:02.100Z', isSidechain: true,
+        message: { role: 'assistant', id: 'msg-sub', content: [{ type: 'text', text: 'the subagent' }] },
+      }]
+      : []),
+    // r1's reply: written tool_use first, text second, with the index saying
+    // which order they were sent in.
+    turn('a2', 'r1', 1, [{ type: 'tool_use', id: 't2', name: 'Bash', input: { command: 'printf two > out' } }], { t2: wireInput }),
+    turn('a3', 'r1', 0, [{ type: 'text', text: 'now the write' }]),
+    ...(over.brokenGroup === true ? [] : [result('u2', 't2', 'written')]),
+  ];
+}
+
+describe('the remainder claude leaves to its own transcript', () => {
+  it('joins it through each assistant entry requestRef, not by position', () => {
+    const t = trace(write('join.jsonl', claudeTranscriptRecord()));
+    // 8 messages are referenced across the three calls; the host retained a
+    // blob for 5 of them, and the transcript accounts for the other 3.
+    expect(t.retained).toMatchObject({ referenced: 8, recoverable: 5 });
+    expect(t.recovery).toMatchObject({ resolved: 3, unresolved: 0, group_mismatches: 0 });
+  });
+
+  it('measures itself against the slots the host retained a blob for too', () => {
+    const t = trace(write('join.jsonl', claudeTranscriptRecord()));
+    expect(t.recovery).toMatchObject({ checked: 1, exact: 1, by_role: { assistant: { checked: 1, exact: 1 } } });
+    expect(t.recovery?.modes).toEqual({});
+  });
+
+  it('reconstructs a turn as it went on the wire, in sent order', () => {
+    // Two things the retained blob proves, because it is the message that
+    // actually went out. The host rewrote `printf two > out` to
+    // `cd /tmp/seat && printf two > out` and recorded both forms, so reading
+    // the model's form reports a command the next call's context never held.
+    // And a2 (the tool call) is written in the file BEFORE a3 (the text),
+    // while apiBlockIndex says the text went first; assembling in file order
+    // inverts the turn.
+    const t = trace(write('join.jsonl', claudeTranscriptRecord()));
+    expect(t.recovery?.exact).toBe(1);
+    expect(t.recovery?.modes).toEqual({});
+  });
+
+  it('names an appended block the transcript does not carry rather than calling it exact', () => {
+    const t = trace(write('join.jsonl', claudeTranscriptRecord({
+      retained: [
+        { type: 'text', text: 'now the write' },
+        { type: 'tool_use', id: 't2', name: 'Bash', input: { command: 'cd /tmp/seat && printf two > out' } },
+        { type: 'text', text: '<system-reminder>and one more thing</system-reminder>' },
+      ],
+    })));
+    expect(t.recovery).toMatchObject({ checked: 1, exact: 0 });
+    expect(Object.keys(t.recovery?.modes ?? {})).toEqual(['the host appended text the transcript does not carry']);
+  });
+
+  it('names a block the host wrapped before sending it', () => {
+    const t = trace(write('join.jsonl', claudeTranscriptRecord({
+      retained: [
+        { type: 'text', text: '<system-reminder>now the write</system-reminder>' },
+        { type: 'tool_use', id: 't2', name: 'Bash', input: { command: 'cd /tmp/seat && printf two > out' } },
+      ],
+    })));
+    expect(t.recovery).toMatchObject({ checked: 1, exact: 0 });
+    expect(Object.keys(t.recovery?.modes ?? {})).toEqual(['the host wrapped or rewrote a block before sending it']);
+  });
+
+  it('leaves a reply group whose count disagrees unresolved instead of falling back to position', () => {
+    // r1's reply group loses its tool result, so it reconstructs one message
+    // where the request added two. Guessing would put the assistant turn in
+    // the user slot, confidently and wrongly.
+    const t = trace(write('join.jsonl', claudeTranscriptRecord({ brokenGroup: true })));
+    expect(t.recovery).toMatchObject({ group_mismatches: 1, resolved: 2, unresolved: 1, checked: 0 });
+  });
+
+  it('does not take a subagent turn for part of this request stream', () => {
+    // The sidechain entry names r1 as well. Counting it would add a third
+    // message to r1's reply group and break the join that otherwise holds.
+    const t = trace(write('join.jsonl', claudeTranscriptRecord({ sidechain: true })));
+    expect(t.recovery).toMatchObject({ resolved: 3, group_mismatches: 0, exact: 1 });
+  });
+
+  it('names the transcript entries that reconstruct each call, by uuid', () => {
+    const t = trace(write('join.jsonl', claudeTranscriptRecord()));
+    // r1 added r0's reply: the two assistant blocks, then the tool result.
+    expect(t.invocations[1]?.resolved_via).toEqual(['a0', 'a1', 'u1']);
+    expect(t.invocations[1]).toMatchObject({ recoverable: 3, resolved: 2 });
+    // r0's own tail is retained, so it needs nothing from the transcript.
+    expect(t.invocations[0]?.resolved_via).toEqual([]);
+  });
+
+  it('keeps additions partial even when the transcript resolves every message', () => {
+    // A reconstruction is what the host wrote down, not what it sent, and the
+    // measured exactness is what says how far those agree. Promoting the
+    // category on an inference would report the two as one thing.
+    const t = trace(write('join.jsonl', claudeTranscriptRecord()));
+    expect(t.recovery?.unresolved).toBe(0);
+    expect(stateOf(t, 'additions')).toBe('partial');
+    expect(reasonOf(t, 'additions')).toContain('5 of 8');
+    expect(reasonOf(t, 'additions')).toContain('resolves 3 more');
+  });
+
+  it('carries no recovery on a harness whose items hold their own content', () => {
+    const t = trace(write('rollout.jsonl', codexRecord()));
+    expect(t.recovery).toBeNull();
+    expect(t.invocations[0]?.resolved).toBeNull();
+  });
+});

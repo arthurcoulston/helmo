@@ -17,11 +17,14 @@
 //   - INVOCATION vs SESSION. A session is many model calls with different
 //     inputs. Every figure here is per invocation, and a session-level total is
 //     never presented as the context any one call received.
-//   - PRESENT vs RECOVERABLE. A message an invocation references is present in
-//     that call's context. It is recoverable only if its content is retained
-//     somewhere we can read. Claude's record references far more messages than
-//     it retains blobs for, so the fraction is MEASURED per trace and never
-//     assumed to be one.
+//   - PRESENT vs RECOVERABLE vs RECONSTRUCTED. A message an invocation
+//     references is present in that call's context. It is recoverable if its
+//     content is retained somewhere we can read, and reconstructed if only the
+//     record's own transcript can supply it. Claude's record references far
+//     more messages than it retains blobs for; the transcript joins to the
+//     rest through each assistant entry's `requestRef`, and that join is
+//     reported as an inference with its own measured accuracy (`recovery`),
+//     never folded into the retained fraction.
 //   - ADDED vs REMOVED vs COMPACTED. A shorter message list is a removal; a
 //     removal the host accompanies with a replacement summary is a compaction.
 //     Reporting the first as the second would invent a summary, and reporting
@@ -115,10 +118,50 @@ export interface TraceInvocation {
   /** How many of this call's messages have retained content somewhere
    *  readable. Never assumed equal to `messages`. */
   recoverable: number | null;
+  /** How many more the record's own transcript reconstructs, by the explicit
+   *  join below. Kept apart from `recoverable` because it is an inference. */
+  resolved: number | null;
+  /** The transcript entries that reconstruct this call's otherwise unreadable
+   *  tail, by uuid and in sent order, so an operator can go and read them.
+   *  Identity, not content: this module retains none. */
+  resolved_via: string[];
   /** The host's own digest of the request, where it writes one. */
   digest: string | null;
   /** Server-side context management the host asked for on this call. */
   managed: string[];
+}
+
+/** What the record's own transcript says about the messages the host retained
+ *  no blob for.
+ *
+ *  Claude's transcript entries are not merely adjacent to the requests: every
+ *  assistant entry carries `requestRef`, the api-request id whose reply it is,
+ *  so the join is an EXPLICIT key and not a position. That is the correction
+ *  this field exists for — the first reading of this record called the
+ *  remainder joinable "only by position" and declined to make the join.
+ *
+ *  It is still an inference, because the transcript holds what the host wrote
+ *  down and the request holds what it sent, and those differ. So every figure
+ *  here is measured on the record's own validation set: the slots where a blob
+ *  exists AND the transcript reconstructs one, where the two can be compared
+ *  byte for byte. A reader gets the accuracy, not an assurance.
+ */
+export interface TraceRecovery {
+  /** Referenced messages with no retained blob that the transcript resolves. */
+  resolved: number;
+  /** ...and the ones it does not, which stay unreadable. */
+  unresolved: number;
+  /** Reply groups where the transcript's message count disagreed with the
+   *  request's own. The join's structural failure mode: reported, because a
+   *  silent fall-back to position is the thing this field replaces. */
+  group_mismatches: number;
+  /** Slots where both a blob and a reconstruction exist. */
+  checked: number;
+  /** ...and how many matched byte for byte. */
+  exact: number;
+  by_role: Record<string, { checked: number; exact: number }>;
+  /** Why an inexact reconstruction was inexact, counted by failure mode. */
+  modes: Record<string, number>;
 }
 
 export interface TraceCompaction {
@@ -164,6 +207,9 @@ export interface ContextTrace {
     recoverable: number | null;
     by_role: Record<string, number>;
   };
+  /** What the transcript recovers of the rest, and how accurately. `null` on a
+   *  harness that needs no recovery because every item carries its content. */
+  recovery: TraceRecovery | null;
   compactions: TraceCompaction[];
   coverage: TraceCoverage[];
   /** What this trace cannot reach at all, named so a reader does not take the
@@ -246,8 +292,12 @@ export function harnessOf(entries: Record<string, unknown>[]): 'claude' | 'codex
 
 function claudeTrace(entries: Record<string, unknown>[], source: TraceSource): ContextTrace {
   const shapes = new Map<string, TraceShape>();
-  const blobs = new Map<string, { role: string; bytes: number }>();
+  // Per blob: its role, its size, and the hash of each content block. The
+  // blocks are what the join below is checked against, and a hash per block
+  // says WHERE a reconstruction came apart while still retaining no content.
+  const blobs = new Map<string, { role: string; bytes: number; types: string[]; hashes: string[] }>();
   const requests: Record<string, unknown>[] = [];
+  const transcript: Record<string, unknown>[] = [];
   const compactions: TraceCompaction[] = [];
   let sessionId: string | null = null;
   let cliVersion: string | null = null;
@@ -285,7 +335,14 @@ function claudeTrace(entries: Record<string, unknown>[], source: TraceSource): C
       const hash = str(e['hash']);
       const message = e['message'];
       if (!hash || !record(message)) continue;
-      blobs.set(hash, { role: str(message['role']) ?? '(unroled)', bytes: bytes(JSON.stringify(message)) });
+      const content = message['content'];
+      const parts: unknown[] = Array.isArray(content) ? content : [content];
+      blobs.set(hash, {
+        role: str(message['role']) ?? '(unroled)',
+        bytes: bytes(JSON.stringify(message)),
+        types: parts.map((b) => (record(b) ? str(b['type']) ?? '(untyped)' : 'text')),
+        hashes: parts.map((b) => sha256(JSON.stringify(b))),
+      });
     } else if (type === 'api-request') {
       requests.push(e);
       const params = e['params'];
@@ -313,6 +370,12 @@ function claudeTrace(entries: Record<string, unknown>[], source: TraceSource): C
       const message = e['message'];
       const content = record(message) ? message['content'] : null;
       if (typeof content === 'string') summaryBytes = bytes(content);
+    } else if ((type === 'user' || type === 'assistant') && record(e['message']) && e['isSidechain'] !== true) {
+      // The host's own narrative of the session, and the place the content of
+      // the messages it kept no blob for actually is. A sidechain entry is a
+      // subagent's own conversation and not part of this request stream, so
+      // including it would put another session's turns in this one's tail.
+      transcript.push(e);
     }
   }
 
@@ -344,6 +407,119 @@ function claudeTrace(entries: Record<string, unknown>[], source: TraceSource): C
     return list;
   };
 
+  // The join to the remainder.
+  //
+  // Every assistant transcript entry carries `requestRef`, the api-request id
+  // whose reply it is, so what a request ADDED is the PREVIOUS request's reply
+  // group: its assistant message, assembled from that group's blocks in sent
+  // order, then the user message the host built from the tool results that
+  // followed. The host retains a blob for what it synthesizes and leaves these
+  // to the transcript, which is why the retained fraction is the half it does.
+  //
+  // What keeps this a reading rather than a guess is that the host retains a
+  // blob for SOME of these slots as well. Those are a validation set the
+  // record carries itself: each reconstruction is compared against the blob
+  // block by block, and the ways the two come apart are counted. The measured
+  // answer on fourteen loop sessions was that an assistant message
+  // reconstructs byte for byte and a user message does so two times in three,
+  // because the host appends and wraps text of its own on the way out.
+  const groups = new Map<string, { assistant: Record<string, unknown>[]; user: Record<string, unknown>[] }>();
+  let openGroup: string | null = null;
+  for (const e of transcript) {
+    const ref = str(e['requestRef']);
+    if (str(e['type']) === 'assistant' && ref !== null) {
+      openGroup = ref;
+      let group = groups.get(ref);
+      if (!group) { group = { assistant: [], user: [] }; groups.set(ref, group); }
+      group.assistant.push(e);
+    } else if (str(e['type']) === 'user' && openGroup !== null) {
+      groups.get(openGroup)!.user.push(e);
+    }
+  }
+
+  // The transcript keeps a tool call as the model wrote it. The host rewrites
+  // some inputs before they go on the wire and records that form beside it, so
+  // reconstructing from the model's form would report a command the next
+  // call's context never held.
+  const blocksOf = (e: Record<string, unknown>): unknown[] => {
+    const message = e['message'] as Record<string, unknown>;
+    const content = message['content'];
+    const raw: unknown[] = Array.isArray(content) ? content : [{ type: 'text', text: typeof content === 'string' ? content : '' }];
+    const wire = record(e['wireToolInputs']) ? (e['wireToolInputs'] as Record<string, unknown>) : null;
+    if (wire === null) return raw;
+    return raw.map((b) => {
+      if (!record(b) || b['type'] !== 'tool_use') return b;
+      const id = str(b['id']);
+      return id !== null && id in wire ? { ...b, input: wire[id] } : b;
+    });
+  };
+  const reconstruct = (group: { assistant: Record<string, unknown>[]; user: Record<string, unknown>[] }) => {
+    const ordered = [...group.assistant].sort((a, b) => (num(a['apiBlockIndex']) ?? 0) - (num(b['apiBlockIndex']) ?? 0));
+    const message = (role: string, from: Record<string, unknown>[]) => {
+      const parts = from.flatMap(blocksOf);
+      return {
+        role,
+        types: parts.map((b) => (record(b) ? str(b['type']) ?? '(untyped)' : 'text')),
+        hashes: parts.map((b) => sha256(JSON.stringify(b))),
+        via: from.map((e) => str(e['uuid']) ?? '(unuuided)'),
+      };
+    };
+    const user = message('user', group.user);
+    return user.types.length > 0 ? [message('assistant', ordered), user] : [message('assistant', ordered)];
+  };
+
+  const recovery: TraceRecovery = { resolved: 0, unresolved: 0, group_mismatches: 0, checked: 0, exact: 0, by_role: {}, modes: {} };
+  const resolvedVia = new Map<string, string[]>();
+  const mode = (why: string) => { recovery.modes[why] = (recovery.modes[why] ?? 0) + 1; };
+  for (const [n, r] of requests.entries()) {
+    const tail = Array.isArray(r['tail']) ? r['tail'].filter((h): h is string => typeof h === 'string') : [];
+    const missing = tail.filter((h) => !blobs.has(h));
+    const previous = n === 0 ? null : str(requests[n - 1]!['id']);
+    const group = previous === null ? undefined : groups.get(previous);
+    if (group === undefined) {
+      recovery.unresolved += missing.length;
+      continue;
+    }
+    const reconstructed = reconstruct(group);
+    // A retained `system` blob in a tail is one the host synthesized; the
+    // transcript never holds it. The slots a reply group accounts for are the
+    // others, in order.
+    const slots = tail.filter((h) => blobs.get(h)?.role !== 'system');
+    if (slots.length !== reconstructed.length) {
+      // The structural failure, named rather than papered over by falling back
+      // to position — which is what reading this remainder positionally would
+      // have done on every group, right or wrong.
+      recovery.group_mismatches++;
+      recovery.unresolved += missing.length;
+      continue;
+    }
+    for (const [k, hash] of slots.entries()) {
+      const message = reconstructed[k]!;
+      const blob = blobs.get(hash);
+      if (blob === undefined) {
+        recovery.resolved++;
+        resolvedVia.set(hash, message.via);
+        continue;
+      }
+      recovery.checked++;
+      const role = recovery.by_role[message.role] ?? { checked: 0, exact: 0 };
+      role.checked++;
+      if (blob.role === message.role && blob.hashes.join() === message.hashes.join()) {
+        recovery.exact++;
+        role.exact++;
+      } else if (blob.role !== message.role) {
+        mode('the retained message and the reconstruction disagree on the role');
+      } else if (blob.hashes.length > message.hashes.length && blob.hashes.slice(0, message.hashes.length).join() === message.hashes.join()) {
+        mode(`the host appended ${blob.types.slice(message.types.length).join('+')} the transcript does not carry`);
+      } else if (blob.types.join() === message.types.join()) {
+        mode('the host wrapped or rewrote a block before sending it');
+      } else {
+        mode('the retained message and the reconstruction disagree in shape');
+      }
+      recovery.by_role[message.role] = role;
+    }
+  }
+
   const invocations: TraceInvocation[] = [];
   const referenced = new Set<string>();
   for (const [i, r] of requests.entries()) {
@@ -361,13 +537,19 @@ function claudeTrace(entries: Record<string, unknown>[], source: TraceSource): C
       if (shape.first_invocation === -1) shape.first_invocation = i;
     }
     let recoverable: number | null = null;
+    let resolved: number | null = null;
     if (list) {
       recoverable = 0;
+      resolved = 0;
       for (const h of list) {
         referenced.add(h);
         if (blobs.has(h)) recoverable++;
+        else if (resolvedVia.has(h)) resolved++;
       }
     }
+    const via = (Array.isArray(r['tail']) ? r['tail'] : [])
+      .filter((h): h is string => typeof h === 'string')
+      .flatMap((h) => resolvedVia.get(h) ?? []);
     invocations.push({
       ordinal: i,
       at: str(r['timestamp']),
@@ -377,6 +559,8 @@ function claudeTrace(entries: Record<string, unknown>[], source: TraceSource): C
       added: tail,
       removed: baseLength !== null && keep !== null ? Math.max(0, baseLength - keep) : null,
       recoverable,
+      resolved,
+      resolved_via: via,
       digest: str(r['requestDigest']),
       managed: Array.isArray(management)
         ? management.map((m) => (record(m) ? str(m['type']) ?? '(untyped)' : '(untyped)'))
@@ -411,7 +595,7 @@ function claudeTrace(entries: Record<string, unknown>[], source: TraceSource): C
       ? state('additions', 'unavailable', 'no message list could be reconstructed, so nothing can be said about what was added')
       : state('additions', recoverableTotal === referenced.size ? 'observed' : 'partial', recoverableTotal === referenced.size
         ? `every one of ${referenced.size} referenced messages has retained content`
-        : `${recoverableTotal} of ${referenced.size} referenced messages have retained content (${Math.round((100 * recoverableTotal) / referenced.size)}%). The host retains a blob for the messages it synthesizes — system reminders, recalled memory, injected instruction files — and leaves ordinary turns to this record's own user and assistant entries, which carry no request hash. So the remainder is present in the file but joins only by position, which is an inference and is not asserted here`),
+        : `${recoverableTotal} of ${referenced.size} referenced messages have retained content (${Math.round((100 * recoverableTotal) / referenced.size)}%): the host retains a blob for what it synthesizes — system reminders, recalled memory, injected instruction files — and leaves ordinary turns to this record's own transcript. The transcript resolves ${recovery.resolved} more through each assistant entry's own requestRef${recovery.unresolved === 0 ? '' : `, and ${recovery.unresolved} not at all`}, which is an inference and stays in \`recovery\` rather than being counted as retention${recovery.checked === 0 ? '' : `; measured against the ${recovery.checked} slots the host retained a blob for too, ${recovery.exact} reconstruct byte for byte`}. This stays PARTIAL on that account: a reconstruction is what the host wrote down, not what it sent`),
     compactions.length === 0
       ? state('evolution', invocations.some((i) => (i.removed ?? 0) > 0) ? 'partial' : 'observed', invocations.some((i) => (i.removed ?? 0) > 0)
         ? 'a call dropped messages its base held with no compaction boundary recorded, so what replaced them is unknown'
@@ -427,11 +611,12 @@ function claudeTrace(entries: Record<string, unknown>[], source: TraceSource): C
     shapes: [...shapes.values()],
     invocations,
     retained: { referenced: referenced.size, recoverable: recoverableTotal, by_role: byRole },
+    recovery,
     compactions,
     coverage,
     unobservable: [
       PROVIDER_CEILING,
-      'the content of an ordinary turn that no retained blob names, which is in this record but joins to its invocation only by position',
+      'what the host appended to or wrapped a reconstructed message with: the transcript holds the payload it wrote down, and `recovery` measures how often that differed from what went out',
       'whether the model attended to any of it: every figure here is about what was supplied',
     ],
   };
@@ -518,6 +703,10 @@ function codexTrace(entries: Record<string, unknown>[], source: TraceSource): Co
         added: null,
         removed: null,
         recoverable: null,
+        // Every item carries its own content inline, so there is nothing to
+        // recover and nothing to infer: `null` here is not a gap.
+        resolved: null,
+        resolved_via: [],
         digest: str(payload['turn_id']),
         managed: developer === null ? [] : [`developer_instructions ${bytes(developer)}B`],
       });
@@ -589,6 +778,7 @@ function codexTrace(entries: Record<string, unknown>[], source: TraceSource): Co
     // here is an item readable here. `by_role` is the item kind, which is what
     // the rollout distinguishes instead of a message role.
     retained: { referenced: items, recoverable: items, by_role: itemKinds },
+    recovery: null,
     compactions,
     coverage,
     unobservable: [
@@ -640,6 +830,42 @@ export function recordForLaunch(launch: LaunchJournalEntry, cwd: string): { path
   const found = readClaudeHostRecord(id, cwd);
   if (!found) return { why: `No transcript under ${claudeHome()}/projects names session ${id}. The host store is the host's: it is not versioned with our releases and nothing stops it being pruned.` };
   return { path: found.path };
+}
+
+/** The most of a host record this reads to answer the one-field question
+ *  below. The codex rollout writes its `session_meta` as the FIRST entry, so
+ *  the revision is in the first line; parsing up to TRACE_BYTE_CEILING of
+ *  rollout to reach a field in its opening line would make an identity lookup
+ *  cost a whole trace. */
+export const META_BYTE_CEILING = 262_144;
+
+/** The repository revision a launch's session started against, from the HOST's
+ *  own record rather than from the launch journal — which has never carried
+ *  one, and reports `unsupported` for that reason.
+ *
+ *  Only the codex rollout records it, free, in its session_meta. The claude
+ *  transcript does not, so `null` here is two different things and the reason
+ *  says which: a host that does not record it, and a record we could not read.
+ */
+export function sourceRevisionForLaunch(launch: LaunchJournalEntry, cwd: string): { revision: string | null; why: string } {
+  const found = recordForLaunch(launch, cwd);
+  if ('why' in found) return { revision: null, why: found.why };
+  if (launch.session?.provider !== 'codex') {
+    return { revision: null, why: 'The claude transcript records no repository revision of its own; what this installation knows about the tree is in the startup receipt, not in the host record.' };
+  }
+  const read = readBounded(found.path, META_BYTE_CEILING);
+  if (!read.ok) return { revision: null, why: read.error };
+  const first = read.text.split('\n', 1)[0] ?? '';
+  let parsed: unknown;
+  try { parsed = JSON.parse(first); } catch { return { revision: null, why: `The first entry of ${found.path} did not parse, so its session metadata could not be read.` }; }
+  if (!record(parsed) || str(parsed['type']) !== 'session_meta') {
+    return { revision: null, why: `The first entry of ${found.path} is not session_meta, so this rollout does not open the way the adapter expects.` };
+  }
+  const payload = parsed['payload'];
+  const git = record(payload) && record(payload['git']) ? (payload['git'] as Record<string, unknown>) : null;
+  const commit = git ? str(git['commit_hash']) : null;
+  if (commit === null) return { revision: null, why: 'This rollout carries session_meta without a git commit, which is what a session started outside a repository looks like.' };
+  return { revision: commit, why: `session_meta.git.commit_hash in ${found.path}` };
 }
 
 /** `~/.codex` unless the operator moved it, read from the host's own variable

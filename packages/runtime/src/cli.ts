@@ -188,7 +188,9 @@ const COMMAND_HELP: Record<string, string> = {
     + `   or: --find <text>    which part of which call's context held it, and when it entered\n`
     + `       [--chars <n>|--full|--json]\n`
     + `       [--verbatim]       with --json: every part's retained content blocks and every tool's whole\n`
-    + `                          definition, as the host wrote them — the export an audit reads`,
+    + `                          definition, as the host wrote them — the export an audit reads\n`
+    + `       each part that is a tool result names where it was acquired from — the file, ticket,\n`
+    + `       command or URL the request asked for — whatever the view`,
   summons: `usage: ${commandName} summons [--since <YYYY-MM-DD>] [--limit <n>] [--root <path>] [--json]`,
   'startup-context': `usage: ${commandName} startup-context [seat] [--launch <id>] [--ticket <id>] [--limit <n>]\n   or: ${commandName} startup-context --diff <launch> --b <launch> [--a-seat <seat>] [--b-seat <seat>]\n   or: ${commandName} startup-context --prune [--apply]`,
   'session-spec': `usage: ${commandName} session-spec <seat> --session <actor stamp> [--provider claude] [--tier high] [--model M] [--cwd P] [--constitution P] [--version V]`,

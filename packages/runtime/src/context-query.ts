@@ -36,6 +36,15 @@
 // answer over a different join than the one that was measured.
 import { createHash } from 'node:crypto';
 import {
+  acquiredAccount,
+  acquiredArgs,
+  acquiredInput,
+  renderAcquired,
+  type AcquiredAccount,
+  type AcquiredInput,
+  type AcquiredRequest,
+} from './context-acquired.js';
+import {
   TRACE_BYTE_CEILING,
   harnessOf,
   indexClaude,
@@ -89,6 +98,20 @@ export interface QueryPart {
    *  and every part would carry its own copy (R-56, H-3818). `null` is also
    *  what an `unreadable` part has: nothing on this machine holds it. */
   payload: unknown[] | null;
+  /** Where this part's content was ACQUIRED from, for the parts that are a
+   *  tool's output rather than an instruction, a turn or the model's own
+   *  reasoning. A result names its request by the host's call id and carries
+   *  nothing else, so this is the join back to it: the tool, and the file,
+   *  ticket, command or URL the request named. One part can hold several — a
+   *  claude user message carries every result of a parallel batch — so this
+   *  is a list. `null`, not an empty list, on a part that is not a result at
+   *  all: nothing was acquired there, and `[]` would read as a result whose
+   *  sources came to nothing (R-56, H-3818).
+   *
+   *  Carried whatever the view, unlike `payload`: a source is a name and a
+   *  path, and it is the first thing an audit of a context asks for. The
+   *  request's own arguments ride along only under the payload view. */
+  acquired: AcquiredInput[] | null;
   /** What to discount this part by, where anything. */
   caveat: string | null;
 }
@@ -153,6 +176,13 @@ export interface ContextAt {
      *  zero. */
     part_bytes: number;
   };
+  /** This call's context by where it was ACQUIRED from — how many inputs of
+   *  each kind, how many bytes of the context they are, and how many distinct
+   *  sources they came from. The question "what is this 200KB of context" is
+   *  answered here before a reader opens a single part, and `sources` is what
+   *  separates one file read forty times from forty files. Empty on a call
+   *  whose context holds no tool output. */
+  acquired: AcquiredAccount[];
   /** What this answer cannot say. Never empty: the provider ceiling is on
    *  every one. */
   gaps: string[];
@@ -292,12 +322,69 @@ function reconstructionCaveat(ix: ClaudeIndex, role: string): string {
   return `${where}; ${measured.exact} of ${measured.checked} ${role} slots in this session that could be checked reconstruct byte for byte — the rest differ because of what the host did on the way out (${modes}), so this is the payload it wrote down, not the last form of it`;
 }
 
+/** The content blocks this record holds for a slot, retained or reconstructed.
+ *  `claudePart` withholds them from a reading that did not ask for the
+ *  payload; the join below needs them on every reading, because a tool
+ *  request's arguments are what name the source. */
+function claudeBlocks(ix: ClaudeIndex, hash: string): unknown[] | null {
+  const blob = ix.blobs.get(hash);
+  if (blob !== undefined) return blob.parts;
+  return ix.reconstructedFor.get(hash)?.parts ?? null;
+}
+
+/** Every tool request the readable part of a message list holds, by the host's
+ *  own call id. A `tool_result` block names its request by that id and carries
+ *  none of it, and the API contract puts the `tool_use` earlier in the SAME
+ *  message list — so the list is the whole search space, and a result whose
+ *  request is missing from it is a request that left the context, not one this
+ *  reader failed to look for. */
+function claudeRequests(ix: ClaudeIndex, list: string[]): Map<string, AcquiredRequest> {
+  const out = new Map<string, AcquiredRequest>();
+  for (const [slot, hash] of list.entries()) {
+    for (const b of claudeBlocks(ix, hash) ?? []) {
+      if (!rec(b) || b['type'] !== 'tool_use') continue;
+      const id = str(b['id']);
+      // First wins: a host that reused an id would otherwise have the later
+      // call's arguments attributed to the earlier call's result.
+      if (id === null || out.has(id)) continue;
+      out.set(id, { call_id: id, tool: str(b['name']), args: acquiredArgs(b['input']), slot });
+    }
+  }
+  return out;
+}
+
+/** The acquired inputs of one part, from the results its blocks hold. */
+function claudeAcquired(
+  blocks: unknown[] | null,
+  requests: Map<string, AcquiredRequest>,
+  view: View,
+): AcquiredInput[] | null {
+  if (blocks === null) return null;
+  const out: AcquiredInput[] = [];
+  for (const b of blocks) {
+    if (!rec(b) || b['type'] !== 'tool_result') continue;
+    const id = str(b['tool_use_id']);
+    out.push(acquiredInput(
+      id,
+      id === null ? undefined : requests.get(id),
+      // The result block's own size, not the part's: a batch of four results
+      // in one message has to apportion, or every source is credited with the
+      // whole message.
+      Buffer.byteLength(JSON.stringify(b), 'utf8'),
+      typeof b['is_error'] === 'boolean' ? (b['is_error'] as boolean) : null,
+      view.verbatim,
+    ));
+  }
+  return out.length === 0 ? null : out;
+}
+
 function claudePart(
   ix: ClaudeIndex,
   hash: string,
   slot: number,
   entered: number | null,
   view: View,
+  requests: Map<string, AcquiredRequest> = new Map(),
 ): QueryPart {
   const blob = ix.blobs.get(hash);
   if (blob !== undefined) {
@@ -313,6 +400,7 @@ function claudePart(
       text,
       truncated,
       payload: view.verbatim ? blob.parts : null,
+      acquired: claudeAcquired(blob.parts, requests, view),
       caveat: null,
     };
   }
@@ -333,6 +421,7 @@ function claudePart(
       // `origin` and `caveat` already say so, and the payload is as much an
       // inference as the text rendered from it.
       payload: view.verbatim ? made.parts : null,
+      acquired: claudeAcquired(made.parts, requests, view),
       caveat: reconstructionCaveat(ix, made.role),
     };
   }
@@ -349,6 +438,9 @@ function claudePart(
     text: null,
     truncated: false,
     payload: null,
+    // Nothing on this machine holds this part's blocks, so whether it held a
+    // result at all is unknown — which is not the same as it holding none.
+    acquired: null,
     caveat: 'the call referenced this message by hash; the host retained no blob for it and the transcript does not reconstruct it, so its content is not on this machine',
   };
 }
@@ -394,7 +486,10 @@ function claudeAt(ix: ClaudeIndex, ordinal: number, view: View): ContextAt | { e
   const first = enteredAt(ix);
   const params = rec(r['params']) ? (r['params'] as Record<string, unknown>) : null;
   const shapeRef = str(r['shapeHash']);
-  const parts = (list ?? []).map((h, i) => claudePart(ix, h, i, first.get(h) ?? null, view));
+  // Built over the WHOLE list before any part is, because a result's request
+  // is an earlier slot of the same list and the parts are produced in order.
+  const requests = claudeRequests(ix, list ?? []);
+  const parts = (list ?? []).map((h, i) => claudePart(ix, h, i, first.get(h) ?? null, view, requests));
   const count = (o: PartOrigin) => parts.filter((p) => p.origin === o).length;
   return {
     harness: 'claude',
@@ -418,6 +513,7 @@ function claudeAt(ix: ClaudeIndex, ordinal: number, view: View): ContextAt | { e
       unreadable: count('unreadable'),
       part_bytes: parts.reduce((t, p) => t + (p.bytes ?? 0), 0),
     },
+    acquired: acquiredAccount(parts.flatMap((p) => p.acquired ?? [])),
     gaps: [
       ...(list === null
         ? ['this call names a base message list this record does not hold, so the parts below start at the gap rather than at the beginning of the call']
@@ -446,7 +542,10 @@ function claudeEvolution(ix: ClaudeIndex, view: View): ContextEvolution {
     const keep = num(r['keep']);
     const removed = baseLength !== null && keep !== null ? Math.max(0, baseLength - keep) : null;
     const shapeRef = str(r['shapeHash']);
-    const added = tail.map((h, k) => claudePart(ix, h, (list?.length ?? tail.length) - tail.length + k, first.get(h) ?? null, view));
+    // Over the full list, not the tail: a call adds the RESULT of a request
+    // its predecessor made, so the request is never in the tail with it.
+    const requests = claudeRequests(ix, list ?? tail);
+    const added = tail.map((h, k) => claudePart(ix, h, (list?.length ?? tail.length) - tail.length + k, first.get(h) ?? null, view, requests));
 
     let instructions: ContextChange['instructions'] = null;
     if (shapeRef !== null && shapeRef !== previousShape) {
@@ -798,6 +897,53 @@ function codexItem(at: string | null, payload: Record<string, unknown>): CodexIt
   };
 }
 
+/** Whether a codex item is the OUTPUT of a tool call. Keyed on carrying both
+ *  a `call_id` and an `output`, not on the item type: the rollouts hold
+ *  `function_call_output` and `custom_tool_call_output` today and the host
+ *  adds types without asking, and an item with those two fields is a result
+ *  whatever it is called. */
+const codexOutput = (p: Record<string, unknown>): boolean => typeof p['call_id'] === 'string' && 'output' in p;
+
+/** Every tool request a codex item list holds, by the host's own call id. The
+ *  request is its own item in the same list — `custom_tool_call` carries its
+ *  whole input as a string, `function_call` carries JSON in `arguments` — so
+ *  this is the same join as claude's over a different shape. */
+function codexRequests(items: { item: CodexItem }[]): Map<string, AcquiredRequest> {
+  const out = new Map<string, AcquiredRequest>();
+  for (const [slot, { item }] of items.entries()) {
+    const p = item.payload;
+    const id = str(p['call_id']);
+    if (id === null || codexOutput(p) || out.has(id)) continue;
+    const raw = 'input' in p ? p['input'] : 'arguments' in p ? p['arguments'] : undefined;
+    if (raw === undefined) continue;
+    // The namespace is part of the tool's identity where the host records one:
+    // `js` says nothing, `mcp__cua_repl/js` says which server answered.
+    const ns = str(p['namespace']);
+    const name = str(p['name']);
+    out.set(id, { call_id: id, tool: ns === null ? name : `${ns}/${name ?? '(unnamed)'}`, args: acquiredArgs(raw), slot });
+  }
+  return out;
+}
+
+/** The acquired input of one codex item, where it is a tool output. A codex
+ *  result is its own item, so there is at most one — the list keeps the shape
+ *  the same as claude's, where a batch arrives in a single message. */
+function codexAcquired(item: CodexItem, requests: Map<string, AcquiredRequest>, view: View): AcquiredInput[] | null {
+  const p = item.payload;
+  if (!codexOutput(p)) return null;
+  const id = str(p['call_id']);
+  return [acquiredInput(
+    id,
+    id === null ? undefined : requests.get(id),
+    item.bytes,
+    // The host writes no error flag on an output item; the tool's own text
+    // carries whatever it said. Reported as unknown rather than as `false`,
+    // which would claim every codex result succeeded.
+    null,
+    view.verbatim,
+  )];
+}
+
 function indexCodex(entries: Record<string, unknown>[]): CodexIndex {
   const ix: CodexIndex = { sessionId: null, cwd: null, turns: [], calls: [], items: [], instructions: [], deltas: [], compactions: [], historyBase: null, base: null, baseWhy: null, baseInstructions: null };
   for (const e of entries) {
@@ -1116,6 +1262,7 @@ function codexAt(ix: CodexIndex, ordinal: number, view: View): ContextAt | { err
       return { item, via: `item ${index}`, index };
     }),
   ];
+  const requests = codexRequests(held);
   const parts: QueryPart[] = held.map(({ item, via, index }, slot) => {
     const { text, truncated } = clip(item.text, view.chars);
     // A part the thread carried in entered before this file: no call here is
@@ -1147,6 +1294,7 @@ function codexAt(ix: CodexIndex, ordinal: number, view: View): ContextAt | { err
       // record does not hold still has an entry, and that entry is what an
       // audit has to account for.
       payload: view.verbatim ? [item.payload] : null,
+      acquired: codexAcquired(item, requests, view),
       caveat: carriedCaveat === null ? item.opaque : item.opaque === null ? carriedCaveat : `${carriedCaveat}. ${item.opaque}`,
     };
   });
@@ -1198,6 +1346,7 @@ function codexAt(ix: CodexIndex, ordinal: number, view: View): ContextAt | { err
       unreadable: parts.length - readable.length,
       part_bytes: readable.reduce((t, p) => t + (p.bytes ?? 0), 0),
     },
+    acquired: acquiredAccount(parts.flatMap((p) => p.acquired ?? [])),
     gaps: [
       ...CODEX_GAPS,
       ...(compaction === null ? [] : [
@@ -1282,6 +1431,17 @@ function codexEvolution(ix: CodexIndex, view: View): ContextEvolution {
         slot: (inForce?.replacement_items.length ?? 0) + (firstNew - base) + k,
       })),
     ];
+    // The request that produced an entering output is almost never entering
+    // with it: the call before this one made it. So the map is built over the
+    // whole context in force, by the same two rules `entering` numbers its
+    // slots with — the replacement list, then the items recorded since its
+    // boundary. A request back in the thread's earlier segment is outside
+    // this window and reads as `request_absent`, which is what it is.
+    const inContext = [
+      ...(inForce?.replacement_items ?? []).map((item) => ({ item })),
+      ...ix.items.slice(base, turn.before).map((item) => ({ item })),
+    ];
+    const requests = codexRequests(inContext);
     const added: QueryPart[] = entering.map(({ item, via, slot }) => {
       const { text, truncated } = clip(item.text, view.chars);
       return {
@@ -1295,6 +1455,7 @@ function codexEvolution(ix: CodexIndex, view: View): ContextEvolution {
         text: item.opaque === null ? text : null,
         truncated: item.opaque === null ? truncated : false,
         payload: view.verbatim ? [item.payload] : null,
+        acquired: codexAcquired(item, requests, view),
         caveat: item.opaque,
       };
     });
@@ -1634,6 +1795,10 @@ function renderPart(p: QueryPart, chars: number): string[] {
     // read from.
     : `${named ? (p.origin === 'retained' ? 'blob ' : 'hash ') : ''}${short(only, named ? 8 : 20)}`;
   out.push(`  #${String(p.slot).padEnd(4)} ${p.role.padEnd(10)} ${p.origin.padEnd(14)} ${p.entered === null ? 'entered ?' : `entered call ${p.entered}`.padEnd(16)} ${p.bytes === null ? '-' : `${n(p.bytes)}B`.padStart(10)}  ${where}`);
+  // Before the content, not after it: a 200KB tool result scrolls its own
+  // provenance off the screen, and where a part came from is what an operator
+  // reading a context is looking for.
+  if (p.acquired !== null) out.push(...renderAcquired(p.acquired));
   if (chars > 0 && p.text !== null) out.push(indent(p.text + (p.truncated ? ' […]' : '')));
   if (p.text === null) out.push('      (no content on this machine)');
   return out;
@@ -1674,6 +1839,12 @@ export function renderContextAt(a: ContextAt & { source: TraceSource }, chars = 
   out.push('');
   const t = a.totals;
   out.push(`parts: ${t.parts} — ${t.retained} retained, ${t.reconstructed} reconstructed, ${t.unreadable} unreadable, ${n(t.part_bytes)}B readable`);
+  // The composition of the context before any of it is read: how much of it
+  // the run FETCHED, of what kind, from how many distinct places. On a long
+  // call this is most of the bytes, and it used to be unsayable.
+  if (a.acquired.length > 0) {
+    out.push(`acquired — ${a.acquired.map((k) => `${k.inputs} ${k.kind} (${n(k.bytes)}B, ${k.sources} source${k.sources === 1 ? '' : 's'})`).join(', ')}`);
+  }
   for (const p of a.parts) out.push(...renderPart(p, chars));
   out.push(...renderCaveats(a.parts));
   out.push('');
@@ -1699,7 +1870,13 @@ export function renderContextEvolution(e: ContextEvolution & { source: TraceSour
       out.push(indent(c.compaction.replacement_text, '      '));
     }
     if (chars > 0) {
-      for (const p of c.added) out.push(`    ${p.role.padEnd(10)} ${p.origin.padEnd(14)} ${oneLine(p.text)}`);
+      for (const p of c.added) {
+        out.push(`    ${p.role.padEnd(10)} ${p.origin.padEnd(14)} ${oneLine(p.text)}`);
+        // What arrived, in the timeline that says when it arrived: a result's
+        // own text opens with the tool's framing, and the file or ticket it
+        // carries is the thing a reader is scanning the timeline for.
+        if (p.acquired !== null) out.push(...renderAcquired(p.acquired, 70));
+      }
     }
   }
   out.push(...renderCaveats(shown.flatMap((c) => c.added)));

@@ -1344,3 +1344,256 @@ describe('the export an audit reads', () => {
     expect((opaque!.payload![0] as Record<string, unknown>)['encrypted_content']).toBe('gAAAAABq4_compaction');
   });
 });
+
+// Where each ACQUIRED input in a context came from (R-56, H-3818). The
+// largest part of a run's context is neither configured nor written by the
+// run: it is fetched, and until this it reached every reading as an anonymous
+// bucket of tool output. A result names its request by the host's call id and
+// carries nothing else, so every case here is about the join back to the
+// request — and about the places the join honestly cannot be made.
+describe('where an acquired input came from', () => {
+  const sessionId = 'cccccccc-1111-2222-3333-444444444444';
+  const blob = (hash: string, role: string, content: unknown[]) =>
+    ({ type: 'api-request-blob', sessionId, hash, message: { role, content } });
+  const shape = {
+    type: 'api-request-shape', sessionId, shapeHash: 'shape0',
+    timestamp: '2026-10-29T08:00:00.000Z', version: '2.1.300',
+    shape: { system: [{ type: 'text', text: 'host block' }], tools: [] },
+  };
+  const request = (slots: string[], id = 'r0', keep = 0) => ({
+    type: 'api-request', sessionId, id, timestamp: '2026-10-29T08:00:01.000Z',
+    version: '2.1.300', shapeHash: 'shape0', cwd: '/tmp/seat',
+    params: { model: 'claude-opus-5' }, keep, tail: slots,
+  });
+
+  // Mutation: leave `acquired` null on every part. The question Arthur asked
+  // this capability for — what is in a run's context and where did it come
+  // from — has no answer for the bytes that make up most of it.
+  it('names the file, ticket and command each result was fetched with', () => {
+    const path = write('acq.jsonl', [
+      shape,
+      blob('m0', 'user', [{ type: 'text', text: 'go' }]),
+      blob('m1', 'assistant', [
+        { type: 'tool_use', id: 't1', name: 'Read', input: { file_path: '/Users/a/projects/crew/AGENTS.md' } },
+        { type: 'tool_use', id: 't2', name: 'mcp__helmo__helmo_get_ticket', input: { ticket_id: 'H-3818', format: 'state' } },
+        { type: 'tool_use', id: 't3', name: 'Bash', input: { command: 'git -C /tmp log -1' } },
+      ]),
+      blob('m2', 'user', [
+        { type: 'tool_result', tool_use_id: 't1', content: [{ type: 'text', text: 'the rules' }] },
+        { type: 'tool_result', tool_use_id: 't2', content: [{ type: 'text', text: '{"id":"H-3818"}' }] },
+        { type: 'tool_result', tool_use_id: 't3', is_error: true, content: [{ type: 'text', text: 'not a repository' }] },
+      ]),
+      request(['m0', 'm1', 'm2']),
+    ]);
+    const a = at(path, 0);
+
+    expect(a.parts[2]!.acquired!.map((i) => [i.kind, i.source, i.tool, i.basis, i.source_field])).toEqual([
+      ['file', '/Users/a/projects/crew/AGENTS.md', 'Read', 'argument', 'file_path'],
+      ['ticket', 'H-3818', 'mcp__helmo__helmo_get_ticket', 'argument', 'ticket_id'],
+      ['command', 'git -C /tmp log -1', 'Bash', 'argument', 'command'],
+    ]);
+    // The request is an earlier slot of the same list, and the reader says
+    // which — so a human can check the attribution rather than trust it.
+    expect(a.parts[2]!.acquired!.every((i) => i.request_slot === 1)).toBe(true);
+    // An error result is still context: it occupied a slot and bytes. It is
+    // marked, not dropped, and it is not treated as a source of content.
+    expect(a.parts[2]!.acquired!.map((i) => i.is_error)).toEqual([null, null, true]);
+  });
+
+  // Mutation: resolve the kind from a table of tool NAMES. The table is this
+  // reader's guess about today's tool set, applied to a run made under
+  // another one — so it goes quietly wrong instead of reporting `tool`.
+  it('reads the source out of the argument field, never out of the tool name', () => {
+    const path = write('field.jsonl', [
+      shape,
+      blob('m0', 'assistant', [
+        // A tool this reader has never heard of, carrying a field it knows.
+        { type: 'tool_use', id: 't1', name: 'AcmeFetchLocalDoc', input: { file_path: '/tmp/doc.md' } },
+        // A tool whose NAME says file, whose arguments name no source at all.
+        { type: 'tool_use', id: 't2', name: 'Read', input: { limit: 40 } },
+      ]),
+      blob('m1', 'user', [
+        { type: 'tool_result', tool_use_id: 't1', content: 'the doc' },
+        { type: 'tool_result', tool_use_id: 't2', content: 'nothing' },
+      ]),
+      request(['m0', 'm1']),
+    ]);
+    const a = at(path, 0);
+
+    expect(a.parts[1]!.acquired!.map((i) => [i.kind, i.source, i.basis])).toEqual([
+      ['file', '/tmp/doc.md', 'argument'],
+      // Named as a tool call that was made and reached for something this
+      // reader cannot follow — not as a file, and not as absent.
+      ['tool', null, 'no_source_field'],
+    ]);
+  });
+
+  // Mutation: credit each source with the whole part's bytes. One claude
+  // message carries every result of a parallel batch, so a four-call batch
+  // would report four times the context it actually was.
+  it('sizes each input by its own result, not by the message that carried it', () => {
+    const path = write('batch.jsonl', [
+      shape,
+      blob('m0', 'assistant', [
+        { type: 'tool_use', id: 't1', name: 'Read', input: { file_path: '/a' } },
+        { type: 'tool_use', id: 't2', name: 'Read', input: { file_path: '/b' } },
+      ]),
+      blob('m1', 'user', [
+        { type: 'tool_result', tool_use_id: 't1', content: 'x' },
+        { type: 'tool_result', tool_use_id: 't2', content: 'y'.repeat(500) },
+      ]),
+      request(['m0', 'm1']),
+    ]);
+    const a = at(path, 0);
+    const [small, large] = a.parts[1]!.acquired!;
+
+    expect(large!.bytes).toBeGreaterThan(small!.bytes! * 10);
+    // And the two together do not exceed the part they came out of.
+    expect(small!.bytes! + large!.bytes!).toBeLessThanOrEqual(a.parts[1]!.bytes!);
+  });
+
+  // Mutation: fall back to `tool` when the request is not found. A result
+  // whose request has left the context — dropped prefix, compaction — would
+  // read as a tool call whose arguments named nothing, which is a claim about
+  // a request this reader never saw.
+  it('says so when a result request is no longer in the context', () => {
+    const path = write('gone.jsonl', [
+      shape,
+      blob('m0', 'assistant', [{ type: 'tool_use', id: 't1', name: 'Read', input: { file_path: '/a' } }]),
+      blob('m1', 'user', [{ type: 'tool_result', tool_use_id: 't1', content: 'x' }]),
+      request(['m0', 'm1'], 'r0'),
+      // The next call keeps nothing of its predecessor and re-adds only the
+      // result: the host dropped the request that produced it.
+      { ...request(['m1'], 'r1', 0), base: 'r0' },
+    ]);
+    const second = at(path, 1).parts[0]!.acquired![0]!;
+
+    expect([second.kind, second.basis, second.call_id, second.tool, second.request_slot])
+      .toEqual(['unknown', 'request_absent', 't1', null, null]);
+  });
+
+  // Mutation: return an empty list for a part holding no result. `[]` reads
+  // as a result whose sources came to nothing; `null` says nothing was
+  // acquired here at all, and on an unreadable part says it cannot be known.
+  it('carries no acquisition list for a part that is not a result', () => {
+    const path = write('plain.jsonl', [
+      shape,
+      blob('m0', 'user', [{ type: 'text', text: 'go' }]),
+      blob('m1', 'assistant', [{ type: 'tool_use', id: 't1', name: 'Read', input: { file_path: '/a' } }]),
+      blob('m2', 'user', [{ type: 'tool_result', tool_use_id: 't1', content: 'x' }]),
+      request(['m0', 'm1', 'm2', 'missing']),
+    ]);
+    const a = at(path, 0);
+
+    expect(a.parts[0]!.acquired).toBeNull();
+    expect(a.parts[1]!.acquired).toBeNull();
+    expect(a.parts[2]!.acquired).not.toBeNull();
+    expect(a.parts[3]!.origin).toBe('unreadable');
+    expect(a.parts[3]!.acquired).toBeNull();
+  });
+
+  // Mutation: carry the request arguments on every reading, or withhold the
+  // source name until --verbatim. The first puts a second object on every
+  // part of a terminal view; the second hides the one field an audit opens
+  // with behind a flag.
+  it('always names the source, and carries the request arguments only when asked', () => {
+    const path = write('view.jsonl', [
+      shape,
+      blob('m0', 'assistant', [{ type: 'tool_use', id: 't1', name: 'Read', input: { file_path: '/a', offset: 10 } }]),
+      blob('m1', 'user', [{ type: 'tool_result', tool_use_id: 't1', content: 'x' }]),
+      request(['m0', 'm1']),
+    ]);
+
+    expect(at(path, 0).parts[1]!.acquired![0]!.request).toBeNull();
+    expect(at(path, 0).parts[1]!.acquired![0]!.source).toBe('/a');
+    const full = contextAt(path, 0, { verbatim: true });
+    if ('error' in full) throw new Error(full.error);
+    expect(full.parts[1]!.acquired![0]!.request).toEqual({ file_path: '/a', offset: 10 });
+  });
+
+  // Mutation: count inputs as sources. One file read forty times and forty
+  // files are the same number of inputs and a different finding, and the
+  // account exists to tell them apart.
+  it('accounts for the call context by kind, counting distinct sources', () => {
+    const path = write('account.jsonl', [
+      shape,
+      blob('m0', 'assistant', [
+        { type: 'tool_use', id: 't1', name: 'Read', input: { file_path: '/a' } },
+        { type: 'tool_use', id: 't2', name: 'Read', input: { file_path: '/a' } },
+        { type: 'tool_use', id: 't3', name: 'Bash', input: { command: 'ls' } },
+      ]),
+      blob('m1', 'user', [
+        { type: 'tool_result', tool_use_id: 't1', content: 'x' },
+        { type: 'tool_result', tool_use_id: 't2', content: 'x' },
+        { type: 'tool_result', tool_use_id: 't3', content: 'y' },
+      ]),
+      request(['m0', 'm1']),
+    ]);
+    const a = at(path, 0);
+
+    expect(a.acquired.find((k) => k.kind === 'file')).toMatchObject({ inputs: 2, sources: 1 });
+    expect(a.acquired.find((k) => k.kind === 'command')).toMatchObject({ inputs: 1, sources: 1 });
+    // A kind nothing in this call belongs to is absent, not a row of zeroes.
+    expect(a.acquired.map((k) => k.kind)).toEqual(expect.not.arrayContaining(['web', 'unknown']));
+    // And the reading says it before an operator opens a single part.
+    expect(renderContextAt({ ...a, source: a.source } as never)).toContain('acquired — 2 file');
+  });
+
+  // Mutation: key the output test on the item TYPE. The rollouts hold
+  // `function_call_output` and `custom_tool_call_output` today and the host
+  // adds types without asking; an item carrying a call_id and an output is a
+  // result whatever it is called.
+  it('joins a codex tool output to its call, with the namespace the host recorded', () => {
+    const path = write('rollout.jsonl', [
+      { type: 'session_meta', timestamp: '2026-10-29T04:00:00.000Z', payload: { session_id: '01a185da-8c88-7463-8b6f-cf9d0d6945cd', cwd: '/tmp/seat' } },
+      { type: 'turn_context', timestamp: '2026-10-29T04:00:02.000Z', payload: { turn_id: 'turn-1', model: 'gpt-6-astra' } },
+      // A custom tool call carries its WHOLE input as a string: that string
+      // is the thing that was run, and there is no field to read it out of.
+      { type: 'response_item', timestamp: '2026-10-29T04:00:02.500Z', payload: { type: 'message', role: 'user', content: [{ type: 'text', text: 'go' }] } },
+      { type: 'response_item', timestamp: '2026-10-29T04:00:03.000Z', payload: { type: 'custom_tool_call', call_id: 'call_1', name: 'exec', input: 'sed -n 1,40p /tmp/seat/AGENTS.md' } },
+      { type: 'token_usage_record', timestamp: '2026-10-29T04:00:03.050Z', payload: { response_id: 'resp_one', turn_id: 'turn-1', usage: { input_tokens: 100 } } },
+      { type: 'response_item', timestamp: '2026-10-29T04:00:03.100Z', payload: { type: 'custom_tool_call_output', call_id: 'call_1', output: 'the first forty lines' } },
+      // A function call carries JSON in `arguments`, and a namespace naming
+      // which server answered it.
+      { type: 'response_item', timestamp: '2026-10-29T04:00:03.200Z', payload: { type: 'function_call', call_id: 'call_2', name: 'js', namespace: 'mcp__cua_repl', arguments: '{"code":"var app = 1;","title":"look"}' } },
+      { type: 'token_usage_record', timestamp: '2026-10-29T04:00:03.250Z', payload: { response_id: 'resp_two', turn_id: 'turn-1', usage: { input_tokens: 200 } } },
+      { type: 'response_item', timestamp: '2026-10-29T04:00:03.300Z', payload: { type: 'function_call_output', call_id: 'call_2', output: 'ok' } },
+      { type: 'token_usage_record', timestamp: '2026-10-29T04:00:05.000Z', payload: { response_id: 'resp_three', turn_id: 'turn-1', usage: { input_tokens: 300 } } },
+    ]);
+    // The third call: the first two tool outputs are inputs to it, which is
+    // where a codex result ever appears — never in the call that asked.
+    const a = at(path, 2);
+
+    expect(a.parts.map((p) => (p.acquired === null ? null : p.acquired.map((i) => [i.kind, i.source, i.tool])))).toEqual([
+      // The ask, then the request the model made, then its output.
+      null,
+      null,
+      [['command', 'sed -n 1,40p /tmp/seat/AGENTS.md', 'exec']],
+      null,
+      // The arguments were written as a JSON string; the source comes out of
+      // the parsed object, under the namespaced tool identity.
+      [['tool', null, 'mcp__cua_repl/js']],
+    ]);
+    expect(a.parts[2]!.acquired![0]!.request_slot).toBe(1);
+    expect(a.parts[4]!.acquired![0]!.request_slot).toBe(3);
+  });
+
+  // Mutation: build the request map over the TAIL. A call adds the result of
+  // a request its predecessor made, so the request is never in the tail with
+  // it — every addition in the timeline would read as source-unknown.
+  it('names the source of a result in the timeline, whose request came a call earlier', () => {
+    const path = write('timeline.jsonl', [
+      shape,
+      blob('m0', 'user', [{ type: 'text', text: 'go' }]),
+      blob('m1', 'assistant', [{ type: 'tool_use', id: 't1', name: 'Read', input: { file_path: '/tmp/seat/PROFILE.md' } }]),
+      blob('m2', 'user', [{ type: 'tool_result', tool_use_id: 't1', content: 'the profile' }]),
+      request(['m0', 'm1'], 'r0'),
+      { ...request(['m2'], 'r1', 2), base: 'r0', timestamp: '2026-10-29T08:00:02.000Z' },
+    ]);
+    const e = evolution(path);
+
+    const added = e.changes[1]!.added;
+    expect(added.map((p) => (p.acquired ?? []).map((i) => i.source))).toEqual([['/tmp/seat/PROFILE.md']]);
+    expect(renderContextEvolution({ ...e, source: e.source } as never)).toContain('<- file /tmp/seat/PROFILE.md — via Read');
+  });
+});

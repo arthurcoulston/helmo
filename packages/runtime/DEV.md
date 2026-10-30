@@ -835,6 +835,37 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   tokenizer run here, and null on claude, whose request entry carries no usage
   at all.
 
+- `context-acquired.ts` — where an ACQUIRED input in a context came from
+  (R-56 H-3818). A run's context is three different things wearing one shape:
+  what was CONFIGURED (context-coverage accounts for that), what the run
+  WROTE, and what it FETCHED. The third is by far the largest — 36 command
+  results are 111,342B of the 252,221B readable on one measured mason call,
+  and 22 are 151,851B of 303,384B on one bosun call — and until this module it
+  reached every reading as an anonymous bucket of tool output. The record does
+  hold the answer, one indirection away: a result names its REQUEST by the
+  host's call id and carries nothing else, so the source is in a different
+  part of the same context. This module is that join and nothing else; it
+  parses no record and reads no file, and both harness readers hand it blocks
+  they already have.
+  ONE RULE, and the reason the join can be trusted: a source is named from the
+  ARGUMENT FIELD a request carries, never from the tool's name. A tool this
+  reader has never seen that takes `file_path` is reading a file and is
+  reported as one; a tool named `Read` that takes something else is not. A
+  table of tool names would put today's tool set into an audit of a run made
+  under another one and go quietly wrong, where the field test reports `tool`
+  — the call was made, and what it reached for is not legible here. Adding a
+  field to `SOURCE_FIELDS` is how a new tool becomes legible, and leaving one
+  out costs a label, never a wrong answer.
+  The join also found a fact about the host that nothing here recorded before:
+  CLAUDE REWRITES A REQUEST between the model's turn and the call it sends.
+  The transcript's assistant entry holds `head -40 MEMORY.md && …`; the
+  api-request blob for the same `toolu_` id holds `cd /Users/…/memory &&
+  head -40 MEMORY.md && …`, and it drops arguments left at their default
+  (`replace_all: false`). On one 71-call mason run, 10 of the 18 requests the
+  record holds in both places differ. So the BLOB is what the call carried and
+  is what this reads; the transcript is what the model said. A reader that
+  takes the transcript as the context is wrong about more than half of its
+  shell commands.
 - `context-inventory.ts` — what EVERY run in a window was given, and in how
   many of them (R-56 H-3802). The two modules above read ONE run. This one
   reads a POPULATION, and the population is the hard half: a report whose
@@ -1871,9 +1902,29 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   its payload, its `via` transcript uuids and its measured caveat), and 82/82
   recorded response items plus 42/42 replacement-history items byte-equal on a
   codex call of 124.
-  Note the default reading is unchanged, and deliberately: an operator's
-  terminal has no use for a second copy of every part, so `payload`,
-  `definition`, `state` and `call_params` are all null without the flag — and
+  `parts[].acquired` is the exception to all of that: it is carried WHATEVER
+  the view, because a source is a name and a path and it is the first thing an
+  audit asks (`context-acquired.ts` above). Each entry names the tool, the
+  `kind` (file, ticket, command, skill, web, search, tool, unknown), the
+  `source` whole, the `source_field` it was read out of so the attribution can
+  be checked rather than trusted, and the `request_slot` the request is at in
+  the same context. `basis` distinguishes the three honest outcomes:
+  `argument` named a thing, `no_source_field` means the tool was called and
+  what it reached for is not legible, `request_absent` means the request has
+  left this context (a dropped prefix, a compaction) and only its call id
+  survives. `null` rather than `[]` on a part holding no result at all, and
+  `null` on an unreadable part, where it cannot be known. Only the request's
+  own arguments ride behind `--verbatim`. `acquired` on the answer is the
+  per-call account: inputs, bytes and DISTINCT sources per kind, which is what
+  separates one file read forty times from forty files, and the terminal
+  reading prints it above the parts.
+  Cross-checked by `crew:agents/mason/workspace/scripts/h3818-acquired-crosscheck.py`,
+  which re-derives the join from the record and shares no code with the
+  reader: 44/44 acquisitions and the account agree on the claude call, 22/22
+  and the account on the codex call.
+  Note the default reading is otherwise unchanged, and deliberately: an
+  operator's terminal has no use for a second copy of every part, so
+  `payload`, `definition`, `state` and `call_params` are all null without the flag — and
   codex's `gaps` NAMES the world_state keys it is not rendering whatever the
   view, so a reader who never passes `--verbatim` is still told they exist.
   ONE NORM FOR AN AGENT RUNNING THIS, not a code rule (ward, H-3750): the

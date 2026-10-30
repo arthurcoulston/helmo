@@ -206,12 +206,21 @@ longer.
   the operator for a decision he had already made. Work filed already
   blocked now releases to its filer when the last blocker it declared closes,
   and the same close is a wake edge, so the seat learns its chain can continue.
-  Two conditions keep it from becoming a way around the rule: the blocks edge
+  Three conditions keep it from becoming a way around the rule: the blocks edge
   must carry `at_filing`, the marker `createTicket` now puts on the edges a
   filing declares, so standing backlog cannot be linked to an open ticket after
-  the fact; and the blocker must have been open at filing, because a dep on
-  finished work was never a wait. Edges linked before this shipped carry no
-  marker and release nothing.
+  the fact; the blocker must have been open at filing, because a dep on
+  finished work was never a wait; and the blocker must not be the filer's own
+  untouched filing either, because closing your own ticket is never gated, so
+  the first two conditions alone let an agent file a disposable blocker, file
+  anything behind it and close the blocker itself — a release with no second
+  pair of eyes anywhere in it (H-3740). A release therefore inherits the
+  blocker's judgment rather than manufacturing it: a chain flows once it is
+  rooted in work somebody other than the filer has seen, and each released step
+  then roots the next, however long the chain. What is deliberately not checked
+  is who closed the blocker — a seat normally finishes its own current step, so
+  that test would have refused the case rather than the bypass. Edges linked
+  before this shipped carry no marker and release nothing.
 
 ## v1.0.0 — 2026-10-22
 

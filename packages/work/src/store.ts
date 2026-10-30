@@ -2618,7 +2618,7 @@ export class Store {
    *  the decision shares the filer's name. Scheduler-spawned instances are
    *  judged by their template: standing work an agent set up for itself is
    *  still self-filed. */
-  private selfFiledUntouched(id: string, caller: string): boolean {
+  private selfFiledUntouched(id: string, caller: string, seen: ReadonlySet<string> = new Set()): boolean {
     // The installation's named leader directs the backlog; its filings are
     // that direction, not a discovery awaiting a second pair of eyes (H-2073).
     if (caller === this.leaderActor()) return false;
@@ -2642,7 +2642,7 @@ export class Store {
       .prepare("SELECT COUNT(*) AS n FROM events WHERE ticket_id = ? AND event_type != 'spend' AND json_extract(actor, '$.name') != 'helmo-scheduler' AND json_extract(actor, '$.kind') IN ('human', 'orchestrator')")
       .get(id) as { n: number };
     if (others.n > 0 || directed.n > 0) return false;
-    if (created.template) return this.selfFiledUntouched(created.template, caller);
+    if (created.template) return this.selfFiledUntouched(created.template, caller, seen);
     if (created.creator !== caller) return false;
     // The rule guards backlog an agent filed and later drew back, and the
     // sanctioned form for "my own next step" is `status: 'in_progress'` — which
@@ -2656,24 +2656,41 @@ export class Store {
     // which is the opposite of what this store is for. Work filed already
     // blocked carries the same "starting this as soon as I can" intent as an
     // in_progress filing, so clearing the last blocker releases it.
-    if (this.filedBehindClearedBlocker(id)) return false;
+    if (this.filedBehindClearedBlocker(id, caller, seen)) return false;
     return true;
   }
 
   /** True when this ticket was filed as work waiting on something else, and
    *  everything it waited for has since closed.
    *
-   *  Two conditions keep this from becoming a way around the rule. The blocks
+   *  Three conditions keep this from becoming a way around the rule. The blocks
    *  edge must carry `at_filing`, the marker `createTicket` puts on the edges
    *  a filing declares; without it, standing backlog could be linked to any
-   *  open ticket after the fact and released when that ticket closed. And the
+   *  open ticket after the fact and released when that ticket closed. The
    *  blocker must still have been open when the ticket was filed, which is
    *  what makes the filing a wait rather than a note about finished work —
    *  compared on `seq`, the store's monotonic clock, because same-millisecond
    *  writes make a `ts` comparison lie, the reason `phantom_block` uses seq
-   *  too and the reason the marker is not a ts comparison. */
-  private filedBehindClearedBlocker(id: string): boolean {
-    if (this.isBlocked(id)) return false;
+   *  too and the reason the marker is not a ts comparison.
+   *
+   *  And the blocker must not be the filer's own untouched filing either. The
+   *  first two conditions alone released ANY ticket with no second pair of eyes
+   *  anywhere (H-3740): file a disposable blocker, file the real work behind it,
+   *  close the blocker yourself — closing your own ticket is never gated, by
+   *  design — and the wake condition is satisfied by the filer alone. So a
+   *  release here INHERITS the blocker's judgment rather than manufacturing it:
+   *  a chain flows only once it is rooted in work somebody other than the filer
+   *  has seen, which is the same bar every other ticket meets (any event by
+   *  another agent). Note what this deliberately does NOT check: WHO closed the
+   *  blocker. On the live instance this feature exists for, mason filed H-3582
+   *  behind H-3573 and closed H-3573 itself — the common shape, since a seat
+   *  usually finishes its own current step — so refusing a same-actor close
+   *  would refuse the case rather than the bypass. The recursion is the right
+   *  semantics for a longer chain: each released step then roots the next, and
+   *  `seen` is copied per branch so a cycle terminates without a diamond
+   *  reading as one. */
+  private filedBehindClearedBlocker(id: string, filer: string, seen: ReadonlySet<string> = new Set()): boolean {
+    if (this.isBlocked(id) || seen.has(id)) return false;
     const rows = this.db
       .prepare(
         `SELECT (SELECT MIN(e.seq) FROM events e
@@ -2683,11 +2700,19 @@ export class Store {
                 (SELECT MAX(e2.seq) FROM events e2 WHERE e2.ticket_id = d.to_id
                   AND ((e2.event_type = 'updated' AND json_extract(e2.payload, '$.diffs.status.to') IN ('done','cancelled'))
                     OR (e2.event_type = 'answered' AND json_extract(e2.payload, '$.resolution') IN ('done','cancelled')))) AS freed
+                , d.to_id AS blocker
          FROM deps d JOIN tickets b ON b.id = d.to_id
          WHERE d.from_id = ? AND d.type = 'blocks' AND b.status IN ('done','cancelled')`,
       )
-      .all(id, id) as { declared: number | null; freed: number | null }[];
-    return rows.some((r) => r.declared !== null && r.freed !== null && r.declared < r.freed);
+      .all(id, id) as { declared: number | null; freed: number | null; blocker: string }[];
+    const path = new Set(seen).add(id);
+    return rows.some(
+      (r) =>
+        r.declared !== null &&
+        r.freed !== null &&
+        r.declared < r.freed &&
+        !this.selfFiledUntouched(r.blocker, filer, path),
+    );
   }
 
   /** The agent whose filing judgment governs this ticket. Scheduler instances
@@ -4226,7 +4251,7 @@ export class Store {
       // Agents only — a human or orchestrator IS the second pair of eyes.
       if (input.status === 'in_progress' && t.status === 'open' && actor.kind === 'agent' && this.selfFiledUntouched(t.id, actor.name)) {
         throw new HelmoError(
-          `${t.id} is your own filing, untouched by anyone else — executing your own discoveries takes a second pair of eyes first (the same triage rule that withholds it from your ready queue). helmo_hygiene surfaces it as awaiting_second_eyes so a reviewing seat can record that judgment. Any event by a human, an orchestrator relaying the human, or another agent releases it: a meeting answer, a note, a handoff, a priority change. takeover does not apply — it exists for stale claims, not self-triage. If this cannot wait, helmo_return_to_human with the case for urgency; if you are starting genuinely new work, create the ticket with status 'in_progress' in the same call instead of filing it and drawing it back later. A chain's next step needs no touch at all: file it with a 'blocks' dep on the work it waits for, and closing that blocker releases it to you.`,
+          `${t.id} is your own filing, untouched by anyone else — executing your own discoveries takes a second pair of eyes first (the same triage rule that withholds it from your ready queue). helmo_hygiene surfaces it as awaiting_second_eyes so a reviewing seat can record that judgment. Any event by a human, an orchestrator relaying the human, or another agent releases it: a meeting answer, a note, a handoff, a priority change. takeover does not apply — it exists for stale claims, not self-triage. If this cannot wait, helmo_return_to_human with the case for urgency; if you are starting genuinely new work, create the ticket with status 'in_progress' in the same call instead of filing it and drawing it back later. A chain's next step needs no touch of its own: file it with a 'blocks' dep on the work it waits for, and closing that blocker releases it to you — provided that blocker is work somebody other than you has seen, because one you filed and closed yourself carries no more judgment than this ticket does.`,
         );
       }
       // Taking over a stale claim starts work as surely as claiming open work.

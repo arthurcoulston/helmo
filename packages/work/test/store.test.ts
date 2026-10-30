@@ -2171,6 +2171,7 @@ describe('harness queries (wake cursor)', () => {
   it("wakeCheck wakes the seat when a chain's blocker closes and releases its next step (H-3646)", () => {
     const s = freshStore();
     const current = create(s, { workstream: 'elsewhere', assignee: builder.name });
+    triage(s, current.id); // real prior work, so closing it roots the next step (H-3740)
     const next = create(s, { workstream: 'elsewhere', assignee: builder.name, deps: [{ to: current.id, type: 'blocks' as const }] });
     const idleSeq = s.maxSeq();
     expect(s.wakeCheck(idleSeq, 'alpha', builder.name).newly_ready_ids).toEqual([]);
@@ -2662,6 +2663,11 @@ describe('triage rule enforced on claims (H-56)', () => {
   it("a chain's next step, filed behind its blocker, is released to its filer when that blocker closes (H-3646)", () => {
     const s = freshStore();
     const current = create(s, { title: 'Deliver R-55' });
+    // The blocker is real prior work, so it carries a judgment of its own — on
+    // the live instance H-3573 had three other seats on it before it closed.
+    // The filer still closes it itself, which is the common shape and
+    // deliberately not what the release checks (H-3740).
+    triage(s, current.id);
     const next = create(s, { title: 'Deliver R-35', deps: [{ to: current.id, type: 'blocks' as const }] });
     expect(() => s.updateTicket(builder, { ticket_id: next.id, note: 'claiming', status: 'in_progress' })).toThrow(/second pair of eyes/);
     expect(s.listTickets({ ready: true, caller: builder.name }).map((t) => t.id)).not.toContain(next.id);
@@ -2671,10 +2677,48 @@ describe('triage rule enforced on claims (H-56)', () => {
     expect(s.hygiene().some((f) => f.check === 'awaiting_second_eyes' && f.ticket_id === next.id)).toBe(false);
     expect(s.updateTicket(builder, { ticket_id: next.id, note: 'the chain continues', status: 'in_progress' }).ticket.status).toBe('in_progress');
   });
+  it('a blocker the filer both files and closes releases nothing — the wake cannot be manufactured (H-3740)', () => {
+    const s = freshStore();
+    const disposable = create(s, { title: 'A blocker whose only purpose is to be closed' });
+    const backlog = create(s, { title: 'Backlog I want to draw back', deps: [{ to: disposable.id, type: 'blocks' as const }] });
+    close(s, disposable.id); // never gated: the filer may always close what it may not claim
+    expect(s.listTickets({ ready: true, caller: builder.name }).map((t) => t.id)).not.toContain(backlog.id);
+    expect(() => s.updateTicket(builder, { ticket_id: backlog.id, note: 'claiming', status: 'in_progress' })).toThrow(/second pair of eyes/);
+    expect(s.selfFiledPending(builder.name)).toContain(backlog.id);
+  });
+  it('starting that disposable blocker yourself does not root the chain either (H-3740)', () => {
+    const s = freshStore();
+    const disposable = create(s, { status: 'in_progress' });
+    const backlog = create(s, { deps: [{ to: disposable.id, type: 'blocks' as const }] });
+    close(s, disposable.id);
+    expect(() => s.updateTicket(builder, { ticket_id: backlog.id, note: 'claiming', status: 'in_progress' })).toThrow(/second pair of eyes/);
+  });
+  it("a blocker another seat filed roots the chain whoever closes it (H-3740)", () => {
+    const s = freshStore();
+    const theirs = s.createTicket(reviewer, { title: 'Their step', body: 'The prior step, owned elsewhere.', workstream: 'helmo-dev', type: 'build' });
+    const mine = create(s, { deps: [{ to: theirs.id, type: 'blocks' as const }] });
+    close(s, theirs.id); // the filer of `mine` closes it: who closes is not the question
+    expect(s.updateTicket(builder, { ticket_id: mine.id, note: 'the chain continues', status: 'in_progress' }).ticket.status).toBe('in_progress');
+  });
+  it('once rooted, a chain keeps flowing step after step (H-3740)', () => {
+    const s = freshStore();
+    const first = create(s);
+    triage(s, first.id);
+    const second = create(s, { deps: [{ to: first.id, type: 'blocks' as const }] });
+    close(s, first.id);
+    expect(s.updateTicket(builder, { ticket_id: second.id, note: 'step two', status: 'in_progress' }).ticket.status).toBe('in_progress');
+    // Nobody else touches `second`: it inherits the root's judgment through the
+    // step it was filed behind, which is what makes a chain longer than two.
+    const third = create(s, { deps: [{ to: second.id, type: 'blocks' as const }] });
+    close(s, second.id);
+    expect(s.updateTicket(builder, { ticket_id: third.id, note: 'step three', status: 'in_progress' }).ticket.status).toBe('in_progress');
+  });
   it('every blocker declared at filing must clear, not just one', () => {
     const s = freshStore();
     const first = create(s);
+    triage(s, first.id);
     const second = create(s);
+    triage(s, second.id);
     const next = create(s, { deps: [{ to: first.id, type: 'blocks' as const }, { to: second.id, type: 'blocks' as const }] });
     close(s, first.id);
     expect(() => s.updateTicket(builder, { ticket_id: next.id, note: 'claiming', status: 'in_progress' })).toThrow(/second pair of eyes/);

@@ -12,7 +12,7 @@
 // opener matches, the 8 summons with no canary at all. Each case exists
 // because one of those would otherwise be read wrong.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { recordLaunchDispatch, recordLaunchIntent, recordLaunchSession } from '../src/launch-journal.js';
@@ -314,6 +314,26 @@ describe('what the scan looked at, so a nil answer is not read as an absence', (
     expect(s.associations).toHaveLength(0);
     expect(s.scanned).toBe(0);
     expect(s.since).toBe('2099-01-01');
+  });
+
+  it('puts the window on the sitting\'s own opening, not on its file\'s date', () => {
+    // The host touches a transcript long after the sitting: one here opened on
+    // the 15th and carries an mtime of the 21st. Reading mtime AS the window
+    // reported 117 summons since October 1st when most of those sittings were
+    // in September.
+    const path = record(crew, '66666666-2222-3333-4444-666666666666',
+      [userEntry('summon mason', '2026-09-15T10:00:00.000Z', crew), assistantSaying(CANARY)]);
+    const touched = new Date('2026-10-21T15:00:00.000Z');
+    utimesSync(path, touched, touched);
+
+    const s = scan({ mason: loop('mason') }, { since: '2026-10-01' });
+    expect(s.scanned).toBe(1);          // the file passed the cheap prefilter
+    expect(s.associations).toHaveLength(0);
+    expect(s.excluded_by_window).toBe(1);
+
+    // And the prefilter never excludes a sitting that belongs in the window:
+    // a record is written at or after the moment its session opened.
+    expect(scan({ mason: loop('mason') }, { since: '2026-09-01' }).associations).toHaveLength(1);
   });
 
   it('states the ceilings on every scan, including the summons it cannot see at all', () => {

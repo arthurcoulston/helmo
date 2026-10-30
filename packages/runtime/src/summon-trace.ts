@@ -124,6 +124,8 @@ export interface SummonScan {
   roots: string[];
   since: string | null;
   scanned: number;
+  /** Sittings the window excluded, and undated ones a window cannot place. */
+  excluded_by_window: number;
   launched_runs: number;
   /** Of the launched runs, those identified by the iteration prompt in the
    *  record rather than by a journal entry — the ones that ran before the
@@ -322,7 +324,7 @@ export function summonAssociations(opts: {
 
   const scan: SummonScan = {
     roster, roles_without_seat: rolesWithoutSeat(opts.loops), roots, since,
-    scanned: 0, launched_runs: 0, launched_by_prompt: 0, other_sessions: 0,
+    scanned: 0, excluded_by_window: 0, launched_runs: 0, launched_by_prompt: 0, other_sessions: 0,
     unreadable: [], associations: [],
     ceilings: [
       'A summon through the crew-summon MCP (phone, web) runs on the provider\'s side and writes nothing on this machine, so an away-from-desk summon is not partially traced — it is absent. No local record holds a crew-summon tool call.',
@@ -355,6 +357,14 @@ export function summonAssociations(opts: {
       if (!name.endsWith('.jsonl')) continue;
       const path = join(projects, dir, name);
       if (sinceMs !== null) {
+        // A PREFILTER, not the window. A record is written at or after the
+        // moment its session opened, so an mtime before the window proves the
+        // sitting is outside it — the implication only runs that way. The
+        // other way is false and reading mtime AS the window said 117 summons
+        // since October 1st when most of those sittings were in September:
+        // the host touches a transcript long after, and one here opened on the
+        // 15th carries an mtime of the 21st. The window itself is applied to
+        // each sitting's own opening below.
         try { if (statSync(path).mtimeMs < sinceMs) continue; } catch { /* reported below by the read */ }
       }
       scan.scanned++;
@@ -430,7 +440,17 @@ export function summonAssociations(opts: {
     }
   }
 
-  scan.associations = [...sittings.values()].sort((a, b) => String(b.opened_at).localeCompare(String(a.opened_at)));
+  const dated = [...sittings.values()];
+  scan.associations = (sinceMs === null
+    ? dated
+    : dated.filter((a) => {
+      // An undated sitting cannot be placed in a window, so a windowed answer
+      // excludes it and counts it rather than quietly keeping or dropping it.
+      const at = a.opened_at === null ? NaN : Date.parse(a.opened_at);
+      if (Number.isNaN(at) || at < sinceMs) { scan.excluded_by_window++; return false; }
+      return true;
+    })
+  ).sort((a, b) => String(b.opened_at).localeCompare(String(a.opened_at)));
   return scan;
 }
 
@@ -439,9 +459,10 @@ export function renderSummonScan(scan: SummonScan, limit = 20): string {
   const named = scan.associations.filter((a) => a.state === 'summon');
   const inferred = scan.associations.filter((a) => a.state === 'spoke_as_role');
   out.push(`NAMED SUMMONS — ${named.length} sittings in ${named.reduce((n, a) => n + a.records.length, 0)} records`);
-  out.push(`  scanned ${scan.scanned} records under ${scan.roots.length} root${scan.roots.length === 1 ? '' : 's'}${scan.since ? ` since ${scan.since}` : ''}: ${scan.launched_runs} this installation launched (${scan.launched_by_prompt} of them identified by the iteration prompt, with no journal entry left), ${scan.other_sessions} neither, ${scan.unreadable.length} unreadable`);
+  out.push(`  scanned ${scan.scanned} records under ${scan.roots.length} root${scan.roots.length === 1 ? '' : 's'}${scan.since ? ` whose file could be newer than ${scan.since}` : ''}: ${scan.launched_runs} this installation launched (${scan.launched_by_prompt} of them identified by the iteration prompt, with no journal entry left), ${scan.other_sessions} neither, ${scan.unreadable.length} unreadable`);
   const absent = named.filter((a) => a.protocol === 'absent').length;
   out.push(`  ${named.length} the operator named${absent ? `, ${absent} of them without the canary the protocol asks for` : ''}; ${inferred.length} more sittings spoke as a role with nothing recording why`);
+  if (scan.since) out.push(`  the window is each sitting's OWN opening, not its file's date: ${scan.excluded_by_window} sitting${scan.excluded_by_window === 1 ? '' : 's'} opened before ${scan.since} and are not counted above`);
   out.push('');
   for (const a of named.slice(0, limit)) {
     out.push(`${a.opened_at ?? '(no timestamp)'}  ${a.role ?? '(no role)'}  [${a.role_basis}, protocol ${a.protocol}]`);

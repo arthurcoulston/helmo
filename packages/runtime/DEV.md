@@ -874,6 +874,25 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   an identity rather than read one. Over the cohort this named 209 of the 217
   `tool`-kind inputs and 1,009,173 of their 1,017,091B; the 8 that remain are
   writes carrying a long body or ref, and they keep `no_source_field`.
+  The length bound was challenged by both reviewers (H-3836, H-3837) and
+  MEASURED rather than tuned, which settled it the other way. The limit is
+  real: a free-text argument field inside an otherwise repeatable argument set
+  makes a query its own source, and ward's live instance is a 93-char
+  `ScheduleWakeup` `reason`. The repair proposed for it was to read the tool's
+  own `input_schema` — which `--verbatim` already exposes — and elide a string
+  property carrying neither `enum` nor `pattern`. Applied to the 87-read-run cohort of 2026-10-30
+  by `crew:agents/mason/workspace/scripts/h3818-freetext-cost.py`, that
+  rule collapses 18 distinct sources over 945,412B of named mass, because
+  `helmo_list_tickets` declares `assignee`, `workstream`, `project`, `type`
+  and `lane` as plain strings: `assignee=bosun`, at 496,705B the heaviest
+  query source on the fleet, becomes `assignee=<free text>`. It recovers ONE
+  source over 545B. And it does not fix its own motivating case — all four
+  `ScheduleWakeup` rows stay distinct, because what makes them unique is a
+  numeric `delaySeconds` the rule keeps. So the bound stays as it is, the
+  limit is disclosed on the kind row (`singletons`, below) and in the cohort
+  gap list, and nobody re-derives this from first principles next time.
+  Measured, the whole free-text mass is four rows and 1,375B — 0.012% of the
+  cohort's fetched bytes.
   The join also found a fact about the host that nothing here recorded before:
   CLAUDE REWRITES A REQUEST between the model's turn and the call it sends.
   The transcript's assistant entry holds `head -40 MEMORY.md && …`; the
@@ -2057,6 +2076,22 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   tickets, 217 queries at 1,017,091B from 48 distinct filter sets (the
   heaviest single source on the fleet is `assignee=bosun`, 35 calls and
   316,085B), 80 file reads at 432,151B, 61 searches at 51,799B.
+  Two figures on each kind row say how far to trust its `sources` count, and
+  both were previously only reachable by arithmetic across two lists.
+  `unnamed` is the part of the kind that named NO source — the calls whose
+  arguments are content rather than an identity. It ADDS across the seats in
+  the merge, unlike `sources`, because an input that named nothing belongs to
+  one call of one run of one seat and there is nothing for two seats to share.
+  On the 87-read-run cohort of 2026-10-30 it is 20 inputs and 19,814B, 0.17% of the fetched
+  bytes, every one of them a write carrying a long body or ref over
+  `ARGUMENT_SET_CHARS` — the bound working, not a gap.
+  `singletons` is the distinct sources this scope saw EXACTLY ONCE, and their
+  bytes: how much of `sources` is a grouping and how much is a tail. It
+  differs by kind for an honest reason — a shell command run once genuinely is
+  one source, so `command` reads 1,524 of 1,550 and that is correct, while a
+  query that repeats should not. Like `sources` it is RECOMPUTED for the
+  cohort rather than added: a source each of two seats fetched once is two
+  inputs in the merge and no longer a one-off.
   Cross-checked by `crew:agents/mason/workspace/scripts/h3818-cohort-crosscheck.py`,
   which opens each record itself and derives the acquisitions a DIFFERENT way
   — the record's distinct results, rather than the reader's walk of the call
@@ -2120,21 +2155,24 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   consecutive contexts. 1,922 checks, 0 disagreements; and the check itself is
   not vacuous — mutating `toolOrigin` to call every tool the host's reddens
   148 of them, mutating `arrivals` to one per run reddens 105.
-  **A standing limit of the shape vocabulary, found by this reading.** A chunk
-  takes ONE shape label for whatever its named sources did not account for,
-  and claude bundles several things into one message part: measured on the
-  2026-10-30 cohort, the first user part carries the host's
+  **A standing limit of the shape vocabulary, found by this reading and since
+  narrowed.** A chunk takes ONE shape label for whatever its named sources did
+  not account for, and a part can carry several things: measured on the
+  2026-10-30 cohort, claude's first user part carries the host's
   `<system-reminder>` wrapper, the repository instruction file and Rev's own
-  iteration prompt together. CLAUDE.md gets its own row because it can be
-  matched against the file on disk; the iteration prompt has no file to match,
-  so its bytes sit under "harness system reminders" and two of our category-1
-  startup inputs read as one of theirs. `launcher_prompt` rows therefore
-  appear on codex, where the prompt arrives as its own part, and not on
-  claude. The report's gap list says this. Related: the `task-prompt` shape
-  test's `\bWorking directory:\b` branch can never fire (`\b` between `:` and a
-  space is no boundary), so only its `\bloop iteration\b` branch does any
-  work — and widening it would newly match a doctrine chapter ABOUT loop
-  iterations, which is why it wants evidence rather than a one-character fix.
+  iteration prompt as three content blocks of one part. CLAUDE.md got its own
+  row because it can be matched against the file on disk; the iteration prompt
+  has no file to match, so its bytes sat under "harness system reminders" and
+  two of our category-1 startup inputs read as one of theirs on that harness.
+  That is now REPAIRED by the seam split above (`QueryPart.segments` and
+  `ITERATION_PROMPT_SEAM`): the part is cut at the seams the host made
+  legible, the prompt is recognised by the opening this installation composes
+  rather than by a phrase, and a `launcher_prompt` row appears on BOTH
+  harnesses. What remains of the limit, and what the gap list now says, is
+  that a part with no legible seam is still one label for its whole remainder,
+  and that the cut leaves the part's own envelope and array framing uncounted
+  — 31B on a four-block part, so items plus residue sum to slightly under the
+  chunk total.
   Reads only — the journal and the host's own records, no new store. The same
   norm as `context-trace` applies to an agent running it: `--json` carries the
   item labels and the paths, not the text, and a sweep reports counts and

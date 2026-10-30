@@ -332,6 +332,28 @@ export interface AcquiredKindRow {
   /** Runs that acquired anything of this kind, so a kind one run leans on is
    *  distinguishable from one the whole fleet does. */
   runs: number;
+  /** The part of this kind that named NO source — the call was made and is
+   *  accounted for, and what it reached for is not an identity. Readable here
+   *  because it was previously only findable by subtracting the `sources`
+   *  rows below from this row, and an audit asking "how much is still
+   *  unattributed" should not have to do arithmetic across two lists.
+   *  Measured on the 87-read-run cohort of 2026-10-30: 20 inputs, 19,814B,
+   *  0.17% of the fetched bytes, every one a WRITE whose arguments carry a
+   *  long body or ref and so exceed `ARGUMENT_SET_CHARS`. That is the bound working, not
+   *  a gap: a `create_ticket` with a 2KB body is unique to its call, and
+   *  counting it as a distinct source would report one source per call. */
+  unnamed: { inputs: number; bytes: number };
+  /** Distinct sources of this kind seen in exactly ONE input, and their
+   *  bytes. The figure that says how much of `sources` is a GROUPING and how
+   *  much is a tail of one-offs — which differs by kind for an honest
+   *  reason, and was the question behind both reviewers' doubt about the
+   *  argument-set key (H-3836/H-3837). A unique shell command genuinely is a
+   *  unique source, so `command` reads 98% singleton and that is correct; a
+   *  query that repeats should not, and where it does the key is carrying
+   *  something unique to the call. Not addable across seats — two seats
+   *  reading one file once each is not a singleton — so the cohort merge
+   *  recomputes it from the merged source list, exactly as `sources` is. */
+  singletons: { sources: number; bytes: number };
 }
 
 export interface AcquiredSourceRow {
@@ -718,7 +740,7 @@ interface AcquiredAcc {
   runs_joined: number;
   runs_refused: { seat: string; launch_id: string; why: string }[];
   calls: number;
-  byKind: Map<AcquiredKind, { inputs: number; bytes: number; sources: Set<string>; runs: Set<string> }>;
+  byKind: Map<AcquiredKind, { inputs: number; bytes: number; sources: Set<string>; runs: Set<string>; unnamed: { inputs: number; bytes: number } }>;
   bySource: Map<string, { kind: AcquiredKind; tool: string | null; source: string; inputs: number; bytes: number; runs: Set<string> }>;
 }
 
@@ -783,10 +805,14 @@ function foldAcquired(acc: AcquiredAcc, seat: string, run: InventoryRun, ourPath
             bytes: input.bytes, ordinal: change.ordinal, via: part.via, harness: evo.harness,
           });
         }
-        const kindRow = acc.byKind.get(input.kind) ?? { inputs: 0, bytes: 0, sources: new Set<string>(), runs: new Set<string>() };
+        const kindRow = acc.byKind.get(input.kind) ?? { inputs: 0, bytes: 0, sources: new Set<string>(), runs: new Set<string>(), unnamed: { inputs: 0, bytes: 0 } };
         kindRow.inputs += 1;
         kindRow.bytes += input.bytes ?? 0;
         kindRow.runs.add(run.launch_id);
+        if (input.source === null) {
+          kindRow.unnamed.inputs += 1;
+          kindRow.unnamed.bytes += input.bytes ?? 0;
+        }
         // Keyed on tool AND source, exactly as the per-call account is: the
         // same command run by two tools is two sources, and an input that
         // named nothing contributes no source rather than one shared one.
@@ -806,19 +832,41 @@ function foldAcquired(acc: AcquiredAcc, seat: string, run: InventoryRun, ourPath
   return sightings;
 }
 
-const finishAcquired = (acc: AcquiredAcc): AcquiredRollup => ({
-  runs_joined: acc.runs_joined,
-  runs_refused: acc.runs_refused,
-  calls: acc.calls,
-  inputs: [...acc.byKind.values()].reduce((n, r) => n + r.inputs, 0),
-  bytes: [...acc.byKind.values()].reduce((n, r) => n + r.bytes, 0),
-  by_kind: [...acc.byKind.entries()]
-    .map(([kind, r]) => ({ kind, inputs: r.inputs, bytes: r.bytes, sources: r.sources.size, runs: r.runs.size }))
-    .sort((a, b) => b.bytes - a.bytes || a.kind.localeCompare(b.kind)),
-  sources: [...acc.bySource.values()]
+/** Sources of one kind that this scope saw exactly once, and their bytes. One
+ *  function for both the seat roll-up and the cohort merge, because the figure
+ *  is only true of the source list it is computed from: a source each of two
+ *  seats read once is two inputs in the merge and no longer a singleton. */
+const singletonsOf = (kind: AcquiredKind, rows: { kind: AcquiredKind; inputs: number; bytes: number }[]): { sources: number; bytes: number } => {
+  let sources = 0;
+  let bytes = 0;
+  for (const r of rows) {
+    if (r.kind !== kind || r.inputs !== 1) continue;
+    sources += 1;
+    bytes += r.bytes;
+  }
+  return { sources, bytes };
+};
+
+function finishAcquired(acc: AcquiredAcc): AcquiredRollup {
+  const sources = [...acc.bySource.values()]
     .map((r) => ({ kind: r.kind, tool: r.tool, source: r.source, inputs: r.inputs, bytes: r.bytes, runs: r.runs.size }))
-    .sort((a, b) => b.bytes - a.bytes || a.source.localeCompare(b.source)),
-});
+    .sort((a, b) => b.bytes - a.bytes || a.source.localeCompare(b.source));
+  return {
+    runs_joined: acc.runs_joined,
+    runs_refused: acc.runs_refused,
+    calls: acc.calls,
+    inputs: [...acc.byKind.values()].reduce((n, r) => n + r.inputs, 0),
+    bytes: [...acc.byKind.values()].reduce((n, r) => n + r.bytes, 0),
+    by_kind: [...acc.byKind.entries()]
+      .map(([kind, r]) => ({
+        kind, inputs: r.inputs, bytes: r.bytes, sources: r.sources.size, runs: r.runs.size,
+        unnamed: { ...r.unnamed },
+        singletons: singletonsOf(kind, sources),
+      }))
+      .sort((a, b) => b.bytes - a.bytes || a.kind.localeCompare(b.kind)),
+    sources,
+  };
+}
 
 /** Seat roll-ups into one for the cohort. Exact rather than a re-read: a run
  *  belongs to one seat, so run counts add, and merging the whole source lists
@@ -828,6 +876,7 @@ export function mergeAcquired(parts: AcquiredRollup[]): AcquiredRollup {
   const byKind = new Map<AcquiredKind, AcquiredKindRow>();
   const bySource = new Map<string, AcquiredSourceRow>();
   const out: AcquiredRollup = { runs_joined: 0, runs_refused: [], calls: 0, inputs: 0, bytes: 0, by_kind: [], sources: [] };
+  const unnamed = new Map<AcquiredKind, { inputs: number; bytes: number }>();
   for (const p of parts) {
     out.runs_joined += p.runs_joined;
     out.runs_refused.push(...p.runs_refused);
@@ -841,17 +890,28 @@ export function mergeAcquired(parts: AcquiredRollup[]): AcquiredRollup {
     }
     for (const r of p.by_kind) {
       const prev = byKind.get(r.kind);
-      // `sources` is recomputed below from the merged list; adding the seats'
-      // own counts would double a source two seats both read.
+      // `sources` and `singletons` are recomputed below from the merged list;
+      // adding the seats' own counts would double a source two seats both
+      // read, and would call a source each of them read once a singleton.
       byKind.set(r.kind, prev === undefined ? { ...r } : { ...prev, inputs: prev.inputs + r.inputs, bytes: prev.bytes + r.bytes, runs: prev.runs + r.runs });
+      // `unnamed` DOES add: an input that named nothing belongs to one call of
+      // one run of one seat, so there is nothing for two seats to share.
+      const u = unnamed.get(r.kind) ?? { inputs: 0, bytes: 0 };
+      unnamed.set(r.kind, { inputs: u.inputs + r.unnamed.inputs, bytes: u.bytes + r.unnamed.bytes });
     }
   }
   const distinct = new Map<AcquiredKind, number>();
   for (const r of bySource.values()) distinct.set(r.kind, (distinct.get(r.kind) ?? 0) + 1);
+  const merged = [...bySource.values()];
   out.by_kind = [...byKind.values()]
-    .map((r) => ({ ...r, sources: distinct.get(r.kind) ?? 0 }))
+    .map((r) => ({
+      ...r,
+      sources: distinct.get(r.kind) ?? 0,
+      unnamed: unnamed.get(r.kind) ?? { inputs: 0, bytes: 0 },
+      singletons: singletonsOf(r.kind, merged),
+    }))
     .sort((a, b) => b.bytes - a.bytes || a.kind.localeCompare(b.kind));
-  out.sources = [...bySource.values()].sort((a, b) => b.bytes - a.bytes || a.source.localeCompare(b.source));
+  out.sources = merged.sort((a, b) => b.bytes - a.bytes || a.source.localeCompare(b.source));
   return out;
 }
 
@@ -1414,8 +1474,10 @@ export function contextInventory(opts: InventoryOptions & { roster?: Roster } = 
       "An item's R-56 category is its supplier crossed with where runs were seen holding it, so it is a reading of this cohort and not a property of the source: a file nothing read mid-run here carries no '3', which means it was not seen fetched, never that it cannot be.",
       "`supplier: 'unknown'` is the honest majority of what runs FETCH. The join names a source; it does not read that source's author. Only a Helmo ticket, the open web, and a file on the seat's own configured source list are claimed either way.",
       "`control: null` means this installation records no control over that class of item — the host CLI's own preamble, its own tool set, the reminders it injects, and whatever a run chose to go and fetch. It is not a claim that no control exists.",
-      "A chunk takes ONE shape label for whatever its named sources did not account for, and claude bundles several things into one message part: measured on this cohort, the first user part carries the host's `<system-reminder>` wrapper, the repository instruction file, and Rev's own iteration prompt together. The instruction file gets its own row because it can be matched against the file on disk; the iteration prompt has no file to match, so it has no row of its own and its bytes sit under the host's reminders. Two of our category-1 startup inputs read as one of theirs on that harness. `launcher_prompt` rows therefore appear on codex, where the prompt arrives as its own part, and not on claude.",
+      "A chunk takes ONE shape label for whatever its named sources did not account for, and a part can carry several things: claude writes its `<system-reminder>` wrapper, the repository instruction file and Rev's own iteration prompt as three content blocks of ONE part. Such a part is now cut at the seams the host made legible and each piece labelled on its own, so this installation's iteration prompt has a `launcher_prompt` row on BOTH harnesses rather than reading as the host's injection on claude. The cut leaves the part's own `{\"role\":…,\"content\":[…]}` envelope and array framing uncounted rather than apportioned — a measured 31B on a four-block part — so items plus residue sum to slightly UNDER the chunk total. A part with no legible seam is still one label for its whole remainder.",
       "The agent's own generated work is deliberately not an item. R-56 keeps it apart from the managed inputs, and here it is the residue account.",
+      "An acquisition's source is read from the ARGUMENT FIELD its request carries, never from the tool's name, so a request whose arguments are CONTENT rather than an identity names nothing and lands in its kind\'s `unnamed` row instead of inventing a source per call. Measured on the 87-read-run cohort of 2026-10-30: 20 inputs, 19,814B, 0.17% of the fetched bytes, every one a write carrying a long body or ref over `ARGUMENT_SET_CHARS`. That is the bound working — a 2KB ticket body is unique to its call — and the row is there so the figure needs no subtraction.",
+      "`sources` counts distinct keys, and a key is a GROUPING only where it repeats, so `singletons` says how much of each kind is a tail of one-offs. Much of that tail is correct: a shell command run once is genuinely one source. Some of it is a free-text argument field inside an otherwise repeatable argument set, which makes a query its own source — measured here as four `ScheduleWakeup` rows, 1,375B, 0.012% of the fetched bytes. Eliding unconstrained string fields by reading the tool's own `input_schema` was measured against that cohort and deliberately NOT done: it collapses 18 distinct sources over 945,412B of named mass (`assignee=bosun`, 496,705B, the heaviest query source on the fleet, among them), recovers one source over 545B, and leaves all four `ScheduleWakeup` rows distinct anyway, because what makes them unique is a numeric `delaySeconds` the rule would keep. A measurement-honesty limit disclosed on the row, not a repair withheld.",
       ...(rollups.length === 0 ? [] : ['Acquisitions are of the runs that were READ and of no others: a running, unjoined or unreadable run fetched what it fetched and none of it is counted here. `runs_joined` against `runs_total` is that coverage, and `runs_refused` names the read runs whose own export refused.',
         "A `channel: 'acquired'` item row and the roll-up below it are two readings of the SAME bytes — by source, and by kind — and the residue account is a third, by chunk. Adding any two of them together double-counts.",
         "An acquired row carries no version: the roll-up reads sizes rather than payloads, so a file read twice with different contents is one row with a byte range. The exact per-read content is `context-trace --record <record> --at <call> --json --verbatim`.",
@@ -1489,7 +1551,11 @@ function renderAcquiredRollup(a: AcquiredRollup, runsTotal: number, limit: numbe
   const out: string[] = [];
   out.push(`${pad}fetched: ${a.inputs} inputs, ${a.bytes.toLocaleString('en-US')}B over ${a.calls} calls — joined from ${a.runs_joined} of ${runsTotal} runs`);
   for (const k of a.by_kind) {
-    out.push(`${pad}  ${k.kind.padEnd(9)} ${String(k.inputs).padStart(6)} inputs  ${`${k.bytes.toLocaleString('en-US')}B`.padStart(14)}  ${String(k.sources).padStart(5)} distinct sources  in ${k.runs} runs`);
+    const tail = [
+      k.singletons.sources === 0 ? '' : `${k.singletons.sources} seen once`,
+      k.unnamed.inputs === 0 ? '' : `${k.unnamed.inputs} naming nothing (${k.unnamed.bytes.toLocaleString('en-US')}B)`,
+    ].filter((t) => t !== '');
+    out.push(`${pad}  ${k.kind.padEnd(9)} ${String(k.inputs).padStart(6)} inputs  ${`${k.bytes.toLocaleString('en-US')}B`.padStart(14)}  ${String(k.sources).padStart(5)} distinct sources  in ${k.runs} runs${tail.length === 0 ? '' : ` — ${tail.join(', ')}`}`);
   }
   for (const r of a.sources.slice(0, limit)) {
     const where = r.source.replace(/\s+/g, ' ').trim();

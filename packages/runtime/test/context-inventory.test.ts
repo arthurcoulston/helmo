@@ -613,6 +613,100 @@ describe('what the population FETCHED, not only what it was configured with', ()
     expect(text).toContain('/tmp/seat/AGENTS.md');
     expect(text).toContain('project=R-45');
   });
+
+  /** A write whose arguments are CONTENT rather than an identity: the whole
+   *  argument set is over `ARGUMENT_SET_CHARS`, so nothing names a source and
+   *  keying one on the body would report one source per call. */
+  const writeTicket = (body: string, out: string) =>
+    ({ tool: 'mcp__helmo__helmo_create_ticket', input: { body }, out });
+
+  /** An acquisition's bytes are the WHOLE result block as the record holds it,
+   *  not the content inside it — `type` and `tool_use_id` were in the context
+   *  too. Derived here rather than written as a number, because a figure read
+   *  from the content alone is a few percent light in one direction across
+   *  every kind, which looks like a reader defect rather than the measuring
+   *  error it is (H-3818, increment 3). `call` and `slot` are the fixture's
+   *  own `t${call}_${slot}` ids. */
+  const resultBytes = (call: number, slot: number, out: string): number =>
+    JSON.stringify({ type: 'tool_result', tool_use_id: `t${call}_${slot}`, content: out }).length;
+
+  // Mutation: leave `unnamed` off the kind row. The figure was previously
+  // only reachable by subtracting the source rows from the kind row, and an
+  // audit asking "how much of this is still unattributed" should not have to
+  // do arithmetic across two lists to find out.
+  it('says how much of a kind named no source, without making the reader subtract', () => {
+    const seat = only(inventory([
+      fetchingRun('L1', [[query('R-45', 'a list'), writeTicket('b'.repeat(400), 'H-1')]]),
+    ], { acquired: true }));
+    const tool = seat.acquired!.by_kind.find((k) => k.kind === 'tool')!;
+
+    expect(tool.inputs).toBe(2);
+    expect(tool.unnamed).toEqual({ inputs: 1, bytes: resultBytes(0, 1, 'H-1') });
+    // And it reconciles: the named inputs are exactly the source rows, so
+    // `inputs` less `unnamed.inputs` is what the list below accounts for.
+    const named = seat.acquired!.sources.filter((r) => r.kind === 'tool');
+    expect(named.map((r) => r.source)).toEqual(['project=R-45']);
+    expect(tool.inputs - tool.unnamed.inputs).toBe(named.reduce((n, r) => n + r.inputs, 0));
+  });
+
+  // Mutation: recompute `unnamed` from the merged source list the way
+  // `sources` is. An input that named nothing has no source row to merge, so
+  // it would silently read zero across a cohort that is full of them.
+  it('adds the unnamed across seats, where a distinct-source count cannot be added', () => {
+    const mine = only(inventory([fetchingRun('L1', [[writeTicket('b'.repeat(400), 'H-1')]])], { acquired: true })).acquired!;
+    const theirs = only(inventory([fetchingRun('L2', [[writeTicket('c'.repeat(400), 'H-2')]])], { acquired: true })).acquired!;
+    const both = mergeAcquired([mine, theirs]);
+    const tool = both.by_kind.find((k) => k.kind === 'tool')!;
+
+    expect(tool.unnamed).toEqual({ inputs: 2, bytes: resultBytes(0, 0, 'H-1') + resultBytes(0, 0, 'H-2') });
+    expect(tool.sources).toBe(0);
+  });
+
+  // Mutation: count every source as a singleton, or count inputs rather than
+  // distinct sources. `sources` is a GROUPING only where a key repeats, and
+  // this is the figure that says how much of the count is a tail — the
+  // question behind both reviewers' doubt about the argument-set key.
+  it('says how much of a kind is a tail of sources seen exactly once', () => {
+    const seat = only(inventory([
+      fetchingRun('L1', [[query('R-45', 'twice'), query('R-56', 'once-only')]]),
+      fetchingRun('L2', [[query('R-45', 'twice')]]),
+    ], { acquired: true }));
+    const tool = seat.acquired!.by_kind.find((k) => k.kind === 'tool')!;
+
+    expect(tool.sources).toBe(2);
+    // `project=R-45` was asked in both runs and is a grouping; `project=R-56`
+    // was asked once and is not.
+    expect(tool.singletons).toEqual({ sources: 1, bytes: resultBytes(0, 1, 'once-only') });
+  });
+
+  // Mutation: add the seats' own singleton figures for the cohort row. A
+  // source each of two seats fetched once is two inputs in the merge and is
+  // no longer a one-off, so an added figure reports a tail that is not there
+  // — the same error `sources` is recomputed to avoid.
+  it('recomputes the singletons for the cohort rather than adding the seats', () => {
+    const mine = only(inventory([fetchingRun('L1', [[read('the rules')]])], { acquired: true })).acquired!;
+    const theirs = only(inventory([fetchingRun('L2', [[read('the rules')]])], { acquired: true })).acquired!;
+
+    expect(mine.by_kind.find((k) => k.kind === 'file')!.singletons.sources).toBe(1);
+    expect(theirs.by_kind.find((k) => k.kind === 'file')!.singletons.sources).toBe(1);
+    expect(mergeAcquired([mine, theirs]).by_kind.find((k) => k.kind === 'file')!.singletons).toEqual({ sources: 0, bytes: 0 });
+  });
+
+  // Mutation: keep both figures in --json and out of the reading. The whole
+  // point of either is that an operator reads the kind row and knows how far
+  // to trust its source count, without opening the export.
+  it('puts the tail and the unattributed mass in the operator\'s reading too', () => {
+    const seat = only(inventory([
+      fetchingRun('L1', [[query('R-45', 'once-only'), writeTicket('b'.repeat(400), 'H-1')]]),
+    ], { acquired: true }));
+    const text = renderInventory({
+      window: { from: 'a', to: 'b', basis: 'the test window' },
+      seats: [seat], acquired: seat.acquired, gaps: [], measured_at: 'now',
+    });
+
+    expect(text).toContain('1 seen once');
+    expect(text).toContain(`1 naming nothing (${resultBytes(0, 1, 'H-1')}B)`);
+  });
 });
 
 describe('whose content it is, how it got here, and which audit category that makes it', () => {

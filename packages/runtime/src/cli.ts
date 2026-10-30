@@ -27,7 +27,8 @@ import { commandName, runCommand } from './command-name.js';
 import { assertTicketIdentity, readTicketLaunches, sessionTrace } from './session-trace.js';
 import { coverageReading } from './context-coverage.js';
 import { contextTrace, recordForLaunch } from './context-trace.js';
-import { latestSettledLaunch, pathProviders } from './context-coverage.js';
+import { readLaunch } from './launch-journal.js';
+import { latestSettledLaunch, pathProviders, pathRuntimes } from './context-coverage.js';
 import { compareReceipts, pruneBlobs, readReceipt, startupReading } from './startup-context.js';
 import { cliError, ticketHistory } from './helm.js';
 import { recordStallEpisodes } from './stalled-work.js';
@@ -374,11 +375,22 @@ switch (cmd) {
       }
       const l = loops[seat]!;
       const wanted = flag('launch');
-      const launch = latestSettledLaunch(seat, pathProviders(l, l.runtime));
-      if (!launch || (wanted !== undefined && launch.launch_id !== wanted)) {
+      // Named, this reads that launch's own journal entry rather than
+      // comparing against the newest. A seat on a rotation settles runs on
+      // both providers, so the newest is only ever one of them — and tracing
+      // the other is the ordinary ask, not an edge case.
+      // Across every runtime this seat can launch under, not just its
+      // primary: a seat on a rotation settles runs on both, and taking the
+      // primary's providers alone returns a run from the other route's
+      // yesterday while the newest one goes unmentioned. Same correction the
+      // coverage inventory needed (CONTEXT-COVERAGE.md, correction 1).
+      const launch = wanted === undefined
+        ? latestSettledLaunch(seat, pathRuntimes(l).flatMap((r) => pathProviders(l, r)))
+        : readLaunch(seat, wanted);
+      if (!launch) {
         console.error(wanted === undefined
           ? `No settled launch for ${seat}. A dispatching launch carries no host session id, so a live run has no trace.`
-          : `The most recent settled launch for ${seat} is ${launch?.launch_id ?? '(none)'}, not ${wanted}. Only the latest settled launch is resolvable here.`);
+          : `No launch ${wanted} in ${seat}'s journal. The id is the one in a launch record or a trace, exactly as written there.`);
         process.exit(1);
       }
       const found = recordForLaunch(launch, l.cwd);

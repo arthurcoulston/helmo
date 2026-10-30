@@ -704,6 +704,69 @@ constitution = "${join(dir, 'PROFILE.md')}"
     expect(result.stderr).toContain('No settled launch for alpha');
   });
 
+  // A seat on a provider rotation settles runs on both, so the newest settled
+  // launch is only ever one of them. --launch reads the named launch's own
+  // journal entry; comparing it against the newest made the other provider's
+  // run untraceable by seat, which is the ordinary ask.
+  // The bare form spans every runtime the seat can launch under. Taking the
+  // primary's providers alone returned the other route's older run while the
+  // newest one went unmentioned — the same correction the coverage inventory
+  // needed (CONTEXT-COVERAGE.md, correction 1).
+  it('resolves the newest settled launch across both routes of a rotation', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rev-trace-rot-'));
+    writeFileSync(join(dir, 'PROFILE.md'), '---\ncap_tokens: 500\n---\nthe seat itself\n');
+    writeFileSync(join(dir, 'roster.toml'), `[global]
+helmo_cli = "/tmp/helmo-cli.js"
+helmo_mcp_server = "/tmp/helmo-server.js"
+
+[providers.claude.models]
+frontier = "claude-opus-5"
+
+[providers.codex.models]
+frontier = "gpt-6"
+
+[loops.alpha]
+workstream = "test"
+cwd = "/tmp"
+provider = "claude"
+tier = "frontier"
+rotation = ["claude", "codex"]
+constitution = "${join(dir, 'PROFILE.md')}"
+`);
+    const launches = join(dir, 'state', 'alpha', 'launches');
+    mkdirSync(launches, { recursive: true });
+    const settle = (id: string, provider: string, endedAt: string, sessionId: string) => {
+      const entry = {
+        format: 1, phase: 'complete', launch_id: id, intent_at: endedAt,
+        session: {
+          provider, model: 'm', provider_session_id: sessionId,
+          provider_session_id_state: 'observed', started_at: endedAt, ended_at: endedAt, outcome: 'ok',
+        },
+      };
+      writeFileSync(join(launches, `${createHash('sha256').update(id).digest('hex')}.json`), JSON.stringify(entry));
+    };
+    // The claude run is older; the codex run is the newest and sits on the
+    // route the primary's provider list does not name.
+    settle('rev:alpha:1:1:1', 'claude', '2026-10-28T00:00:00.000Z', 'aaaaaaaa-1111-2222-3333-444444444444');
+    settle('rev:alpha:1:2:2', 'codex', '2026-10-29T00:00:00.000Z', 'bbbbbbbb-1111-2222-3333-444444444444');
+
+    const result = rev(dir, ['context-trace', 'alpha']);
+
+    // Neither host record exists here, so the trace stops at locating it —
+    // and the message names which session it resolved, which is the assertion.
+    expect(result.stderr).toContain('bbbbbbbb-1111-2222-3333-444444444444');
+    expect(result.stderr).not.toContain('aaaaaaaa-1111-2222-3333-444444444444');
+  });
+
+  it('resolves the launch it is given rather than only the newest', () => {
+    const dir = home();
+    const result = rev(dir, ['context-trace', 'alpha', '--launch', 'rev:alpha:1:1:1']);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("No launch rev:alpha:1:1:1 in alpha's journal");
+    expect(result.stderr).not.toContain('No settled launch');
+  });
+
   it('refuses an unknown seat and prints its usage with no arguments', () => {
     const dir = home();
     expect(rev(dir, ['context-trace', 'nobody']).stderr).toContain("Unknown loop 'nobody'");

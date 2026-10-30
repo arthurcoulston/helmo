@@ -623,3 +623,90 @@ runtime = "mock"
     expect(readFileSync(join(i.home, 'state', 'alpha', 'PACE'), 'utf8')).toContain('0.5');
   });
 });
+
+// The CLI half of R-55's per-invocation trace (H-3724). The module's own
+// acceptance is in context-trace.test.ts; what is only observable here is the
+// exit code, the refusals, and that the verb is reachable at all — the gap
+// H-3641's findings left in `startup-context`, where four behaviour changes
+// shipped with nothing at this level that would have caught a regression.
+describe('context-trace (R-55 H-3724)', () => {
+  function home(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'rev-trace-cli-'));
+    writeFileSync(join(dir, 'PROFILE.md'), '---\ncap_tokens: 500\n---\nthe seat itself\n');
+    writeFileSync(join(dir, 'roster.toml'), `[global]
+helmo_cli = "/tmp/helmo-cli.js"
+helmo_mcp_server = "/tmp/helmo-server.js"
+
+[loops.alpha]
+workstream = "test"
+cwd = "/tmp"
+provider = "claude"
+model = "claude-opus-5"
+constitution = "${join(dir, 'PROFILE.md')}"
+`);
+    return dir;
+  }
+
+  const record = (dir: string, entries: unknown[]): string => {
+    const path = join(dir, 'record.jsonl');
+    writeFileSync(path, entries.map((e) => JSON.stringify(e)).join('\n') + '\n');
+    return path;
+  };
+
+  it('prints a trace for a record and exits 0 when every category is readable', () => {
+    const dir = home();
+    const path = record(dir, [
+      {
+        type: 'api-request-shape', sessionId: 'aaaaaaaa-1111-2222-3333-444444444444', shapeHash: 's0',
+        version: '2.1.300', shape: { system: [{ type: 'text', text: 'host block' }], tools: [{ name: 'Bash' }] },
+      },
+      { type: 'api-request-blob', sessionId: 'aaaaaaaa-1111-2222-3333-444444444444', hash: 'm0', message: { role: 'user', content: [] } },
+      {
+        type: 'api-request', sessionId: 'aaaaaaaa-1111-2222-3333-444444444444', id: 'r0', shapeHash: 's0',
+        version: '2.1.300', keep: 0, tail: ['m0'], params: { model: 'claude-opus-5' },
+      },
+    ]);
+    const result = rev(dir, ['context-trace', '--record', path]);
+
+    expect(result.status, result.stderr).toBe(0);
+    const trace = JSON.parse(result.stdout) as { harness: string; coverage: { category: string; state: string }[] };
+    expect(trace.harness).toBe('claude');
+    expect(trace.coverage.some((c) => c.state === 'unavailable')).toBe(false);
+  });
+
+  // A category nothing could be said about is the finding this command exists
+  // for, so whatever runs it on a timer learns that from the status.
+  it('exits 1 when a required category is unavailable', () => {
+    const dir = home();
+    const path = record(dir, [
+      { type: 'user', sessionId: 'aaaaaaaa-1111-2222-3333-444444444444', message: { role: 'user', content: 'hello' } },
+    ]);
+    const result = rev(dir, ['context-trace', '--record', path]);
+
+    expect(result.status).toBe(1);
+    const trace = JSON.parse(result.stdout) as { coverage: { category: string; state: string }[] };
+    expect(trace.coverage.filter((c) => c.state === 'unavailable').map((c) => c.category))
+      .toEqual(['invocations', 'instructions', 'tools', 'additions']);
+  });
+
+  it('exits 1 on a record it cannot attribute to a harness, rather than reading it as one', () => {
+    const dir = home();
+    const result = rev(dir, ['context-trace', '--record', record(dir, [{ type: 'something-else' }])]);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('harness that wrote it is unknown');
+  });
+
+  it('says a seat with no settled launch has no trace instead of reading the wrong session', () => {
+    const result = rev(home(), ['context-trace', 'alpha']);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('No settled launch for alpha');
+  });
+
+  it('refuses an unknown seat and prints its usage with no arguments', () => {
+    const dir = home();
+    expect(rev(dir, ['context-trace', 'nobody']).stderr).toContain("Unknown loop 'nobody'");
+    expect(rev(dir, ['context-trace']).stderr).toContain('usage: rev context-trace');
+  });
+});

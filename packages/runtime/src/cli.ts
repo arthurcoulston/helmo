@@ -26,6 +26,8 @@ import { buildIntakeResult, recordIntakeResult } from './intake-preparation.js';
 import { commandName, runCommand } from './command-name.js';
 import { assertTicketIdentity, readTicketLaunches, sessionTrace } from './session-trace.js';
 import { coverageReading } from './context-coverage.js';
+import { contextTrace, recordForLaunch } from './context-trace.js';
+import { latestSettledLaunch, pathProviders } from './context-coverage.js';
 import { compareReceipts, pruneBlobs, readReceipt, startupReading } from './startup-context.js';
 import { cliError, ticketHistory } from './helm.js';
 import { recordStallEpisodes } from './stalled-work.js';
@@ -171,6 +173,7 @@ const COMMAND_HELP: Record<string, string> = {
   tail: `usage: ${commandName} tail <loop>`,
   trace: `usage: ${commandName} trace <installation-qualified ticket>`,
   'context-coverage': `usage: ${commandName} context-coverage [seat] [--no-inventory]`,
+  'context-trace': `usage: ${commandName} context-trace <seat> [--launch <id>]\n   or: ${commandName} context-trace --record <path to a host record>`,
   'startup-context': `usage: ${commandName} startup-context [seat] [--launch <id>] [--ticket <id>] [--limit <n>]\n   or: ${commandName} startup-context --diff <launch> --b <launch> [--a-seat <seat>] [--b-seat <seat>]\n   or: ${commandName} startup-context --prune [--apply]`,
   'session-spec': `usage: ${commandName} session-spec <seat> --session <actor stamp> [--provider claude] [--tier high] [--model M] [--cwd P] [--constitution P] [--version V]`,
   team: `usage: ${commandName} team <stop|resume> <loop|role|all> [--worker]`,
@@ -349,6 +352,47 @@ switch (cmd) {
     // A path whose account can no longer be checked is the finding this
     // command exists for, so it leaves a non-zero status for whatever ran it.
     if (reading.summary.stale || reading.summary.error) process.exitCode = 1;
+    break;
+  }
+  // What one SESSION's context actually was, per model invocation (R-55
+  // H-3724). context-coverage asks whether the configured account still
+  // holds and startup-context records what a launch was handed; neither can
+  // say what reached the model on the fortieth call. This reads the host CLI's
+  // own per-request ledger and reports every required category's state with
+  // its reason, so a category the host stopped retaining reads as partial
+  // rather than as a figure that quietly stopped being true.
+  case 'context-trace': {
+    const record = flag('record');
+    let path: string;
+    if (record !== undefined) {
+      path = record;
+    } else {
+      const seat = rest[0] && !rest[0].startsWith('--') ? knownLoop(rest[0]) : undefined;
+      if (!seat) {
+        console.error(COMMAND_HELP['context-trace']);
+        process.exit(1);
+      }
+      const l = loops[seat]!;
+      const wanted = flag('launch');
+      const launch = latestSettledLaunch(seat, pathProviders(l, l.runtime));
+      if (!launch || (wanted !== undefined && launch.launch_id !== wanted)) {
+        console.error(wanted === undefined
+          ? `No settled launch for ${seat}. A dispatching launch carries no host session id, so a live run has no trace.`
+          : `The most recent settled launch for ${seat} is ${launch?.launch_id ?? '(none)'}, not ${wanted}. Only the latest settled launch is resolvable here.`);
+        process.exit(1);
+      }
+      const found = recordForLaunch(launch, l.cwd);
+      if ('why' in found) {
+        console.error(found.why);
+        process.exit(1);
+      }
+      path = found.path;
+    }
+    const t = contextTrace(path);
+    console.log(JSON.stringify(t, null, 2));
+    // A record that cannot be read at all, and a category nothing could be
+    // said about, are the findings this command exists for.
+    if ('error' in t || t.coverage.some((c) => c.state === 'unavailable')) process.exitCode = 1;
     break;
   }
   // What a launch actually received, from this installation's own retained
@@ -1062,6 +1106,7 @@ switch (cmd) {
   tail <loop>              print the path of the loop's event trace
   trace <ticket@install>   join one ticket to content-off launch/session metadata and Work events
   context-coverage [seat]  is the account of what each seat loads still true? per path, with repairs
+  context-trace <seat>     what one session's context was, per model invocation, from the host's own ledger
 Any command also takes --installation <name|home> (or --installation=<name|home>): it asserts which
 installation the command is about, and ANY command — reads included — refuses rather than redirects
 if that disagrees with the environment.

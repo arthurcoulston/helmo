@@ -125,10 +125,17 @@ export interface PathCoverage {
   note: string;
 }
 
+// What this check does not measure. Two of these three said more than the
+// records warranted, and H-3724 measured them: the Codex rollout DOES retain
+// its tool inventory (as server descriptions and the host's own schema
+// hashes), and both hosts record compaction with before and after figures. So
+// what is unmeasured HERE is unmeasured by this check, which reads one launch's
+// prompt — not unobservable. `context-trace.ts` is where the rest is read, and
+// naming it is the difference between a gap and a dead end.
 const UNMEASURED = [
-  "the host CLI's own system prompt and harness instructions (retained in the host record, not ours)",
-  'the tool and MCP schemas the session is given (the Claude record retains them; the Codex rollout does not)',
-  'anything the session read, was handed, or kept after the host compacted it',
+  "the host CLI's own system prompt and harness instructions: retained in the host record, not ours, and read per invocation by context-trace",
+  'the tool and MCP schemas the session is given, including any added mid-session: both hosts retain an inventory, and context-trace reports it per configuration change',
+  'anything the session read, was handed, or kept after the host compacted it: this check reads the launch, and context-trace reads the evolution',
 ];
 
 const sha256 = (text: string): string => createHash('sha256').update(text, 'utf8').digest('hex');

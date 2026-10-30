@@ -571,6 +571,65 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   selecting the retained release and restoring its entry-point pins: a release
   without this module neither reads nor writes either store, so both are left
   behind inert and no downgrade deletes them.
+- `context-trace.ts` — what one SESSION's context actually was, per model
+  invocation (R-55 H-3724). The two modules above answer about the launch:
+  context-coverage asks whether the configured account still holds, and
+  startup-context records what the launch was handed. Neither can say what
+  reached the model on the fortieth call — what had been added since, what the
+  host had dropped, and how big any of it was. The audit behind
+  context-coverage recorded that as "No record" on every path, and that was too
+  pessimistic: both host CLIs keep a per-invocation ledger and both record
+  compaction. This module reads them, and it adds no collector either.
+  Two adapters, because the two hosts are partial in DIFFERENT places, and that
+  difference is the finding.
+  **Claude** (`api-request`, `api-request-shape`, `api-request-blob`, from
+  claude-code 2.1.300) names every call's message list exactly — `base` is the
+  call it builds on, `keep` how many of that call's messages survived, `tail`
+  the hashes appended — so the list, the additions AND the removals are
+  reconstructable without the host ever writing one out. Each configuration of
+  system prompt and tool schemas is a `shapeHash` re-emitted whenever it
+  changes, so a session's instruction and tool timeline is readable: one mason
+  loop session grew from 12 tools at 23KB to 24 at 75KB as deferred schemas
+  loaded. What it does NOT hold is the content of every message it references —
+  measured at 36-49% across recent loop sessions. The retained blobs skew to
+  what the host SYNTHESIZES (system reminders, recalled memory, injected
+  instruction files), and ordinary turns are left to the transcript's own
+  `user` and `assistant` entries, which carry no request hash. The host's
+  canonicalization is not reproducible from the record, so that join is
+  positional — an inference, and `additions` reports `partial` with the measured
+  fraction rather than asserting it.
+  **Codex** (`session_meta`, `world_state`, `turn_context`, `response_item`,
+  `token_usage_record`, `compacted`) is the mirror image: every item's content
+  is inline, the host's own prompt is verbatim in `base_instructions`, the cwd
+  repository's revision comes free in `session_meta.git` — the field
+  session-trace.ts still reports `unsupported` — and each source arrives as
+  text or as the host's own hash, which is the immutable reference the brief
+  asks for. What it does not hold is the message array of each underlying API
+  call: it records turns and items, so `invocations` is `partial` and no
+  per-call count is computed. A `world_state` with `full: false` is a DELTA
+  carrying only the keys that moved; the first version of this reader read one
+  as a configuration and reported a tool list of 35 as a tool list of 0, so a
+  delta is recorded as a change point and never read as an inventory.
+  Five distinctions, the same discipline as its two neighbours. INVOCATION vs
+  SESSION: every figure is per call, and no session total is presented as what
+  one call received. PRESENT vs RECOVERABLE, above. ADDED vs REMOVED vs
+  COMPACTED: a shorter list is a removal, and only a removal the host
+  accompanies with a replacement summary is a compaction — a drop with no
+  boundary reports `partial` with "what replaced them is unknown" rather than
+  inventing one. STRUCTURE vs CONTENT: this module retains nothing. It records
+  identity, byte sizes and the host's own hashes and leaves content where it
+  already lives, which keeps a trace free of credentials by construction rather
+  than by redaction. OBSERVED vs PARTIAL vs UNAVAILABLE: all seven categories
+  are always present with a reason, because a category dropped from the reading
+  would read as covered.
+  The provider ceiling is stated on every trace and is the same on both: what a
+  provider adds, rewrites, caches or drops inside its own service is in no file
+  on this machine. So is the attention limit — every figure here is about what
+  was SUPPLIED, never about what the model used.
+  Read by `--record <path>`, or by seat, which joins through the launch
+  journal's `provider_session_id` and therefore only resolves a SETTLED launch:
+  a dispatching entry carries no id, and saying a live run has no trace is the
+  honest answer rather than reading the previous run's file.
 - **Every Team read goes through `readBounded`, and that is the whole guard
   (H-3004).** The inventory includes every `CLAUDE.md` and `AGENTS.md` found
   walking up from a seat's cwd — files no roster entry names, in trees any agent
@@ -1450,6 +1509,14 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   any path is `stale` or `error`, so whatever runs it learns the finding
   without reading the JSON. `--no-inventory` drops the tokenized per-file
   measurement; the whole fleet with it measures ~2s here.
+- `node dist/cli.js context-trace <seat> [--launch <id>]` or
+  `context-trace --record <path>` prints one session's per-invocation context
+  trace from the host CLI's own record. It exits non-zero when a required
+  category is `unavailable` or the record cannot be attributed to a harness,
+  which are the two findings it exists for; a category that is `partial` is a
+  reading and does not. The seat form resolves only the most recent SETTLED
+  launch, because that is the only one the launch journal carries a host
+  session id for.
 - `node dist/cli.js startup-context [seat] [--launch <id>] [--ticket <id>]
   [--limit <n>]` prints the startup receipts: one per launch, newest first,
   each with its content resolved now and whether its composition still rebuilds.

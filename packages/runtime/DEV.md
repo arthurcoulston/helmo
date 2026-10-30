@@ -912,7 +912,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   Attribution is one-directional: R-45's configured inventory puts a NAME to a
   chunk the host retained, and is never evidence that a source was loaded. A
   source on that list that matched nothing is `configured_unseen`, which is a
-  finding. `attribution_basis` says how strong the name is — `sha` and
+  finding with three possible causes and the reading names all three: it
+  stopped being delivered, it has been edited since every run in the window,
+  or it is under the containment floor below and so is only ever named as a
+  whole chunk of its own (ward on H-3836). `attribution_basis` says how strong the name is — `sha` and
   `contains` are proofs against retained bytes, `prefix` matched only a part's
   opening and is marked for discounting, `shape` names a host STRUCTURE and no
   source at all. `contains` has a 64-byte floor on the variant
@@ -931,7 +934,38 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   A chunk is rarely one thing: the harness hands over a bundle with two
   instruction files and its own wrapper in one message. So a chunk yields
   EVERY source it carries plus its unaccounted remainder, and the bytes split
-  across them without loss. An attributed item is versioned and sized by what
+  across them without loss. The REMAINDER is split the same way, at the seams
+  this installation can read, because one shape label for a bundle is a label
+  for its first piece (R-56, H-3818 increment 5). The two hosts bundle
+  differently and both seams are legible: claude writes a first-call part as
+  several CONTENT BLOCKS (`QueryPart.segments` carries them, with each block's
+  own serialized size), and codex takes one stdin, so the seat's composed
+  instructions and the iteration prompt arrive as ONE item joined by
+  `ITERATION_PROMPT_SEAM` — exported from `shim.ts`, which writes it, so the
+  separator has one spelling. Read whole, a claude part opening with a
+  `<system-reminder>` put this installation's own iteration prompt under the
+  host's reminder label: category 1 counted as category 2, on every claude run
+  of every seat, 1,989–2,439B per run. The same split fixes the codex figure,
+  which was the chunk's leftover after the profile matched and read 47% light
+  (1,128B against the prompt's real 2,118B).
+  A piece's bytes are its own serialized size, the unit the part's `bytes` is
+  in; they sum to a little under the part — its `{"role":…,"content":[…]}`
+  envelope and the array's framing, a measured 31B on a four-block part — and
+  that difference is left uncounted rather than smeared across the pieces to
+  make a total balance.
+  The launcher prompt is recognised by the OPENING this installation composes
+  (`ITERATION_PROMPT_OPENING` and its legacy form, the same two constants
+  `summon-trace.ts` matches records against), never by a phrase: the phrase
+  test it replaced read a doctrine chapter ABOUT loop iterations as the
+  launcher's own writing, and its second branch — `\bWorking directory:\b` —
+  could never fire at all, because there is no word boundary between `:` and a
+  space. An opening only became usable once a part was read piece by piece: on
+  claude the prompt is never at the start of the part that carries it.
+  Pieces of one chunk that are the same thing are FOLDED into one row, because
+  a run keeps one row per key and three reminder blocks would otherwise report
+  the first block's size as the part's reminder bytes. A folded row claims no
+  version — the pieces hash differently and none of those hashes is the
+  item's. An attributed item is versioned and sized by what
   MATCHED, not by the chunk that carried it — the bundle differs per run and
   the file does not, so hashing the chunk read as five versions of a profile
   that had not changed. Instruction and tool bytes nothing accounts for get an
@@ -1923,6 +1957,15 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   its payload, its `via` transcript uuids and its measured caveat), and 82/82
   recorded response items plus 42/42 replacement-history items byte-equal on a
   codex call of 124.
+  `parts[].segments` is carried whatever the view too, and for a different
+  reason: it is not content but STRUCTURE — a part's content blocks as the host
+  wrote them, each with its own serialized size — and a part is often a bundle
+  whose pieces came from different places. `null` where there is nothing to
+  take apart: a single-block part (`text` IS the block), a part whose text was
+  clipped (the blocks after the cut are partial, so a per-block reading would
+  be a guess), an unreadable part, and codex throughout, which writes one block
+  per item. `context-inventory` reads it to keep this installation's own
+  iteration prompt out of the host's reminder row; see that module above.
   `parts[].acquired` is the exception to all of that: it is carried WHATEVER
   the view, because a source is a name and a path and it is the first thing an
   audit asks (`context-acquired.ts` above). Each entry names the tool, the

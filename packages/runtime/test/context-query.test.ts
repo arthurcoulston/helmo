@@ -1233,6 +1233,30 @@ describe('the export an audit reads', () => {
     expect(read.parts[2]!.payload).toEqual([{ type: 'tool_result', tool_use_id: 't1', is_error: false, content: [{ type: 'text', text: 'total 0' }] }]);
   });
 
+  // Mutation: carry `segments` only under `--verbatim`, or build it from the
+  // joined text. A part's blocks are STRUCTURE, not content: the inventory
+  // reads them on every run of a cohort to tell the pieces of a bundle apart,
+  // and it never asks for a verbatim view — it cannot, because a verbatim read
+  // implies no truncation and a cohort pass is bounded per part.
+  it('carries a part blocks apart, with each block own size, whatever the view', () => {
+    const path = write('tools.jsonl', toolTrafficRecord());
+    const read = at(path, 0);
+    if ('error' in read) throw new Error(read.error);
+
+    const bundled = read.parts[0]!;
+    expect(bundled.segments).toEqual([
+      { type: 'text', text: 'run it', bytes: Buffer.byteLength(JSON.stringify({ type: 'text', text: 'run it' }), 'utf8') },
+      { type: 'image', text: '[image]', bytes: Buffer.byteLength(JSON.stringify({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'QUJD' } }), 'utf8') },
+    ]);
+    // The pieces sum to the part less its own envelope and the array framing
+    // around them — a real difference, left uncounted rather than smeared.
+    const pieces = bundled.segments!.reduce((n, g) => n + g.bytes, 0);
+    expect(pieces).toBeLessThan(bundled.bytes!);
+    expect(bundled.bytes! - pieces).toBeLessThan(40);
+    // Nothing to take apart: one block, and `text` is it.
+    expect(read.parts[1]!.segments).toBeNull();
+  });
+
   // Mutation: carry the payload always. Every terminal reading of a long
   // session would then hold a second copy of every part it already printed.
   it('carries no payload unless it was asked for', () => {

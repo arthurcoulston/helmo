@@ -19,6 +19,15 @@ import { GlobalConfig, LoopConfig, ModelPrice, RunChoice, Runtime, SessionResult
 // parent session's ANTHROPIC_BASE_URL without its auth reads as logged-out.
 export const AMBIENT_SESSION_ENV = /^(CLAUDE|ANTHROPIC|AI_AGENT$|BAGGAGE$|CODEX)/;
 
+/** What joins the seat's composed instructions to the iteration prompt on the
+ *  codex path, where both go down one stdin and arrive as ONE message item.
+ *  Exported because a reader of the host record has to take that item apart
+ *  again: this installation writes the seam, so it is the one legible place to
+ *  cut, and a separator spelled twice would drift (R-56, H-3818). On the
+ *  claude path there is no seam to write — the prompt goes in on `-p` and the
+ *  host keeps it as its own content block. */
+export const ITERATION_PROMPT_SEAM = '\n\n--- Iteration prompt ---\n\n';
+
 export function cleanEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(process.env)) {
@@ -599,7 +608,7 @@ async function runCodex(g: GlobalConfig, l: LoopConfig, prompt: string, model: s
     {
       cwd: l.cwd,
       env: sessionEnv(l),
-      input: `${systemPrompt(l)}\n\n--- Iteration prompt ---\n\n${prompt}`,
+      input: `${systemPrompt(l)}${ITERATION_PROMPT_SEAM}${prompt}`,
     },
   );
   endSessionGroup(res.pid);

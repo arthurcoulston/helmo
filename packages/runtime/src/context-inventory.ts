@@ -35,7 +35,8 @@ import { contextAt, contextEvolution, type QueryPart } from './context-query.js'
 import type { AcquiredKind } from './context-acquired.js';
 import { currentSources, pathProviders, pathRuntimes, readSource } from './context-coverage.js';
 import { workingTreeInstructions } from './team.js';
-import { mcpServers } from './shim.js';
+import { ITERATION_PROMPT_SEAM, mcpServers } from './shim.js';
+import { ITERATION_PROMPT_OPENING, ITERATION_PROMPT_OPENING_LEGACY } from './summon-trace.js';
 
 /** The first run of the R-56 cohort: the iteration in which Arthur commissioned
  *  this reading. Runs before it are a different population — they were launched
@@ -362,10 +363,12 @@ export interface SeatInventory {
   seat: string;
   provider_paths: string[];
   /** Sources this installation configures for the seat that matched no chunk in
-   *  any read run. Each one is a finding: either it stopped being delivered, or
-   *  it has been edited since every run in the window and this read can no
-   *  longer recognise what was delivered. Both are worth a look, and neither is
-   *  the same as the source being absent from the context. */
+   *  any read run. Each one is a finding: it stopped being delivered, or it has
+   *  been edited since every run in the window and this read can no longer
+   *  recognise what was delivered, or it is shorter than
+   *  `CONTAINMENT_FLOOR_BYTES` and so is never named INSIDE a bundle, only as
+   *  a whole chunk of its own. All three are worth a look, and none of them is
+   *  the same as the source being absent from the context (ward on H-3836). */
   configured_unseen: string[];
   population: Record<RunState, number>;
   runs_total: number;
@@ -455,7 +458,17 @@ const SHAPES: { id: string; label: string; test: (text: string, role: string, ty
   { id: 'system-reminder', label: 'harness system reminders', test: (t) => t.trimStart().startsWith('<system-reminder>') },
   { id: 'tool-output', label: 'tool results', test: (_t, _r, types) => types.some((k) => k === 'tool_result' || k === 'function_call_output') },
   { id: 'assistant-turn', label: "the model's own turns", test: (_t, role) => role === 'assistant' },
-  { id: 'task-prompt', label: 'the run instruction the launcher supplied', test: (t, role) => (role === 'user' || role === 'developer') && /\bloop iteration\b|\bWorking directory:\b/.test(t) },
+  // Recognised by the opening THIS INSTALLATION composes, read from the two
+  // constants `summon-trace.ts` already matches records against, so the prompt
+  // and every reader of it cannot drift apart. The phrase test this replaces
+  // was wrong twice over: its `\bWorking directory:\b` branch could never
+  // fire (there is no word boundary between `:` and a space, so only the
+  // `loop iteration` branch did any work), and the branch that did fire
+  // matched on a PHRASE — a doctrine chapter about loop iterations read as the
+  // launcher's prompt. An opening is the honest test, and it became usable
+  // only once a bundled part was read block by block: on claude the prompt is
+  // never at the start of the part that carries it.
+  { id: 'task-prompt', label: 'the run instruction the launcher supplied', test: (t, role) => (role === 'user' || role === 'developer') && (t.startsWith(ITERATION_PROMPT_OPENING) || ITERATION_PROMPT_OPENING_LEGACY.test(t)) },
 ];
 
 /** Which shapes are a recurring ITEM and which are a run's own material. A
@@ -1132,11 +1145,92 @@ export function inventory(runs: InventoryRun[], opts: InventoryOptions = {}): Se
   return out;
 }
 
+/** Rows of one chunk that are the same thing said twice, folded into one. A
+ *  bundled part carries three `<system-reminder>` blocks, and three rows for
+ *  them would report the first block's size as the part's reminder bytes —
+ *  `firstSeen` below keeps one row per key per run, so whichever came first
+ *  would be the figure. Folded, the row carries what the whole part held of
+ *  that thing, which is the number an audit asked for.
+ *
+ *  A folded row claims no version. Two blocks of one shape hash differently
+ *  and neither hash is the item's; `''` is how every other weak reading in
+ *  this file says it saw no version, and the version list skips it. */
+const foldChunkRows = (rows: Seen[]): Seen[] => {
+  const out: Seen[] = [];
+  const at = new Map<string, Seen>();
+  for (const r of rows) {
+    const prev = at.get(r.key);
+    if (prev === undefined) { const copy = { ...r, via: [...r.via] }; at.set(r.key, copy); out.push(copy); continue; }
+    prev.bytes = (prev.bytes ?? 0) + (r.bytes ?? 0);
+    if (prev.sha256 !== r.sha256) prev.sha256 = '';
+    for (const v of r.via) if (!prev.via.includes(v)) prev.via.push(v);
+  }
+  return out;
+};
+
+/** A part taken apart at the seams, or `null` where there is no seam in it and
+ *  the part is one thing.
+ *
+ *  A part is rarely one thing, and the two hosts bundle differently. Claude
+ *  writes the host's reminders, the repository instruction file and this
+ *  installation's iteration prompt as three CONTENT BLOCKS in one part. Codex
+ *  takes one stdin, so the seat's composed instructions and the same prompt
+ *  arrive as ONE item joined by a separator this installation wrote itself.
+ *  Both are legible, and neither is legible from the joined text alone.
+ *
+ *  A sub-chunk's bytes are its own serialized size, the unit the part's
+ *  `bytes` is in, the way `claudeAcquired` already apportions a batch of
+ *  results in one message. They sum to a little under the part — its array
+ *  framing, its envelope — and that difference is left uncounted rather than
+ *  smeared across the pieces to make a total balance. */
+const partSeams = (p: QueryPart): { type: string; text: string; bytes: number }[] | null => {
+  if (p.origin === 'unreadable' || p.truncated) return null;
+  const blocks = p.segments !== null
+    ? p.segments.map((s) => ({ type: s.type, text: s.text, bytes: s.bytes }))
+    : p.text === null || p.text === ''
+      ? []
+      : [{ type: p.types[0] ?? 'text', text: p.text, bytes: p.bytes ?? Buffer.byteLength(JSON.stringify(p.text), 'utf8') }];
+  const out: { type: string; text: string; bytes: number }[] = [];
+  for (const b of blocks) {
+    const at = b.text.indexOf(ITERATION_PROMPT_SEAM);
+    if (at < 0) { out.push(b); continue; }
+    for (const side of [b.text.slice(0, at), b.text.slice(at + ITERATION_PROMPT_SEAM.length)]) {
+      if (side !== '') out.push({ type: b.type, text: side, bytes: Buffer.byteLength(JSON.stringify(side), 'utf8') });
+    }
+  }
+  return out.length > 1 ? out : null;
+};
+
 /** Whether a part's text is complete is a property of the part, not of which
  *  pass read it: an untruncated later part can be searched for a source
- *  embedded in it exactly as a first-call part can. */
-const classifyPart = (p: QueryPart, named: NamedSource[], ordinal: number, harness: string): ChunkReading =>
-  classify('message', p.text, p.bytes, p.role, p.types, named, !p.truncated, ordinal, p.via, p.origin === 'unreadable', harness);
+ *  embedded in it exactly as a first-call part can.
+ *
+ *  A bundled part is read piece by piece and the readings summed. One chunk
+ *  still — the chunk is the part, and the run accounts count it once — but the
+ *  things inside it are no longer one thing. Read whole, everything the named
+ *  sources did not account for took ONE shape label, and on claude the part
+ *  opens with a reminder, so that label was the host's: this installation's
+ *  own iteration prompt, the highest-control startup input there is, was
+ *  counted as somebody else's injection (R-56 category 1 read as category 2).
+ *  Piece by piece, each gets its own name, its own bytes and its own
+ *  supplier. */
+const classifyPart = (p: QueryPart, named: NamedSource[], ordinal: number, harness: string): ChunkReading => {
+  const pieces = partSeams(p);
+  if (pieces === null) {
+    return classify('message', p.text, p.bytes, p.role, p.types, named, !p.truncated, ordinal, p.via, p.origin === 'unreadable', harness);
+  }
+  const rows: Seen[] = [];
+  let residue_bytes = 0;
+  for (const s of pieces) {
+    // The PIECE's type, not the part's: a part holding a result and a reminder
+    // has both in `p.types`, and handing that list to each piece would read
+    // the reminder as tool traffic.
+    const r = classify('message', s.text, s.bytes, p.role, [s.type], named, true, ordinal, p.via, false, harness);
+    rows.push(...r.seen);
+    residue_bytes += r.residue_bytes;
+  }
+  return { seen: foldChunkRows(rows), residue_bytes };
+};
 
 /** The lower bound when the caller gave none: the last seven days, floored at
  *  the cohort start. Computed here rather than before the branch because
@@ -1372,7 +1466,7 @@ export function renderInventory(r: ContextInventory, limit = 20): string {
       if (e) out.push(`  ${' '.repeat(22)}   e.g. ${e.launch_id} call ${e.ordinal}: context-trace --record ${e.record} --at ${e.ordinal}`);
     }
     if (s.items.length > shown.length) out.push(`  … ${s.items.length - shown.length} more items`);
-    for (const u of s.configured_unseen) out.push(`  configured and unseen: ${u} — either it stopped being delivered, or it has been edited since every run here.`);
+    for (const u of s.configured_unseen) out.push(`  configured and unseen: ${u} — it stopped being delivered, or it has been edited since every run here, or it is under ${CONTAINMENT_FLOOR_BYTES}B and so is only ever named as a whole chunk of its own.`);
     out.push(`  run material not itemised: ${s.residue.parts} chunks, ${s.residue.bytes}B across ${s.residue.runs} runs (turns, tool results, this run's own instruction).`);
     if (s.acquired !== null) out.push(...renderAcquiredRollup(s.acquired, s.runs_total, limit, '  '));
     for (const g of s.gaps) out.push(`  gap: ${g}`);

@@ -27,6 +27,7 @@ import {
   toolOrigin, categoriesOf, originOf,
   type InventoryRun, type NamedSource, type SeatInventory,
 } from '../src/context-inventory.js';
+import { ITERATION_PROMPT_SEAM } from '../src/shim.js';
 
 let dir: string;
 let savedCodex: string | undefined;
@@ -62,7 +63,7 @@ const write = (name: string, entries: unknown[]): string => {
  *  asserts about structure. Attribution is about content, so these cases need
  *  to put a known instruction file inside a known bundle, which means writing
  *  the bytes here. The shape is the fixture's; only the text differs. */
-const claudeWith = (over: { system: string[]; calls: string[][]; session?: string; tools?: string[]; laterTools?: string[] }): unknown[] => {
+const claudeWith = (over: { system: string[]; calls: (string | string[])[][]; session?: string; tools?: string[]; laterTools?: string[] }): unknown[] => {
   const sessionId = over.session ?? 'aaaaaaaa-1111-2222-3333-444444444444';
   const texts = over.calls.flat();
   const shape = {
@@ -72,9 +73,13 @@ const claudeWith = (over: { system: string[]; calls: string[][]; session?: strin
       tools: (over.tools ?? ['Bash']).map((name) => ({ name, description: `the ${name} tool` })),
     },
   };
+  // A message is one content block where the call named a string, and SEVERAL
+  // where it named an array — which is how claude really delivers a first
+  // call: the host's reminder, the repository instruction file and the
+  // launcher's prompt as three blocks of one part.
   const blobs = texts.map((text, i) => ({
     type: 'api-request-blob', sessionId, hash: `m${i}`,
-    message: { role: 'user', content: [{ type: 'text', text }] },
+    message: { role: 'user', content: (Array.isArray(text) ? text : [text]).map((t) => ({ type: 'text', text: t })) },
   }));
   const requests: unknown[] = [];
   let held = 0;
@@ -273,6 +278,15 @@ describe('a named source is counted as itself', () => {
     const seat = only(inventory([run({ launch_id: 'L1', record })], { named: { mason: source('tiny.md', 'the seat') } }));
     expect(seat.configured_unseen).toEqual(['tiny.md']);
     expect(seat.items.some((i) => i.attributed_to === 'tiny.md')).toBe(false);
+
+    // Mutation: name only the two causes the line named before — that it
+    // stopped being delivered, or that it was edited since every run. This
+    // source is unseen for neither reason: it is UNDER the containment floor,
+    // so it can only ever be named as a whole chunk of its own, and an
+    // operator sent looking for a delivery failure would not find one (ward
+    // on H-3836).
+    const text = renderInventory({ window: { from: 'a', to: 'b', basis: 'the test window' }, seats: [seat], acquired: null, gaps: [], measured_at: 'now' });
+    expect(text).toMatch(/configured and unseen: tiny\.md .*under 64B/);
   });
 });
 
@@ -696,6 +710,92 @@ describe('whose content it is, how it got here, and which audit category that ma
     const prompt = item(seat, 'the run instruction the launcher supplied');
     expect(prompt).toMatchObject({ supplier: 'us', supplier_basis: 'launcher_shape', entry: 'launcher_prompt', categories: ['1'] });
     expect(prompt.control).toContain('Rev iteration prompt');
+  });
+
+  // Mutation: read a part whole — have `partSeams` return null however many
+  // content blocks the host wrote. The remainder then takes ONE shape label,
+  // and since a claude first call opens with a reminder, that label is the
+  // host's: this installation's own iteration prompt is counted as somebody
+  // else's injection, which is R-56 category 1 read as category 2.
+  it('reads a bundled part block by block, so our prompt in it is ours and not the wrapper it arrived behind', () => {
+    const file = 'the repository instruction file, long enough to be attributed on its own\n'.repeat(4);
+    const reminder = `<system-reminder>\n${file}</system-reminder>`;
+    const prompt = `${'This is a Rev loop iteration, not a summon;'} AGENTS.md's summon clause does not apply; the queue is the work. Loop iteration 7 for agent 'mason'.`;
+    const seat = only(inventory([
+      run({ launch_id: 'L1', record: write('bundle.jsonl', claudeWith({ system: ['preamble'], calls: [[[reminder, prompt]]] })) }),
+    ], { named: { mason: source('/tmp/seat/CLAUDE.md', file) } }));
+
+    // All three, from one part: the file by name, the wrapper as the host's,
+    // the prompt as ours.
+    expect(item(seat, '/tmp/seat/CLAUDE.md')).toMatchObject({ categories: ['1'], supplier: 'us', supplier_basis: 'configured_source' });
+    expect(item(seat, 'the run instruction the launcher supplied')).toMatchObject({
+      categories: ['1'], supplier: 'us', supplier_basis: 'launcher_shape', entry: 'launcher_prompt',
+    });
+    // And the host's row carries the wrapper's bytes only. Read whole it
+    // carried the prompt's too, which is the defect this case pins.
+    const reminders = item(seat, 'harness system reminders');
+    expect(reminders.supplier).toBe('host');
+    expect(reminders.bytes!.max).toBeLessThan(Buffer.byteLength(prompt, 'utf8'));
+  });
+
+  // Mutation: drop the seam split and read a codex item whole. Codex takes one
+  // stdin, so the seat's composed instructions and the prompt arrive as ONE
+  // item; without the cut the prompt is whatever is left over after the
+  // profile matched, which is how it read before — a figure 40% light, under a
+  // row that could only exist on that harness.
+  it('cuts a codex item at the seam this installation itself wrote between the profile and the prompt', () => {
+    const profile = 'the mason profile, long enough to be attributed on its own\n'.repeat(4);
+    const prompt = "This is a Rev loop iteration, not a summon; the queue is the work. Loop iteration 7 for agent 'mason'.";
+    const seat = only(inventory([
+      run({
+        launch_id: 'L1', provider: 'codex',
+        record: write('seam.jsonl', codexWith({
+          items: [{ type: 'message', role: 'user', content: [{ type: 'text', text: `${profile}${ITERATION_PROMPT_SEAM}${prompt}` }] }],
+        })),
+      }),
+    ], { named: { mason: source('/tmp/seat/PROFILE.md', profile) } }));
+
+    expect(item(seat, '/tmp/seat/PROFILE.md')).toMatchObject({ categories: ['1'], supplier_basis: 'configured_source' });
+    const launcher = item(seat, 'the run instruction the launcher supplied');
+    expect(launcher).toMatchObject({ categories: ['1'], supplier: 'us', supplier_basis: 'launcher_shape' });
+    // Its own bytes, not the chunk's leftover: the prompt measured as the
+    // piece it is, which is at least the text and a little more for the
+    // framing it was serialized in.
+    expect(launcher.bytes!.min).toBeGreaterThanOrEqual(Buffer.byteLength(prompt, 'utf8'));
+  });
+
+  // Mutation: restore the phrase test (`/\bloop iteration\b/` over the whole
+  // chunk). A doctrine chapter ABOUT loop iterations then reads as the
+  // launcher's prompt — our own writing, in category 1, with a control line
+  // pointing at the roster. The prompt is recognised by the opening this
+  // installation composes, which `summon-trace.ts` reads records back against,
+  // and nothing else is.
+  it('names the launcher prompt by the opening we compose, not by a phrase a document about it also carries', () => {
+    const chapter = 'A loop iteration is unattended, and the doctrine chapter about loop iterations says so at length.\n'.repeat(6);
+    const seat = only(inventory([
+      run({ launch_id: 'L1', record: write('chapter.jsonl', claudeWith({ system: ['preamble'], calls: [[chapter]] })) }),
+    ]));
+
+    expect(seat.items.filter((i) => i.label.includes('the run instruction the launcher supplied'))).toEqual([]);
+    // Still accounted for — as a chunk nothing named, which is what it is.
+    expect(seat.accounts[0]!.chunks.total).toBeGreaterThan(0);
+  });
+
+  // Mutation: push every piece's row through without folding. `firstSeen`
+  // keeps one row per key per run, so three reminder blocks in one part would
+  // report the FIRST block's size as the part's reminder bytes — a figure
+  // smaller than the thing it names, and smaller the more the host bundles.
+  it('folds the pieces of one chunk that are the same thing, so a row carries what the whole part held of it', () => {
+    const blocks = ['<system-reminder>the first reminder</system-reminder>', '<system-reminder>the second, which is longer than the first</system-reminder>', '<system-reminder>and a third</system-reminder>'];
+    const seat = only(inventory([
+      run({ launch_id: 'L1', record: write('folded.jsonl', claudeWith({ system: ['preamble'], calls: [[blocks]] })) }),
+    ]));
+
+    const reminders = item(seat, 'harness system reminders');
+    expect(reminders.bytes!.min).toBeGreaterThan(blocks.reduce((n, b) => n + Buffer.byteLength(b, 'utf8'), 0));
+    // Three blocks, three hashes, none of them the item's: a folded row claims
+    // no version rather than the first piece's.
+    expect(reminders.versions).toEqual([]);
   });
 
   // Mutation: give every basis a control line, or leave the field off. A

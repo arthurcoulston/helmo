@@ -88,6 +88,20 @@ export interface QueryPart {
   entered: number | null;
   text: string | null;
   truncated: boolean;
+  /** `text` taken apart again, one entry per content block, where the part
+   *  carries more than one. A claude message part is often a BUNDLE — the
+   *  host's own reminders, the repository instruction file and this
+   *  installation's launcher prompt as three separate blocks in one part — and
+   *  a reader handed only the joined text has to classify the bundle as one
+   *  thing. It is not one thing, and reading it as one put our highest-control
+   *  startup input under the host's reminder label (R-56, H-3818).
+   *
+   *  `null` where there is nothing to take apart: a single-block part, where
+   *  `text` IS the block; a part whose text was clipped, where the later
+   *  blocks are partial or absent and a per-block reading would be a guess;
+   *  and an unreadable part, which holds no blocks at all. Codex writes one
+   *  block per item, so this is `null` throughout on that harness. */
+  segments: PartSegment[] | null;
   /** The content blocks the host retained, exactly as it wrote them — the
    *  tool_use `input` object, the structured `tool_result` content, the image
    *  part with its own metadata. `text` above is a RENDERING of these: it
@@ -276,27 +290,58 @@ const UNIVERSAL_GAPS = [
   'whether the model attended to any of this: every part here is what was supplied to the call, not what was used',
 ];
 
-/** A part's text, from the content blocks the record holds. A block whose
- *  payload is not text is rendered as what it IS — a tool call with its input,
- *  a result with its output — rather than skipped, because an operator reading
- *  a context needs the tool traffic most of all. */
-function partText(parts: unknown[]): string {
-  const out: string[] = [];
+/** One content block of a part, rendered, with the block's OWN size. The size
+ *  is measured the way `bytes` on the part is — the serialized block, not its
+ *  text — so the two are in the same unit and a block's share of a part can be
+ *  read against the part's total. This is the apportioning rule
+ *  `claudeAcquired` already uses for a batch of results in one message, said
+ *  once for every block kind. */
+export interface PartSegment {
+  /** The block's own type, which is not the part's: a part carrying a result
+   *  and a reminder has two, and a reader that applied the part's type list to
+   *  each block would read the reminder as tool traffic. */
+  type: string;
+  text: string;
+  bytes: number;
+}
+
+/** A part's content blocks, each rendered as what it IS — a tool call with its
+ *  input, a result with its output — rather than skipped, because an operator
+ *  reading a context needs the tool traffic most of all. */
+function partSegments(parts: unknown[]): PartSegment[] {
+  const out: PartSegment[] = [];
+  const add = (type: string, text: string, block: unknown): void =>
+    void out.push({ type, text, bytes: Buffer.byteLength(JSON.stringify(block) ?? '', 'utf8') });
   for (const b of parts) {
-    if (typeof b === 'string') { out.push(b); continue; }
+    if (typeof b === 'string') { add('text', b, b); continue; }
     if (!rec(b)) continue;
     const type = str(b['type']);
-    if (type === 'text') out.push(str(b['text']) ?? '');
-    else if (type === 'thinking') out.push(`[thinking] ${str(b['thinking']) ?? ''}`);
-    else if (type === 'tool_use') out.push(`[tool_use ${str(b['name']) ?? '(unnamed)'}] ${JSON.stringify(b['input'])}`);
+    if (type === 'text') add('text', str(b['text']) ?? '', b);
+    else if (type === 'thinking') add('thinking', `[thinking] ${str(b['thinking']) ?? ''}`, b);
+    else if (type === 'tool_use') add('tool_use', `[tool_use ${str(b['name']) ?? '(unnamed)'}] ${JSON.stringify(b['input'])}`, b);
     else if (type === 'tool_result') {
       const content = b['content'];
-      out.push(`[tool_result ${str(b['tool_use_id']) ?? ''}] ${typeof content === 'string' ? content : partText(Array.isArray(content) ? content : [content])}`);
-    } else if (type === 'image') out.push('[image]');
-    else out.push(`[${type ?? 'untyped'}] ${JSON.stringify(b)}`);
+      add('tool_result', `[tool_result ${str(b['tool_use_id']) ?? ''}] ${typeof content === 'string' ? content : partText(Array.isArray(content) ? content : [content])}`, b);
+    } else if (type === 'image') add('image', '[image]', b);
+    else add(type ?? 'untyped', `[${type ?? 'untyped'}] ${JSON.stringify(b)}`, b);
   }
-  return out.join('\n');
+  return out;
 }
+
+/** A part's text, from the content blocks the record holds. */
+function partText(parts: unknown[]): string {
+  return partSegments(parts).map((s) => s.text).join('\n');
+}
+
+/** A part's blocks for the reader that needs them apart, or `null` where there
+ *  is nothing a per-block reading could honestly add. Clipped text is the
+ *  reason for the truncation test: the blocks after the cut are partial or
+ *  missing, and classifying them would be reading a guess. */
+const segmentsFor = (parts: unknown[], truncated: boolean): PartSegment[] | null => {
+  if (truncated) return null;
+  const segs = partSegments(parts);
+  return segs.length > 1 ? segs : null;
+};
 
 function clip(text: string, chars: number): { text: string; truncated: boolean } {
   if (text.length <= chars) return { text, truncated: false };
@@ -399,6 +444,7 @@ function claudePart(
       entered,
       text,
       truncated,
+      segments: segmentsFor(blob.parts, truncated),
       payload: view.verbatim ? blob.parts : null,
       acquired: claudeAcquired(blob.parts, requests, view),
       caveat: null,
@@ -417,6 +463,7 @@ function claudePart(
       entered,
       text,
       truncated,
+      segments: segmentsFor(made.parts, truncated),
       // The blocks the transcript was assembled into, not a retained message.
       // `origin` and `caveat` already say so, and the payload is as much an
       // inference as the text rendered from it.
@@ -437,6 +484,7 @@ function claudePart(
     entered,
     text: null,
     truncated: false,
+    segments: null,
     payload: null,
     // Nothing on this machine holds this part's blocks, so whether it held a
     // result at all is unknown — which is not the same as it holding none.
@@ -1290,6 +1338,9 @@ function codexAt(ix: CodexIndex, ordinal: number, view: View): ContextAt | { err
           : ix.turns.filter((t) => t.before <= index).length,
       text: item.opaque === null ? text : null,
       truncated: item.opaque === null ? truncated : false,
+      // Codex records one item per part, so there is never a bundle to take
+      // apart here. The field is the same field on both harnesses and says so.
+      segments: null,
       // Carried even where the text is not: an item whose plaintext this
       // record does not hold still has an entry, and that entry is what an
       // audit has to account for.
@@ -1454,6 +1505,7 @@ function codexEvolution(ix: CodexIndex, view: View): ContextEvolution {
         entered: i,
         text: item.opaque === null ? text : null,
         truncated: item.opaque === null ? truncated : false,
+        segments: null,
         payload: view.verbatim ? [item.payload] : null,
         acquired: codexAcquired(item, requests, view),
         caveat: item.opaque,

@@ -67,8 +67,13 @@ export function claudeRecord(over: { blobs?: boolean; compaction?: boolean } = {
 }
 
 /** A codex rollout: session_meta, a full world_state, a partial one, two turns
- *  and a compaction. */
-export function codexRecord(over: { full?: boolean; encryptedReasoning?: boolean; secondCall?: boolean } = {}): unknown[] {
+ *  and a compaction.
+ *
+ *  `compaction: false` leaves the boundary out. A compaction REPLACES the item
+ *  list, so a call after one holds the host's `replacement_history` and none of
+ *  the items before it — which is the wrong fixture for anything about how a
+ *  call's own window is bounded. */
+export function codexRecord(over: { full?: boolean; encryptedReasoning?: boolean; secondCall?: boolean; compaction?: boolean } = {}): unknown[] {
   const entries: unknown[] = [
     {
       type: 'session_meta', timestamp: '2026-10-29T04:00:00.000Z', ordinal: 0,
@@ -107,7 +112,10 @@ export function codexRecord(over: { full?: boolean; encryptedReasoning?: boolean
         collaboration_mode: { mode: 'default', settings: { developer_instructions: 'mode instructions' } },
       },
     },
-    { type: 'response_item', timestamp: '2026-10-29T04:00:03.000Z', ordinal: 4, payload: { type: 'message' } },
+    {
+      type: 'response_item', timestamp: '2026-10-29T04:00:03.000Z', ordinal: 4,
+      payload: { type: 'message', role: 'user', content: [{ type: 'text', text: 'the first ask' }] },
+    },
     // Every reasoning item in a real rollout looks like this: an empty
     // `summary` and the content only as provider-encrypted text. The item was
     // in the call's context; what it said is not on this machine.
@@ -117,7 +125,10 @@ export function codexRecord(over: { full?: boolean; encryptedReasoning?: boolean
         payload: { type: 'reasoning', id: 'rs_1', summary: [], encrypted_content: 'gAAAAABq4_a3ytF' },
       }]
       : []),
-    { type: 'response_item', timestamp: '2026-10-29T04:00:04.000Z', ordinal: 5, payload: { type: 'custom_tool_call' } },
+    {
+      type: 'response_item', timestamp: '2026-10-29T04:00:04.000Z', ordinal: 5,
+      payload: { type: 'custom_tool_call', name: 'exec', arguments: 'printf one' },
+    },
     {
       // One per API call, carrying the provider's own response id for it. The
       // rollout's finest call boundary: a turn below is a USER turn, and one
@@ -128,13 +139,21 @@ export function codexRecord(over: { full?: boolean; encryptedReasoning?: boolean
         usage: { input_tokens: 100, cached_input_tokens: 40, output_tokens: 10, total_tokens: 110 },
       },
     },
-    {
+  );
+  if (over.compaction !== false) {
+    entries.push({
       type: 'compacted', timestamp: '2026-10-29T05:00:00.000Z', ordinal: 7,
       payload: {
         message: '', window_number: 1,
         first_window_id: 'w0', previous_window_id: 'w0', window_id: 'w1',
         compaction_response_id: 'resp_abc',
-        replacement_history: [{}, {}],
+        // What the host says the context IS from here on. The two shapes a
+        // resumed rollout really opens with: a readable replacement message,
+        // and a `compaction` item carried only as provider-encrypted text.
+        replacement_history: [
+          { type: 'message', role: 'user', content: [{ type: 'text', text: 'the summary of what came before' }] },
+          { type: 'compaction', id: 'cp_1', metadata: { kind: 'window' }, encrypted_content: 'gAAAAABq4_compaction' },
+        ],
         retained_context: {
           user_messages: [{}, {}], assistant_messages: [{}],
           user_messages_incomplete: false, assistant_messages_incomplete: true, incomplete: false,
@@ -144,7 +163,9 @@ export function codexRecord(over: { full?: boolean; encryptedReasoning?: boolean
           turn_token_usage: { input_tokens: 1_900_000 },
         },
       },
-    },
+    });
+  }
+  entries.push(
     { type: 'turn_context', timestamp: '2026-10-29T05:00:01.000Z', ordinal: 8, payload: { turn_id: 'turn-2', model: 'gpt-6-astra' } },
   );
   if (over.secondCall === true) {

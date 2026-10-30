@@ -337,7 +337,10 @@ describe('the codex rollout', () => {
     expect(a.gaps.join(' ')).toContain('1 items this call itself produced');
     expect(a.gaps.join(' ')).toContain('sit inside its window without ever having been in its input');
     // ...and it belongs to the NEXT call's input, which is where it shows up.
-    const next = at(write('two-calls.jsonl', codexRecord({ secondCall: true })), 1);
+    // No compaction between the two: a boundary REPLACES the item list, so the
+    // next call's context would be the host's replacement and this fixture
+    // could not show where the produced item went.
+    const next = at(write('two-calls.jsonl', codexRecord({ secondCall: true, compaction: false })), 1);
     expect(next.parts.map((p) => p.types[0])).toEqual(['message', 'custom_tool_call', 'message']);
     expect(next.parts.find((p) => p.types[0] === 'custom_tool_call')!.entered).toBe(1);
   });
@@ -382,7 +385,7 @@ describe('the codex rollout', () => {
   // Mutation: show a reasoning item as the empty string its summary parses to.
   // The item WAS in the context; its content is provider-encrypted.
   it('says a reasoning item carried only as encrypted text is unreadable, not empty', () => {
-    const a = at(write('reasoning.jsonl', codexRecord({ encryptedReasoning: true, secondCall: true })), 1);
+    const a = at(write('reasoning.jsonl', codexRecord({ encryptedReasoning: true, secondCall: true, compaction: false })), 1);
 
     const reasoning = a.parts.find((p) => p.types[0] === 'reasoning')!;
     expect(reasoning).toMatchObject({ origin: 'unreadable', text: null });
@@ -450,5 +453,228 @@ describe('what the operator is shown', () => {
 
     expect(text).toContain('0 hits');
     expect(text).toContain('no match in what is readable — which is not the same as absent from the context');
+  });
+});
+
+// What ward's security review of this surface found (H-3750, four honesty
+// defects on the increment at helmo@9298571): in four places what it showed
+// was not what the host supplied. The surface exists for that one property,
+// so each is its own case here.
+describe('what it shows is what was supplied', () => {
+  const ESC = '\u001b';
+  const BEL = '\u0007';
+
+  /** A record with ESC and BEL where a hostile page's bytes really land: in a
+   *  retained message (a tool result holds whatever a page an agent fetched
+   *  held), in a host instruction block, and in the summary that replaced a
+   *  compaction's dropped turns. The sequences are the real ones — set the
+   *  window title, clear the screen, write the clipboard. */
+  function controlByteRecord(): unknown[] {
+    const entries = claudeRecord({ compaction: true }) as Record<string, unknown>[];
+    const blob = entries.find((e) => e['type'] === 'api-request-blob' && e['hash'] === 'm0')!;
+    (blob['message'] as { content: { text: string }[] }).content[0]!.text =
+      `the page said ${ESC}]0;owned${BEL}${ESC}[2J${ESC}]52;c;cGF5bG9hZA==${BEL} and nothing else`;
+    const shape = entries.find((e) => e['type'] === 'api-request-shape')!;
+    (shape['shape'] as { system: { text: string }[] }).system[0]!.text = `host block ${ESC}[31mone`;
+    const summary = entries.find((e) => e['isCompactSummary'] === true)!;
+    (summary['message'] as { content: string }).content = `This session is being continued${ESC}[2K`;
+    return entries;
+  }
+
+  // Mutation: print the part text as it stands. A record holds whatever a
+  // session's tool results held, so a page an agent fetched can rewrite what
+  // the operator's terminal DISPLAYS of a context — hide a line above, clear
+  // the screen, retitle the window, write the clipboard where the terminal
+  // allows it.
+  it('renders the control bytes a record carries visibly, in every text mode', () => {
+    const path = write('control.jsonl', controlByteRecord());
+    const shown = [
+      renderContextAt(at(path, 2) as Parameters<typeof renderContextAt>[0], Infinity),
+      renderContextEvolution(evolution(path) as Parameters<typeof renderContextEvolution>[0], Infinity),
+      renderContextFind(find(path, 'the page said') as Parameters<typeof renderContextFind>[0]),
+    ];
+
+    for (const text of shown) {
+      expect(text).not.toContain(ESC);
+      expect(text).not.toContain(BEL);
+      expect(text).toContain('\\u001b');
+    }
+    // The part, the instruction block and the replacement summary each.
+    expect(shown[0]).toContain('\\u001b]0;owned\\u0007\\u001b[2J');
+    expect(shown[0]).toContain('host block \\u001b[31mone');
+    expect(shown[1]).toContain('This session is being continued\\u001b[2K');
+    expect(shown[2]).toContain('\\u001b]52;c;');
+  });
+
+  // Mutation: strip the control bytes instead of showing them. They WERE in
+  // the context, and a surface that quietly removes part of what was supplied
+  // is the defect it exists to prevent — hiding a prompt injection's own
+  // formatting from the operator reading for one.
+  it('keeps the record own bytes in the structure, where a consumer reads them', () => {
+    const a = at(write('control.jsonl', controlByteRecord()), 2);
+
+    expect(a.parts[0]!.text).toContain(ESC);
+    expect(a.parts[0]!.text).toContain(BEL);
+    expect(a.instructions!.blocks[0]!.text).toContain(ESC);
+  });
+
+  // Mutation: fall back to the payload's own JSON as an item's text. The
+  // `compaction` item a resumed rollout OPENS with carries only
+  // `encrypted_content`: 64KB of ciphertext, shown as the content of the first
+  // part of every such call, labelled retained and counted in the readable
+  // bytes. 58 of them on the machine this was built against.
+  it('says an item carried only as encrypted text is unreadable whatever its kind', () => {
+    const a = at(write('rollout.jsonl', codexRecord({ secondCall: true })), 1);
+
+    const compaction = a.parts.find((p) => p.types[0] === 'compaction')!;
+    expect(compaction).toMatchObject({ origin: 'unreadable', text: null });
+    expect(compaction.caveat).toContain('provider-encrypted text');
+    // And its ciphertext is nowhere in what an operator is shown.
+    expect(renderContextAt(a as Parameters<typeof renderContextAt>[0], Infinity)).not.toContain('gAAAAABq4_compaction');
+    expect(a.totals).toMatchObject({ retained: 2, unreadable: 1 });
+  });
+
+  // Mutation: treat a payload with no text field as readable. An item this
+  // reader has no text for is unreadable with the keys it DOES have named —
+  // enough for an operator to go and look — never its own JSON passed off as
+  // what the model was shown.
+  it('names the keys of an item it has no text for, rather than showing its JSON', () => {
+    const entries = codexRecord({ compaction: false });
+    entries.push({
+      type: 'response_item', timestamp: '2026-10-29T05:00:02.500Z',
+      payload: { type: 'image_reference', id: 'img_1', image: { url: 'blob:1' } },
+    });
+    entries.push({
+      type: 'token_usage_record', timestamp: '2026-10-29T05:00:03.000Z',
+      payload: { response_id: 'resp_two', turn_id: 'turn-2', usage: { input_tokens: 240 } },
+    });
+
+    const a = at(write('no-text.jsonl', entries), 1);
+
+    const image = a.parts.find((p) => p.types[0] === 'image_reference')!;
+    expect(image).toMatchObject({ origin: 'unreadable', text: null });
+    expect(image.caveat).toContain('carries no text in any field this reader knows');
+    expect(image.caveat).toContain('keys: type, id, image');
+    expect(renderContextAt(a as Parameters<typeof renderContextAt>[0], Infinity)).not.toContain('blob:1');
+  });
+
+  // Mutation: list the items from 0 after a compaction. On the real rollout
+  // this reported 216 parts for a call the host sent 27 of, with no line
+  // saying 189 had left: the host REBASES the item list, and reading the file
+  // from the top shows a context two hundred items longer than the one that
+  // was sent.
+  it('takes the context of a call after a compaction from the host own replacement list', () => {
+    const a = at(write('rollout.jsonl', codexRecord({ secondCall: true })), 1);
+
+    // The two the host wrote as its replacement, then the one item recorded
+    // since the boundary — not the two items it dropped.
+    expect(a.parts.map((p) => p.via[0])).toEqual(['replacement 0', 'replacement 1', 'item 2']);
+    expect(a.parts[0]!.text).toContain('the summary of what came before');
+    expect(a.parts.map((p) => p.text)).not.toContain('the first ask');
+    // Each replacement part entered at the call the boundary handed it to.
+    expect(a.parts[0]!.entered).toBe(1);
+  });
+
+  // Mutation: drop the items silently. An operator reading a post-compaction
+  // call has to be told that most of the session is gone from it, and where
+  // the last call that held it is.
+  it('says what the compaction dropped, and which call last held it', () => {
+    const a = at(write('rollout.jsonl', codexRecord({ secondCall: true })), 1);
+
+    const gaps = a.gaps.join(' ');
+    expect(gaps).toContain('2 items recorded before the compaction');
+    expect(gaps).toContain("are NOT in this call's context");
+    expect(gaps).toContain('2 items it wrote as its replacement_history');
+    expect(gaps).toContain('Ask --at 0 for the last call that held the dropped items');
+  });
+
+  // Mutation: carry every span to the last call. `--find` reported each of
+  // the rollout's 216 pre-compaction items as held through the final call,
+  // which is the same error in the answer an operator is most likely to
+  // quote: "this instruction was in the context the whole way".
+  it('ends a find span at the compaction that dropped the part', () => {
+    const path = write('rollout.jsonl', codexRecord({ secondCall: true }));
+
+    const dropped = find(path, 'the first ask').hits[0]!;
+    expect(dropped).toMatchObject({ ref: 'item 0', first_invocation: 0, last_invocation: 0, invocations: 1 });
+
+    // The replacement begins its own span at the boundary.
+    const replacement = find(path, 'the summary of what came before').hits[0]!;
+    expect(replacement.ref).toContain('replacement 0');
+    expect(replacement).toMatchObject({ first_invocation: 1, last_invocation: 1, invocations: 1 });
+    expect(find(path, 'the first ask').gaps.join(' ')).toContain('a span above ends at the first boundary');
+  });
+
+  // Mutation: report an empty span as `first_invocation` with 0 invocations.
+  // An item a compaction dropped before any call was given it — one call's own
+  // output — was in no call's INPUT, and `first 1, invocations 0` renders as
+  // "call 1".
+  it('reports a part no call input ever held as in no call', () => {
+    const path = write('rollout.jsonl', codexRecord({ secondCall: true }));
+    const f = find(path, 'printf one');
+
+    expect(f.hits[0]).toMatchObject({ ref: 'item 1', first_invocation: null, invocations: 0 });
+    expect(renderContextFind(f as Parameters<typeof renderContextFind>[0])).toContain('in no call');
+  });
+
+  // Mutation: report the compaction without the item counts. `--changes` was
+  // the one place a codex compaction showed at all, and it named the host's
+  // token figures while saying nothing about the context being replaced.
+  it('names the items a codex compaction dropped and the ones that replaced them', () => {
+    const e = evolution(write('rollout.jsonl', codexRecord({ secondCall: true })));
+
+    const notable = e.changes.find((c) => c.compaction !== null)!.notable.join(' ');
+    expect(notable).toContain('the 2 items recorded before it left the context');
+    expect(notable).toContain('replaced by the 2 the host wrote as its replacement_history');
+  });
+
+  // Mutation: choose the compaction by its item index rather than by the
+  // rollout's own order. The host writes the boundary AFTER the call whose
+  // window ended on the same item count, so `index <= call.before` handed the
+  // call BEFORE the compaction the context of the one after it: on the real
+  // rollout, 27 replacement parts for the call the host's own usage record
+  // puts at 204,655 input tokens.
+  it('leaves the call before a compaction with the context it was given', () => {
+    const entries = codexRecord({ secondCall: true }) as Record<string, unknown>[];
+    // A call whose window ends exactly at the boundary having produced
+    // nothing — the shape the real rollout's call 66 has.
+    const boundary = entries.findIndex((e) => e['type'] === 'compacted');
+    entries.splice(boundary, 0, {
+      type: 'token_usage_record', timestamp: '2026-10-29T04:59:00.000Z',
+      payload: { response_id: 'resp_at_boundary', turn_id: 'turn-1', usage: { input_tokens: 1_900_000 } },
+    });
+
+    const a = at(write('at-boundary.jsonl', entries), 1);
+
+    expect(a.host_tokens!.basis).toContain('resp_at_boundary');
+    expect(a.parts.map((p) => p.via[0])).toEqual(['item 0', 'item 1']);
+    expect(a.gaps.join(' ')).not.toContain('replacement_history');
+    // ...and the next call, the first the boundary applies to, does hold it.
+    expect(at(write('at-boundary.jsonl', entries), 2).parts[0]!.via[0]).toBe('replacement 0');
+  });
+
+  // Mutation: report an unreadable part's size as null. 64KB of a call's
+  // context that cannot be read here is the figure most worth having, so the
+  // size stays and only the readable total excludes it.
+  it('keeps the size of a part it cannot read, and out of the readable total', () => {
+    const a = at(write('rollout.jsonl', codexRecord({ secondCall: true })), 1);
+
+    const opaque = a.parts.find((p) => p.origin === 'unreadable')!;
+    expect(opaque.bytes).toBeGreaterThan(0);
+    expect(a.totals.part_bytes).toBe(a.parts.filter((p) => p.origin === 'retained').reduce((sum, p) => sum + p.bytes!, 0));
+  });
+
+  // Mutation: call the host's preserved list the messages carried across. On
+  // the real boundary the host lists 50 transcript entries as preserved and
+  // its next request carries 5 messages, 0 of them byte-equal to one of the
+  // 50. Both figures printed on one screen, and only the parts count came off
+  // the request the host actually sent.
+  it('does not call the host preserved list what the next call carried', () => {
+    const e = evolution(write('compacted.jsonl', claudeRecord({ compaction: true })));
+
+    const notable = e.changes.find((c) => c.compaction !== null)!.notable.join(' ');
+    expect(notable).not.toContain('messages carried across');
+    expect(notable).toContain('the host lists 3 transcript entries as preserved');
+    expect(notable).toContain('not the message array of the next call, which is the parts figure above');
   });
 });

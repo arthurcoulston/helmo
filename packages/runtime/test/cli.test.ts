@@ -812,6 +812,42 @@ constitution = "${join(dir, 'PROFILE.md')}"
     expect((JSON.parse(asJson.stdout) as { parts: { origin: string }[] }).parts[0]!.origin).toBe('retained');
   });
 
+  // What ward measured on this surface (H-3750, finding 1): the stdout of
+  // --at --full, --find and --changes each carried the record's raw ESC bytes
+  // straight to the terminal, and only --json was clean. A record holds
+  // whatever a session's tool results held, so the bytes are a fetched page's
+  // to choose.
+  it('sends no raw control byte of the record to the terminal, in any text mode', () => {
+    const dir = home();
+    const path = record(dir, [
+      {
+        type: 'api-request-shape', sessionId: session, shapeHash: 's0', version: '2.1.300',
+        timestamp: '2026-10-29T08:00:00.000Z',
+        shape: { system: [{ type: 'text', text: 'the host instructions' }], tools: [{ name: 'Bash' }] },
+      },
+      {
+        type: 'api-request-blob', sessionId: session, hash: 'm0',
+        message: { role: 'user', content: [{ type: 'text', text: 'the page said \u001b]0;owned\u0007\u001b[2J and nothing else' }] },
+      },
+      {
+        type: 'api-request', sessionId: session, id: 'r0', shapeHash: 's0', version: '2.1.300',
+        timestamp: '2026-10-29T08:00:01.000Z', keep: 0, tail: ['m0'], params: { model: 'claude-opus-5' },
+      },
+    ]);
+
+    for (const flags of [['--at', '0', '--full'], ['--find', 'the page said'], ['--changes']]) {
+      const result = rev(dir, ['context-trace', '--record', path, ...flags]);
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout, flags.join(' ')).not.toMatch(/[\u001b\u0007]/);
+      expect(result.stdout, flags.join(' ')).toContain('\\u001b]0;owned\\u0007');
+    }
+    // The structure still carries the record's own bytes: JSON escapes them,
+    // and a consumer reading what was supplied needs them.
+    const asJson = rev(dir, ['context-trace', '--record', path, '--at', '0', '--full', '--json']);
+    expect(asJson.stdout).not.toMatch(/[\u001b\u0007]/);
+    expect((JSON.parse(asJson.stdout) as { parts: { text: string }[] }).parts[0]!.text).toContain('\u001b]0;owned');
+  });
+
   it('refuses two questions at once rather than answering one of them', () => {
     const dir = home();
     const result = rev(dir, ['context-trace', '--record', queryable(dir), '--at', '0', '--changes']);

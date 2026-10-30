@@ -40,6 +40,7 @@ import {
   harnessOf,
   indexClaude,
   parseTraceRecord,
+  visibleControls,
   type ClaudeIndex,
   type ClaudeReconstruction,
   type TraceCompaction,
@@ -65,7 +66,11 @@ export interface QueryPart {
   via: string[];
   types: string[];
   /** Of the retained message, or of the reconstruction where that is what was
-   *  read. `null` when nothing could be read. */
+   *  read. `null` when no size can be read at all. On an `unreadable` codex
+   *  item this is the item's own recorded size, which is a real figure and
+   *  often the interesting one — the compaction item a resumed rollout opens
+   *  with is 64KB of the call's context that cannot be read here. `part_bytes`
+   *  counts only the parts that could be. */
   bytes: number | null;
   /** The first call whose context held this exact slot — so a part that has
    *  been carried for forty calls is distinguishable from one that just
@@ -425,7 +430,15 @@ function claudeEvolution(ix: ClaudeIndex, chars: number): ContextEvolution {
 
     const notable: string[] = [];
     if (compaction !== null) {
-      notable.push(`compaction (${compaction.trigger ?? 'trigger unrecorded'}): ${compaction.pre_tokens ?? '?'} → ${compaction.post_tokens ?? '?'} tokens by the host's own count, ${compaction.preserved_messages ?? '?'} messages carried across${compaction.replacement_text === null ? ', and this record holds no replacement summary' : ''}`);
+      notable.push(`compaction (${compaction.trigger ?? 'trigger unrecorded'}): ${compaction.pre_tokens ?? '?'} → ${compaction.post_tokens ?? '?'} tokens by the host's own count${compaction.replacement_text === null ? ', and this record holds no replacement summary' : ''}`);
+      // Not "messages carried across": the host's list is of TRANSCRIPT
+      // entries before the boundary, and on the real record 0 of the 5
+      // messages its next request actually carried is byte-equal to one of
+      // the 50 it lists. Two figures on one screen, and the parts count is
+      // the one that came off the request (ward on H-3750, finding 4).
+      if (compaction.preserved_messages !== null) {
+        notable.push(`the host lists ${compaction.preserved_messages} transcript entries as preserved at that boundary — its own list, not the message array of the next call, which is the parts figure above`);
+      }
     }
     if ((removed ?? 0) > 0 && compaction === null) {
       notable.push(`${removed} parts the previous call held were dropped, with no compaction boundary in this record: what replaced them is unknown`);
@@ -563,6 +576,17 @@ function claudeFind(ix: ClaudeIndex, needle: string, chars: number): ContextFind
 const MODEL_PRODUCED = (kind: string, role: string | null): boolean =>
   kind === 'reasoning' || /_call$/.test(kind) || (kind === 'message' && role === 'assistant');
 
+/** One item of a codex rollout's context, as this reader holds it. */
+interface CodexItem {
+  at: string | null;
+  kind: string;
+  role: string | null;
+  text: string;
+  bytes: number;
+  /** Why this item's content is not readable here, where it is not. */
+  opaque: string | null;
+}
+
 interface CodexIndex {
   sessionId: string | null;
   cwd: string | null;
@@ -589,19 +613,29 @@ interface CodexIndex {
   }[];
   /** Each response_item, in order, with the text it carries — or the reason
    *  this record holds no plaintext for it. */
-  items: { at: string | null; kind: string; role: string | null; text: string; bytes: number; opaque: string | null }[];
+  items: CodexItem[];
   /** The last `full: true` world_state at or before each item index. */
   instructions: { at: string | null; index: number; blocks: { bytes: number; sha256: string; text: string }[]; tools: { name: string; bytes: number; description: string | null }[] }[];
   /** `full: false` entries: a delta, naming only the keys that moved. Read as
    *  a configuration one reports every absent key as empty — the trap the
    *  first reading of this record fell into. */
   deltas: { at: string | null; index: number; keys: string[] }[];
-  compactions: (TraceCompaction & { index: number })[];
+  /** Each compaction, with the item index it landed on, how many calls and
+   *  turns the rollout had recorded by then, and the items the host wrote as
+   *  the context that REPLACED everything before it. The rollout carries that
+   *  list (`replacement_history`), so a call after a compaction has a knowable
+   *  context, and the items it dropped can be named as dropped instead of
+   *  listed as still present. */
+  compactions: (TraceCompaction & { index: number; calls_before: number; turns_before: number; replacement_items: CodexItem[] })[];
   baseInstructions: { bytes: number; sha256: string; text: string } | null;
 }
 
-function itemText(payload: Record<string, unknown>): string {
-  const kind = str(payload['type']) ?? '(untyped)';
+/** The text one response item carries, or `null` where this record holds none
+ *  in any field this reader knows. A payload's own JSON is never its text: a
+ *  `[compaction] {"encrypted_content":…}` dump is 64KB of ciphertext presented
+ *  as what the model was shown, which is the one thing it is not (ward on
+ *  H-3750, finding 2). */
+function itemText(payload: Record<string, unknown>): string | null {
   const content = payload['content'];
   if (Array.isArray(content)) {
     return content.map((c) => (rec(c) ? str(c['text']) ?? str(c['output']) ?? JSON.stringify(c) : String(c))).join('\n');
@@ -612,7 +646,36 @@ function itemText(payload: Record<string, unknown>): string {
     if (typeof v === 'string') return v;
     if (Array.isArray(v)) return v.map((c) => (rec(c) ? str(c['text']) ?? JSON.stringify(c) : String(c))).join('\n');
   }
-  return `[${kind}] ${JSON.stringify(payload)}`;
+  return null;
+}
+
+/** One response item as this reader holds it: the text it carries, or the
+ *  reason this record holds no plaintext for it. One function, because the
+ *  items a compaction's `replacement_history` carries are read by the same
+ *  rules as the items it replaced. */
+function codexItem(at: string | null, payload: Record<string, unknown>): CodexItem {
+  const kind = str(payload['type']) ?? '(untyped)';
+  const text = itemText(payload);
+  // An item whose plaintext this record does not hold. The reasoning items
+  // are the standing case and they are not an edge: the host writes
+  // `summary: []` and an `encrypted_content` blob, so the item WAS in the
+  // call's context and what it said is not on this machine. Shown as the
+  // empty string it parses to, it would read as a part that was blank; shown
+  // as its own JSON, as a part that said something else entirely.
+  const encrypted = typeof payload['encrypted_content'] === 'string';
+  const opaque = text !== null && text.trim() !== ''
+    ? null
+    : encrypted
+      ? `the host records this ${kind} item's content only as provider-encrypted text (encrypted_content), so what it said is not on this machine — it was in the call's context all the same`
+      : `this ${kind} item carries no text in any field this reader knows (keys: ${Object.keys(payload).join(', ')})`;
+  return {
+    at,
+    kind,
+    role: str(payload['role']),
+    text: text ?? '',
+    bytes: Buffer.byteLength(JSON.stringify(payload), 'utf8'),
+    opaque,
+  };
 }
 
 function indexCodex(entries: Record<string, unknown>[]): CodexIndex {
@@ -657,27 +720,7 @@ function indexCodex(entries: Record<string, unknown>[]): CodexIndex {
     } else if (type === 'turn_context' && payload) {
       ix.turns.push({ at, model: str(payload['model']), turn_id: str(payload['turn_id']), before: ix.items.length });
     } else if (type === 'response_item' && payload) {
-      const kind = str(payload['type']) ?? '(untyped)';
-      const text = itemText(payload);
-      // An item whose plaintext this record does not hold. The reasoning items
-      // are the standing case and they are not an edge: the host writes
-      // `summary: []` and an `encrypted_content` blob, so the item WAS in the
-      // call's context and what it said is not on this machine. Shown as the
-      // empty string it parses to, it would read as a part that was blank.
-      const encrypted = typeof payload['encrypted_content'] === 'string';
-      const opaque = text.trim() !== ''
-        ? null
-        : encrypted
-          ? `the host records this ${kind} item's content only as provider-encrypted text (encrypted_content), so what it said is not on this machine — it was in the call's context all the same`
-          : `this ${kind} item carries no text in any field this reader knows (keys: ${Object.keys(payload).join(', ')})`;
-      ix.items.push({
-        at,
-        kind,
-        role: str(payload['role']),
-        text,
-        bytes: Buffer.byteLength(JSON.stringify(payload), 'utf8'),
-        opaque,
-      });
+      ix.items.push(codexItem(at, payload));
     } else if (type === 'token_usage_record' && payload) {
       const usage = rec(payload['usage']) ? (payload['usage'] as Record<string, unknown>) : null;
       const from = ix.calls.at(-1)?.before ?? 0;
@@ -701,8 +744,15 @@ function indexCodex(entries: Record<string, unknown>[]): CodexIndex {
       const incomplete = retained
         ? retained['incomplete'] === true || retained['user_messages_incomplete'] === true || retained['assistant_messages_incomplete'] === true
         : false;
+      const history = Array.isArray(payload['replacement_history']) ? payload['replacement_history'] : [];
       ix.compactions.push({
         index: ix.items.length,
+        // The rollout's own order, not arithmetic over it: the first call
+        // recorded after this boundary is the first one whose context was the
+        // replacement list.
+        calls_before: ix.calls.length,
+        turns_before: ix.turns.length,
+        replacement_items: history.filter(rec).map((item) => codexItem(at, item)),
         at,
         trigger: str(payload['message']) || 'unrecorded',
         pre_tokens: turnUsage ? num(turnUsage['input_tokens']) : null,
@@ -720,6 +770,13 @@ function indexCodex(entries: Record<string, unknown>[]): CodexIndex {
 const CODEX_GAPS = [
   'the message array sent on each API call: the rollout records turns and items, so a call\'s context here is the items recorded before it, in order — this reader\'s arithmetic, not a list the host wrote',
 ];
+
+/** The ordinal of the first call recorded AFTER a compaction — the first one
+ *  whose context was the host's replacement list. Read off the counts the
+ *  rollout had reached at the boundary, so a rollout with no usage records is
+ *  measured in its turns and not silently in calls it does not have. */
+const afterCompaction = (c: CodexIndex['compactions'][number], byUsage: boolean): number =>
+  (byUsage ? c.calls_before : c.turns_before);
 
 function codexInstructionsAt(ix: CodexIndex, index: number, chars: number): QueryInstructions | null {
   const applicable = ix.instructions.filter((s) => s.index <= index).at(-1) ?? ix.instructions[0];
@@ -760,18 +817,40 @@ function codexAt(ix: CodexIndex, ordinal: number, chars: number): ContextAt | { 
   // The turn in force supplies the model: a usage record names its turn, not
   // its model.
   const turn = ix.turns.filter((t) => t.before <= call.before).at(-1) ?? ix.turns[0] ?? { at: null, model: null, turn_id: null, before: 0 };
-  const parts: QueryPart[] = ix.items.slice(0, call.before).map((item, i) => {
+  // A compaction REPLACES the context rather than trimming it: the host writes
+  // the new item list as `replacement_history` and everything recorded before
+  // the boundary is gone. Listing the file's items from 0 reported 216 parts
+  // for a call the host sent 27 of, with nothing saying 189 had left (ward on
+  // H-3750, finding 3).
+  // By the rollout's own ORDER, not by the item index: the boundary is written
+  // after the call whose window ended at the same item count, and `index <=
+  // call.before` handed call 66 the context of call 67 — the 27 replacement
+  // parts for a call the host's own figures put at 204,655 input tokens.
+  const compaction = ix.compactions.filter((c) => afterCompaction(c, byUsage) <= ordinal).at(-1) ?? null;
+  const entered = compaction === null ? null : afterCompaction(compaction, byUsage);
+  const held: { item: CodexItem; via: string; index: number | null }[] = [
+    ...(compaction?.replacement_items ?? []).map((item, k) => ({ item, via: `replacement ${k}`, index: null })),
+    ...ix.items.slice(compaction?.index ?? 0, call.before).map((item, k) => {
+      const index = (compaction?.index ?? 0) + k;
+      return { item, via: `item ${index}`, index };
+    }),
+  ];
+  const parts: QueryPart[] = held.map(({ item, via, index }, slot) => {
     const { text, truncated } = clip(item.text, chars);
     return {
-      slot: i,
+      slot,
       role: item.role ?? item.kind,
       origin: item.opaque === null ? 'retained' : 'unreadable',
-      via: [`item ${i}`],
+      via: [via],
       types: [item.kind],
       bytes: item.bytes,
-      entered: byUsage
-        ? ix.calls.findIndex((c) => c.inputs > i) === -1 ? null : ix.calls.findIndex((c) => c.inputs > i)
-        : ix.turns.filter((t) => t.before <= i).length,
+      // A replacement item entered at the boundary; a recorded item at the
+      // call whose window first reached it.
+      entered: index === null
+        ? entered
+        : byUsage
+          ? ix.calls.findIndex((c) => c.inputs > index) === -1 ? null : ix.calls.findIndex((c) => c.inputs > index)
+          : ix.turns.filter((t) => t.before <= index).length,
       text: item.opaque === null ? text : null,
       truncated: item.opaque === null ? truncated : false,
       caveat: item.opaque,
@@ -804,6 +883,10 @@ function codexAt(ix: CodexIndex, ordinal: number, chars: number): ContextAt | { 
     },
     gaps: [
       ...CODEX_GAPS,
+      ...(compaction !== null
+        ? [`the ${compaction.index} items recorded before the compaction at ${compaction.at ?? 'an unrecorded time'} are NOT in this call's context and are not listed above: the host replaced them with the ${compaction.replacement_items.length} items it wrote as its replacement_history, which are the `
+          + `${compaction.replacement_items.length === 0 ? 'parts this reader therefore has none of' : `first ${compaction.replacement_items.length} slots here`}. ${entered === null || entered < 1 ? 'No call before the boundary is recorded' : `Ask --at ${entered - 1} for the last call that held the dropped items`}`]
+        : []),
       ...(byUsage && (window as CodexIndex['calls'][number]).before > (window as CodexIndex['calls'][number]).inputs
         ? [`the ${(window as CodexIndex['calls'][number]).before - (window as CodexIndex['calls'][number]).inputs} items this call itself produced — its reasoning, its reply, its tool request — are NOT listed above: the host writes the usage record after the call, so they sit inside its window without ever having been in its input. An item kind this reader does not recognise counts as input, so the list errs long rather than short`]
         : []),
@@ -843,7 +926,10 @@ function codexEvolution(ix: CodexIndex, chars: number): ContextEvolution {
     const previous = state ? ix.instructions.filter((s) => s.index <= from).at(-1) : undefined;
     const delta = ix.deltas.filter((d) => d.index > from && d.index <= turn.before);
     const notable: string[] = [];
-    if (compacted) notable.push(`compaction (${compacted.trigger}): ${compacted.pre_tokens ?? '?'} → ${compacted.post_tokens ?? '?'} input tokens by the host's own usage record, ${compacted.preserved_messages ?? '?'} messages retained (a floor where the host marks its set incomplete)`);
+    if (compacted) {
+      notable.push(`compaction (${compacted.trigger}): ${compacted.pre_tokens ?? '?'} → ${compacted.post_tokens ?? '?'} input tokens by the host's own usage record; the ${compacted.index} items recorded before it left the context, replaced by the ${compacted.replacement_items.length} the host wrote as its replacement_history`);
+      notable.push(`the host's retained set at that boundary lists ${compacted.preserved_messages ?? '?'} messages${/INCOMPLETE/.test(compacted.basis) ? ', and marks it INCOMPLETE, so that count is a floor' : ''} — the host's own list, not the item array of the next call`);
+    }
     let instructions: ContextChange['instructions'] = null;
     if (state) {
       const nowTools = state.tools.map((t) => t.name);
@@ -889,7 +975,7 @@ function codexEvolution(ix: CodexIndex, chars: number): ContextEvolution {
         ? ["a call below is one token_usage_record — the host's own per-call entry, carrying its response id and input token count — and the items between two of them are that call's additions by this reader's arithmetic, counted up to the first item the call itself produced"]
         : ['this rollout has no per-call usage record, so a line below is a user TURN, which is many model calls']),
       ...CODEX_GAPS,
-      'what a compaction DROPPED: the host names its replacement response and its retained set, never a dropped figure, so no removal count appears above',
+      'what a compaction dropped in TOKENS: the host writes its replacement list and its retained set, never a dropped figure, so the item counts above are this reader\'s arithmetic over the record\'s own order and only the token figures are the host\'s own',
       ...UNIVERSAL_GAPS,
     ],
   };
@@ -935,19 +1021,53 @@ function codexFind(ix: CodexIndex, needle: string, chars: number): ContextFind {
       hits.push({ where: 'tool', ref: t.name, origin: 'configured', role: 'tool', ...span, excerpt: excerpt(text) });
     }
   }
+  // Every part some call's context held, with the span of calls that held it.
+  // A compaction ENDS a span: a recorded item is in no context after the
+  // boundary that dropped it, and the host's own replacement list begins its
+  // own span there. Carried to the last call, each of this rollout's 216
+  // pre-compaction items read as held through call 66 when 189 of them left
+  // at call 67 (ward on H-3750, finding 3).
+  const byUsage = ix.calls.length > 0;
+  const spans: { item: CodexItem; ref: string; from: number | null; to: number | null }[] = [];
   for (const [i, item] of ix.items.entries()) {
+    const dropped = ix.compactions.find((c) => c.index > i) ?? null;
+    spans.push({
+      item,
+      ref: `item ${i}`,
+      from: turnOf(i),
+      to: dropped === null ? lastCall : afterCompaction(dropped, byUsage) - 1,
+    });
+  }
+  for (const c of ix.compactions) {
+    const next = ix.compactions.find((o) => o.index > c.index) ?? null;
+    const from = afterCompaction(c, byUsage);
+    for (const [k, item] of c.replacement_items.entries()) {
+      spans.push({
+        item,
+        ref: `replacement ${k} of the compaction at item ${c.index}`,
+        // A boundary the rollout records no call after replaced the context of
+        // nothing it went on to send.
+        from: from > lastCall ? null : from,
+        to: next === null ? lastCall : afterCompaction(next, byUsage) - 1,
+      });
+    }
+  }
+  for (const { item, ref, from, to } of spans) {
     if (item.opaque !== null) { searched.unreadable++; continue; }
     searched.parts++;
     if (!item.text.toLowerCase().includes(lower)) continue;
-    const entered = turnOf(i);
+    // An empty span is reported as one in the STRUCTURE, not only in the
+    // rendering: a part a compaction dropped before any call had been given it
+    // was in no call's input, and `first 1, invocations 0` reads as call 1.
+    const empty = from === null || to === null || to < from;
     hits.push({
       where: 'message',
-      ref: `item ${i}`,
+      ref,
       origin: 'retained',
       role: item.role ?? item.kind,
-      first_invocation: entered,
-      last_invocation: (ix.calls.length > 0 ? ix.calls.length : ix.turns.length) - 1 || null,
-      invocations: entered === null ? 0 : (ix.calls.length > 0 ? ix.calls.length : ix.turns.length) - entered,
+      first_invocation: empty ? null : from,
+      last_invocation: empty ? null : to,
+      invocations: empty ? 0 : to! - from! + 1,
       excerpt: excerpt(item.text),
     });
   }
@@ -959,7 +1079,10 @@ function codexFind(ix: CodexIndex, needle: string, chars: number): ContextFind {
     searched,
     gaps: [
       ...(searched.unreadable > 0
-        ? [`${searched.unreadable} items hold no plaintext in this record — reasoning items are carried as provider-encrypted text — so a match inside one would not appear here: a nil result is "not found in what is readable", never "was not in the context"`]
+        ? [`${searched.unreadable} items hold no plaintext in this record — a reasoning item is carried as provider-encrypted text, and so is the compaction item a resumed rollout opens with — so a match inside one would not appear here: a nil result is "not found in what is readable", never "was not in the context"`]
+        : []),
+      ...(ix.compactions.length > 0
+        ? [`what a part's span means across a compaction, beyond the host's own order: this rollout has ${ix.compactions.length}, and a span above ends at the first boundary after the part entered, because the host replaced the whole item list there rather than trimming it. A part recorded before a boundary that no call had yet been given is "in no call" — it was one call's own output, and the next call was given the replacement instead`]
         : []),
       ...CODEX_GAPS,
       ...UNIVERSAL_GAPS,
@@ -1020,6 +1143,16 @@ export function contextFind(path: string, needle: string, options: QueryOptions 
 // with 362 parts is a 30MB object, and `--json` stays available for a consumer
 // that wants it. These renderers are pure, so what an operator sees is what a
 // test asserts.
+
+/** The last thing each renderer does to everything it prints. A record holds
+ *  whatever a session's tool results held — a page an agent fetched included —
+ *  so a part's text can carry ESC sequences that retitle the operator's window,
+ *  clear the screen above a line, or write their clipboard. Visible, never
+ *  stripped: the bytes WERE in the context, and this surface exists to show
+ *  what was supplied. Applied to the whole rendering rather than per field,
+ *  because a field added later cannot forget it (ward on H-3750, finding 1).
+ *  `--json` needs none of this: JSON escapes them itself. */
+const printable = (lines: string[]): string => visibleControls(lines.join('\n'));
 
 const n = (v: number | null): string => (v === null ? '?' : v.toLocaleString('en-US'));
 const clock = (at: string | null): string => (at === null ? '--:--:--' : (at.split('T')[1] ?? at).replace(/\.\d+Z?$/, '').replace('Z', ''));
@@ -1088,7 +1221,7 @@ export function renderContextAt(a: ContextAt & { source: TraceSource }, chars = 
   out.push('');
   out.push('this answer cannot say:');
   for (const g of a.gaps) out.push(`  - ${g}`);
-  return out.join('\n');
+  return printable(out);
 }
 
 export function renderContextEvolution(e: ContextEvolution & { source: TraceSource }, chars = PREVIEW_CHARS, notableOnly = false): string {
@@ -1115,12 +1248,12 @@ export function renderContextEvolution(e: ContextEvolution & { source: TraceSour
   out.push('');
   out.push('this answer cannot say:');
   for (const g of e.gaps) out.push(`  - ${g}`);
-  return out.join('\n');
+  return printable(out);
 }
 
 export function renderContextFind(f: ContextFind & { source: TraceSource }): string {
   const out: string[] = [];
-  const span = (h: QueryHit): string => (h.first_invocation === null
+  const span = (h: QueryHit): string => (h.first_invocation === null || h.invocations === 0
     ? 'in no call'
     : h.invocations <= 1 ? `call ${h.first_invocation}` : `calls ${h.first_invocation}–${h.last_invocation} (${h.invocations})`);
   const where = (h: QueryHit): string => (h.where === 'message'
@@ -1137,5 +1270,5 @@ export function renderContextFind(f: ContextFind & { source: TraceSource }): str
   out.push('');
   out.push('this answer cannot say:');
   for (const g of f.gaps) out.push(`  - ${g}`);
-  return out.join('\n');
+  return printable(out);
 }

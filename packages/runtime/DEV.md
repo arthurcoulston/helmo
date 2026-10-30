@@ -680,6 +680,22 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   WAS in the call's context and what it said is not here. And a nil `contextFind`
   reports what it searched and what it could not read, because "not found in
   what is readable" is not "was not in the context".
+  A payload's own JSON is never its text: ANY item carrying
+  `encrypted_content` and no plaintext field is unreadable whatever its kind,
+  and so is one with no text in any field this reader knows — named with the
+  keys it does carry. Fell to the `compaction` item a resumed rollout OPENS
+  with, which was labelled `retained` with 64KB of ciphertext as its content
+  and counted in the readable bytes, on 58 rollouts on this machine. The
+  item's own size is still reported, because 64KB of a context that cannot be
+  read here is the figure most worth having; `part_bytes` counts only what
+  could be read.
+  The renderers make C0/C1 control bytes VISIBLE (`\u001b`), as their last act
+  over everything they print, applied to the whole rendering so a field added
+  later cannot forget it. A record holds whatever a session's tool results
+  held, a fetched page included, so a part's text can retitle the operator's
+  window, clear the screen above a line or write their clipboard. Visible and
+  never stripped: the bytes WERE in the context, and `--json` carries the
+  record's own, which is what a consumer reads.
   Two readings the timeline would get wrong without saying so. A compaction
   does not appear in the host's own keep count at all — it REBASES rather than
   truncating, so `removed` reads 0 while sixty parts leave, and `held`/
@@ -698,7 +714,27 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   named in the answer's gaps. Taking the whole window instead put three items
   that did not exist yet into every call's context, on every rollout. An item
   kind the reader does not recognise counts as input, so the list errs long
-  rather than short, and says which way it errs. Note this is a
+  rather than short, and says which way it errs.
+  A codex compaction REPLACES the item list rather than trimming it: the host
+  writes the new context as `replacement_history`, so a call after a boundary
+  holds those items plus whatever was recorded since, the dropped items are
+  named as dropped in the answer's gaps with the last call that held them, and
+  a `contextFind` span ENDS at the first boundary after the part entered.
+  Reading the file from item 0 instead reported 216 parts for a call the host's
+  own usage record puts at 24,837 input tokens against 204,655 for the one
+  before it. Which compaction applies is read off the rollout's own ORDER (how
+  many calls it had recorded at the boundary), not off the item index: the host
+  writes the boundary after the call whose window ended on the same item count,
+  so `index <= call.before` handed the call BEFORE the compaction the context
+  of the one after it. A part a boundary dropped before any call had been given
+  it — one call's own output — is reported as in no call, in the structure and
+  not only in the rendering.
+  `preserved_messages` is what the HOST lists as preserved at a boundary, by
+  its own count, and is never called what the next call carried: on claude it
+  is a transcript-level list of entries, and against the one compacted record
+  on this machine 0 of the 5 messages the next request actually carried is
+  byte-equal to one of the 50 it lists. The parts figure on the same line is
+  the one that came off the request. Note this is a
   FINER unit than `context-trace.ts`'s codex `invocations`, which counts
   `turn_context` entries: a turn is a USER turn, so one loop iteration is a
   single turn with a dozen calls inside it, and reading a context by turn

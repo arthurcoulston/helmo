@@ -170,7 +170,10 @@ export interface TraceCompaction {
   pre_tokens: number | null;
   post_tokens: number | null;
   dropped_tokens: number | null;
-  /** Messages the host says it carried across, by its own count. */
+  /** What the host LISTS as preserved at the boundary, by its own count: on
+   *  claude a list of transcript entries, on codex its `retained_context`.
+   *  NOT the message array of the next call — the two disagree, and it is the
+   *  next request that says what was sent. */
   preserved_messages: number | null;
   /** An immutable reference to what replaced the dropped turns, where the host
    *  writes one: a response id, or the summary's own hash. */

@@ -306,17 +306,54 @@ describe('the codex rollout', () => {
   // Mutation: present the items before a turn as the host's own message list.
   // The rollout records turns and items; the per-call array is this reader's
   // arithmetic and has to say so.
-  it('reads a turn context as the items recorded before it, and says whose arithmetic that is', () => {
-    const a = at(write('rollout.jsonl', codexRecord()), 1);
+  it('reads a call context as the items recorded before it, and says whose arithmetic that is', () => {
+    const a = at(write('rollout.jsonl', codexRecord()), 0);
 
     expect(a.parts.map((p) => p.types[0])).toEqual(['message', 'custom_tool_call']);
     expect(a.gaps.join(' ')).toContain("this reader's arithmetic, not a list the host wrote");
   });
 
+  // Mutation: read a call off the turn boundaries. A turn is a USER turn, so
+  // one loop iteration is a single turn with a dozen calls inside it: on a real
+  // mason rollout that reading offered `--at 0` and nothing else, over a
+  // context that grew from 15,908 to 37,468 input tokens across seven calls.
+  it('takes a call from the host per-call usage record, with the response id and token count it carries', () => {
+    const a = at(write('two-calls.jsonl', codexRecord({ secondCall: true })), 1);
+
+    expect(a.of).toBe(2);
+    expect(a.call_unit).toContain('one token_usage_record');
+    expect(a.host_tokens).toMatchObject({ input: 240, cached: 90 });
+    expect(a.host_tokens!.basis).toContain('resp_two');
+    // Its context is every item before that call, the second turn's ask last.
+    expect(a.parts.at(-1)!.text).toBe('the next ask');
+  });
+
+  // Mutation: present the turn as a call anyway. A host old enough to write no
+  // usage record leaves only the user turn, and saying so is the difference
+  // between a coarse reading and a wrong one.
+  it('falls back to the user turn where the rollout has no usage record, and names it as a turn', () => {
+    const entries = codexRecord().filter((e) => (e as { type?: string }).type !== 'token_usage_record');
+    const a = at(write('no-usage.jsonl', entries), 1);
+
+    expect(a.of).toBe(2);
+    expect(a.call_unit).toContain('a turn is many calls');
+    expect(a.host_tokens).toBeNull();
+  });
+
+  // The claude request entry carries no usage: the host writes the response's
+  // counts elsewhere. Reported absent rather than as our byte total dressed up
+  // as tokens.
+  it('reports no host token count on a harness whose request entry has none', () => {
+    const a = at(write('join.jsonl', claudeTranscriptRecord()), 2);
+
+    expect(a.host_tokens).toBeNull();
+    expect(a.call_unit).toContain('one api-request');
+  });
+
   // Mutation: show a reasoning item as the empty string its summary parses to.
   // The item WAS in the context; its content is provider-encrypted.
   it('says a reasoning item carried only as encrypted text is unreadable, not empty', () => {
-    const a = at(write('reasoning.jsonl', codexRecord({ encryptedReasoning: true })), 1);
+    const a = at(write('reasoning.jsonl', codexRecord({ encryptedReasoning: true })), 0);
 
     const reasoning = a.parts.find((p) => p.types[0] === 'reasoning')!;
     expect(reasoning).toMatchObject({ origin: 'unreadable', text: null });
@@ -330,7 +367,7 @@ describe('the codex rollout', () => {
   // one shares an index with: an absent key and an empty map are the same
   // shape, so the reading went low rather than missing.
   it('takes the instructions from the last FULL world state, and names the deltas since', () => {
-    const a = at(write('rollout.jsonl', codexRecord()), 1);
+    const a = at(write('rollout.jsonl', codexRecord()), 0);
 
     expect(a.instructions!.tools.map((t) => t.name))
       .toEqual(['mcp__helmo', 'mcp__node_repl', 'functions.exec', 'clock']);
@@ -341,9 +378,11 @@ describe('the codex rollout', () => {
   // Mutation: compute a dropped figure from the item count. The rollout's item
   // count only grows, and the host states no dropped figure at a boundary.
   it('reports a compaction with the host own usage figures and no invented drop', () => {
-    const e = evolution(write('rollout.jsonl', codexRecord()));
+    const e = evolution(write('rollout.jsonl', codexRecord({ secondCall: true })));
 
     const call = e.changes.find((c) => c.compaction !== null)!;
+    // The host's own per-call input count, never our arithmetic.
+    expect(e.changes.map((c) => c.host_input_tokens)).toEqual([100, 240]);
     expect(call.compaction).toMatchObject({ pre_tokens: 1_900_000, post_tokens: 240_000, dropped_tokens: null, preserved_messages: 3 });
     expect(call.compaction!.basis).toContain('INCOMPLETE, so the preserved count is a floor');
     expect(call.removed).toBeNull();

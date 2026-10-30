@@ -92,6 +92,12 @@ export interface QueryInstructions {
 export interface ContextAt {
   harness: 'claude' | 'codex';
   session_id: string | null;
+  /** What one unit of `ordinal` IS on this harness, because the two records
+   *  bound a call differently and a number without its unit is unreadable. */
+  call_unit: string;
+  /** The host's own size for this call, where it writes one. Not ours: no
+   *  tokenizer runs here, and an unknown overhead is not zero. */
+  host_tokens: { input: number | null; cached: number | null; basis: string } | null;
   /** Which call, and how many the session made. */
   ordinal: number;
   of: number;
@@ -135,6 +141,9 @@ export interface ContextChange {
     blocks_changed: number;
   };
   compaction: null | (TraceCompaction & { replacement_text: string | null; replacement_truncated: boolean });
+  /** The host's own input token count for this call, where it writes one.
+   *  Never our own arithmetic. */
+  host_input_tokens: number | null;
   /** Why this call is worth an operator's attention, in their terms. Empty on
    *  an ordinary turn. */
   notable: string[];
@@ -334,6 +343,11 @@ function claudeAt(ix: ClaudeIndex, ordinal: number, chars: number): ContextAt | 
   return {
     harness: 'claude',
     session_id: ix.sessionId,
+    call_unit: "one api-request — the host's own entry for a model call, naming that call's exact message list",
+    // The request entry carries no usage: the host writes the response's
+    // counts elsewhere, and `sizes` in the trace says the same thing. Reported
+    // as absent rather than as our own byte total dressed up as tokens.
+    host_tokens: null,
     ordinal,
     of: ix.requests.length,
     at: str(r['timestamp']),
@@ -433,7 +447,7 @@ function claudeEvolution(ix: ClaudeIndex, chars: number): ContextEvolution {
     if (list !== null && previousList !== null && list.length < previousList) {
       notable.push(`this call's context holds ${list.length} parts where the previous call's held ${previousList}: ${previousList - list.length} left it${(removed ?? 0) === 0 ? ', and the host rebased rather than truncating, so its own keep count reads 0' : ''}`);
     }
-    changes.push({ ordinal: i, at, added, removed, held: list?.length ?? null, previously: previousList, instructions, compaction, notable });
+    changes.push({ ordinal: i, at, added, removed, held: list?.length ?? null, previously: previousList, instructions, compaction, host_input_tokens: null, notable });
   }
   // A boundary after the last call still happened, and dropping it would lose
   // the one compaction a session that ended on it ever had.
@@ -447,6 +461,7 @@ function claudeEvolution(ix: ClaudeIndex, chars: number): ContextEvolution {
       held: null,
       previously: null,
       instructions: null,
+      host_input_tokens: null,
       compaction: { ...c, replacement_text: ix.summaryText === null ? null : text, replacement_truncated: ix.summaryText === null ? false : truncated },
       notable: [`compaction (${c.trigger ?? 'trigger unrecorded'}) after the last model call in this record`],
     });
@@ -536,8 +551,16 @@ function claudeFind(ix: ClaudeIndex, needle: string, chars: number): ContextFind
 interface CodexIndex {
   sessionId: string | null;
   cwd: string | null;
-  /** Each turn_context, in order. */
+  /** Each turn_context, in order. A turn is a user turn, not a model call: one
+   *  loop iteration is a single turn with a dozen calls inside it. */
   turns: { at: string | null; model: string | null; turn_id: string | null; before: number }[];
+  /** Each token_usage_record, in order — one per API call, carrying the
+   *  provider's own `response_id` for that call and the host's own input token
+   *  count for it. This is the finest call boundary the rollout holds, and the
+   *  only one with the host's identity on it; `turns` are far too coarse to
+   *  read a context by. The message ARRAY of the call is still not recorded,
+   *  which is the standing codex ceiling. */
+  calls: { at: string | null; response_id: string | null; turn_id: string | null; input: number | null; cached: number | null; before: number }[];
   /** Each response_item, in order, with the text it carries — or the reason
    *  this record holds no plaintext for it. */
   items: { at: string | null; kind: string; role: string | null; text: string; bytes: number; opaque: string | null }[];
@@ -567,7 +590,7 @@ function itemText(payload: Record<string, unknown>): string {
 }
 
 function indexCodex(entries: Record<string, unknown>[]): CodexIndex {
-  const ix: CodexIndex = { sessionId: null, cwd: null, turns: [], items: [], instructions: [], deltas: [], compactions: [], baseInstructions: null };
+  const ix: CodexIndex = { sessionId: null, cwd: null, turns: [], calls: [], items: [], instructions: [], deltas: [], compactions: [], baseInstructions: null };
   for (const e of entries) {
     const type = str(e['type']);
     const at = str(e['timestamp']);
@@ -629,6 +652,16 @@ function indexCodex(entries: Record<string, unknown>[]): CodexIndex {
         bytes: Buffer.byteLength(JSON.stringify(payload), 'utf8'),
         opaque,
       });
+    } else if (type === 'token_usage_record' && payload) {
+      const usage = rec(payload['usage']) ? (payload['usage'] as Record<string, unknown>) : null;
+      ix.calls.push({
+        at,
+        response_id: str(payload['response_id']),
+        turn_id: str(payload['turn_id']),
+        input: usage ? num(usage['input_tokens']) : null,
+        cached: usage ? num(usage['cached_input_tokens']) : null,
+        before: ix.items.length,
+      });
     } else if (type === 'compacted' && payload) {
       const retained = rec(payload['retained_context']) ? (payload['retained_context'] as Record<string, unknown>) : null;
       const latest = rec(payload['latest_token_usage_record']) ? (payload['latest_token_usage_record'] as Record<string, unknown>) : null;
@@ -676,11 +709,22 @@ function codexInstructionsAt(ix: CodexIndex, index: number, chars: number): Quer
 }
 
 function codexAt(ix: CodexIndex, ordinal: number, chars: number): ContextAt | { error: string } {
-  const turn = ix.turns[ordinal];
-  if (turn === undefined) {
-    return { error: `this rollout records ${ix.turns.length} turns, numbered 0 to ${Math.max(0, ix.turns.length - 1)}` };
+  // A call is a usage record where the rollout has them; a host old enough to
+  // write none leaves only the turn, which is coarser by an order of magnitude
+  // and is named as what it is rather than passed off as a call.
+  const byUsage = ix.calls.length > 0;
+  const unit = byUsage
+    ? "one token_usage_record — the host writes one per API call, carrying that call's own response id and input token count"
+    : 'one turn_context: this rollout has no per-call usage record, so the only boundary it holds is the user turn, and a turn is many calls';
+  const call = byUsage ? ix.calls[ordinal] : ix.turns[ordinal];
+  const of = byUsage ? ix.calls.length : ix.turns.length;
+  if (call === undefined) {
+    return { error: `this rollout records ${of} ${byUsage ? 'model calls' : 'turns'}, numbered 0 to ${Math.max(0, of - 1)}` };
   }
-  const parts: QueryPart[] = ix.items.slice(0, turn.before).map((item, i) => {
+  // The turn in force supplies the model: a usage record names its turn, not
+  // its model.
+  const turn = ix.turns.filter((t) => t.before <= call.before).at(-1) ?? ix.turns[0] ?? { at: null, model: null, turn_id: null, before: 0 };
+  const parts: QueryPart[] = ix.items.slice(0, call.before).map((item, i) => {
     const { text, truncated } = clip(item.text, chars);
     return {
       slot: i,
@@ -689,22 +733,31 @@ function codexAt(ix: CodexIndex, ordinal: number, chars: number): ContextAt | { 
       via: [`item ${i}`],
       types: [item.kind],
       bytes: item.bytes,
-      entered: ix.turns.filter((t) => t.before <= i).length,
+      entered: byUsage
+        ? ix.calls.findIndex((c) => c.before > i) === -1 ? null : ix.calls.findIndex((c) => c.before > i)
+        : ix.turns.filter((t) => t.before <= i).length,
       text: item.opaque === null ? text : null,
       truncated: item.opaque === null ? truncated : false,
       caveat: item.opaque,
     };
   });
-  const deltasBefore = ix.deltas.filter((d) => d.index <= turn.before);
+  const deltasBefore = ix.deltas.filter((d) => d.index <= call.before);
   const readable = parts.filter((p) => p.origin === 'retained');
+  const usage = byUsage ? (call as CodexIndex['calls'][number]) : null;
   return {
     harness: 'codex',
     session_id: ix.sessionId,
+    call_unit: unit,
+    host_tokens: usage === null ? null : {
+      input: usage.input,
+      cached: usage.cached,
+      basis: `the host's own usage record for response ${usage.response_id ?? '(unrecorded)'}, in its units; the cached figure is of that input, not additional to it`,
+    },
     ordinal,
-    of: ix.turns.length,
-    at: turn.at,
+    of,
+    at: call.at,
     model: turn.model,
-    instructions: codexInstructionsAt(ix, turn.before, chars),
+    instructions: codexInstructionsAt(ix, call.before, chars),
     parts,
     totals: {
       parts: parts.length,
@@ -725,8 +778,12 @@ function codexAt(ix: CodexIndex, ordinal: number, chars: number): ContextAt | { 
 
 function codexEvolution(ix: CodexIndex, chars: number): ContextEvolution {
   const changes: ContextChange[] = [];
-  for (const [i, turn] of ix.turns.entries()) {
-    const from = i === 0 ? 0 : ix.turns[i - 1]!.before;
+  const byUsage = ix.calls.length > 0;
+  const boundaries: { at: string | null; before: number; input: number | null }[] = byUsage
+    ? ix.calls.map((c) => ({ at: c.at, before: c.before, input: c.input }))
+    : ix.turns.map((t) => ({ at: t.at, before: t.before, input: null }));
+  for (const [i, turn] of boundaries.entries()) {
+    const from = i === 0 ? 0 : boundaries[i - 1]!.before;
     const added: QueryPart[] = ix.items.slice(from, turn.before).map((item, k) => {
       const { text, truncated } = clip(item.text, chars);
       return {
@@ -780,6 +837,7 @@ function codexEvolution(ix: CodexIndex, chars: number): ContextEvolution {
       previously: null,
       instructions,
       compaction: compacted ? { ...compacted, replacement_text: null, replacement_truncated: false } : null,
+      host_input_tokens: turn.input,
       notable,
     });
   }
@@ -788,6 +846,9 @@ function codexEvolution(ix: CodexIndex, chars: number): ContextEvolution {
     session_id: ix.sessionId,
     changes,
     gaps: [
+      ...(byUsage
+        ? ["a call below is one token_usage_record — the host's own per-call entry, carrying its response id and input token count — and the items between two of them are that call's additions by this reader's arithmetic"]
+        : ['this rollout has no per-call usage record, so a line below is a user TURN, which is many model calls']),
       ...CODEX_GAPS,
       'what a compaction DROPPED: the host names its replacement response and its retained set, never a dropped figure, so no removal count appears above',
       ...UNIVERSAL_GAPS,
@@ -951,6 +1012,8 @@ function renderCaveats(parts: QueryPart[]): string[] {
 export function renderContextAt(a: ContextAt & { source: TraceSource }, chars = PREVIEW_CHARS): string {
   const out: string[] = [];
   out.push(`context of call ${a.ordinal} of ${a.of} — ${a.harness} session ${short(a.session_id, 8)} at ${a.at ?? 'an unrecorded time'}, model ${a.model ?? 'unrecorded'}`);
+  out.push(`a call here is ${a.call_unit}`);
+  if (a.host_tokens !== null) out.push(`the host's own size for it: ${n(a.host_tokens.input)} input tokens${a.host_tokens.cached === null ? '' : ` (${n(a.host_tokens.cached)} of them cached)`} — ${a.host_tokens.basis}`);
   out.push(`record: ${a.source.path} (${n(a.source.read_bytes)}B read of ${n(a.source.bytes)}B, ${n(a.source.lines)} entries${a.source.truncated ? ', TRUNCATED at the read ceiling' : ''}${a.source.unparseable > 0 ? `, ${a.source.unparseable} unparseable` : ''})`);
   out.push('');
   if (a.instructions === null) {
@@ -984,7 +1047,8 @@ export function renderContextEvolution(e: ContextEvolution & { source: TraceSour
   for (const c of shown) {
     const moved = `${c.added.length > 0 ? `+${c.added.length}` : '  '}${(c.removed ?? 0) > 0 ? ` -${c.removed}` : ''}`;
     const held = c.held === null ? '' : c.previously !== null && c.previously !== c.held ? `${c.previously}→${c.held} parts` : `${c.held} parts`;
-    out.push(`call ${String(c.ordinal).padStart(4)}  ${clock(c.at)}  ${moved.padEnd(8)} ${held}`);
+    const tokens = c.host_input_tokens === null ? '' : `  ${n(c.host_input_tokens)} input tokens (host's own count)`;
+    out.push(`call ${String(c.ordinal).padStart(4)}  ${clock(c.at)}  ${moved.padEnd(8)} ${held}${tokens}`);
     for (const note of c.notable) out.push(`    ! ${note}`);
     if (c.compaction?.replacement_text) {
       out.push(`    replacement summary (${n(c.compaction.replacement_text.length)} chars shown${c.compaction.replacement_truncated ? ', truncated' : ''}):`);

@@ -68,7 +68,7 @@ export function claudeRecord(over: { blobs?: boolean; compaction?: boolean } = {
 
 /** A codex rollout: session_meta, a full world_state, a partial one, two turns
  *  and a compaction. */
-export function codexRecord(over: { full?: boolean; encryptedReasoning?: boolean } = {}): unknown[] {
+export function codexRecord(over: { full?: boolean; encryptedReasoning?: boolean; secondCall?: boolean } = {}): unknown[] {
   const entries: unknown[] = [
     {
       type: 'session_meta', timestamp: '2026-10-29T04:00:00.000Z', ordinal: 0,
@@ -119,8 +119,14 @@ export function codexRecord(over: { full?: boolean; encryptedReasoning?: boolean
       : []),
     { type: 'response_item', timestamp: '2026-10-29T04:00:04.000Z', ordinal: 5, payload: { type: 'custom_tool_call' } },
     {
+      // One per API call, carrying the provider's own response id for it. The
+      // rollout's finest call boundary: a turn below is a USER turn, and one
+      // loop iteration is a single turn with a dozen calls inside it.
       type: 'token_usage_record', timestamp: '2026-10-29T04:00:05.000Z', ordinal: 6,
-      payload: { usage: { input_tokens: 100, output_tokens: 10, total_tokens: 110 } },
+      payload: {
+        response_id: 'resp_one', turn_id: 'turn-1',
+        usage: { input_tokens: 100, cached_input_tokens: 40, output_tokens: 10, total_tokens: 110 },
+      },
     },
     {
       type: 'compacted', timestamp: '2026-10-29T05:00:00.000Z', ordinal: 7,
@@ -141,6 +147,18 @@ export function codexRecord(over: { full?: boolean; encryptedReasoning?: boolean
     },
     { type: 'turn_context', timestamp: '2026-10-29T05:00:01.000Z', ordinal: 8, payload: { turn_id: 'turn-2', model: 'gpt-6-astra' } },
   );
+  if (over.secondCall === true) {
+    entries.push(
+      { type: 'response_item', timestamp: '2026-10-29T05:00:02.000Z', ordinal: 9, payload: { type: 'message', role: 'user', content: [{ type: 'text', text: 'the next ask' }] } },
+      {
+        type: 'token_usage_record', timestamp: '2026-10-29T05:00:03.000Z', ordinal: 10,
+        payload: {
+          response_id: 'resp_two', turn_id: 'turn-2',
+          usage: { input_tokens: 240, cached_input_tokens: 90, output_tokens: 20, total_tokens: 260 },
+        },
+      },
+    );
+  }
   return entries;
 }
 

@@ -686,9 +686,24 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   `previously` are what the drop is actually read against. And the first shape
   of a session is the CONFIGURATION, not a change to one; reported as a change
   it reads as twelve tools having been added at call 0.
-  On codex a turn's context is every item recorded before it, in order, which
-  is this reader's arithmetic and is stated as such on every answer: the
-  rollout records turns and items, never the array sent on one API call.
+  On codex a CALL is one `token_usage_record` — the host writes one per API
+  call, carrying that call's own `response_id` and its input token count — and
+  the items recorded before it are its context, in order, which is this
+  reader's arithmetic and is stated as such on every answer: the rollout
+  records turns and items, never the array sent on one call. Note this is a
+  FINER unit than `context-trace.ts`'s codex `invocations`, which counts
+  `turn_context` entries: a turn is a USER turn, so one loop iteration is a
+  single turn with a dozen calls inside it, and reading a context by turn
+  offered `--at 0` and nothing else over a real mason rollout whose context grew
+  from 15,908 to 37,468 input tokens across seven calls. Each answer names its
+  own unit in `call_unit` rather than leaving a bare ordinal to be read against
+  the wrong one; reconciling the trace's `invocations` to the usage record is a
+  recorded residual on H-3724, and would restate figures the R-55 boundary
+  document measured. A rollout old enough to carry no usage record falls back
+  to the turn and says that is what it is.
+  `host_tokens` is the host's own count for the call or null — never a
+  tokenizer run here, and null on claude, whose request entry carries no usage
+  at all.
   The renderers are pure functions in the same module, so what an operator sees
   is what the acceptance asserts. They print each distinct caveat ONCE with how
   many parts carry it — a call with 72 reconstructed parts printed the same two

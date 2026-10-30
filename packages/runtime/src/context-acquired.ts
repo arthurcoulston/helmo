@@ -28,13 +28,21 @@
 /** What the request named, by the field it named it in. `tool` is a request
  *  whose arguments this reader recognises no source field in — the tool was
  *  called and the call is accounted for, but what it reached for is its own
- *  business. `unknown` is a result whose request is not in the readable part
- *  of this context at all. */
+ *  business. Most of those still have an identity, the argument set itself
+ *  (see `argument_set` below); the kind stays `tool` because naming it
+ *  anything better would mean reading the tool's NAME, which is the one
+ *  thing this module will not do. `unknown` is a result whose request is not
+ *  in the readable part of this context at all. */
 export type AcquiredKind = 'file' | 'command' | 'ticket' | 'skill' | 'web' | 'search' | 'tool' | 'unknown';
 
-/** How `source` was arrived at. `argument` is the only basis that names a
- *  thing; the other two say, in two different ways, that nothing did. */
-export type AcquiredBasis = 'argument' | 'no_source_field' | 'request_absent';
+/** How `source` was arrived at. `argument` names a THING the request asked
+ *  for. `argument_set` names no thing — the request carried no field this
+ *  reader resolves a source out of — but its arguments as a whole are a
+ *  short, repeatable key, and that key is the call's own identity: forty
+ *  `{assignee: "bosun"}` ticket queries are one source, not forty anonymous
+ *  ones. The remaining two say, in two different ways, that nothing named
+ *  anything. */
+export type AcquiredBasis = 'argument' | 'argument_set' | 'no_source_field' | 'request_absent';
 
 export interface AcquiredInput {
   /** The host's own id for the call. The join key, and the identity a reader
@@ -45,12 +53,15 @@ export interface AcquiredInput {
   kind: AcquiredKind;
   /** The thing the request named: an absolute path, a ticket id, the command
    *  as it was run, a URL, a search pattern. Whole, never clipped — a
-   *  rendering clips it, this does not. `null` wherever the basis is not
-   *  `argument`. */
+   *  rendering clips it, this does not. Under `argument_set` it is instead
+   *  the whole argument set rendered canonically (`project=R-45`, `()` for a
+   *  call with no arguments at all): the call's identity rather than a thing
+   *  it named, and read as such. `null` only where neither basis applies. */
   source: string | null;
   basis: AcquiredBasis;
   /** The argument field `source` was read out of, so a reader can check it
-   *  against the request rather than taking this reader's word. */
+   *  against the request rather than taking this reader's word. `null` under
+   *  `argument_set`, where the source is every field and no single one. */
   source_field: string | null;
   /** The slot of the part holding the REQUEST, where it is in this context.
    *  A result whose request has left the context (a compaction, a dropped
@@ -130,24 +141,71 @@ export function acquiredArgs(raw: unknown): unknown {
   }
 }
 
+/** Characters of rendered argument set above which it stops being an
+ *  identity and starts being content. A filter set repeats — the same query
+ *  asked twice renders the same key — and a 6KB ticket body does not: it is
+ *  unique to its call, so counting it as a distinct source would report one
+ *  source per call and say nothing. There is no way to measure repeatability
+ *  from a single call, and length is the honest proxy: short enough to read
+ *  in a report is short enough to be a name. A request over it keeps
+ *  `no_source_field`, which is what it was before this existed. */
+const ARGUMENT_SET_CHARS = 300;
+
+/** One argument value, where it is one a key can be built from. Scalars and
+ *  arrays of scalars only: a nested object is a structure, and flattening it
+ *  into a key invents an identity rather than reading one. */
+const scalar = (v: unknown): string | null => {
+  if (typeof v === 'string') return /[\s="]/.test(v) ? JSON.stringify(v) : v;
+  if (typeof v === 'number' || typeof v === 'boolean' || v === null) return JSON.stringify(v);
+  if (Array.isArray(v)) {
+    const each = v.map(scalar);
+    return each.every((e) => e !== null) ? `[${each.join(',')}]` : null;
+  }
+  return null;
+};
+
+/** The whole argument set as one canonical key, or `null` where it is not one.
+ *  Keys sorted, so two calls that differ only in the order the host wrote
+ *  their arguments are one source and not two. */
+export function argumentSet(args: Record<string, unknown>): string | null {
+  const keys = Object.keys(args).sort();
+  if (keys.length === 0) return '()';
+  const pairs: string[] = [];
+  for (const k of keys) {
+    const v = scalar(args[k]);
+    if (v === null) return null;
+    pairs.push(`${k}=${v}`);
+  }
+  const key = pairs.join(' ');
+  return key.length > ARGUMENT_SET_CHARS ? null : key;
+}
+
 /** What a request names, from its arguments. A bare string of arguments is a
  *  command: it is how both harnesses' shell tools are called, and the string
  *  IS the thing that was run. */
-function named(args: unknown): { kind: AcquiredKind; source: string | null; field: string | null } {
+function named(args: unknown): { kind: AcquiredKind; source: string | null; field: string | null; basis: AcquiredBasis } {
   const text = str(args);
-  if (text !== null) return { kind: 'command', source: text, field: null };
-  if (!rec(args)) return { kind: 'tool', source: null, field: null };
+  if (text !== null) return { kind: 'command', source: text, field: null, basis: 'argument' };
+  if (!rec(args)) return { kind: 'tool', source: null, field: null, basis: 'no_source_field' };
   for (const { field, kind } of SOURCE_FIELDS) {
     const value = args[field];
     const as = str(value);
-    if (as !== null && as !== '') return { kind, source: as, field };
+    if (as !== null && as !== '') return { kind, source: as, field, basis: 'argument' };
     // An array of strings is how a shell command reaches some hosts, and
     // joining it is the command as it was run rather than a JSON line.
     if (Array.isArray(value) && value.length > 0 && value.every((v) => typeof v === 'string')) {
-      return { kind, source: (value as string[]).join(' '), field };
+      return { kind, source: (value as string[]).join(' '), field, basis: 'argument' };
     }
   }
-  return { kind: 'tool', source: null, field: null };
+  // No field named a thing. The arguments as a whole may still be a name:
+  // most of the unattributed mass on a real cohort is queries taking filters
+  // rather than an id — `{project: "R-45"}`, `{assignee: "bosun"}`, `{}` —
+  // and an audit asking where 1MB of context came from gets "a tool was
+  // called" without this.
+  const set = argumentSet(args);
+  return set === null
+    ? { kind: 'tool', source: null, field: null, basis: 'no_source_field' }
+    : { kind: 'tool', source: set, field: null, basis: 'argument_set' };
 }
 
 /** One acquired input, from the request that produced it. */
@@ -172,13 +230,13 @@ export function acquiredInput(
       is_error: isError,
     };
   }
-  const { kind, source, field } = named(request.args);
+  const { kind, source, field, basis } = named(request.args);
   return {
     call_id: callId,
     tool: request.tool,
     kind,
     source,
-    basis: source === null ? 'no_source_field' : 'argument',
+    basis,
     source_field: field,
     request_slot: request.slot,
     request: verbatim ? request.args : null,
@@ -211,10 +269,13 @@ export function renderAcquired(inputs: AcquiredInput[], to = 110): string[] {
   return inputs.map((i) => {
     const what = i.basis === 'argument'
       ? `${i.kind} ${oneLine(i.source ?? '', to)}`
-      : i.basis === 'no_source_field'
-        ? `${i.tool ?? 'a tool'} call, no argument naming a source`
-        : `request not in this context (call ${i.call_id ?? 'unidentified'})`;
-    const tool = i.basis === 'argument' && i.tool !== null ? ` — via ${i.tool}` : '';
+      // Not "a file" or "a ticket" — a call, named by what it asked for.
+      : i.basis === 'argument_set'
+        ? `call ${oneLine(i.source ?? '', to)}`
+        : i.basis === 'no_source_field'
+          ? `${i.tool ?? 'a tool'} call, no argument naming a source`
+          : `request not in this context (call ${i.call_id ?? 'unidentified'})`;
+    const tool = i.basis !== 'request_absent' && i.basis !== 'no_source_field' && i.tool !== null ? ` — via ${i.tool}` : '';
     const slot = i.request_slot === null ? '' : `, asked at #${i.request_slot}`;
     return `      <- ${what}${tool}${slot}${i.is_error === true ? ' [the host marked this result an error]' : ''}`;
   });

@@ -32,6 +32,7 @@ import type { LoopConfig } from './types.js';
 import { journalEntries, launchSessionRunning, type LaunchJournalEntry } from './launch-journal.js';
 import { recordForLaunch } from './context-trace.js';
 import { contextAt, contextEvolution, type QueryPart } from './context-query.js';
+import type { AcquiredKind } from './context-acquired.js';
 import { currentSources, pathProviders, pathRuntimes, readSource } from './context-coverage.js';
 import { workingTreeInstructions } from './team.js';
 
@@ -191,6 +192,52 @@ export interface RunAccount {
   unknown_channels: ItemChannel[];
 }
 
+/** What a seat's runs FETCHED in the window, rolled up — the third kind of
+ *  context, and on a real cohort by far the largest. The items above are the
+ *  recurring material a run is CONFIGURED with; this is what it went and got,
+ *  and until it was here the only route from the population to that figure
+ *  was a script composing `context-inventory --json` with one
+ *  `context-trace --record` per run (R-56, H-3818). A question an operator
+ *  has should not need a file nobody maintains standing between it and the
+ *  answer. Off by default: it reads every run's whole evolution rather than
+ *  its first call, which is the cost the existing report does not pay. */
+export interface AcquiredKindRow {
+  kind: AcquiredKind;
+  inputs: number;
+  bytes: number;
+  /** DISTINCT sources, keyed on tool and source together: one file read forty
+   *  times and forty files are the same input count and a different finding. */
+  sources: number;
+  /** Runs that acquired anything of this kind, so a kind one run leans on is
+   *  distinguishable from one the whole fleet does. */
+  runs: number;
+}
+
+export interface AcquiredSourceRow {
+  kind: AcquiredKind;
+  tool: string | null;
+  source: string;
+  inputs: number;
+  bytes: number;
+  runs: number;
+}
+
+export interface AcquiredRollup {
+  /** Read runs whose evolution this could be taken from. Always against
+   *  `runs_total`, never against itself. */
+  runs_joined: number;
+  /** Read runs whose own export refused, with the reason. A denominator of
+   *  the runs that happened to parse reads as completeness. */
+  runs_refused: { seat: string; launch_id: string; why: string }[];
+  calls: number;
+  inputs: number;
+  bytes: number;
+  by_kind: AcquiredKindRow[];
+  /** Every distinct source, heaviest first — not a top-N. This is the data an
+   *  audit asks for, and clipping it here would put the script back. */
+  sources: AcquiredSourceRow[];
+}
+
 export interface SeatInventory {
   seat: string;
   provider_paths: string[];
@@ -215,12 +262,18 @@ export interface SeatInventory {
   items: InventoryItem[];
   residue: ResidueAccount;
   accounts: RunAccount[];
+  /** `null`, not an empty roll-up, when it was not asked for: zero inputs is
+   *  a measurement and "nobody measured" is not. */
+  acquired: AcquiredRollup | null;
   gaps: string[];
 }
 
 export interface ContextInventory {
   window: { from: string; to: string; basis: string };
   seats: SeatInventory[];
+  /** The same roll-up over every seat at once, because the cohort question —
+   *  "where did this fleet's context come from" — is not a per-seat one. */
+  acquired: AcquiredRollup | null;
   /** True of every seat's figures, so no reader has to find it per row. */
   gaps: string[];
   measured_at: string;
@@ -237,6 +290,10 @@ export interface InventoryOptions {
   /** Evidence refs carried per item. The drill-down is the ref, not the
    *  content: `context-trace --record <record> --at <ordinal>` reads it. */
   evidence_per_item?: number;
+  /** Roll up what each run FETCHED as well as what it was configured with.
+   *  Opt-in: it reads every call of every record rather than each record's
+   *  first, so it costs what the rest of this report does not. */
+  acquired?: boolean;
 }
 
 /** One form a configured source can reach a context in. The hosts do not
@@ -423,6 +480,103 @@ interface Acc {
   forms: Set<string>;
 }
 
+/** The roll-up while it is being built. Sets rather than counts, because a
+ *  distinct-source count cannot be added up after the fact. */
+interface AcquiredAcc {
+  runs_joined: number;
+  runs_refused: { seat: string; launch_id: string; why: string }[];
+  calls: number;
+  byKind: Map<AcquiredKind, { inputs: number; bytes: number; sources: Set<string>; runs: Set<string> }>;
+  bySource: Map<string, { kind: AcquiredKind; tool: string | null; source: string; inputs: number; bytes: number; runs: Set<string> }>;
+}
+
+const newAcquiredAcc = (): AcquiredAcc => ({ runs_joined: 0, runs_refused: [], calls: 0, byKind: new Map(), bySource: new Map() });
+
+/** One run's acquisitions, from its whole evolution. Reads the run's own
+ *  changes rather than its first call: most of what a run fetches arrives
+ *  after the context it started with. */
+function foldAcquired(acc: AcquiredAcc, seat: string, run: InventoryRun): void {
+  const evo = contextEvolution(run.record!, { chars: 0 });
+  if ('error' in evo) {
+    acc.runs_refused.push({ seat, launch_id: run.launch_id, why: evo.error });
+    return;
+  }
+  acc.runs_joined += 1;
+  acc.calls += evo.changes.length;
+  for (const change of evo.changes) {
+    for (const part of change.added) {
+      for (const input of part.acquired ?? []) {
+        const kindRow = acc.byKind.get(input.kind) ?? { inputs: 0, bytes: 0, sources: new Set<string>(), runs: new Set<string>() };
+        kindRow.inputs += 1;
+        kindRow.bytes += input.bytes ?? 0;
+        kindRow.runs.add(run.launch_id);
+        // Keyed on tool AND source, exactly as the per-call account is: the
+        // same command run by two tools is two sources, and an input that
+        // named nothing contributes no source rather than one shared one.
+        if (input.source !== null) {
+          const key = `${input.tool ?? ''}\u0000${input.source}`;
+          kindRow.sources.add(key);
+          const sourceRow = acc.bySource.get(key) ?? { kind: input.kind, tool: input.tool, source: input.source, inputs: 0, bytes: 0, runs: new Set<string>() };
+          sourceRow.inputs += 1;
+          sourceRow.bytes += input.bytes ?? 0;
+          sourceRow.runs.add(run.launch_id);
+          acc.bySource.set(key, sourceRow);
+        }
+        acc.byKind.set(input.kind, kindRow);
+      }
+    }
+  }
+}
+
+const finishAcquired = (acc: AcquiredAcc): AcquiredRollup => ({
+  runs_joined: acc.runs_joined,
+  runs_refused: acc.runs_refused,
+  calls: acc.calls,
+  inputs: [...acc.byKind.values()].reduce((n, r) => n + r.inputs, 0),
+  bytes: [...acc.byKind.values()].reduce((n, r) => n + r.bytes, 0),
+  by_kind: [...acc.byKind.entries()]
+    .map(([kind, r]) => ({ kind, inputs: r.inputs, bytes: r.bytes, sources: r.sources.size, runs: r.runs.size }))
+    .sort((a, b) => b.bytes - a.bytes || a.kind.localeCompare(b.kind)),
+  sources: [...acc.bySource.values()]
+    .map((r) => ({ kind: r.kind, tool: r.tool, source: r.source, inputs: r.inputs, bytes: r.bytes, runs: r.runs.size }))
+    .sort((a, b) => b.bytes - a.bytes || a.source.localeCompare(b.source)),
+});
+
+/** Seat roll-ups into one for the cohort. Exact rather than a re-read: a run
+ *  belongs to one seat, so run counts add, and merging the whole source lists
+ *  on the same key recovers the cohort's distinct-source count — which seat
+ *  totals alone cannot, since two seats reading one file are one source. */
+export function mergeAcquired(parts: AcquiredRollup[]): AcquiredRollup {
+  const byKind = new Map<AcquiredKind, AcquiredKindRow>();
+  const bySource = new Map<string, AcquiredSourceRow>();
+  const out: AcquiredRollup = { runs_joined: 0, runs_refused: [], calls: 0, inputs: 0, bytes: 0, by_kind: [], sources: [] };
+  for (const p of parts) {
+    out.runs_joined += p.runs_joined;
+    out.runs_refused.push(...p.runs_refused);
+    out.calls += p.calls;
+    out.inputs += p.inputs;
+    out.bytes += p.bytes;
+    for (const r of p.sources) {
+      const key = `${r.tool ?? ''}\u0000${r.source}`;
+      const prev = bySource.get(key);
+      bySource.set(key, prev === undefined ? { ...r } : { ...prev, inputs: prev.inputs + r.inputs, bytes: prev.bytes + r.bytes, runs: prev.runs + r.runs });
+    }
+    for (const r of p.by_kind) {
+      const prev = byKind.get(r.kind);
+      // `sources` is recomputed below from the merged list; adding the seats'
+      // own counts would double a source two seats both read.
+      byKind.set(r.kind, prev === undefined ? { ...r } : { ...prev, inputs: prev.inputs + r.inputs, bytes: prev.bytes + r.bytes, runs: prev.runs + r.runs });
+    }
+  }
+  const distinct = new Map<AcquiredKind, number>();
+  for (const r of bySource.values()) distinct.set(r.kind, (distinct.get(r.kind) ?? 0) + 1);
+  out.by_kind = [...byKind.values()]
+    .map((r) => ({ ...r, sources: distinct.get(r.kind) ?? 0 }))
+    .sort((a, b) => b.bytes - a.bytes || a.kind.localeCompare(b.kind));
+  out.sources = [...bySource.values()].sort((a, b) => b.bytes - a.bytes || a.source.localeCompare(b.source));
+  return out;
+}
+
 /** Aggregate the readable runs of one seat into items with their frequencies.
  *  Takes a population rather than reading one: a caller handing it runs it
  *  built itself (a test, a different window) gets the same arithmetic, and the
@@ -457,9 +611,14 @@ export function inventory(runs: InventoryRun[], opts: InventoryOptions = {}): Se
     // number of read runs whose channel is in here, so a run that hid half its
     // tool schemas widens every tool row rather than none of them.
     const unknownByChannel: Record<ItemChannel, Set<string>> = { host_instructions: new Set(), tool: new Set(), message: new Set() };
+    const acq = opts.acquired === true ? newAcquiredAcc() : null;
 
     for (const run of seatRuns) {
       if (run.state !== 'read' || run.record === null) continue;
+      // Before the first-call read, and not inside it: a run whose first call
+      // refuses can still have readable later calls, and its acquisitions are
+      // not forfeit because the report's other half could not be taken.
+      if (acq !== null) foldAcquired(acq, seat, run);
       const first = contextAt(run.record, 0, { chars: Infinity });
       if ('error' in first) {
         note(`a run's first call could not be read after its record parsed (${first.error}), so it contributes to no item row and widens every one.`, run.launch_id);
@@ -647,7 +806,7 @@ export function inventory(runs: InventoryRun[], opts: InventoryOptions = {}): Se
     });
     const matched = new Set(items.filter((i) => i.attributed_to !== null).map((i) => i.attributed_to!));
     const configured_unseen = named.map((n) => n.label).filter((label) => !matched.has(label));
-    out.push({ seat, provider_paths: [], configured_unseen, population, runs_total: seatRuns.length, runs: seatRuns, items, residue, accounts, gaps });
+    out.push({ seat, provider_paths: [], configured_unseen, population, runs_total: seatRuns.length, runs: seatRuns, items, residue, accounts, acquired: acq === null ? null : finishAcquired(acq), gaps });
   }
   return out;
 }
@@ -806,16 +965,20 @@ export function contextInventory(opts: InventoryOptions & { roster?: Roster } = 
       seat, provider_paths: paths, configured_unseen: [],
       population: { read: 0, no_model_call: 0, running: 0, unjoined: 0, unreadable: 0 },
       runs_total: 0, runs: [], items: [], residue: { parts: 0, bytes: 0, runs: 0 }, accounts: [],
+      acquired: opts.acquired === true ? { runs_joined: 0, runs_refused: [], calls: 0, inputs: 0, bytes: 0, by_kind: [], sources: [] } : null,
       gaps: ['This seat launched nothing in the window, so it has no items. That is a reading about the window, not about what the seat loads when it runs.'],
     };
   });
+  const rollups = out.map((s2) => s2.acquired).filter((a): a is AcquiredRollup => a !== null);
   return {
-    window, seats: out, measured_at: new Date().toISOString(),
+    window, seats: out, acquired: rollups.length === 0 ? null : mergeAcquired(rollups),
+    measured_at: new Date().toISOString(),
     gaps: [
       "Every figure is of what the HOST retained in its own request ledger. A provider's handling of a request is in no file on this machine, so an item's presence is presence in what was supplied.",
       'A name comes from matching a retained chunk against a configured source as it reads today. A source edited since a run matches nothing from that run and is reported unnamed rather than as the current file.',
       'A mention of a path, or a read that failed, is not a load and reaches no item row. Only chunks the host put in a call\'s context are counted.',
       'Host sessions this installation did not launch carry no journal entry and are not in this population at all.',
+      ...(rollups.length === 0 ? [] : ['Acquisitions are of the runs that were READ and of no others: a running, unjoined or unreadable run fetched what it fetched and none of it is counted here. `runs_joined` against `runs_total` is that coverage, and `runs_refused` names the read runs whose own export refused.']),
     ],
   };
 }
@@ -860,9 +1023,34 @@ export function renderInventory(r: ContextInventory, limit = 20): string {
     if (s.items.length > shown.length) out.push(`  … ${s.items.length - shown.length} more items`);
     for (const u of s.configured_unseen) out.push(`  configured and unseen: ${u} — either it stopped being delivered, or it has been edited since every run here.`);
     out.push(`  run material not itemised: ${s.residue.parts} chunks, ${s.residue.bytes}B across ${s.residue.runs} runs (turns, tool results, this run's own instruction).`);
+    if (s.acquired !== null) out.push(...renderAcquiredRollup(s.acquired, s.runs_total, limit, '  '));
     for (const g of s.gaps) out.push(`  gap: ${g}`);
+  }
+  if (r.acquired !== null && r.seats.length > 1) {
+    out.push('');
+    out.push('the whole cohort, by where its fetched context came from');
+    out.push(...renderAcquiredRollup(r.acquired, r.seats.reduce((n, s) => n + s.runs_total, 0), limit, '  '));
   }
   out.push('');
   for (const g of r.gaps) out.push(`limit: ${g}`);
   return out.join('\n');
+}
+
+/** The fetched half as prose. Leads with coverage for the same reason the
+ *  report leads with the population: without it the byte totals below read as
+ *  the whole of what the runs fetched, and they are the whole of what was
+ *  readable. */
+function renderAcquiredRollup(a: AcquiredRollup, runsTotal: number, limit: number, pad: string): string[] {
+  const out: string[] = [];
+  out.push(`${pad}fetched: ${a.inputs} inputs, ${a.bytes.toLocaleString('en-US')}B over ${a.calls} calls — joined from ${a.runs_joined} of ${runsTotal} runs`);
+  for (const k of a.by_kind) {
+    out.push(`${pad}  ${k.kind.padEnd(9)} ${String(k.inputs).padStart(6)} inputs  ${`${k.bytes.toLocaleString('en-US')}B`.padStart(14)}  ${String(k.sources).padStart(5)} distinct sources  in ${k.runs} runs`);
+  }
+  for (const r of a.sources.slice(0, limit)) {
+    const where = r.source.replace(/\s+/g, ' ').trim();
+    out.push(`${pad}  ${`${r.bytes.toLocaleString('en-US')}B`.padStart(12)}  ${String(r.inputs).padStart(4)}x  ${r.kind.padEnd(8)} ${where.length > 96 ? `${where.slice(0, 96)}…` : where}`);
+  }
+  if (a.sources.length > limit) out.push(`${pad}  … ${a.sources.length - limit} more distinct sources (all of them are in --json)`);
+  for (const f of a.runs_refused) out.push(`${pad}  no acquisition figure from ${f.launch_id}: ${f.why}`);
+  return out;
 }

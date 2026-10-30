@@ -1422,10 +1422,55 @@ describe('where an acquired input came from', () => {
 
     expect(a.parts[1]!.acquired!.map((i) => [i.kind, i.source, i.basis])).toEqual([
       ['file', '/tmp/doc.md', 'argument'],
-      // Named as a tool call that was made and reached for something this
-      // reader cannot follow — not as a file, and not as absent.
-      ['tool', null, 'no_source_field'],
+      // Named as a tool call carrying these arguments — not as a file, and
+      // not as absent. The kind stays `tool` because nothing but the tool's
+      // name says otherwise, and its name is the one thing not read here.
+      ['tool', 'limit=40', 'argument_set'],
     ]);
+  });
+
+  // Mutation: leave a request with no recognised source field at
+  // `no_source_field`. On the measured cohort that is 1,017,091B of acquired
+  // context — ticket queries taking filters rather than an id — reaching an
+  // audit as 0 distinct sources, so "where did this come from" answers "a
+  // tool was called" for a fifth of the bytes.
+  it('names a call by its whole argument set when no one field names a thing', () => {
+    const body = 'x'.repeat(400);
+    const path = write('argset.jsonl', [
+      shape,
+      blob('m0', 'assistant', [
+        { type: 'tool_use', id: 't1', name: 'mcp__helmo__helmo_list_tickets', input: { project: 'R-45', limit: 30 } },
+        // The same query, written in the other key order: one source, not two.
+        { type: 'tool_use', id: 't2', name: 'mcp__helmo__helmo_list_tickets', input: { limit: 30, project: 'R-45' } },
+        // No arguments at all is still an identity — the unfiltered call.
+        { type: 'tool_use', id: 't3', name: 'mcp__helmo__helmo_hygiene', input: {} },
+        // Content, not a filter: unique to its call, so counting it as a
+        // distinct source would report one source per call and say nothing.
+        { type: 'tool_use', id: 't4', name: 'mcp__helmo__helmo_create_ticket', input: { title: 'a', body } },
+        // A nested object is a structure; flattening it would invent a name.
+        { type: 'tool_use', id: 't5', name: 'Acme', input: { actor: { name: 'mason' } } },
+      ]),
+      blob('m1', 'user', [
+        { type: 'tool_result', tool_use_id: 't1', content: 'a' },
+        { type: 'tool_result', tool_use_id: 't2', content: 'b' },
+        { type: 'tool_result', tool_use_id: 't3', content: 'c' },
+        { type: 'tool_result', tool_use_id: 't4', content: 'd' },
+        { type: 'tool_result', tool_use_id: 't5', content: 'e' },
+      ]),
+      request(['m0', 'm1']),
+    ]);
+    const a = at(path, 0);
+
+    expect(a.parts[1]!.acquired!.map((i) => [i.source, i.basis, i.source_field])).toEqual([
+      ['limit=30 project=R-45', 'argument_set', null],
+      ['limit=30 project=R-45', 'argument_set', null],
+      ['()', 'argument_set', null],
+      [null, 'no_source_field', null],
+      [null, 'no_source_field', null],
+    ]);
+    // Five calls of one kind, three of which named themselves, and the two
+    // that named the same thing are one source.
+    expect(a.acquired.find((k) => k.kind === 'tool')).toMatchObject({ inputs: 5, sources: 2 });
   });
 
   // Mutation: credit each source with the whole part's bytes. One claude
@@ -1570,9 +1615,10 @@ describe('where an acquired input came from', () => {
       null,
       [['command', 'sed -n 1,40p /tmp/seat/AGENTS.md', 'exec']],
       null,
-      // The arguments were written as a JSON string; the source comes out of
-      // the parsed object, under the namespaced tool identity.
-      [['tool', null, 'mcp__cua_repl/js']],
+      // The arguments were written as a JSON string; no field in the parsed
+      // object names a thing, so the set itself is the identity — quoted
+      // where a value would otherwise run into the next pair.
+      [['tool', 'code="var app = 1;" title=look', 'mcp__cua_repl/js']],
     ]);
     expect(a.parts[2]!.acquired![0]!.request_slot).toBe(1);
     expect(a.parts[4]!.acquired![0]!.request_slot).toBe(3);

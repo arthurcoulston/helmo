@@ -23,7 +23,7 @@ import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  inventory, cohortRuns, renderInventory, contextInventory,
+  inventory, cohortRuns, renderInventory, contextInventory, mergeAcquired,
   type InventoryRun, type NamedSource, type SeatInventory,
 } from '../src/context-inventory.js';
 
@@ -464,11 +464,129 @@ describe('the population is reachable, run by run', () => {
         run({ launch_id: 'L1', record: write('r.jsonl', claudeWith({ system: ['preamble'], calls: [['ask']] })) }),
         run({ launch_id: 'L2', state: 'running', why: 'has not settled, so it carries no host session id', record: null, calls: null }),
       ]))],
+      acquired: null,
       gaps: [],
       measured_at: 'now',
     });
 
     expect(text).toContain('no figure from L2 (running): has not settled, so it carries no host session id');
     expect(text).not.toContain('no figure from L1');
+  });
+});
+
+describe('what the population FETCHED, not only what it was configured with', () => {
+  /** A claude record whose calls fetch things. `claudeWith` above builds text
+   *  turns, which is what attribution needs; acquisition needs requests and
+   *  their results, so this writes those. Each call adds one request message
+   *  and one result message, which is the shape both hosts actually produce. */
+  const claudeFetching = (over: { session: string; calls: { tool: string; input: unknown; out: string }[][] }): unknown[] => {
+    const sessionId = over.session;
+    const entries: unknown[] = [{
+      type: 'api-request-shape', sessionId, shapeHash: 'shape0', timestamp: '2026-10-29T08:00:00.000Z', version: '2.1.300',
+      shape: { system: [{ type: 'text', text: 'preamble' }], tools: [{ name: 'Bash', description: 'run a command' }] },
+    }];
+    const tail: string[] = [];
+    over.calls.forEach((call, i) => {
+      const ask = `q${i}`;
+      const got = `a${i}`;
+      entries.push({
+        type: 'api-request-blob', sessionId, hash: ask,
+        message: { role: 'assistant', content: call.map((c, j) => ({ type: 'tool_use', id: `t${i}_${j}`, name: c.tool, input: c.input })) },
+      });
+      entries.push({
+        type: 'api-request-blob', sessionId, hash: got,
+        message: { role: 'user', content: call.map((c, j) => ({ type: 'tool_result', tool_use_id: `t${i}_${j}`, content: c.out })) },
+      });
+      tail.push(ask, got);
+      entries.push({
+        type: 'api-request', sessionId, id: `r${i}`, timestamp: `2026-10-29T08:00:0${i + 1}.000Z`,
+        version: '2.1.300', shapeHash: 'shape0', cwd: '/tmp/seat', params: { model: 'claude-opus-5' },
+        ...(i === 0 ? {} : { base: `r${i - 1}` }), keep: i * 2, tail: tail.slice(i * 2),
+      });
+    });
+    return entries;
+  };
+
+  const fetchingRun = (launch: string, calls: { tool: string; input: unknown; out: string }[][]): InventoryRun =>
+    run({ launch_id: launch, record: write(`${launch}.jsonl`, claudeFetching({ session: `aaaaaaaa-1111-2222-3333-44444444444${launch.slice(-1)}`, calls })) });
+
+  const read = (text: string) => ({ tool: 'Read', input: { file_path: '/tmp/seat/AGENTS.md' }, out: text });
+  const query = (project: string, text: string) => ({ tool: 'mcp__helmo__helmo_list_tickets', input: { project }, out: text });
+
+  // Mutation: roll the acquisitions up per run and stop. The question is over
+  // a cohort — "where did this fleet's context come from" — and a per-run
+  // answer leaves the only route to it a script composing one shipped command
+  // with another, which is the bespoke reconstruction this exists to remove.
+  it('rolls what every run fetched up by kind, counting a source read twice as one', () => {
+    const seat = only(inventory([
+      fetchingRun('L1', [[read('the rules'), query('R-45', 'a ticket list')]]),
+      fetchingRun('L2', [[read('the rules again')], [query('R-56', 'another list')]]),
+    ], { acquired: true }));
+    const a = seat.acquired!;
+
+    expect(a.runs_joined).toBe(2);
+    expect(a.runs_refused).toEqual([]);
+    // One file, read in both runs: two inputs, one source, two runs.
+    expect(a.by_kind.find((k) => k.kind === 'file')).toMatchObject({ inputs: 2, sources: 1, runs: 2 });
+    // Two queries with different filters: two inputs, two sources.
+    expect(a.by_kind.find((k) => k.kind === 'tool')).toMatchObject({ inputs: 2, sources: 2, runs: 2 });
+    expect(a.inputs).toBe(4);
+    // Every distinct source, not a top-N: an audit that has to ask twice for
+    // the tail is back to writing the script.
+    expect(a.sources.map((r) => r.source).sort()).toEqual(['/tmp/seat/AGENTS.md', 'project=R-45', 'project=R-56']);
+    expect(a.sources.find((r) => r.source === '/tmp/seat/AGENTS.md')).toMatchObject({ inputs: 2, runs: 2 });
+  });
+
+  // Mutation: count `runs_joined` as the denominator, or leave a refused run
+  // out silently. A denominator of the runs that happened to parse reads as
+  // completeness, which is the failure the whole report is shaped against.
+  it('counts acquisitions only from runs it read, and says how many that was', () => {
+    const seat = only(inventory([
+      fetchingRun('L1', [[read('the rules')]]),
+      run({ launch_id: 'L2', state: 'running', why: 'has not settled', record: null, calls: null }),
+      run({ launch_id: 'L3', state: 'unjoined', why: 'no host record names its session', record: null, calls: null }),
+    ], { acquired: true }));
+
+    expect(seat.acquired!.runs_joined).toBe(1);
+    expect(seat.runs_total).toBe(3);
+    expect(seat.acquired!.inputs).toBe(1);
+  });
+
+  // Mutation: return an empty roll-up when it was not asked for. Zero inputs
+  // is a measurement; "nobody measured" is not, and a consumer cannot tell
+  // the two apart from a row of zeroes.
+  it('is absent, not empty, when the roll-up was not asked for', () => {
+    const seats = inventory([fetchingRun('L1', [[read('the rules')]])]);
+
+    expect(only(seats).acquired).toBeNull();
+  });
+
+  // Mutation: add the seats' own distinct-source counts together for the
+  // cohort row. Two seats reading one file are one source and would report
+  // as two, and the count that separates forty files from one file read
+  // forty times is the only reason the column is there.
+  it('merges the seats into one cohort reading without double-counting a shared source', () => {
+    const mine = only(inventory([fetchingRun('L1', [[read('the rules')]])], { acquired: true })).acquired!;
+    const theirs = only(inventory([fetchingRun('L2', [[read('the rules')]])], { acquired: true })).acquired!;
+    const both = mergeAcquired([mine, theirs]);
+
+    expect(both.by_kind.find((k) => k.kind === 'file')).toMatchObject({ inputs: 2, sources: 1, runs: 2 });
+    expect(both.runs_joined).toBe(2);
+    expect(both.sources).toHaveLength(1);
+  });
+
+  // Mutation: print the kind totals and stop. 1MB of `tool` with no source
+  // named is exactly the reading this increment exists to end, and the
+  // heaviest sources are what an operator opens the report for.
+  it('names the heaviest sources in the reading an operator sees', () => {
+    const seat = only(inventory([fetchingRun('L1', [[read('x'.repeat(500)), query('R-45', 'small')]])], { acquired: true }));
+    const text = renderInventory({
+      window: { from: 'a', to: 'b', basis: 'the test window' },
+      seats: [seat], acquired: seat.acquired, gaps: [], measured_at: 'now',
+    });
+
+    expect(text).toContain('fetched: 2 inputs');
+    expect(text).toContain('/tmp/seat/AGENTS.md');
+    expect(text).toContain('project=R-45');
   });
 });

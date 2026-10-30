@@ -179,7 +179,10 @@ const COMMAND_HELP: Record<string, string> = {
   'context-coverage': `usage: ${commandName} context-coverage [seat] [--no-inventory]`,
   'context-inventory': `usage: ${commandName} context-inventory [seat] [--from <ISO>] [--to <ISO>] [--limit <n>] [--json]\n`
     + `       what each seat's runs in the window were actually given, and in how many of them\n`
-    + `       the window defaults to the last 7 days intersected with the R-56 cohort start`,
+    + `       the window defaults to the last 7 days intersected with the R-56 cohort start\n`
+    + `       [--acquired]       also roll up what those runs FETCHED — every file, ticket, command and\n`
+    + `                          query, by kind and by distinct source, per seat and over the cohort.\n`
+    + `                          Reads every call of every record, so it costs more than the report above`,
   'context-trace': `usage: ${commandName} context-trace <seat> [--launch <id>] [--record <path>]\n`
     + `       the whole record's reading, per required category\n`
     + `   or: --at <call>      what was in that call's context, and where each part came from\n`
@@ -458,6 +461,7 @@ switch (cmd) {
         ...(seat ? { seats: [seat] } : {}),
         ...(from === undefined ? {} : { from }),
         ...(to === undefined ? {} : { to }),
+        ...(rest.includes('--acquired') ? { acquired: true } : {}),
       });
     } catch (e) {
       console.error(cliError(e));

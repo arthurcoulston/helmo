@@ -856,6 +856,24 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   — the call was made, and what it reached for is not legible here. Adding a
   field to `SOURCE_FIELDS` is how a new tool becomes legible, and leaving one
   out costs a label, never a wrong answer.
+  A request that names no single thing can still NAME ITSELF. Most of what
+  the field test left as `tool` is queries that take filters rather than an
+  id — `{assignee: "bosun"}`, `{project: "R-45"}`, `{}` — and 1,017,091B of
+  the measured cohort's acquired context reached an audit as 0 distinct
+  sources because of it. `argumentSet` renders the whole argument set as one
+  canonical key (keys sorted, so two calls differing only in the order the
+  host wrote them are one source; values JSON-quoted where they would
+  otherwise run into the next pair; `()` for a call with no arguments, which
+  is the identity of the unfiltered call). `basis` is `argument_set`, the
+  KIND STAYS `tool` — naming it anything better would mean reading the tool's
+  name — and `source_field` is null, because the source is every field and no
+  single one. The bound on it is length: `ARGUMENT_SET_CHARS` (300) separates
+  a filter, which repeats, from content, which is unique to its call and
+  would report one source per call and say nothing. Scalars and arrays of
+  scalars only; a nested object is a structure and flattening it would invent
+  an identity rather than read one. Over the cohort this named 209 of the 217
+  `tool`-kind inputs and 1,009,173 of their 1,017,091B; the 8 that remain are
+  writes carrying a long body or ref, and they keep `no_source_field`.
   The join also found a fact about the host that nothing here recorded before:
   CLAUDE REWRITES A REQUEST between the model's turn and the call it sends.
   The transcript's assistant entry holds `head -40 MEMORY.md && …`; the
@@ -1908,11 +1926,12 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   `kind` (file, ticket, command, skill, web, search, tool, unknown), the
   `source` whole, the `source_field` it was read out of so the attribution can
   be checked rather than trusted, and the `request_slot` the request is at in
-  the same context. `basis` distinguishes the three honest outcomes:
-  `argument` named a thing, `no_source_field` means the tool was called and
-  what it reached for is not legible, `request_absent` means the request has
-  left this context (a dropped prefix, a compaction) and only its call id
-  survives. `null` rather than `[]` on a part holding no result at all, and
+  the same context. `basis` distinguishes the four honest outcomes:
+  `argument` named a thing, `argument_set` named no one thing and the whole
+  argument set is the call's identity, `no_source_field` means the tool was
+  called and what it reached for is not legible, `request_absent` means the
+  request has left this context (a dropped prefix, a compaction) and only its
+  call id survives. `null` rather than `[]` on a part holding no result at all, and
   `null` on an unreadable part, where it cannot be known. Only the request's
   own arguments ride behind `--verbatim`. `acquired` on the answer is the
   per-call account: inputs, bytes and DISTINCT sources per kind, which is what
@@ -1920,8 +1939,11 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   reading prints it above the parts.
   Cross-checked by `crew:agents/mason/workspace/scripts/h3818-acquired-crosscheck.py`,
   which re-derives the join from the record and shares no code with the
-  reader: 44/44 acquisitions and the account agree on the claude call, 22/22
-  and the account on the codex call.
+  reader — its field table and its argument-set rule are RESTATED there, so
+  the two drifting reports a mismatch rather than agreeing by construction.
+  158 acquisitions and the per-call account agree with 0 disagreements over
+  three records: a 160-call mason run, a 21-call bosun run and an 11-call
+  codex rollout.
   Note the default reading is otherwise unchanged, and deliberately: an
   operator's terminal has no use for a second copy of every part, so
   `payload`, `definition`, `state` and `call_params` are all null without the flag — and
@@ -1937,7 +1959,7 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   INSTALLATION_RELEASE node packages/runtime/dist/cli.js …` is the read-only way
   to exercise it against real records.
 - `node dist/cli.js context-inventory [seat] [--from <ISO>] [--to <ISO>]
-  [--limit <n>] [--json]` prints the population reading: per seat, every run in
+  [--limit <n>] [--acquired] [--json]` prints the population reading: per seat, every run in
   the window with its state, then the items with their frequencies and an
   evidence ref per item that is itself a `context-trace --record <path> --at
   <ordinal>` command, so a figure drills straight down to the content behind
@@ -1959,16 +1981,45 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   reconstruction this capability exists to remove. With the record path on
   each row, the per-run readers APPLY OVER A COHORT: this command for the
   population, then `context-trace --record <path> --changes --chars 0 --json`
-  per read run, and the acquired entries those exports already carry add up.
-  Over the 44-run cohort of 2026-10-30 that is 1,091 acquired inputs,
-  4,829,777B, 741 distinct sources from 43 runs, with the 44th named as
-  `running` and its reason printed rather than quietly absent — 617 command
-  results at 1,818,248B, 169 ticket reads at 1,725,670B from 67 distinct
-  tickets, 67 file reads at 388,718B, 52 searches, and 186 calls at 853,120B
-  whose arguments name no source this reader can follow (mostly ticket LIST
-  calls, which take filters rather than an id). The rendered reading names
-  each run no figure can come from, per run, for the same reason: `1 running`
-  leaves an operator with no launch id to go and look at.
+  per read run. The rendered reading names each run no figure can come from,
+  per run, for the same reason the manifest exists: `1 running` leaves an
+  operator with no launch id to go and look at.
+  `--acquired` does that composition INSIDE the command, which is the point —
+  a question an operator has should not need a script nobody maintains
+  standing between it and the answer. It rolls up what every run FETCHED by
+  `kind` and by distinct `source`, per seat and then over the whole cohort,
+  and `seats[].acquired` / the top-level `acquired` carry every distinct
+  source rather than a top-N, because an audit that has to ask twice for the
+  tail is back to writing the script. The cohort row is a MERGE of the seat
+  roll-ups and not a re-read: a run belongs to one seat, so inputs, bytes and
+  run counts add, and the distinct-source count is recomputed from the merged
+  source list — adding the seats' own counts would report two seats reading
+  one file as two sources. `null` rather than an empty roll-up when it was
+  not asked for: zero inputs is a measurement and "nobody measured" is not.
+  Off by default because it reads every call of every record where the rest
+  of the report reads each record's first; on the 52-run cohort of
+  2026-10-30 that is ~3.5s for the whole fleet.
+  `runs_joined` is always read against `runs_total`, never against itself,
+  and `runs_refused` names the read runs whose own export refused — a
+  denominator of the runs that happened to parse reads as completeness, which
+  is the failure this whole report is shaped against. Acquisitions come only
+  from runs that were READ: a running, unjoined or unreadable run fetched
+  what it fetched and none of it is here, and the cohort gap list says so.
+  Over the 52-run cohort of 2026-10-30 (50 read): 1,340 acquired inputs,
+  5,639,483B, 964 distinct sources — 788 command results at 2,125,724B from
+  753 distinct commands, 194 ticket reads at 2,012,718B from 72 distinct
+  tickets, 217 queries at 1,017,091B from 48 distinct filter sets (the
+  heaviest single source on the fleet is `assignee=bosun`, 35 calls and
+  316,085B), 80 file reads at 432,151B, 61 searches at 51,799B.
+  Cross-checked by `crew:agents/mason/workspace/scripts/h3818-cohort-crosscheck.py`,
+  which opens each record itself and derives the acquisitions a DIFFERENT way
+  — the record's distinct results, rather than the reader's walk of the call
+  chain counting an input in the call that added it — and agrees on inputs,
+  bytes, distinct sources and run counts for all five kinds. Note what that
+  check had to get right to agree: a part's bytes are the WHOLE result block
+  on claude (`type`, `tool_use_id`, `is_error` were in the context too) and
+  the whole item payload on codex. Measuring only the content reads 2-4%
+  light, which looked like a reader defect until both sides were printed.
   Reads only — the journal and the host's own records, no new store. The same
   norm as `context-trace` applies to an agent running it: `--json` carries the
   item labels and the paths, not the text, and a sweep reports counts and

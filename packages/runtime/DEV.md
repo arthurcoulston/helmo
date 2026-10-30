@@ -712,6 +712,40 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   `host_tokens` is the host's own count for the call or null — never a
   tokenizer run here, and null on claude, whose request entry carries no usage
   at all.
+
+- `summon-trace.ts` — which host records are NAMED SUMMONS, and on what basis
+  (R-55 H-3724 requirement 6). Every other trace here joins a record to a
+  launch THIS installation made, through the launch journal's
+  `provider_session_id`; a summon has no launch, because the operator opens the
+  session himself and the estate is never told. So the join comes out of the
+  record: his own opening words ("summon mason") and the canary the summoned
+  role reproduces in what it says back. Two claims about two different moments,
+  kept apart — one SUPPLIED, one CONFIRMED — which is why a summon has to
+  record nothing new and costs him nothing at the moment he starts one.
+  `skills/summon.md` deliberately keeps that moment free of tool calls, so a
+  design that registered the summon would have had to spend the one thing the
+  protocol protects.
+  Three readings it refuses, each measured on the 14,135 records of this
+  machine rather than supposed. A canary is NOT a summon: 86 loop records
+  reproduce one, so the journal is consulted first and authoritatively, and an
+  iteration prompt in the record settles it too — journalling came later than
+  the fleet and 3,230 records carry no entry to join to. A role named with no
+  canary IS still a summon: 8 of 122 sittings here, reported as `protocol:
+  absent` rather than demoted. And one sitting is not one record: 165 opener
+  matches came from 142 sittings, because a resume copies the transcript.
+  A canary reproduced with nothing naming a role is its own state,
+  `spoke_as_role`, never a summon — of 37 such sittings here some are summons
+  he phrased without a role name ("Arthur summons you into a meeting") and
+  others are probe sessions something else launched under a seat's own cwd,
+  which arrive with that profile and reproduce its canary while being nobody's
+  summon. One observable cannot separate those.
+  Ordered cheap first, and the order is the design rather than an
+  optimisation: the journal settles a record in a map lookup, the opening words
+  come from the head of the file, and only a record that is neither reads
+  whole. The whole scan is ~5s over 4,698 records.
+  The ceiling is stated on every scan: a summon through the crew-summon MCP
+  (phone, web) runs on the provider's side and writes NOTHING on this machine,
+  so an away-from-desk summon is not partially traced — it is absent.
   The renderers are pure functions in the same module, so what an operator sees
   is what the acceptance asserts. They print each distinct caveat ONCE with how
   many parts carry it — a call with 72 reconstructed parts printed the same two
@@ -1603,6 +1637,13 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   any path is `stale` or `error`, so whatever runs it learns the finding
   without reading the JSON. `--no-inventory` drops the tokenized per-file
   measurement; the whole fleet with it measures ~2s here.
+- `node dist/cli.js summons [--since <date>] [--limit <n>] [--root <path>]`
+  lists the named summons this installation can see, each with the basis for
+  its role claim, whether the protocol was performed, and every record of the
+  sitting. It hands off to the reader above: `context-trace --record <path>`
+  over a listed record reads that summon's context like any other session's.
+  The scan says what it searched and what it cannot see, because a nil answer
+  that does not is read as an absence.
 - `node dist/cli.js context-trace <seat> [--launch <id>]` or
   `context-trace --record <path>` prints one session's per-invocation context
   trace from the host CLI's own record. It exits non-zero when a required

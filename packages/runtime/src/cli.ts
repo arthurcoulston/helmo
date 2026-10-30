@@ -28,6 +28,7 @@ import { assertTicketIdentity, readTicketLaunches, sessionTrace, type LaunchEvid
 import { coverageReading } from './context-coverage.js';
 import { contextTrace, recordForLaunch, sourceRevisionForLaunch } from './context-trace.js';
 import { contextAt, contextEvolution, contextFind, renderContextAt, renderContextEvolution, renderContextFind, PREVIEW_CHARS } from './context-query.js';
+import { summonAssociations, renderSummonScan } from './summon-trace.js';
 import { readLaunch } from './launch-journal.js';
 import { latestSettledLaunch, pathProviders, pathRuntimes } from './context-coverage.js';
 import { compareReceipts, pruneBlobs, readReceipt, startupReading } from './startup-context.js';
@@ -182,6 +183,7 @@ const COMMAND_HELP: Record<string, string> = {
     + `                        [--notable] only the calls with something to report\n`
     + `   or: --find <text>    which part of which call's context held it, and when it entered\n`
     + `       [--chars <n>|--full|--json]`,
+  summons: `usage: ${commandName} summons [--since <YYYY-MM-DD>] [--limit <n>] [--root <path>] [--json]`,
   'startup-context': `usage: ${commandName} startup-context [seat] [--launch <id>] [--ticket <id>] [--limit <n>]\n   or: ${commandName} startup-context --diff <launch> --b <launch> [--a-seat <seat>] [--b-seat <seat>]\n   or: ${commandName} startup-context --prune [--apply]`,
   'session-spec': `usage: ${commandName} session-spec <seat> --session <actor stamp> [--provider claude] [--tier high] [--model M] [--cwd P] [--constitution P] [--version V]`,
   team: `usage: ${commandName} team <stop|resume> <loop|role|all> [--worker]`,
@@ -399,6 +401,30 @@ switch (cmd) {
     // A path whose account can no longer be checked is the finding this
     // command exists for, so it leaves a non-zero status for whatever ran it.
     if (reading.summary.stale || reading.summary.error) process.exitCode = 1;
+    break;
+  }
+  // Which host records are NAMED SUMMONS, and on what basis (R-55 H-3724
+  // requirement 6). Every other trace here joins a record to a launch THIS
+  // installation made; a summon has no launch, so the join comes from the
+  // record itself — the operator's own opening words, and the canary the
+  // summoned role reproduces in what it says back. Two claims about two
+  // moments, kept apart, so a summon has to record nothing new and costs the
+  // operator nothing at the moment he starts one.
+  case 'summons': {
+    const since = flag('since') ?? null;
+    if (since !== null && Number.isNaN(Date.parse(since))) {
+      console.error('--since takes a date this runtime can parse, e.g. 2026-10-01');
+      process.exit(1);
+    }
+    const rootFlag = flag('root');
+    const limit = Number(flag('limit') ?? 20);
+    if (!Number.isFinite(limit) || limit < 1) {
+      console.error('--limit takes a count of sittings to print');
+      process.exit(1);
+    }
+    const scan = summonAssociations({ loops, since, ...(rootFlag === undefined ? {} : { roots: [rootFlag] }) });
+    if (rest.includes('--json')) console.log(JSON.stringify(scan, null, 2));
+    else console.log(renderSummonScan(scan, limit));
     break;
   }
   // What one SESSION's context actually was, per model invocation (R-55
@@ -1199,6 +1225,7 @@ switch (cmd) {
   context-coverage [seat]  is the account of what each seat loads still true? per path, with repairs
   context-trace <seat>     what one session's context was, per model invocation, from the host's own ledger
                            --at <call> | --changes | --find <text> read it as an operator: parts and their origins
+  summons                  which host records are named summons, on what basis, and what cannot be seen
 Any command also takes --installation <name|home> (or --installation=<name|home>): it asserts which
 installation the command is about, and ANY command — reads included — refuses rather than redirects
 if that disagrees with the environment.

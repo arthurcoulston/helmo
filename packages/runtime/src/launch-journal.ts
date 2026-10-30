@@ -91,14 +91,21 @@ export function readLaunch(loop: string, launchId: string): LaunchJournalEntry |
   return entry;
 }
 
-/** Launches a restart must resolve: anything admitted or dispatched, plus a
- *  claim whose intent was recorded but whose answer never was. */
-export function unsettledLaunches(loop: string): LaunchJournalEntry[] {
+/** Every launch this loop's journal holds. One reading, so a caller asking
+ *  what is unsettled and a caller asking which host sessions this
+ *  installation started cannot disagree about what the journal says. */
+export function journalEntries(loop: string): LaunchJournalEntry[] {
   return readdirSync(journalDir(loop)).filter((name) => name.endsWith('.json')).map((name) => {
     const entry = JSON.parse(readFileSync(join(journalDir(loop), name), 'utf8')) as LaunchJournalEntry;
     if (entry.format !== 1 || !entry.launch_id) throw new Error(`Launch journal entry ${name} is corrupt.`);
     return entry;
-  }).filter((entry) => entry.phase === 'admitted' || entry.phase === 'dispatching' || (entry.phase === 'intent' && entry.claim === true));
+  });
+}
+
+/** Launches a restart must resolve: anything admitted or dispatched, plus a
+ *  claim whose intent was recorded but whose answer never was. */
+export function unsettledLaunches(loop: string): LaunchJournalEntry[] {
+  return journalEntries(loop).filter((entry) => entry.phase === 'admitted' || entry.phase === 'dispatching' || (entry.phase === 'intent' && entry.claim === true));
 }
 
 export function recordLaunchIntent(

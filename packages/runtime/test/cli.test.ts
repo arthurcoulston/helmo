@@ -828,3 +828,49 @@ constitution = "${join(dir, 'PROFILE.md')}"
     expect(result.stderr).toContain('1 model calls, numbered 0 to 0');
   });
 });
+
+// Named-summon association (R-55 H-3724 requirement 6). Its acceptance is in
+// summon-trace.test.ts; what is only observable here is that the command
+// reaches the scan with the roster the installation actually has, and that it
+// refuses a window or a limit it cannot act on rather than scanning on a
+// value it silently replaced.
+describe('summons (R-55 H-3724)', () => {
+  function summonHome(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'rev-summons-cli-'));
+    const crew = join(dir, 'crew');
+    mkdirSync(join(crew, '.git'), { recursive: true });
+    mkdirSync(join(crew, 'agents', 'alpha'), { recursive: true });
+    writeFileSync(join(crew, 'agents', 'alpha', 'PROFILE.md'), '# alpha\n\nPROFILE.md (alpha) — the canary.\n');
+    writeFileSync(join(dir, 'roster.toml'), `[global]
+helmo_cli = "/tmp/helmo-cli.js"
+helmo_mcp_server = "/tmp/helmo-server.js"
+
+[loops.alpha]
+workstream = "test"
+cwd = "${join(crew, 'agents', 'alpha')}"
+runtime = "mock"
+constitution = "${join(crew, 'agents', 'alpha', 'PROFILE.md')}"
+`);
+    return dir;
+  }
+
+  it('scans the seats\' own records and states what it cannot see', () => {
+    const dir = summonHome();
+    const claude = mkdtempSync(join(tmpdir(), 'rev-summons-claude-'));
+    const result = spawnSync('npx', ['tsx', REV_CLI, 'summons'], {
+      cwd: ROOT, encoding: 'utf8', env: { ...process.env, REV_HOME: dir, CLAUDE_CONFIG_DIR: claude },
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('NAMED SUMMONS — 0 sittings');
+    // A nil answer that does not say what it searched reads as an absence.
+    expect(result.stdout).toContain('crew-summon MCP');
+  });
+
+  it('refuses a window it cannot parse and a limit it cannot count', () => {
+    const dir = summonHome();
+    expect(rev(dir, ['summons', '--since', 'last tuesday']).stderr).toContain('--since takes a date');
+    expect(rev(dir, ['summons', '--limit', 'lots']).stderr).toContain('--limit takes a count');
+    expect(rev(dir, ['summons', '--since', 'last tuesday']).status).toBe(1);
+  });
+});

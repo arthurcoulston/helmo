@@ -19,6 +19,7 @@ import { GlobalConfig, LoopConfig, RunChoice } from './types.js';
 import { checkOnSettle } from './context-coverage.js';
 import { attachSettlement, launchAssociation, recordStartupContext } from './startup-context.js';
 import { workingTreeInstructions } from './team.js';
+import { ITERATION_PROMPT_OPENING } from './summon-trace.js';
 import { launchGroupFile, launchSessionRunning, readLaunch, recordLaunchAdmission, recordLaunchClaim, recordLaunchDispatch, recordLaunchIntent, recordLaunchSession, recordLaunchTouched, settleLaunch, unsettledLaunches } from './launch-journal.js';
 import { commandName } from './command-name.js';
 
@@ -773,7 +774,9 @@ export async function runLoop(g: GlobalConfig, l: LoopConfig, opts: RunOptions =
     const deploy =
       `A change you land that needs the Rev fleet restarted to take effect is yours to deploy, never a question for the human: run 'node $REV_CLI redeploy --ticket <id> --reason "<why>"' and it lands after your iteration ends. Never a bare 'rev': on a shared machine it may be another installation's fleet. `;
     const prompt =
-      `This is a Rev loop iteration, not a summon; AGENTS.md's summon clause does not apply; the queue is the work. ` +
+      // The opening clause is a constant because summon-trace.ts reads it back
+      // out of the host record to tell a launched run from a summon (H-3724).
+      `${ITERATION_PROMPT_OPENING} AGENTS.md's summon clause does not apply; the queue is the work. ` +
       `Loop iteration ${i} for agent '${l.name}'. Working directory: ${l.cwd}. ` +
       toolset +
       steering +

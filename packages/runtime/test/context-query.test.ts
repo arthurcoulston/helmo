@@ -309,8 +309,24 @@ describe('the codex rollout', () => {
   it('reads a call context as the items recorded before it, and says whose arithmetic that is', () => {
     const a = at(write('rollout.jsonl', codexRecord()), 0);
 
-    expect(a.parts.map((p) => p.types[0])).toEqual(['message', 'custom_tool_call']);
+    expect(a.parts.map((p) => p.types[0])).toEqual(['message']);
     expect(a.gaps.join(' ')).toContain("this reader's arithmetic, not a list the host wrote");
+  });
+
+  // Mutation: take the whole usage window as the call's context. The host
+  // writes the usage record AFTER the call, so the window ends with the call's
+  // own reasoning, reply and tool request — three items per call that were
+  // never in the context it was given, on every call of every rollout.
+  it('does not count what the call itself produced as part of its own input', () => {
+    const a = at(write('rollout.jsonl', codexRecord()), 0);
+
+    expect(a.parts.map((p) => p.types[0])).not.toContain('custom_tool_call');
+    expect(a.gaps.join(' ')).toContain('1 items this call itself produced');
+    expect(a.gaps.join(' ')).toContain('sit inside its window without ever having been in its input');
+    // ...and it belongs to the NEXT call's input, which is where it shows up.
+    const next = at(write('two-calls.jsonl', codexRecord({ secondCall: true })), 1);
+    expect(next.parts.map((p) => p.types[0])).toEqual(['message', 'custom_tool_call', 'message']);
+    expect(next.parts.find((p) => p.types[0] === 'custom_tool_call')!.entered).toBe(1);
   });
 
   // Mutation: read a call off the turn boundaries. A turn is a USER turn, so
@@ -353,13 +369,13 @@ describe('the codex rollout', () => {
   // Mutation: show a reasoning item as the empty string its summary parses to.
   // The item WAS in the context; its content is provider-encrypted.
   it('says a reasoning item carried only as encrypted text is unreadable, not empty', () => {
-    const a = at(write('reasoning.jsonl', codexRecord({ encryptedReasoning: true })), 0);
+    const a = at(write('reasoning.jsonl', codexRecord({ encryptedReasoning: true, secondCall: true })), 1);
 
     const reasoning = a.parts.find((p) => p.types[0] === 'reasoning')!;
     expect(reasoning).toMatchObject({ origin: 'unreadable', text: null });
     expect(reasoning.caveat).toContain('provider-encrypted text');
     expect(reasoning.caveat).toContain("it was in the call's context all the same");
-    expect(a.totals).toMatchObject({ retained: 2, unreadable: 1 });
+    expect(a.totals).toMatchObject({ retained: 3, unreadable: 1 });
   });
 
   // Mutation: read a `full: false` world_state as a configuration. One such

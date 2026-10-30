@@ -548,6 +548,15 @@ function claudeFind(ix: ClaudeIndex, needle: string, chars: number): ContextFind
 // and is labelled as such on every answer, rather than presented as the host's
 // own list.
 
+/** Whether an item is something the MODEL produced rather than something
+ *  supplied to it. The distinction is what separates a call's input context
+ *  from its own output inside one usage window: a `custom_tool_call_output` is
+ *  an input to the NEXT call, while the `custom_tool_call` above it was this
+ *  call's own doing. An unrecognised kind counts as input, which overstates
+ *  rather than drops — and the overstatement is named on the answer. */
+const MODEL_PRODUCED = (kind: string, role: string | null): boolean =>
+  kind === 'reasoning' || /_call$/.test(kind) || (kind === 'message' && role === 'assistant');
+
 interface CodexIndex {
   sessionId: string | null;
   cwd: string | null;
@@ -560,7 +569,18 @@ interface CodexIndex {
    *  only one with the host's identity on it; `turns` are far too coarse to
    *  read a context by. The message ARRAY of the call is still not recorded,
    *  which is the standing codex ceiling. */
-  calls: { at: string | null; response_id: string | null; turn_id: string | null; input: number | null; cached: number | null; before: number }[];
+  calls: {
+    at: string | null; response_id: string | null; turn_id: string | null;
+    input: number | null; cached: number | null;
+    /** Every item recorded before this call's usage entry — its window, which
+     *  also holds what the call itself produced. */
+    before: number;
+    /** The items that were its INPUT: the window up to its own first output
+     *  item. The host writes the usage record AFTER the call, so the window
+     *  ends with that call's reasoning, its assistant message and its tool
+     *  call — none of which was in the context it was given. */
+    inputs: number;
+  }[];
   /** Each response_item, in order, with the text it carries — or the reason
    *  this record holds no plaintext for it. */
   items: { at: string | null; kind: string; role: string | null; text: string; bytes: number; opaque: string | null }[];
@@ -654,6 +674,8 @@ function indexCodex(entries: Record<string, unknown>[]): CodexIndex {
       });
     } else if (type === 'token_usage_record' && payload) {
       const usage = rec(payload['usage']) ? (payload['usage'] as Record<string, unknown>) : null;
+      const from = ix.calls.at(-1)?.before ?? 0;
+      const produced = ix.items.slice(from).findIndex((i) => MODEL_PRODUCED(i.kind, i.role));
       ix.calls.push({
         at,
         response_id: str(payload['response_id']),
@@ -661,6 +683,7 @@ function indexCodex(entries: Record<string, unknown>[]): CodexIndex {
         input: usage ? num(usage['input_tokens']) : null,
         cached: usage ? num(usage['cached_input_tokens']) : null,
         before: ix.items.length,
+        inputs: produced === -1 ? ix.items.length : from + produced,
       });
     } else if (type === 'compacted' && payload) {
       const retained = rec(payload['retained_context']) ? (payload['retained_context'] as Record<string, unknown>) : null;
@@ -689,7 +712,7 @@ function indexCodex(entries: Record<string, unknown>[]): CodexIndex {
 }
 
 const CODEX_GAPS = [
-  'the message array sent on each API call: the rollout records turns and items, so a turn\'s context here is every item recorded before it in order — this reader\'s arithmetic, not a list the host wrote',
+  'the message array sent on each API call: the rollout records turns and items, so a call\'s context here is the items recorded before it, in order — this reader\'s arithmetic, not a list the host wrote',
 ];
 
 function codexInstructionsAt(ix: CodexIndex, index: number, chars: number): QueryInstructions | null {
@@ -716,7 +739,14 @@ function codexAt(ix: CodexIndex, ordinal: number, chars: number): ContextAt | { 
   const unit = byUsage
     ? "one token_usage_record — the host writes one per API call, carrying that call's own response id and input token count"
     : 'one turn_context: this rollout has no per-call usage record, so the only boundary it holds is the user turn, and a turn is many calls';
-  const call = byUsage ? ix.calls[ordinal] : ix.turns[ordinal];
+  const window = byUsage ? ix.calls[ordinal] : ix.turns[ordinal];
+  // The usage record is written AFTER the call, so its window ends with what
+  // the call itself produced. A call's own reasoning and tool request were
+  // never in the context it was given, and counting them would make every
+  // codex call's context three items too long.
+  const call = window === undefined
+    ? undefined
+    : { ...window, before: byUsage ? (window as CodexIndex['calls'][number]).inputs : window.before };
   const of = byUsage ? ix.calls.length : ix.turns.length;
   if (call === undefined) {
     return { error: `this rollout records ${of} ${byUsage ? 'model calls' : 'turns'}, numbered 0 to ${Math.max(0, of - 1)}` };
@@ -734,7 +764,7 @@ function codexAt(ix: CodexIndex, ordinal: number, chars: number): ContextAt | { 
       types: [item.kind],
       bytes: item.bytes,
       entered: byUsage
-        ? ix.calls.findIndex((c) => c.before > i) === -1 ? null : ix.calls.findIndex((c) => c.before > i)
+        ? ix.calls.findIndex((c) => c.inputs > i) === -1 ? null : ix.calls.findIndex((c) => c.inputs > i)
         : ix.turns.filter((t) => t.before <= i).length,
       text: item.opaque === null ? text : null,
       truncated: item.opaque === null ? truncated : false,
@@ -743,7 +773,7 @@ function codexAt(ix: CodexIndex, ordinal: number, chars: number): ContextAt | { 
   });
   const deltasBefore = ix.deltas.filter((d) => d.index <= call.before);
   const readable = parts.filter((p) => p.origin === 'retained');
-  const usage = byUsage ? (call as CodexIndex['calls'][number]) : null;
+  const usage = byUsage ? (window as CodexIndex['calls'][number]) : null;
   return {
     harness: 'codex',
     session_id: ix.sessionId,
@@ -768,6 +798,9 @@ function codexAt(ix: CodexIndex, ordinal: number, chars: number): ContextAt | { 
     },
     gaps: [
       ...CODEX_GAPS,
+      ...(byUsage && (window as CodexIndex['calls'][number]).before > (window as CodexIndex['calls'][number]).inputs
+        ? [`the ${(window as CodexIndex['calls'][number]).before - (window as CodexIndex['calls'][number]).inputs} items this call itself produced — its reasoning, its reply, its tool request — are NOT listed above: the host writes the usage record after the call, so they sit inside its window without ever having been in its input. An item kind this reader does not recognise counts as input, so the list errs long rather than short`]
+        : []),
       ...(deltasBefore.length > 0
         ? [`${deltasBefore.length} world_state deltas were recorded before this turn (keys: ${[...new Set(deltasBefore.flatMap((d) => d.keys))].join(', ')}); the instructions above are the last FULL state, so a key a delta moved since then is stale here`]
         : []),
@@ -780,7 +813,7 @@ function codexEvolution(ix: CodexIndex, chars: number): ContextEvolution {
   const changes: ContextChange[] = [];
   const byUsage = ix.calls.length > 0;
   const boundaries: { at: string | null; before: number; input: number | null }[] = byUsage
-    ? ix.calls.map((c) => ({ at: c.at, before: c.before, input: c.input }))
+    ? ix.calls.map((c) => ({ at: c.at, before: c.inputs, input: c.input }))
     : ix.turns.map((t) => ({ at: t.at, before: t.before, input: null }));
   for (const [i, turn] of boundaries.entries()) {
     const from = i === 0 ? 0 : boundaries[i - 1]!.before;
@@ -847,7 +880,7 @@ function codexEvolution(ix: CodexIndex, chars: number): ContextEvolution {
     changes,
     gaps: [
       ...(byUsage
-        ? ["a call below is one token_usage_record — the host's own per-call entry, carrying its response id and input token count — and the items between two of them are that call's additions by this reader's arithmetic"]
+        ? ["a call below is one token_usage_record — the host's own per-call entry, carrying its response id and input token count — and the items between two of them are that call's additions by this reader's arithmetic, counted up to the first item the call itself produced"]
         : ['this rollout has no per-call usage record, so a line below is a user TURN, which is many model calls']),
       ...CODEX_GAPS,
       'what a compaction DROPPED: the host names its replacement response and its retained set, never a dropped figure, so no removal count appears above',
@@ -865,9 +898,13 @@ function codexFind(ix: CodexIndex, needle: string, chars: number): ContextFind {
     const from = Math.max(0, at - Math.floor(chars / 2));
     return `${from > 0 ? '…' : ''}${text.slice(from, from + chars)}${from + chars < text.length ? '…' : ''}`;
   };
+  // By the same per-call boundary the readings above use.
   const turnOf = (index: number): number | null => {
-    const found = ix.turns.findIndex((t) => t.before > index);
-    return found === -1 ? (ix.turns.length === 0 ? null : ix.turns.length - 1) : found;
+    const where = ix.calls.length > 0
+      ? ix.calls.findIndex((c) => c.inputs > index)
+      : ix.turns.findIndex((t) => t.before > index);
+    const of = ix.calls.length > 0 ? ix.calls.length : ix.turns.length;
+    return where === -1 ? (of === 0 ? null : of - 1) : where;
   };
   for (const state of ix.instructions) {
     for (const [k, b] of state.blocks.entries()) {
@@ -893,8 +930,8 @@ function codexFind(ix: CodexIndex, needle: string, chars: number): ContextFind {
       origin: 'retained',
       role: item.role ?? item.kind,
       first_invocation: entered,
-      last_invocation: ix.turns.length === 0 ? null : ix.turns.length - 1,
-      invocations: entered === null ? 0 : ix.turns.length - entered,
+      last_invocation: (ix.calls.length > 0 ? ix.calls.length : ix.turns.length) - 1 || null,
+      invocations: entered === null ? 0 : (ix.calls.length > 0 ? ix.calls.length : ix.turns.length) - entered,
       excerpt: excerpt(item.text),
     });
   }

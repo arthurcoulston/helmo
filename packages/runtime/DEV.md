@@ -690,7 +690,15 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   call, carrying that call's own `response_id` and its input token count — and
   the items recorded before it are its context, in order, which is this
   reader's arithmetic and is stated as such on every answer: the rollout
-  records turns and items, never the array sent on one call. Note this is a
+  records turns and items, never the array sent on one call.
+  The usage record is written AFTER the call, so its window ends with what the
+  call itself produced — its reasoning, its reply, its tool request. Those were
+  never in the context it was GIVEN, so a call's input stops at its own first
+  model-produced item (`MODEL_PRODUCED`), and the count of what was left out is
+  named in the answer's gaps. Taking the whole window instead put three items
+  that did not exist yet into every call's context, on every rollout. An item
+  kind the reader does not recognise counts as input, so the list errs long
+  rather than short, and says which way it errs. Note this is a
   FINER unit than `context-trace.ts`'s codex `invocations`, which counts
   `turn_context` entries: a turn is a USER turn, so one loop iteration is a
   single turn with a dozen calls inside it, and reading a context by turn

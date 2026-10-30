@@ -899,9 +899,12 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   its first request; calling that unreadable would hide a failure mode behind
   a tooling one). A seat that launched nothing is a ROW, because a configured
   agent that stopped running is the thing a fleet report must not lose.
-  `inventory` aggregates the readable runs. Every item counts a run ONCE, by
-  its earliest sighting, so `preload` (in the first model call) and `later`
-  are told apart and a profile carried through forty calls is one run.
+  `inventory` aggregates the readable runs. Every CONFIGURED item counts a run
+  ONCE, by its earliest sighting, so `preload` (in the first model call) and
+  `later` are told apart and a profile carried through forty calls is one run.
+  A FETCHED item (`channel: 'acquired'`) is folded the other way — an arrival
+  rather than a carry, so both measures can take the same run; see the
+  `--acquired` entry below.
   `bounds` is `any_runs .. any_runs + unknown_runs` against EVERY run in the
   window, and `share` — the only percentage — is withheld unless the whole
   population was read and no channel in it was unknown. Unknown is not zero,
@@ -2020,6 +2023,75 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   on claude (`type`, `tool_use_id`, `is_error` were in the context too) and
   the whole item payload on codex. Measuring only the content reads 2-4%
   light, which looked like a reader defect until both sides were printed.
+  Every item also carries the R-56 audit classification (revision 652,
+  H-3818): `categories`, `supplier`, `supplier_basis`, `entry`,
+  `entry_trigger`, `control`. A category is not a property of the content — it
+  is the SUPPLIER crossed with WHERE the item entered, which is why
+  `categories` is a set and not a field: `1` ours at startup, `2` theirs at
+  startup, `3` what the agent fetched, `4a` theirs mid-run, `4b` ours mid-run.
+  A source that enters both ways across a cohort carries both, because R-56
+  says in as many words that "the same logical source may enter through
+  different routes on different runs", and a row that had to pick is where
+  this would start being wrong. `unknown` is its own member for the reason
+  zero is not unknown anywhere else here.
+  Supplier and entry are kept APART on purpose — "a harness loading our
+  profile does not turn it into somebody else's content" — so our PROFILE.md
+  reads `us content, entered by host_injection`. Every `supplier_basis` names
+  a fact the read can point at, and there is no value meaning "assumed":
+  `configured_source` (matched R-45's configured source by content),
+  `launcher_shape` (Rev's own iteration prompt, which this installation
+  composes), `configured_server` (the tool's `mcp__<server>__` namespace is a
+  server this installation registers — read from `mcpServers()`, the shim's
+  own composition, never from the tool's name), `host_tool` (no namespace at
+  all, and both hosts namespace every server tool), `unconfigured_server`
+  (somebody configures it and it is not us, which is a finding and not the
+  host's authorship), `host_shape`, `acquisition`, `none`.
+  `supplier: 'unknown'` is the honest majority of what runs FETCH: the join
+  names a source and does not read that source's author, so only a Helmo
+  ticket, the open web, and a path on the seat's own configured source list
+  are claimed. `control` is null wherever this installation records no control
+  — the host's preamble, its tool set, its reminders, and whatever a run chose
+  to go and get — and the gap list says that means none is RECORDED, not that
+  none exists.
+  A `channel: 'acquired'` item is the frequency row for a FETCHED source, and
+  it follows a different fold rule from every other row: both measures can
+  take the same run, because an acquisition is an ARRIVAL and not a carry.
+  "An input loaded at startup and read again later can appear in both
+  measures; carrying old content across requests is not a new read." So a file
+  read at call 0 and again at call 40 is preload 1, later 1, any 1 — and
+  `arrivals` 2, which is the figure that reconciles the row against the
+  roll-up's `inputs` for the same source. `arrivals` is null on a configured
+  item, where counting arrivals would be counting calls. An acquired row
+  carries no `versions`: the roll-up reads sizes rather than payloads, so a
+  file read twice with different contents is one row with a byte range, and
+  the exact per-read content is `context-trace … --at <call> --json
+  --verbatim`.
+  Three readings of one mass, and adding any two double-counts: the acquired
+  item rows group the fetched bytes by SOURCE, the roll-up groups them by
+  KIND, and the residue account groups a call's context by CHUNK.
+  Cross-checked by `crew:agents/mason/workspace/scripts/h3818-category-crosscheck.py`,
+  which restates each rule against the record rather than importing it — the
+  namespace rule read out of `roster.toml` and the seats' own `mcp_extra`
+  files, a tool's timing from the shapes its calls point at, an acquisition's
+  arrival call from the request chain's `tail` where the reader diffs
+  consecutive contexts. 1,922 checks, 0 disagreements; and the check itself is
+  not vacuous — mutating `toolOrigin` to call every tool the host's reddens
+  148 of them, mutating `arrivals` to one per run reddens 105.
+  **A standing limit of the shape vocabulary, found by this reading.** A chunk
+  takes ONE shape label for whatever its named sources did not account for,
+  and claude bundles several things into one message part: measured on the
+  2026-10-30 cohort, the first user part carries the host's
+  `<system-reminder>` wrapper, the repository instruction file and Rev's own
+  iteration prompt together. CLAUDE.md gets its own row because it can be
+  matched against the file on disk; the iteration prompt has no file to match,
+  so its bytes sit under "harness system reminders" and two of our category-1
+  startup inputs read as one of theirs. `launcher_prompt` rows therefore
+  appear on codex, where the prompt arrives as its own part, and not on
+  claude. The report's gap list says this. Related: the `task-prompt` shape
+  test's `\bWorking directory:\b` branch can never fire (`\b` between `:` and a
+  space is no boundary), so only its `\bloop iteration\b` branch does any
+  work — and widening it would newly match a doctrine chapter ABOUT loop
+  iterations, which is why it wants evidence rather than a one-character fix.
   Reads only — the journal and the host's own records, no new store. The same
   norm as `context-trace` applies to an agent running it: `--json` carries the
   item labels and the paths, not the text, and a sweep reports counts and

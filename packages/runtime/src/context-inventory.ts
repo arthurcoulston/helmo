@@ -35,6 +35,7 @@ import { contextAt, contextEvolution, type QueryPart } from './context-query.js'
 import type { AcquiredKind } from './context-acquired.js';
 import { currentSources, pathProviders, pathRuntimes, readSource } from './context-coverage.js';
 import { workingTreeInstructions } from './team.js';
+import { mcpServers } from './shim.js';
 
 /** The first run of the R-56 cohort: the iteration in which Arthur commissioned
  *  this reading. Runs before it are a different population — they were launched
@@ -102,7 +103,91 @@ export interface InventoryRun {
   calls: number | null;
 }
 
-export type ItemChannel = 'host_instructions' | 'tool' | 'message';
+export type ItemChannel = 'host_instructions' | 'tool' | 'message' | 'acquired';
+
+/** The audit categories R-56 (revision 652) organises a managed input by.
+ *  A category is not a property of the content — it is two observations
+ *  multiplied: WHO supplied the content, and WHERE it entered.
+ *
+ *    1   our startup inputs          `us` at the first request
+ *    2   others' startup inputs      not ours, at the first request
+ *    3   what the agent fetched      a result its own tool call returned
+ *    4a  others' mid-run additions   not ours, after the first request
+ *    4b  our mid-run additions       `us`, after the first request
+ *
+ *  So an item carries a SET of them, not one. The same logical source enters
+ *  by different routes on different runs — a profile the harness loads at
+ *  startup is category 1, and a run that reads the same file mid-flight is
+ *  category 3 — and R-56 says that explicitly ("the same logical source may
+ *  enter through different routes on different runs"). A row claiming one
+ *  category would have to pick, and picking is where this would start being
+ *  wrong. `unknown` is its own member for the same reason zero is not
+ *  unknown anywhere else in this file: a chunk nothing accounts for has an
+ *  unestablished category, which is a finding and not category 2.
+ *
+ *  The agent's own generated work is deliberately not here. R-56 keeps it
+ *  separate from the managed inputs, and in this reading it is the residue
+ *  account — a turn is not an item and never acquires a category. */
+export type ContextCategory = '1' | '2' | '3' | '4a' | '4b' | 'unknown';
+
+/** Who authored the content. Deliberately NOT who delivered it: R-56's own
+ *  words are that "a harness loading our profile does not turn it into
+ *  somebody else's content", so delivery lives in `ContextEntry` and this
+ *  field answers a different question. `external` is content neither this
+ *  installation nor the host wrote — the open web. `unknown` is the honest
+ *  majority for what a run fetched: the join knows a source's NAME, which is
+ *  not a claim about its author. */
+export type ContextSupplier = 'us' | 'host' | 'external' | 'unknown';
+
+/** What established the supplier. Every value names a fact this read can
+ *  point at, and there is no value meaning "assumed". */
+export type SupplierBasis =
+  /** The chunk matched, by content, a source this installation configures for
+   *  the seat — the strongest statement available, because the match is
+   *  against bytes the host retained. */
+  | 'configured_source'
+  /** The tool's name carries the namespace of an MCP server this
+   *  installation configures for the seat (`mcp__helmo__…` against the
+   *  `helmo` server). The namespace is the host's own rendering of our
+   *  configuration, so this is read off the record and not guessed. */
+  | 'configured_server'
+  /** A tool name with no MCP namespace at all. Both hosts namespace every
+   *  server tool, so a bare name is one the host CLI itself defines. */
+  | 'host_tool'
+  /** The chunk matched a structural shape only the host writes: its own
+   *  preamble, the catalogue it injects, the reminders it wraps a turn in. */
+  | 'host_shape'
+  /** A tool namespaced to a server this installation does NOT configure.
+   *  Somebody configures it and it is not us — which is a finding, and is
+   *  not the same as the host having authored it. */
+  | 'unconfigured_server'
+  /** The chunk matched the shape of Rev's own iteration prompt. The launcher
+   *  composes that text, so it is ours however the host delivered it — and
+   *  it is the one startup input this installation writes fresh per run. */
+  | 'launcher_shape'
+  /** The item is a result the run's own tool call fetched. What it fetched
+   *  has a source; who WROTE that source is a second question this join does
+   *  not answer, except where the source is one of ours by name. */
+  | 'acquisition'
+  /** Nothing established it. */
+  | 'none';
+
+/** How the item entered the context — the delivery mechanism, which is a
+ *  separate axis from who authored the content. */
+export type ContextEntry =
+  /** Composed into the request's instruction blocks by the host. */
+  | 'host_instructions'
+  /** A tool definition the host sent with the request. */
+  | 'host_tool_table'
+  /** The host put it in the message list itself: a reminder, a catalogue, an
+   *  environment brief, its own preamble carried as a message. */
+  | 'host_injection'
+  /** Rev's own iteration prompt, which the launcher wrote. */
+  | 'launcher_prompt'
+  /** The run asked and the host returned the answer. */
+  | 'agent_tool_call'
+  /** A message chunk whose route this read cannot name. */
+  | 'unknown';
 
 /** How an item got its name. `sha` and `contains` are proofs against the bytes
  *  the host retained. `prefix` is weaker by construction — it matched the
@@ -140,6 +225,25 @@ export interface InventoryItem {
   attribution_basis: AttributionBasis;
   /** The configured source whose content this is, where that is provable. */
   attributed_to: string | null;
+  /** The R-56 audit categories this item was OBSERVED in, sorted. Derived
+   *  from `supplier` and the measures below rather than asserted: an item
+   *  with `preload_runs > 0` and a supplier of `us` carries '1' because a run
+   *  was seen holding it at its first request, and the same item carries '4b'
+   *  as well if another run first saw it later. */
+  categories: ContextCategory[];
+  supplier: ContextSupplier;
+  supplier_basis: SupplierBasis;
+  entry: ContextEntry;
+  /** The specific trigger, where the record names one: the tool whose call
+   *  returned an acquisition, or the call a tool definition was added at.
+   *  `null` where the mechanism IS the whole trigger — nothing triggers the
+   *  host's own preamble. */
+  entry_trigger: string | null;
+  /** The control surface this installation knows over this item, in one line
+   *  an operator can act on. `null` means nobody recorded a control here, not
+   *  that none exists — R-56 asks for controls "where known", and the gap
+   *  list says which classes have none recorded. */
+  control: string | null;
   /** Distinct contents seen under this one logical identity, newest count
    *  first. Grouping a source does not merge its versions away: a profile
    *  edited mid-window is one item with two versions, not one averaged item. */
@@ -150,6 +254,16 @@ export interface InventoryItem {
   later_runs: number;
   /** Runs that held it at all. Each run counts once, whatever its call count. */
   any_runs: number;
+  /** ARRIVALS across every run, for an item that arrives rather than being
+   *  carried — a `channel: 'acquired'` row, where one run reading a file
+   *  forty times is one run and forty arrivals. This is the figure that
+   *  reconciles an item row against the `acquired.sources` row of the same
+   *  source, and the two readings are of the same bytes.
+   *
+   *  `null`, not 0, on a configured item: an instruction block is composed
+   *  into every request of the run and counting its "arrivals" would be
+   *  counting calls. The measures above are per run for exactly that reason. */
+  arrivals: number | null;
   /** Read runs whose channel for this item could not be read, so they can
    *  neither confirm nor deny it. These are what make a share unsafe. */
   unknown_runs: number;
@@ -175,7 +289,13 @@ export interface InventoryItem {
  *  turn, a tool result, the run's own ticket text. Counting it per item would
  *  be noise — it is unique to its run by nature — but dropping it would make
  *  the accounting below balance by omission, which is the failure this whole
- *  report exists to avoid. */
+ *  report exists to avoid.
+ *
+ *  A warning that matters once `--acquired` is on: the tool results in here
+ *  are ALSO the `channel: 'acquired'` item rows, read a second way. This
+ *  account groups a run's context by CHUNK and asks what nothing named; those
+ *  rows group the same bytes by SOURCE. They are two readings of one mass,
+ *  not two masses, and adding them together double-counts (R-56, H-3818). */
 export interface ResidueAccount {
   parts: number;
   bytes: number;
@@ -290,6 +410,13 @@ export interface InventoryOptions {
   /** Evidence refs carried per item. The drill-down is the ref, not the
    *  content: `context-trace --record <record> --at <ordinal>` reads it. */
   evidence_per_item?: number;
+  /** The MCP servers this installation configures for each seat, by name as
+   *  the shim registers them. A tool definition's namespace is tested against
+   *  these to say whether the tool is ours (R-56 category 1/4b) or somebody
+   *  else's. A seat with no entry here has no server proved ours, so its
+   *  namespaced tools read `unconfigured_server` rather than `us` — absent
+   *  configuration never upgrades a claim. */
+  servers?: Record<string, string[]>;
   /** Roll up what each run FETCHED as well as what it was configured with.
    *  Opt-in: it reads every call of every record rather than each record's
    *  first, so it costs what the rest of this report does not. */
@@ -335,6 +462,83 @@ const SHAPES: { id: string; label: string; test: (text: string, role: string, ty
  *  tool result is as real as a profile and is no more countable across runs
  *  than the command that produced it. */
 const RESIDUE_SHAPES = new Set(['tool-output', 'assistant-turn']);
+
+/** The shapes that are THIS INSTALLATION's own writing rather than the
+ *  host's. Only one so far, and it is the one that matters most: the
+ *  iteration prompt is the single startup input Rev composes fresh per run,
+ *  so reading it as somebody else's injection would put our highest-control
+ *  input in category 2 (R-56). */
+const OURS_SHAPES = new Set(['task-prompt']);
+
+/** Who supplied the content and how it got here — the two axes R-56 keeps
+ *  apart, plus the trigger and the control surface. Built where the facts
+ *  are, never re-derived from an item key downstream. */
+export interface ItemOrigin {
+  supplier: ContextSupplier;
+  supplier_basis: SupplierBasis;
+  entry: ContextEntry;
+  entry_trigger: string | null;
+  control: string | null;
+}
+
+/** The control surface, by what established the supplier. Only the classes
+ *  this installation actually controls get a line; the rest get `null` and
+ *  the report's gap list says that no control is recorded for them, which is
+ *  a different statement from there being none. Deliberately short — R-56
+ *  asks for the control to be DESCRIBED, and the thing an operator needs is
+ *  where to go. */
+const CONTROLS: Partial<Record<SupplierBasis, string>> = {
+  configured_source: "the seat's `constitution` and `skills` in the Rev roster, plus the instruction files the host discovers in its `cwd`",
+  launcher_shape: "the Rev iteration prompt: the loop's roster entry and the dispatch that composes it",
+  configured_server: "the `helmo_mcp_server` global and the seat's `mcp_extra`, both in the Rev roster",
+};
+
+export const originOf = (supplier: ContextSupplier, basis: SupplierBasis, entry: ContextEntry, trigger: string | null = null): ItemOrigin =>
+  ({ supplier, supplier_basis: basis, entry, entry_trigger: trigger, control: CONTROLS[basis] ?? null });
+
+/** How a chunk ARRIVED, from the channel it was read out of. The channel is
+ *  the mechanism: an instruction block was composed, a tool definition was
+ *  sent with the request, a message the host wrote is an injection. */
+const entryForChannel = (channel: ItemChannel): ContextEntry =>
+  channel === 'host_instructions' ? 'host_instructions'
+    : channel === 'tool' ? 'host_tool_table'
+      : channel === 'acquired' ? 'agent_tool_call' : 'host_injection';
+
+/** Whether a tool name is namespaced to an MCP server this installation
+ *  configures for the seat. Both hosts render a server tool as
+ *  `mcp__<server>__<tool>`, so the namespace is the host's own record of our
+ *  configuration — read, not guessed. Three outcomes, and the middle one is
+ *  the one a name table would get wrong: a bare name is a tool the host CLI
+ *  itself defines, a namespace we configure is ours, and a namespace we do
+ *  not configure is somebody's and not ours (R-56 asks that tool definitions
+ *  be "classified by their actual author and entry route, not automatically
+ *  treated as external"). */
+export function toolOrigin(name: string, servers: string[]): ItemOrigin {
+  const parts = name.split('__');
+  if (parts.length < 3 || parts[0] !== 'mcp') return originOf('host', 'host_tool', 'host_tool_table');
+  const server = parts[1]!;
+  return servers.includes(server)
+    ? originOf('us', 'configured_server', 'host_tool_table', `MCP server ${server}`)
+    : originOf('unknown', 'unconfigured_server', 'host_tool_table', `MCP server ${server}`);
+}
+
+/** The categories an item was observed in: the supplier crossed with where
+ *  it was seen entering. Derived from the measures, so a row can never claim
+ *  a category no run put it in — and an item seen both ways across a cohort
+ *  carries both, which is R-56's "the same logical source may enter through
+ *  different routes on different runs". */
+export function categoriesOf(origin: ItemOrigin, preload: number, later: number): ContextCategory[] {
+  if (origin.entry === 'agent_tool_call') return ['3'];
+  if (origin.supplier === 'unknown') return ['unknown'];
+  const ours = origin.supplier === 'us';
+  const out: ContextCategory[] = [];
+  if (preload > 0) out.push(ours ? '1' : '2');
+  if (later > 0) out.push(ours ? '4b' : '4a');
+  // Seen in no run at all: every row here was seen in one, except a row
+  // whose every sighting fell in a run that later proved unreadable. It has
+  // a supplier and no observed entry point, and that is not a category.
+  return out.length ? out : ['unknown'];
+}
 
 const shapeOf = (text: string, role: string, types: string[]): { id: string; label: string } | null => {
   for (const s of SHAPES) {
@@ -395,6 +599,11 @@ interface Seen {
   form: string | null;
   ordinal: number;
   via: string[];
+  origin: ItemOrigin;
+  /** An acquisition counts ARRIVALS, not a carried presence, so its sighting
+   *  carries how many arrived in this run. `null` on every other sighting,
+   *  where arrivals are not what is being counted. */
+  arrivals: number | null;
 }
 
 /** What became of one chunk of a call's context: the items it was found to
@@ -419,7 +628,7 @@ const classify = (
     // counted as itself and never folded into a named item.
     const key = `unresolved:${harness}:${channel}:${role}:${types.join('+') || 'unknown'}`;
     return {
-      seen: [{ key, channel, label: `an unread ${role} chunk on ${harness} (${types.join(', ') || 'no type recorded'})`, attribution: 'unresolved', basis: 'none', attributed_to: null, sha256: '', bytes, form: null, ordinal, via }],
+      seen: [{ key, channel, label: `an unread ${role} chunk on ${harness} (${types.join(', ') || 'no type recorded'})`, attribution: 'unresolved', basis: 'none', attributed_to: null, sha256: '', bytes, form: null, ordinal, via, origin: originOf('unknown', 'none', 'unknown'), arrivals: null }],
       residue_bytes: 0,
     };
   }
@@ -437,7 +646,7 @@ const classify = (
     const version = m.basis === 'prefix' ? '' : m.variant.sha256;
     const occupies = m.basis === 'prefix' ? size : m.variant.bytes;
     matchedBytes += occupies;
-    seen.push({ key: `source:${m.source.label}`, channel, label: m.source.label, attribution: 'attributed', basis: m.basis, attributed_to: m.source.label, sha256: version, bytes: occupies, form: m.variant.form, ordinal, via });
+    seen.push({ key: `source:${m.source.label}`, channel, label: m.source.label, attribution: 'attributed', basis: m.basis, attributed_to: m.source.label, sha256: version, bytes: occupies, form: m.variant.form, ordinal, via, origin: originOf('us', 'configured_source', entryForChannel(channel)), arrivals: null });
   }
   // Whatever the named sources do not account for. A prefix match covers an
   // unknown amount of its chunk, so it claims no remainder either way.
@@ -445,7 +654,12 @@ const classify = (
   if (remainder === 0) return { seen, residue_bytes: 0 };
   const shape = shapeOf(body, role, types);
   if (shape && !RESIDUE_SHAPES.has(shape.id)) {
-    seen.push({ key: `shape:${harness}:${channel}:${shape.id}`, channel, label: `${shape.label} (${harness})`, attribution: 'unattributed', basis: 'shape', attributed_to: null, sha256: sha256(body), bytes: remainder, form: null, ordinal, via });
+    // `task-prompt` is this installation's own writing; every other shape is
+    // the host's. Both reach the context the same way, which is why supplier
+    // and entry are two fields and not one.
+    const ours = OURS_SHAPES.has(shape.id);
+    seen.push({ key: `shape:${harness}:${channel}:${shape.id}`, channel, label: `${shape.label} (${harness})`, attribution: 'unattributed', basis: 'shape', attributed_to: null, sha256: sha256(body), bytes: remainder, form: null, ordinal, via, arrivals: null,
+      origin: ours ? originOf('us', 'launcher_shape', 'launcher_prompt') : originOf('host', 'host_shape', entryForChannel(channel)) });
     return { seen, residue_bytes: 0 };
   }
   if (channel !== 'message' && body.length > 0) {
@@ -465,6 +679,11 @@ const classify = (
       label: whole_chunk ? `an unaccounted ${channel} chunk on ${harness}` : `the ${channel} bytes alongside a named source that nothing accounts for (${harness})`,
       attribution: 'unattributed', basis: 'none', attributed_to: null,
       sha256: whole_chunk ? sha256(body) : '', bytes: remainder, form: null, ordinal, via,
+      // Instruction or tool bytes nothing named. The supplier is exactly as
+      // unestablished as the name is, and `unknown` is what says so: calling
+      // it the host's because it arrived in the host's instructions would put
+      // configuration this installation has no source for into category 2.
+      origin: originOf('unknown', 'none', entryForChannel(channel)), arrivals: null,
     });
     return { seen, residue_bytes: 0 };
   }
@@ -472,7 +691,7 @@ const classify = (
 };
 
 interface Acc {
-  item: Omit<InventoryItem, 'bounds' | 'share'> & { versions: ItemVersion[] };
+  item: Omit<InventoryItem, 'bounds' | 'share' | 'categories'> & { versions: ItemVersion[] };
   preload: Set<string>;
   later: Set<string>;
   versionRuns: Map<string, { runs: Set<string>; bytes: number | null }>;
@@ -492,20 +711,65 @@ interface AcquiredAcc {
 
 const newAcquiredAcc = (): AcquiredAcc => ({ runs_joined: 0, runs_refused: [], calls: 0, byKind: new Map(), bySource: new Map() });
 
+/** One acquisition as the ITEM layer needs it, which is not what the roll-up
+ *  needs: the roll-up adds bytes per source, and this says what entered a
+ *  run's context and when, so a source gets the same preload/later/any
+ *  frequency row a configured one has. */
+interface AcquiredSighting {
+  key: string;
+  label: string;
+  origin: ItemOrigin;
+  bytes: number | null;
+  ordinal: number;
+  via: string[];
+  harness: string;
+}
+
+/** Who supplied an acquisition's CONTENT. The join names the source; it does
+ *  not read the source's author, so this says `unknown` wherever only the
+ *  name is known — which is most of it, and is the honest reading of "do not
+ *  claim source-level frequencies where only a generic bucket is known".
+ *
+ *  Two exceptions, each a fact rather than an inference: a `ticket` came out
+ *  of this installation's own record store, and a `file` whose path is one of
+ *  the seat's configured sources is a file we wrote. `web` is the open web by
+ *  construction. A command's output is whatever it ran and is never claimed. */
+const acquiredSupplier = (kind: AcquiredKind, source: string | null, ourPaths: Set<string>): ContextSupplier => {
+  if (kind === 'ticket') return 'us';
+  if (kind === 'web') return 'external';
+  if (source !== null && ourPaths.has(source)) return 'us';
+  return 'unknown';
+};
+
 /** One run's acquisitions, from its whole evolution. Reads the run's own
  *  changes rather than its first call: most of what a run fetches arrives
- *  after the context it started with. */
-function foldAcquired(acc: AcquiredAcc, seat: string, run: InventoryRun): void {
+ *  after the context it started with. Returns the per-input sightings so the
+ *  item layer can build frequencies over the same walk — reading the record
+ *  twice for two readings of one thing is the cost this report does not pay. */
+function foldAcquired(acc: AcquiredAcc, seat: string, run: InventoryRun, ourPaths: Set<string>): AcquiredSighting[] | null {
   const evo = contextEvolution(run.record!, { chars: 0 });
   if ('error' in evo) {
     acc.runs_refused.push({ seat, launch_id: run.launch_id, why: evo.error });
-    return;
+    return null;
   }
   acc.runs_joined += 1;
   acc.calls += evo.changes.length;
+  const sightings: AcquiredSighting[] = [];
   for (const change of evo.changes) {
     for (const part of change.added) {
       for (const input of part.acquired ?? []) {
+        // An acquisition with no source has no identity to count across runs
+        // — it is one call's anonymous result — so it reaches the roll-up's
+        // kind row and no item row. Giving it one keyed on its bytes would
+        // manufacture a source per call and say nothing.
+        if (input.source !== null) {
+          sightings.push({
+            key: `acquired:${input.kind}:${input.tool ?? ''}\u0000${input.source}`,
+            label: `${input.kind} ${input.source}${input.tool === null ? '' : ` (via ${input.tool})`}`,
+            origin: originOf(acquiredSupplier(input.kind, input.source, ourPaths), 'acquisition', 'agent_tool_call', input.tool === null ? null : `a ${input.tool} call`),
+            bytes: input.bytes, ordinal: change.ordinal, via: part.via, harness: evo.harness,
+          });
+        }
         const kindRow = acc.byKind.get(input.kind) ?? { inputs: 0, bytes: 0, sources: new Set<string>(), runs: new Set<string>() };
         kindRow.inputs += 1;
         kindRow.bytes += input.bytes ?? 0;
@@ -526,6 +790,7 @@ function foldAcquired(acc: AcquiredAcc, seat: string, run: InventoryRun): void {
       }
     }
   }
+  return sightings;
 }
 
 const finishAcquired = (acc: AcquiredAcc): AcquiredRollup => ({
@@ -610,15 +875,75 @@ export function inventory(runs: InventoryRun[], opts: InventoryOptions = {}): Se
     // Channels a run could not read whole. An item's unknown count is the
     // number of read runs whose channel is in here, so a run that hid half its
     // tool schemas widens every tool row rather than none of them.
-    const unknownByChannel: Record<ItemChannel, Set<string>> = { host_instructions: new Set(), tool: new Set(), message: new Set() };
+    const unknownByChannel: Record<ItemChannel, Set<string>> = { host_instructions: new Set(), tool: new Set(), message: new Set(), acquired: new Set() };
     const acq = opts.acquired === true ? newAcquiredAcc() : null;
+    const servers = opts.servers?.[seat] ?? [];
+    // The seat's configured source PATHS, for deciding whether a file a run
+    // read is one of ours. The same list the names above come from, read as
+    // identities rather than as text.
+    const ourPaths = new Set(named.map((n) => n.label));
+
+    const ensure = (s: { key: string; channel: ItemChannel; label: string; attribution: Attribution; basis: AttributionBasis; attributed_to: string | null; origin: ItemOrigin }): Acc => {
+      const found = accs.get(s.key);
+      if (found) return found;
+      const made: Acc = {
+        item: {
+          key: s.key, channel: s.channel, label: s.label, attribution: s.attribution, attribution_basis: s.basis,
+          attributed_to: s.attributed_to, supplier: s.origin.supplier, supplier_basis: s.origin.supplier_basis,
+          entry: s.origin.entry, entry_trigger: s.origin.entry_trigger, control: s.origin.control,
+          versions: [], preload_runs: 0, later_runs: 0, any_runs: 0, arrivals: null, unknown_runs: 0,
+          bytes: null, harnesses: [], forms: [], evidence: [],
+        },
+        preload: new Set(), later: new Set(), versionRuns: new Map(), harnesses: new Set(), forms: new Set(),
+      };
+      accs.set(s.key, made);
+      return made;
+    };
+
+    /** This run's acquisitions as item rows. Two rules differ from the fold
+     *  below, and both are in the ticket in as many words.
+     *
+     *  First, BOTH measures can take the same run. The fold below counts a
+     *  run by an item's FIRST sighting, because a profile in forty calls was
+     *  loaded once and carried forward; an acquisition in call 0 and again in
+     *  call 40 is two FETCHES — "an input loaded at startup and read again
+     *  later can appear in both measures; carrying old content across
+     *  requests is not a new read".
+     *
+     *  Second, arrivals are counted as well as runs. A source read forty
+     *  times in one run is one run and forty arrivals, and the arrival count
+     *  is what reconciles this row against the `acquired.sources` row of the
+     *  same source. */
+    const foldAcquiredItems = (sightings: AcquiredSighting[], run: InventoryRun): void => {
+      for (const sighting of sightings) {
+        const acc = ensure({ key: sighting.key, channel: 'acquired', label: sighting.label, attribution: 'attributed', basis: 'sha', attributed_to: sighting.label, origin: sighting.origin });
+        (sighting.ordinal === 0 ? acc.preload : acc.later).add(run.launch_id);
+        acc.harnesses.add(sighting.harness);
+        acc.item.arrivals = (acc.item.arrivals ?? 0) + 1;
+        if (sighting.bytes !== null) {
+          acc.item.bytes = acc.item.bytes === null ? { min: sighting.bytes, max: sighting.bytes } : { min: Math.min(acc.item.bytes.min, sighting.bytes), max: Math.max(acc.item.bytes.max, sighting.bytes) };
+        }
+        if (acc.item.evidence.length < perItem) acc.item.evidence.push({ seat, launch_id: run.launch_id, record: run.record!, ordinal: sighting.ordinal, via: sighting.via });
+      }
+    };
 
     for (const run of seatRuns) {
       if (run.state !== 'read' || run.record === null) continue;
       // Before the first-call read, and not inside it: a run whose first call
       // refuses can still have readable later calls, and its acquisitions are
       // not forfeit because the report's other half could not be taken.
-      if (acq !== null) foldAcquired(acq, seat, run);
+      // Acquisitions, from the same walk that feeds the roll-up. A run whose
+      // evolution refuses is UNKNOWN for this channel rather than absent from
+      // it: it fetched what it fetched, and none of it was readable.
+      if (acq !== null) {
+        const acquired = foldAcquired(acq, seat, run, ourPaths);
+        if (acquired === null) unknownByChannel.acquired.add(run.launch_id);
+        // Folded here rather than with the rest of the run's sightings, and
+        // deliberately: the first-call read below can refuse and `continue`,
+        // and a run's acquisitions are not forfeit because the report's other
+        // half could not be taken.
+        else foldAcquiredItems(acquired, run);
+      }
       const first = contextAt(run.record, 0, { chars: Infinity });
       if ('error' in first) {
         note(`a run's first call could not be read after its record parsed (${first.error}), so it contributes to no item row and widens every one.`, run.launch_id);
@@ -668,7 +993,7 @@ export function inventory(runs: InventoryRun[], opts: InventoryOptions = {}): Se
           take(classify('host_instructions', b.text, b.bytes, 'system', ['instructions'], named, !b.truncated, 0, [b.sha256], false, first.harness), b.bytes);
         }
         for (const t of first.instructions.tools) {
-          one({ key: `tool:${t.name}`, channel: 'tool', label: `tool ${t.name}`, attribution: 'attributed', basis: 'sha', attributed_to: `tool schema ${t.name}`, sha256: sha256(`${t.name}\n${t.description ?? ''}`), bytes: t.bytes, form: null, ordinal: 0, via: [`tool ${t.name}`] }, t.bytes);
+          one({ key: `tool:${t.name}`, channel: 'tool', label: `tool ${t.name}`, attribution: 'attributed', basis: 'sha', attributed_to: `tool schema ${t.name}`, sha256: sha256(`${t.name}\n${t.description ?? ''}`), bytes: t.bytes, form: null, ordinal: 0, via: [`tool ${t.name}`], origin: toolOrigin(t.name, servers), arrivals: null }, t.bytes);
         }
       } else {
         unknownByChannel.host_instructions.add(run.launch_id);
@@ -690,7 +1015,11 @@ export function inventory(runs: InventoryRun[], opts: InventoryOptions = {}): Se
           if (change.ordinal === 0) continue;
           for (const p of change.added) take(classifyPart(p, named, change.ordinal, first.harness), p.bytes);
           for (const name of change.instructions?.tools_added ?? []) {
-            one({ key: `tool:${name}`, channel: 'tool', label: `tool ${name}`, attribution: 'attributed', basis: 'sha', attributed_to: `tool schema ${name}`, sha256: sha256(name), bytes: null, form: null, ordinal: change.ordinal, via: [`tool ${name}`] }, null);
+            one({ key: `tool:${name}`, channel: 'tool', label: `tool ${name}`, attribution: 'attributed', basis: 'sha', attributed_to: `tool schema ${name}`, sha256: sha256(name), bytes: null, form: null, ordinal: change.ordinal, via: [`tool ${name}`], arrivals: null,
+              // A tool table the host extended mid-run: the call it was added
+              // at IS the trigger, and it is the one thing an audit of a
+              // deferred tool set has to be able to point at.
+              origin: { ...toolOrigin(name, servers), entry_trigger: `added at call ${change.ordinal}` } }, null);
           }
           if (change.compaction) {
             // A compaction REBASES the context: what the next call carried came
@@ -729,18 +1058,7 @@ export function inventory(runs: InventoryRun[], opts: InventoryOptions = {}): Se
         if (!prev || s.ordinal < prev.ordinal) firstSeen.set(s.key, s);
       }
       for (const s of firstSeen.values()) {
-        let acc = accs.get(s.key);
-        if (!acc) {
-          acc = {
-            item: {
-              key: s.key, channel: s.channel, label: s.label, attribution: s.attribution, attribution_basis: s.basis,
-              attributed_to: s.attributed_to, versions: [], preload_runs: 0, later_runs: 0, any_runs: 0, unknown_runs: 0,
-              bytes: null, harnesses: [], forms: [], evidence: [],
-            },
-            preload: new Set(), later: new Set(), versionRuns: new Map(), harnesses: new Set(), forms: new Set(),
-          };
-          accs.set(s.key, acc);
-        }
+        const acc = ensure(s);
         // A weaker basis never upgrades a row's claim, and a stronger one does:
         // one run proving a name by sha earns the name, and a later prefix
         // match does not take it back down.
@@ -786,6 +1104,9 @@ export function inventory(runs: InventoryRun[], opts: InventoryOptions = {}): Se
         harnesses: [...harnesses].sort(),
         forms: [...forms].sort(),
         versions,
+        // Last, from the measures: the category is where runs were SEEN
+        // entering this item, so it cannot be computed before they are known.
+        categories: categoriesOf({ supplier: item.supplier, supplier_basis: item.supplier_basis, entry: item.entry, entry_trigger: item.entry_trigger, control: item.control }, preload.size, later.size),
         preload_runs: preload.size,
         later_runs: later.size,
         any_runs: any.size,
@@ -894,6 +1215,22 @@ const runRow = (seat: string, l: LoopConfig, entry: LaunchJournalEntry): Invento
   return { ...base, state: 'read', why: null, record: found.path, calls: first.of };
 };
 
+/** The MCP servers this installation registers for a seat, by the name the
+ *  shim gives each one — which is the name the host renders into a tool's
+ *  `mcp__<server>__…` namespace, so these are what a tool name can be tested
+ *  against. Taken from the shim's own composition rather than restated here:
+ *  a server added to the launch and not to this list would read as somebody
+ *  else's, which is the quiet wrong answer.
+ *
+ *  A seat whose `mcp_extra` will not parse names NO servers rather than the
+ *  ones it would have named: its namespaced tools then read
+ *  `unconfigured_server`, which is true of what this read could establish. */
+export function configuredServersFor(seat: string, roster: Roster): string[] {
+  const l = roster.loops[seat];
+  if (!l) return [];
+  try { return Object.keys(mcpServers(roster.global, l, l.model)); } catch { return []; }
+}
+
 /** The configured sources this installation believes a seat loads, read for
  *  their text so a retained chunk can be matched to one. R-45's inventory is a
  *  label here and never evidence: a source on this list that matched no chunk
@@ -952,7 +1289,9 @@ export function contextInventory(opts: InventoryOptions & { roster?: Roster } = 
   const { runs, seats, window } = cohortRuns({ ...opts, roster });
   const named: Record<string, NamedSource[]> = opts.named ?? {};
   for (const seat of seats) if (!named[seat]) named[seat] = namedSourcesFor(seat, roster);
-  const built = inventory(runs, { ...opts, named });
+  const servers: Record<string, string[]> = opts.servers ?? {};
+  for (const seat of seats) if (!servers[seat]) servers[seat] = configuredServersFor(seat, roster);
+  const built = inventory(runs, { ...opts, named, servers });
   const bySeat = new Map(built.map((s) => [s.seat, s]));
   const out: SeatInventory[] = seats.map((seat) => {
     const l = roster.loops[seat]!;
@@ -978,7 +1317,15 @@ export function contextInventory(opts: InventoryOptions & { roster?: Roster } = 
       'A name comes from matching a retained chunk against a configured source as it reads today. A source edited since a run matches nothing from that run and is reported unnamed rather than as the current file.',
       'A mention of a path, or a read that failed, is not a load and reaches no item row. Only chunks the host put in a call\'s context are counted.',
       'Host sessions this installation did not launch carry no journal entry and are not in this population at all.',
-      ...(rollups.length === 0 ? [] : ['Acquisitions are of the runs that were READ and of no others: a running, unjoined or unreadable run fetched what it fetched and none of it is counted here. `runs_joined` against `runs_total` is that coverage, and `runs_refused` names the read runs whose own export refused.']),
+      "An item's R-56 category is its supplier crossed with where runs were seen holding it, so it is a reading of this cohort and not a property of the source: a file nothing read mid-run here carries no '3', which means it was not seen fetched, never that it cannot be.",
+      "`supplier: 'unknown'` is the honest majority of what runs FETCH. The join names a source; it does not read that source's author. Only a Helmo ticket, the open web, and a file on the seat's own configured source list are claimed either way.",
+      "`control: null` means this installation records no control over that class of item — the host CLI's own preamble, its own tool set, the reminders it injects, and whatever a run chose to go and fetch. It is not a claim that no control exists.",
+      "A chunk takes ONE shape label for whatever its named sources did not account for, and claude bundles several things into one message part: measured on this cohort, the first user part carries the host's `<system-reminder>` wrapper, the repository instruction file, and Rev's own iteration prompt together. The instruction file gets its own row because it can be matched against the file on disk; the iteration prompt has no file to match, so it has no row of its own and its bytes sit under the host's reminders. Two of our category-1 startup inputs read as one of theirs on that harness. `launcher_prompt` rows therefore appear on codex, where the prompt arrives as its own part, and not on claude.",
+      "The agent's own generated work is deliberately not an item. R-56 keeps it apart from the managed inputs, and here it is the residue account.",
+      ...(rollups.length === 0 ? [] : ['Acquisitions are of the runs that were READ and of no others: a running, unjoined or unreadable run fetched what it fetched and none of it is counted here. `runs_joined` against `runs_total` is that coverage, and `runs_refused` names the read runs whose own export refused.',
+        "A `channel: 'acquired'` item row and the roll-up below it are two readings of the SAME bytes — by source, and by kind — and the residue account is a third, by chunk. Adding any two of them together double-counts.",
+        "An acquired row carries no version: the roll-up reads sizes rather than payloads, so a file read twice with different contents is one row with a byte range. The exact per-read content is `context-trace --record <record> --at <call> --json --verbatim`.",
+      ]),
     ],
   };
 }
@@ -1012,11 +1359,15 @@ export function renderInventory(r: ContextInventory, limit = 20): string {
           ? `${i.bounds.low} of ${i.bounds.of}`
           : `${i.bounds.low}..${i.bounds.high} of ${i.bounds.of}`;
       const name = i.attribution === 'attributed' ? i.attributed_to! : i.label;
-      out.push(`  ${freq.padEnd(22)} ${i.channel.padEnd(18)} ${name}`);
+      out.push(`  ${freq.padEnd(22)} ${`cat ${i.categories.join('+')}`.padEnd(11)} ${i.channel.padEnd(18)} ${name}`);
       const basis = i.attribution === 'attributed' ? `named by ${i.attribution_basis}${i.forms.includes('body-after-frontmatter') ? ', delivered without its frontmatter' : ''}` : i.attribution === 'unresolved' ? 'content not retained — size only' : `no configured source accounts for it (${i.attribution_basis})`;
       const size = i.bytes ? (i.bytes.min === i.bytes.max ? `${i.bytes.min}B` : `${i.bytes.min}–${i.bytes.max}B`) : 'no size recorded';
       const versions = i.versions.length === 0 ? 'no version observed whole' : `${i.versions.length} version${i.versions.length === 1 ? '' : 's'}`;
-      out.push(`  ${' '.repeat(22)}   preload ${i.preload_runs}, later ${i.later_runs}, unknown ${i.unknown_runs} · ${size} · ${versions} · ${i.harnesses.join('+') || 'no harness'} · ${basis}`);
+      out.push(`  ${' '.repeat(22)}   preload ${i.preload_runs}, later ${i.later_runs}, unknown ${i.unknown_runs}${i.arrivals === null ? '' : `, ${i.arrivals} arrivals`} · ${size} · ${versions} · ${i.harnesses.join('+') || 'no harness'} · ${basis}`);
+      // Supplier and entry on their own line, because they are two answers
+      // and the row above reads as one. The control is the actionable half
+      // and says so when nobody recorded one.
+      out.push(`  ${' '.repeat(22)}   ${i.supplier} content (${i.supplier_basis}), entered by ${i.entry}${i.entry_trigger === null ? '' : ` — ${i.entry_trigger}`} · control: ${i.control ?? 'none recorded here'}`);
       const e = i.evidence[0];
       if (e) out.push(`  ${' '.repeat(22)}   e.g. ${e.launch_id} call ${e.ordinal}: context-trace --record ${e.record} --at ${e.ordinal}`);
     }

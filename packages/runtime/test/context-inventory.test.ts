@@ -24,6 +24,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   inventory, cohortRuns, renderInventory, contextInventory, mergeAcquired,
+  toolOrigin, categoriesOf, originOf,
   type InventoryRun, type NamedSource, type SeatInventory,
 } from '../src/context-inventory.js';
 
@@ -61,7 +62,7 @@ const write = (name: string, entries: unknown[]): string => {
  *  asserts about structure. Attribution is about content, so these cases need
  *  to put a known instruction file inside a known bundle, which means writing
  *  the bytes here. The shape is the fixture's; only the text differs. */
-const claudeWith = (over: { system: string[]; calls: string[][]; session?: string; tools?: string[] }): unknown[] => {
+const claudeWith = (over: { system: string[]; calls: string[][]; session?: string; tools?: string[]; laterTools?: string[] }): unknown[] => {
   const sessionId = over.session ?? 'aaaaaaaa-1111-2222-3333-444444444444';
   const texts = over.calls.flat();
   const shape = {
@@ -88,7 +89,16 @@ const claudeWith = (over: { system: string[]; calls: string[][]; session?: strin
     });
     held += call.length;
   });
-  return [shape, ...blobs, ...requests];
+  if (over.laterTools === undefined) return [shape, ...blobs, ...requests];
+  // A second shape the LAST request points at, which is how the hosts record a
+  // tool table that grew mid-run: the schemas a deferred tool set adds arrive
+  // as a shape change, not as a message.
+  const later = {
+    type: 'api-request-shape', sessionId, shapeHash: 'shape1', timestamp: '2026-10-29T08:00:30.000Z', version: '2.1.300',
+    shape: { system: shape.shape.system, tools: [...(over.tools ?? ['Bash']), ...over.laterTools].map((name) => ({ name, description: `the ${name} tool` })) },
+  };
+  (requests[requests.length - 1] as Record<string, unknown>)['shapeHash'] = 'shape1';
+  return [shape, later, ...blobs, ...requests];
 };
 
 /** A codex rollout in the shape fixtures/host-records.ts takes from codex
@@ -588,5 +598,217 @@ describe('what the population FETCHED, not only what it was configured with', ()
     expect(text).toContain('fetched: 2 inputs');
     expect(text).toContain('/tmp/seat/AGENTS.md');
     expect(text).toContain('project=R-45');
+  });
+});
+
+describe('whose content it is, how it got here, and which audit category that makes it', () => {
+  // Mutation: return one category per item rather than a set, or decide it
+  // from the channel alone. The category R-56 defines is the supplier
+  // CROSSED with where the item entered — "our startup inputs" and "our
+  // mid-run additions" are two different optimisation areas with the same
+  // owner — so a row that picks one has lost the half an audit reads it for.
+  it('crosses the supplier with where the item entered to name the category', () => {
+    const profile = 'the seat profile, as it reads today\n'.repeat(40);
+    const seat = only(inventory([
+      run({
+        launch_id: 'L1',
+        record: write('cats.jsonl', claudeWith({
+          system: [`You are Claude Code, the host preamble\n${profile}`],
+          calls: [['the first ask'], ['the second']],
+          tools: ['Bash'], laterTools: ['mcp__helmo__helmo_get_ticket'],
+        })),
+        calls: 2,
+      }),
+    ], { named: { mason: source('/tmp/seat/PROFILE.md', profile) }, servers: { mason: ['helmo'] } }));
+
+    // Ours, at the first request.
+    expect(item(seat, '/tmp/seat/PROFILE.md')).toMatchObject({
+      categories: ['1'], supplier: 'us', supplier_basis: 'configured_source', entry: 'host_instructions',
+    });
+    // Theirs, at the first request.
+    expect(item(seat, 'tool Bash')).toMatchObject({ categories: ['2'], supplier: 'host', entry: 'host_tool_table' });
+    // Ours, added after it — a different category with the same owner, and
+    // the trigger is the call it was added at.
+    expect(item(seat, 'tool mcp__helmo__helmo_get_ticket')).toMatchObject({
+      categories: ['4b'], supplier: 'us', supplier_basis: 'configured_server', entry_trigger: 'added at call 1',
+    });
+  });
+
+  // Mutation: read the tool's NAME for a server we know — test for `helmo`
+  // in the string, or fall back to `us` when the configured list is empty.
+  // Either one puts this reader's guess about today's tool set into an audit
+  // of a run made under another one, and the failure is silent: a tool
+  // somebody else configures reads as ours.
+  it('calls a tool ours only when its namespace is a server this installation configures', () => {
+    expect(toolOrigin('mcp__helmo__helmo_get_ticket', ['helmo'])).toMatchObject({ supplier: 'us', supplier_basis: 'configured_server', entry_trigger: 'MCP server helmo' });
+    // The same tool, on an installation that does not configure that server.
+    expect(toolOrigin('mcp__helmo__helmo_get_ticket', [])).toMatchObject({ supplier: 'unknown', supplier_basis: 'unconfigured_server' });
+    expect(toolOrigin('mcp__other__thing', ['helmo'])).toMatchObject({ supplier: 'unknown', supplier_basis: 'unconfigured_server', entry_trigger: 'MCP server other' });
+    // No namespace at all: both hosts namespace every server tool, so this is
+    // one the host CLI itself defines.
+    expect(toolOrigin('Bash', ['helmo'])).toMatchObject({ supplier: 'host', supplier_basis: 'host_tool' });
+  });
+
+  // Mutation: read the whole cross from the supplier and ignore the measures
+  // ('us' always 1, 'host' always 2). An item nothing was seen entering would
+  // then carry a category no run put it in.
+  it('claims only the categories runs were seen entering, and unknown where the supplier is unestablished', () => {
+    const ours = originOf('us', 'configured_source', 'host_instructions');
+    const theirs = originOf('host', 'host_shape', 'host_injection');
+
+    expect(categoriesOf(ours, 3, 0)).toEqual(['1']);
+    expect(categoriesOf(ours, 0, 3)).toEqual(['4b']);
+    // The same logical source entering both ways across a cohort.
+    expect(categoriesOf(ours, 2, 1)).toEqual(['1', '4b']);
+    expect(categoriesOf(theirs, 2, 1)).toEqual(['2', '4a']);
+    // Seen in no run: a supplier and no observed entry point is not a category.
+    expect(categoriesOf(ours, 0, 0)).toEqual(['unknown']);
+    expect(categoriesOf(originOf('unknown', 'none', 'host_instructions'), 3, 0)).toEqual(['unknown']);
+  });
+
+  // Mutation: default an unnamed instruction chunk to the host, since it
+  // arrived in the host's own instructions. That is the delivery mechanism
+  // standing in for the content's owner — the exact collapse R-56 forbids —
+  // and it would file configuration this installation has no source for
+  // under somebody else's name instead of reporting it as a finding.
+  it('leaves the supplier unestablished for a chunk nothing named', () => {
+    const seat = only(inventory([
+      run({ launch_id: 'L1', record: write('unnamed.jsonl', claudeWith({ system: ['configuration nothing here accounts for'], calls: [['the ask']] })) }),
+    ]));
+
+    expect(item(seat, 'an unaccounted host_instructions chunk')).toMatchObject({
+      supplier: 'unknown', supplier_basis: 'none', categories: ['unknown'], entry: 'host_instructions', control: null,
+    });
+  });
+
+  // Mutation: drop OURS_SHAPES and let every shape be the host's. The
+  // iteration prompt is the one startup input this installation composes
+  // fresh per run — R-56 calls category 1 "our highest-control optimization
+  // area" — and reading it as an injection moves it out of that category
+  // and out of the control line that says where to change it.
+  it('keeps the launcher prompt ours however the host delivered it', () => {
+    const seat = only(inventory([
+      run({ launch_id: 'L1', record: write('prompt.jsonl', claudeWith({ system: ['preamble'], // The wording the shape test actually recognises, as a real prompt
+      // carries it: "This is a Rev loop iteration, not a summon".
+      calls: [['This is a Rev loop iteration, not a summon; the queue is the work.']] })) }),
+    ]));
+
+    const prompt = item(seat, 'the run instruction the launcher supplied');
+    expect(prompt).toMatchObject({ supplier: 'us', supplier_basis: 'launcher_shape', entry: 'launcher_prompt', categories: ['1'] });
+    expect(prompt.control).toContain('Rev iteration prompt');
+  });
+
+  // Mutation: give every basis a control line, or leave the field off. A
+  // control invented for the host's own preamble sends an operator to a
+  // setting that does not exist; `null` is the honest reading, and the
+  // report's gap list says it means none is RECORDED rather than none is
+  // possible.
+  it('carries a control line only where this installation has one', () => {
+    const profile = 'the seat profile\n'.repeat(40);
+    const seat = only(inventory([
+      run({ launch_id: 'L1', record: write('ctl.jsonl', claudeWith({ system: [`You are Claude Code, the host preamble\n${profile}`], calls: [['the ask']] })) }),
+    ], { named: { mason: source('/tmp/seat/PROFILE.md', profile) }, servers: { mason: ['helmo'] } }));
+
+    expect(item(seat, '/tmp/seat/PROFILE.md').control).toContain('`constitution`');
+    expect(item(seat, 'tool Bash').control).toBeNull();
+    expect(item(seat, "the host CLI's own preamble").control).toBeNull();
+  });
+});
+
+describe('what the run fetched, as a frequency row of its own', () => {
+  const claudeFetching = (over: { session: string; calls: { tool: string; input: unknown; out: string }[][] }): unknown[] => {
+    const sessionId = over.session;
+    const entries: unknown[] = [{
+      type: 'api-request-shape', sessionId, shapeHash: 'shape0', timestamp: '2026-10-29T08:00:00.000Z', version: '2.1.300',
+      shape: { system: [{ type: 'text', text: 'preamble' }], tools: [{ name: 'Bash', description: 'run a command' }] },
+    }];
+    const tail: string[] = [];
+    over.calls.forEach((call, i) => {
+      const ask = `q${i}`;
+      const got = `a${i}`;
+      entries.push({
+        type: 'api-request-blob', sessionId, hash: ask,
+        message: { role: 'assistant', content: call.map((c, j) => ({ type: 'tool_use', id: `t${i}_${j}`, name: c.tool, input: c.input })) },
+      });
+      entries.push({
+        type: 'api-request-blob', sessionId, hash: got,
+        message: { role: 'user', content: call.map((c, j) => ({ type: 'tool_result', tool_use_id: `t${i}_${j}`, content: c.out })) },
+      });
+      tail.push(ask, got);
+      entries.push({
+        type: 'api-request', sessionId, id: `r${i}`, timestamp: `2026-10-29T08:00:0${i + 1}.000Z`,
+        version: '2.1.300', shapeHash: 'shape0', cwd: '/tmp/seat', params: { model: 'claude-opus-5' },
+        ...(i === 0 ? {} : { base: `r${i - 1}` }), keep: i * 2, tail: tail.slice(i * 2),
+      });
+    });
+    return entries;
+  };
+  const fetchingRun = (launch: string, calls: { tool: string; input: unknown; out: string }[][]): InventoryRun =>
+    run({ launch_id: launch, calls: calls.length, record: write(`${launch}-freq.jsonl`, claudeFetching({ session: `bbbbbbbb-1111-2222-3333-44444444444${launch.slice(-1)}`, calls })) });
+
+  const read = (text: string) => ({ tool: 'Read', input: { file_path: '/tmp/seat/MEMORY.md' }, out: text });
+
+  // Mutation: fold acquisitions with the first-sighting rule the configured
+  // items use, so a run lands in `preload` or in `later` and never both.
+  // That rule is right for a profile — composed into every request of the run
+  // and loaded once — and wrong for a fetch, which the ticket says in as many
+  // words: "an input loaded at startup and read again later can appear in
+  // both measures; carrying old content across requests is not a new read."
+  it('counts a fetch as an arrival, so one run can be both preload and later', () => {
+    const seat = only(inventory([
+      fetchingRun('L1', [[read('the memory index')], [read('the memory index, read again')]]),
+    ], { acquired: true }));
+
+    const row = item(seat, '/tmp/seat/MEMORY.md');
+    expect(row.channel).toBe('acquired');
+    expect(row).toMatchObject({ categories: ['3'], entry: 'agent_tool_call', entry_trigger: 'a Read call', preload_runs: 1, later_runs: 1, any_runs: 1, arrivals: 2 });
+    // The run is ONE run in the denominator however many times it fetched.
+    expect(row.bounds).toEqual({ low: 1, high: 1, of: 1 });
+  });
+
+  // Mutation: leave a refused run out of the acquired channel's unknown set.
+  // Its bounds would then read as an exact figure over the runs that happened
+  // to parse — the failure the whole report is shaped against — and a run
+  // that fetched plenty would be indistinguishable from one that fetched
+  // nothing.
+  it('widens an acquired row for a run whose own evolution refused', () => {
+    const seat = only(inventory([
+      fetchingRun('L1', [[read('the memory index')]]),
+      // A record the population joined and that is not there to read by the
+      // time the report runs — the host pruned it between the two. The state
+      // is `read` because the join found it; the read is what refuses.
+      run({ launch_id: 'L2', calls: 1, record: join(dir, 'pruned-before-the-read.jsonl') }),
+    ], { acquired: true }));
+
+    const row = item(seat, '/tmp/seat/MEMORY.md');
+    expect(row.unknown_runs).toBe(1);
+    expect(row.bounds).toEqual({ low: 1, high: 2, of: 2 });
+    expect(row.share).toBeNull();
+    expect(seat.acquired!.runs_refused).toHaveLength(1);
+  });
+
+  // Mutation: claim a supplier for every acquisition from its kind — a file
+  // is ours, a command is ours because our agent ran it. The join names a
+  // SOURCE; it does not read that source's author, and the two facts it can
+  // state are that a Helmo ticket came out of this installation's own store
+  // and that a path on the seat's configured source list is a file we wrote.
+  it('claims an acquisition is ours only where the source itself says so', () => {
+    const seat = only(inventory([
+      fetchingRun('L1', [[
+        read('the memory index'),
+        { tool: 'mcp__helmo__helmo_get_ticket', input: { ticket_id: 'H-3818' }, out: 'the ticket body' },
+        { tool: 'Bash', input: { command: 'uname -a' }, out: 'Darwin' },
+      ]]),
+      // The path is on the seat's configured source list; its CONTENT is
+      // deliberately not what the run fetched, so the acquired row is the only
+      // row for it and the test is about the source list and nothing else.
+    ], { acquired: true, named: { mason: source('/tmp/seat/MEMORY.md', 'a body nothing in this run carried, long enough not to be a token\n'.repeat(20)) } }));
+
+    // A path on the seat's own configured source list.
+    expect(item(seat, 'file /tmp/seat/MEMORY.md').supplier).toBe('us');
+    // This installation's own record store.
+    expect(item(seat, 'ticket H-3818').supplier).toBe('us');
+    // Whatever that command printed. Never claimed.
+    expect(item(seat, 'command uname -a').supplier).toBe('unknown');
   });
 });

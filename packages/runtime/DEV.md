@@ -1699,6 +1699,11 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   session's parts are the 30MB the JSON reading already was. `--json` hands over
   the structure. Two questions at once is refused rather than answered as one,
   and a call the session never made is refused with the range it did.
+  ONE NORM FOR AN AGENT RUNNING THIS, not a code rule (ward, H-3750): the
+  command stores nothing, but an agent running `--full` or `--find` puts the
+  record's content into its own transcript, and anything it quotes into a
+  ticket or a commit becomes a store. A sweep or a loop reports states, counts
+  and labels — never the text.
   Note the dev tree cannot drive this command against a pinned installation:
   the release-coherence gate refuses before any projection runs. `env -u
   INSTALLATION_RELEASE node packages/runtime/dist/cli.js …` is the read-only way

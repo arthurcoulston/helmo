@@ -588,6 +588,25 @@ describe('what it shows is what was supplied', () => {
     expect(gaps).toContain('Ask --at 0 for the last call that held the dropped items');
   });
 
+  // Mutation: report a boundary with no replacement list as one that replaced
+  // the context with nothing. Every compacted entry on this machine carries a
+  // replacement list, so this branch is reached only by a host that writes
+  // none — and then the post-boundary context is UNREADABLE rather than short,
+  // which is the one distinction the surface is for.
+  it('says a boundary whose replacement list this record lacks leaves the context unreadable', () => {
+    const entries = codexRecord({ secondCall: true }) as Record<string, unknown>[];
+    const compacted = entries.find((e) => e['type'] === 'compacted')!;
+    delete (compacted['payload'] as Record<string, unknown>)['replacement_history'];
+
+    const a = at(write('no-replacement.jsonl', entries), 1);
+
+    expect(a.parts.map((p) => p.via[0])).toEqual(['item 2']);
+    const gaps = a.gaps.join(' ');
+    expect(gaps).toContain('this record holds no replacement_history for that boundary');
+    expect(gaps).toContain('1 part above is only what was recorded SINCE it');
+    expect(gaps).not.toContain('Ask --at');
+  });
+
   // Mutation: carry every span to the last call. `--find` reported each of
   // the rollout's 216 pre-compaction items as held through the final call,
   // which is the same error in the answer an operator is most likely to

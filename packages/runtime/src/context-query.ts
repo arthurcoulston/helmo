@@ -883,10 +883,15 @@ function codexAt(ix: CodexIndex, ordinal: number, chars: number): ContextAt | { 
     },
     gaps: [
       ...CODEX_GAPS,
-      ...(compaction !== null
-        ? [`the ${compaction.index} items recorded before the compaction at ${compaction.at ?? 'an unrecorded time'} are NOT in this call's context and are not listed above: the host replaced them with the ${compaction.replacement_items.length} items it wrote as its replacement_history, which are the `
-          + `${compaction.replacement_items.length === 0 ? 'parts this reader therefore has none of' : `first ${compaction.replacement_items.length} slots here`}. ${entered === null || entered < 1 ? 'No call before the boundary is recorded' : `Ask --at ${entered - 1} for the last call that held the dropped items`}`]
-        : []),
+      ...(compaction === null ? [] : [
+        compaction.replacement_items.length > 0
+          ? `the ${compaction.index} items recorded before the compaction at ${compaction.at ?? 'an unrecorded time'} are NOT in this call's context and are not listed above: the host replaced them with the ${compaction.replacement_items.length} items it wrote as its replacement_history, which are the first ${compaction.replacement_items.length} slots here${entered === null || entered < 1 ? '' : `. Ask --at ${entered - 1} for the last call that held the dropped items`}`
+          // Every one of the 33 compacted entries on the machine this was
+          // built against carries a replacement list. A host that writes none
+          // leaves the post-boundary context unreadable rather than short,
+          // and the difference has to be said.
+          : `the ${compaction.index} items recorded before the compaction at ${compaction.at ?? 'an unrecorded time'} are NOT in this call's context, and this record holds no replacement_history for that boundary: the ${parts.length} part${parts.length === 1 ? '' : 's'} above ${parts.length === 1 ? 'is' : 'are'} only what was recorded SINCE it, and what the host put in place of the dropped items cannot be read here`,
+      ]),
       ...(byUsage && (window as CodexIndex['calls'][number]).before > (window as CodexIndex['calls'][number]).inputs
         ? [`the ${(window as CodexIndex['calls'][number]).before - (window as CodexIndex['calls'][number]).inputs} items this call itself produced — its reasoning, its reply, its tool request — are NOT listed above: the host writes the usage record after the call, so they sit inside its window without ever having been in its input. An item kind this reader does not recognise counts as input, so the list errs long rather than short`]
         : []),

@@ -835,6 +835,64 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   tokenizer run here, and null on claude, whose request entry carries no usage
   at all.
 
+- `context-inventory.ts` — what EVERY run in a window was given, and in how
+  many of them (R-56 H-3802). The two modules above read ONE run. This one
+  reads a POPULATION, and the population is the hard half: a report whose
+  denominator is the runs it managed to parse reads as completeness while
+  hiding every run it could not join.
+  Two layers with a seam between them, which is also the test seam.
+  `cohortRuns` builds the population from the LAUNCH JOURNAL — not by scanning
+  host records, because a run that produced no host record at all is written
+  down in exactly one place — and gives each run a state with its reason:
+  `read`, `running` (not settled, so no host session id by design — the state
+  of the run taking the reading), `unjoined` (settled, and no record on this
+  machine names it), `unreadable`, `no_model_call` (a launch that died before
+  its first request; calling that unreadable would hide a failure mode behind
+  a tooling one). A seat that launched nothing is a ROW, because a configured
+  agent that stopped running is the thing a fleet report must not lose.
+  `inventory` aggregates the readable runs. Every item counts a run ONCE, by
+  its earliest sighting, so `preload` (in the first model call) and `later`
+  are told apart and a profile carried through forty calls is one run.
+  `bounds` is `any_runs .. any_runs + unknown_runs` against EVERY run in the
+  window, and `share` — the only percentage — is withheld unless the whole
+  population was read and no channel in it was unknown. Unknown is not zero,
+  and a run nobody could read is not a run that held nothing.
+  Attribution is one-directional: R-45's configured inventory puts a NAME to a
+  chunk the host retained, and is never evidence that a source was loaded. A
+  source on that list that matched nothing is `configured_unseen`, which is a
+  finding. `attribution_basis` says how strong the name is — `sha` and
+  `contains` are proofs against retained bytes, `prefix` matched only a part's
+  opening and is marked for discounting, `shape` names a host STRUCTURE and no
+  source at all. Every basis compares against the source as it reads TODAY, so
+  a file edited since a run matches nothing from it and is reported unnamed
+  rather than as the current file; the version recorded is the chunk's, never
+  the present one.
+  Both hosts STRIP a leading YAML frontmatter block before delivering an
+  instruction file, so `SourceVariant` carries the body form as well as the
+  whole file. Matching only the file as it sits on disk reported crew's
+  CLAUDE.md — which is in every claude run's context — as configured and
+  unseen. Which form matched is reported: frontmatter a seat's author wrote
+  never reached the model.
+  A chunk is rarely one thing: the harness hands over a bundle with two
+  instruction files and its own wrapper in one message. So a chunk yields
+  EVERY source it carries plus its unaccounted remainder, and the bytes split
+  across them without loss. An attributed item is versioned and sized by what
+  MATCHED, not by the chunk that carried it — the bundle differs per run and
+  the file does not, so hashing the chunk read as five versions of a profile
+  that had not changed. Instruction and tool bytes nothing accounts for get an
+  item of their own rather than being swept into the conversational residue,
+  where nobody would look for them.
+  `RunAccount` is the balance: every chunk of a run's first call is an item, an
+  unresolved chunk (content the host did not retain — its SIZE is still real),
+  or run material. Turns and tool results are run material on purpose: they
+  are as real as a profile and no more countable across runs than the command
+  that produced them, and a row for each would bury every row that means
+  something. The residue is counted, never dropped — an accounting that
+  balances by omission is the failure this whole reading exists to avoid.
+  What is counted is what the host put in a call's message list. A filename in
+  a prompt, a read that failed, a source this installation configured: none of
+  those are loads and none reach an item row.
+
 - `summon-trace.ts` — which host records are NAMED SUMMONS, and on what basis
   (R-55 H-3724 requirement 6). Every other trace here joins a record to a
   launch THIS installation made, through the launch journal's
@@ -1794,6 +1852,20 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   the release-coherence gate refuses before any projection runs. `env -u
   INSTALLATION_RELEASE node packages/runtime/dist/cli.js …` is the read-only way
   to exercise it against real records.
+- `node dist/cli.js context-inventory [seat] [--from <ISO>] [--to <ISO>]
+  [--limit <n>] [--json]` prints the population reading: per seat, every run in
+  the window with its state, then the items with their frequencies and an
+  evidence ref per item that is itself a `context-trace --record <path> --at
+  <ordinal>` command, so a figure drills straight down to the content behind
+  it. No seat argument reads every configured one, including the seats that ran
+  nothing. The window defaults to the last seven days INTERSECTED with the R-56
+  cohort start (`COHORT_START`), because runs before it were launched by
+  releases whose context composition this report cannot vouch for; `--from`
+  takes a wider historical read deliberately and says so in `window.basis`.
+  Reads only — the journal and the host's own records, no new store. The same
+  norm as `context-trace` applies to an agent running it: `--json` carries the
+  item labels and the paths, not the text, and a sweep reports counts and
+  labels. Driven from the dev tree the same way: `env -u INSTALLATION_RELEASE`.
 - `node dist/cli.js startup-context [seat] [--launch <id>] [--ticket <id>]
   [--limit <n>]` prints the startup receipts: one per launch, newest first,
   each with its content resolved now and whether its composition still rebuilds.

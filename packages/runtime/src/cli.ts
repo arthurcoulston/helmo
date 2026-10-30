@@ -26,6 +26,7 @@ import { buildIntakeResult, recordIntakeResult } from './intake-preparation.js';
 import { commandName, runCommand } from './command-name.js';
 import { assertTicketIdentity, readTicketLaunches, sessionTrace, type LaunchEvidence } from './session-trace.js';
 import { coverageReading } from './context-coverage.js';
+import { contextInventory, renderInventory } from './context-inventory.js';
 import { contextTrace, recordForLaunch, sourceRevisionForLaunch } from './context-trace.js';
 import { contextAt, contextEvolution, contextFind, renderContextAt, renderContextEvolution, renderContextFind, PREVIEW_CHARS } from './context-query.js';
 import { summonAssociations, renderSummonScan } from './summon-trace.js';
@@ -176,6 +177,9 @@ const COMMAND_HELP: Record<string, string> = {
   tail: `usage: ${commandName} tail <loop>`,
   trace: `usage: ${commandName} trace <installation-qualified ticket>`,
   'context-coverage': `usage: ${commandName} context-coverage [seat] [--no-inventory]`,
+  'context-inventory': `usage: ${commandName} context-inventory [seat] [--from <ISO>] [--to <ISO>] [--limit <n>] [--json]\n`
+    + `       what each seat's runs in the window were actually given, and in how many of them\n`
+    + `       the window defaults to the last 7 days intersected with the R-56 cohort start`,
   'context-trace': `usage: ${commandName} context-trace <seat> [--launch <id>] [--record <path>]\n`
     + `       the whole record's reading, per required category\n`
     + `   or: --at <call>      what was in that call's context, and where each part came from\n`
@@ -425,6 +429,29 @@ switch (cmd) {
     const scan = summonAssociations({ loops, since, ...(rootFlag === undefined ? {} : { roots: [rootFlag] }) });
     if (rest.includes('--json')) console.log(JSON.stringify(scan, null, 2));
     else console.log(renderSummonScan(scan, limit));
+    break;
+  }
+  // What EVERY run in a window was given, and in how many of them (R-56
+  // H-3802). context-trace answers for one session; this answers over a
+  // population, which is a different question and a harder one: the
+  // denominator is every launch the journal holds, so a run that could not be
+  // joined or read widens a figure instead of quietly leaving it.
+  case 'context-inventory': {
+    const seat = rest[0] && !rest[0].startsWith('--') ? knownLoop(rest[0]) : undefined;
+    const from = flag('from');
+    const to = flag('to');
+    const limit = Number(flag('limit') ?? 20);
+    if (!Number.isFinite(limit) || limit < 1) {
+      console.error('--limit takes the number of items to show per seat');
+      process.exit(1);
+    }
+    const report = contextInventory({
+      ...(seat ? { seats: [seat] } : {}),
+      ...(from === undefined ? {} : { from }),
+      ...(to === undefined ? {} : { to }),
+    });
+    if (rest.includes('--json')) console.log(JSON.stringify(report, null, 2));
+    else console.log(renderInventory(report, limit));
     break;
   }
   // What one SESSION's context actually was, per model invocation (R-55
@@ -1225,6 +1252,8 @@ switch (cmd) {
   context-coverage [seat]  is the account of what each seat loads still true? per path, with repairs
   context-trace <seat>     what one session's context was, per model invocation, from the host's own ledger
                            --at <call> | --changes | --find <text> read it as an operator: parts and their origins
+  context-inventory [seat] what every run in a window was given, and in how many of them — with the runs
+                           it could not read carried as bounds rather than dropped
   summons                  which host records are named summons, on what basis, and what cannot be seen
 Any command also takes --installation <name|home> (or --installation=<name|home>): it asserts which
 installation the command is about, and ANY command — reads included — refuses rather than redirects

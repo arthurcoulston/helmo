@@ -50,6 +50,15 @@ const WINDOW_DAYS = 7;
  *  which is the honest outcome and not the same as the chunk being absent. */
 export const ATTRIBUTION_BYTE_CEILING = 262_144;
 
+/** The smallest variant a CONTAINMENT match may name. Containment asks only
+ *  whether a chunk holds a source's bytes, and a handful of bytes is held by
+ *  almost anything — so a short instruction file would be named in bundles it
+ *  was never part of. The floor leaves no reading different today (the
+ *  smallest configured variant on the real roster is about a kilobyte) and
+ *  keeps it that way when a short source appears (H-3817). An exact `sha`
+ *  match is whole-chunk equality and needs no floor. */
+const CONTAINMENT_FLOOR_BYTES = 64;
+
 /** Characters of each later-arriving part carried for matching. The first call
  *  is read whole; a run's additions are its whole conversation and are not, so
  *  this is per part and not per run. It is above the size of an instruction
@@ -288,7 +297,7 @@ const attribute = (text: string | null, bytes: number | null, named: NamedSource
     // counted twice for being present both whole and as its own body.
     const found: Match[] = [];
     for (const s of named) {
-      const hit = s.variants.filter((v) => v.bytes > 0 && text.includes(v.text)).sort((a, b) => b.bytes - a.bytes)[0];
+      const hit = s.variants.filter((v) => v.bytes >= CONTAINMENT_FLOOR_BYTES && text.includes(v.text)).sort((a, b) => b.bytes - a.bytes)[0];
       if (hit) found.push({ source: s, variant: hit, basis: 'contains' });
     }
     if (found.length) return found;
@@ -639,6 +648,14 @@ export function inventory(runs: InventoryRun[], opts: InventoryOptions = {}): Se
 const classifyPart = (p: QueryPart, named: NamedSource[], ordinal: number, harness: string): ChunkReading =>
   classify('message', p.text, p.bytes, p.role, p.types, named, !p.truncated, ordinal, p.via, p.origin === 'unreadable', harness);
 
+/** The lower bound when the caller gave none: the last seven days, floored at
+ *  the cohort start. Computed here rather than before the branch because
+ *  computing it unconditionally is what threw on an unparseable `to`. */
+const defaultWindowFrom = (to: string): string => {
+  const sevenDays = new Date(Date.parse(to) - WINDOW_DAYS * 86_400_000).toISOString();
+  return Date.parse(sevenDays) > Date.parse(COHORT_START) ? sevenDays : COHORT_START;
+};
+
 /** The population: every launch this installation recorded for each seat in
  *  the window, with the reason any of them cannot be read. This is the half a
  *  report cannot be allowed to skip — the journal is the only record of a run
@@ -646,12 +663,25 @@ const classifyPart = (p: QueryPart, named: NamedSource[], ordinal: number, harne
  *  records would never know it existed. */
 export function cohortRuns(opts: InventoryOptions & { roster?: Roster } = {}): { runs: InventoryRun[]; seats: string[]; window: { from: string; to: string; basis: string } } {
   const roster = opts.roster ?? loadRoster();
+  // Both bounds, before either is used for anything. An unparseable bound is
+  // NaN and every comparison against NaN is false, so unchecked a mistyped
+  // `--from` dropped the lower bound and reported the whole journal at exit 0
+  // — a selector silently answering the wrong question — while a mistyped
+  // `--to` reached the operator as a RangeError from `toISOString` (H-3817).
+  // The message names the flag because these options are the command's flags
+  // one for one, and the CLI prints this as its refusal.
+  for (const [flag, value] of [['--from', opts.from], ['--to', opts.to]] as const) {
+    if (value !== undefined && !Number.isFinite(Date.parse(value))) {
+      throw new Error(`context-inventory: ${flag} is not an instant this can read: ${JSON.stringify(value)}. Pass an ISO instant, as in ${COHORT_START}.`);
+    }
+  }
   const to = opts.to ?? new Date().toISOString();
-  const defaultFrom = new Date(Date.parse(to) - WINDOW_DAYS * 86_400_000).toISOString();
-  const from = opts.from ?? (Date.parse(defaultFrom) > Date.parse(COHORT_START) ? defaultFrom : COHORT_START);
+  const from = opts.from ?? defaultWindowFrom(to);
   const basis = opts.from
     ? 'explicit bounds'
     : `the last ${WINDOW_DAYS} days intersected with the R-56 cohort start ${COHORT_START}`;
+  const lower = Date.parse(from);
+  const upper = Date.parse(to);
   const wanted = opts.seats && opts.seats.length ? opts.seats : Object.keys(roster.loops);
   const seats = wanted.filter((s) => roster.loops[s]).sort();
   const runs: InventoryRun[] = [];
@@ -664,7 +694,7 @@ export function cohortRuns(opts: InventoryOptions & { roster?: Roster } = {}): {
     }
     for (const entry of entries) {
       const at = Date.parse(entry.intent_at);
-      if (!Number.isFinite(at) || at < Date.parse(from) || at > Date.parse(to)) continue;
+      if (!Number.isFinite(at) || at < lower || at > upper) continue;
       runs.push(runRow(seat, l, entry));
     }
   }

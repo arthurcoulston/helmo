@@ -254,6 +254,16 @@ describe('a named source is counted as itself', () => {
     expect(seat.configured_unseen).toEqual(['MEMORY.md']);
     expect(seat.items.some((i) => i.attributed_to === 'MEMORY.md')).toBe(false);
   });
+
+  // Mutation: testing containment with no floor on the variant. A handful of
+  // bytes is contained in almost anything, so a short instruction file would
+  // be named in bundles it was never part of (H-3817).
+  it('does not name a source by a containment match too short to prove anything', () => {
+    const record = write('tiny.jsonl', claudeWith({ system: ['a preamble about the run, the seat and the tools it was given\n'.repeat(3)], calls: [['ask']] }));
+    const seat = only(inventory([run({ launch_id: 'L1', record })], { named: { mason: source('tiny.md', 'the seat') } }));
+    expect(seat.configured_unseen).toEqual(['tiny.md']);
+    expect(seat.items.some((i) => i.attributed_to === 'tiny.md')).toBe(false);
+  });
 });
 
 describe('preload and later are told apart', () => {
@@ -384,5 +394,36 @@ describe('the population comes from the journal, not from the host store', () =>
     expect(idle.items).toEqual([]);
     expect(idle.gaps.join(' ')).toMatch(/launched nothing/);
     expect(renderInventory(report)).toContain('launched nothing in the window');
+  });
+
+  // Mutation: filtering with a bare `Date.parse` comparison per entry. An
+  // unparseable bound is NaN and every comparison against it is false, so a
+  // mistyped `--from` dropped the lower bound and read the whole journal at
+  // exit 0 — a selector silently answering the wrong question (H-3817).
+  it('refuses an unparseable lower bound instead of widening the window to the whole journal', () => {
+    roster(['mason']);
+    journal('mason', [
+      { phase: 'dispatching', launch_id: 'L-in', intent_at: '2026-10-30T12:00:00.000Z' },
+      { phase: 'dispatching', launch_id: 'L-older', intent_at: '2026-10-30T01:00:00.000Z' },
+    ]);
+    const bounded = cohortRuns({ from: '2026-10-30T06:00:00Z', to: '2026-10-30T23:00:00Z', seats: ['mason'] });
+    expect(bounded.runs.map((r) => r.launch_id)).toEqual(['L-in']);
+    expect(() => cohortRuns({ from: 'banana', to: '2026-10-30T23:00:00Z', seats: ['mason'] })).toThrow(/--from/);
+  });
+
+  // Mutation: computing the default lower bound before knowing `to` parses.
+  // `new Date(NaN).toISOString()` throws `RangeError: Invalid time value`, so
+  // the refusal reached the operator as a stack trace with nothing on stdout,
+  // even when `--from` was good (H-3817, the H-3637 finding-2 shape).
+  it('refuses an unparseable upper bound by name rather than through a RangeError', () => {
+    roster(['mason']);
+    journal('mason', []);
+    for (const opts of [{ to: 'banana' }, { from: '2026-10-30T00:00:00Z', to: 'banana' }]) {
+      let thrown: unknown;
+      try { cohortRuns({ ...opts, seats: ['mason'] }); } catch (e) { thrown = e; }
+      const message = thrown instanceof Error ? thrown.message : String(thrown);
+      expect(message).toMatch(/--to/);
+      expect(message).not.toMatch(/Invalid time value/);
+    }
   });
 });

@@ -32,6 +32,21 @@ runtime = "mock"
   return home;
 }
 
+// R-56's population reader at the surface an operator types. The arithmetic is
+// context-inventory.test.ts's; what this owns is that a mistyped bound reaches
+// the operator as one named line and a non-zero status, rather than as a
+// RangeError trace with nothing on stdout (H-3817).
+describe('context-inventory (R-56 H-3817)', () => {
+  it('refuses a bound it cannot read by name, not as a stack trace', () => {
+    const home = roster();
+    const bad = rev(home, ['context-inventory', 'alpha', '--to', 'banana']);
+    expect(bad.status).toBe(1);
+    expect(bad.stderr).toContain('--to');
+    expect(bad.stderr).not.toContain('    at ');
+    expect(bad.stdout).toBe('');
+  });
+});
+
 describe('context-coverage (R-45 H-3581)', () => {
   function claudeRoster(): string {
     const home = mkdtempSync(join(tmpdir(), 'rev-cov-cli-'));

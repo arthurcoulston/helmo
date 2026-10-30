@@ -863,7 +863,10 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   finding. `attribution_basis` says how strong the name is — `sha` and
   `contains` are proofs against retained bytes, `prefix` matched only a part's
   opening and is marked for discounting, `shape` names a host STRUCTURE and no
-  source at all. Every basis compares against the source as it reads TODAY, so
+  source at all. `contains` has a 64-byte floor on the variant
+  (`CONTAINMENT_FLOOR_BYTES`): a handful of bytes is held by almost anything,
+  so a short instruction file would otherwise be named in bundles it was never
+  part of (H-3817). `sha` is whole-chunk equality and needs no floor. Every basis compares against the source as it reads TODAY, so
   a file edited since a run matches nothing from it and is reported unnamed
   rather than as the current file; the version recorded is the chunk's, never
   the present one.
@@ -1862,6 +1865,11 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   cohort start (`COHORT_START`), because runs before it were launched by
   releases whose context composition this report cannot vouch for; `--from`
   takes a wider historical read deliberately and says so in `window.basis`.
+  Either bound is REFUSED by name if it is not a readable instant — one stderr
+  line, exit 1, nothing on stdout. An unparseable bound is NaN and every
+  comparison against NaN is false, so a mistyped `--from` used to drop the
+  lower bound and report the whole journal at exit 0, and a mistyped `--to`
+  threw a RangeError at the operator (H-3817).
   Reads only — the journal and the host's own records, no new store. The same
   norm as `context-trace` applies to an agent running it: `--json` carries the
   item labels and the paths, not the text, and a sweep reports counts and

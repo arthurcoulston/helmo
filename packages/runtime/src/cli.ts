@@ -445,11 +445,20 @@ switch (cmd) {
       console.error('--limit takes the number of items to show per seat');
       process.exit(1);
     }
-    const report = contextInventory({
-      ...(seat ? { seats: [seat] } : {}),
-      ...(from === undefined ? {} : { from }),
-      ...(to === undefined ? {} : { to }),
-    });
+    // A bound this cannot read is refused by name, like `--limit` above it. The
+    // check is inside `cohortRuns` so every caller gets it; what belongs here
+    // is printing it as one line rather than as a stack trace (H-3817).
+    let report: ReturnType<typeof contextInventory>;
+    try {
+      report = contextInventory({
+        ...(seat ? { seats: [seat] } : {}),
+        ...(from === undefined ? {} : { from }),
+        ...(to === undefined ? {} : { to }),
+      });
+    } catch (e) {
+      console.error(cliError(e));
+      process.exit(1);
+    }
     if (rest.includes('--json')) console.log(JSON.stringify(report, null, 2));
     else console.log(renderInventory(report, limit));
     break;

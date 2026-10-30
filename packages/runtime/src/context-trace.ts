@@ -231,13 +231,15 @@ const state = (category: TraceCategory, s: TraceState, reason: string): TraceCov
 const PROVIDER_CEILING =
   'anything the provider adds, rewrites, caches or drops inside its own service: no record on this machine observes it';
 
-interface ParsedRecord {
+export interface ParsedRecord {
   entries: Record<string, unknown>[];
   source: TraceSource;
   error?: string;
 }
 
-function parseRecord(path: string): ParsedRecord {
+/** One host record, parsed. Exported for context-query.ts, which answers an
+ *  operator's three questions over the same entries this trace reads. */
+export function parseTraceRecord(path: string): ParsedRecord {
   const read = readBounded(path, TRACE_BYTE_CEILING);
   if (!read.ok) {
     return { entries: [], source: { path, bytes: read.bytes, read_bytes: 0, truncated: false, lines: 0, unparseable: 0 }, error: read.error };
@@ -290,12 +292,74 @@ export function harnessOf(entries: Record<string, unknown>[]): 'claude' | 'codex
   return null;
 }
 
-function claudeTrace(entries: Record<string, unknown>[], source: TraceSource): ContextTrace {
+/** One message the host retained a blob for, WITH its content.
+ *
+ *  The trace above reports identity, sizes and hashes only. The query surface
+ *  in context-query.ts reads the same blobs with their parts, because an
+ *  operator following a part of one invocation's context to its origin has to
+ *  see what the part was. Neither reading stores anything: both are derived
+ *  from the host's own record at read time. */
+export interface ClaudeBlob {
+  role: string;
+  bytes: number;
+  types: string[];
+  hashes: string[];
+  parts: unknown[];
+}
+
+/** A slot the host kept no blob for, as the transcript reconstructs it. Kept
+ *  apart from a blob everywhere, because it is an inference whose accuracy is
+ *  measured in `recovery` rather than assumed. */
+export interface ClaudeReconstruction {
+  role: string;
+  types: string[];
+  hashes: string[];
+  /** The transcript entries it was assembled from, by uuid, in sent order. */
+  via: string[];
+  parts: unknown[];
+}
+
+/** The instructions and tool schemas of one request shape, as text. */
+export interface ClaudeShapeText {
+  system: string[];
+  tools: { name: string; bytes: number; description: string | null }[];
+}
+
+/** One reading of a claude record, indexed once.
+ *
+ *  `claudeTrace` turns this into a per-category state with no content in it;
+ *  `context-query.ts` reads the same index with content. ONE index, so a query
+ *  can never answer over a different join than the one `recovery` measured —
+ *  which is the whole value of the second increment's correction, and would be
+ *  lost the moment the read surface grew a second implementation of it. */
+export interface ClaudeIndex {
+  sessionId: string | null;
+  cliVersion: string | null;
+  cwd: string | null;
+  models: string[];
+  shapes: Map<string, TraceShape>;
+  shapeTexts: Map<string, ClaudeShapeText>;
+  blobs: Map<string, ClaudeBlob>;
+  /** Every api-request entry, in file order. */
+  requests: Record<string, unknown>[];
+  byId: Map<string, Record<string, unknown>>;
+  compactions: TraceCompaction[];
+  summaryBytes: number | null;
+  summaryText: string | null;
+  /** The exact message list of one call, or null where the chain hits a base
+   *  this record does not hold. */
+  listFor: (r: Record<string, unknown>) => string[] | null;
+  /** By slot hash, for the slots no blob exists for. */
+  reconstructedFor: Map<string, ClaudeReconstruction>;
+  recovery: TraceRecovery;
+}
+
+export function indexClaude(entries: Record<string, unknown>[]): ClaudeIndex {
   const shapes = new Map<string, TraceShape>();
   // Per blob: its role, its size, and the hash of each content block. The
   // blocks are what the join below is checked against, and a hash per block
   // says WHERE a reconstruction came apart while still retaining no content.
-  const blobs = new Map<string, { role: string; bytes: number; types: string[]; hashes: string[] }>();
+  const blobs = new Map<string, ClaudeBlob>();
   const requests: Record<string, unknown>[] = [];
   const transcript: Record<string, unknown>[] = [];
   const compactions: TraceCompaction[] = [];
@@ -304,6 +368,8 @@ function claudeTrace(entries: Record<string, unknown>[], source: TraceSource): C
   let cwd: string | null = null;
   const models = new Set<string>();
   let summaryBytes: number | null = null;
+  let summaryText: string | null = null;
+  const shapeTexts = new Map<string, ClaudeShapeText>();
 
   for (const e of entries) {
     const type = str(e['type']);
@@ -317,11 +383,21 @@ function claudeTrace(entries: Record<string, unknown>[], source: TraceSource): C
       const system = Array.isArray(shape['system']) ? shape['system'] : [];
       const tools = Array.isArray(shape['tools']) ? shape['tools'] : [];
       const blocks: TraceBlock[] = [];
+      const texts: string[] = [];
       for (const block of system) {
         const text = record(block) ? str(block['text']) : null;
         if (text === null) continue;
         blocks.push({ bytes: bytes(text), sha256: sha256(text) });
+        texts.push(text);
       }
+      shapeTexts.set(ref, {
+        system: texts,
+        tools: tools.map((t) => ({
+          name: record(t) ? str(t['name']) ?? '(unnamed)' : '(unnamed)',
+          bytes: bytes(JSON.stringify(t)),
+          description: record(t) ? str(t['description']) : null,
+        })),
+      });
       shapes.set(ref, {
         ref,
         at: str(e['timestamp']),
@@ -342,6 +418,7 @@ function claudeTrace(entries: Record<string, unknown>[], source: TraceSource): C
         bytes: bytes(JSON.stringify(message)),
         types: parts.map((b) => (record(b) ? str(b['type']) ?? '(untyped)' : 'text')),
         hashes: parts.map((b) => sha256(JSON.stringify(b))),
+        parts,
       });
     } else if (type === 'api-request') {
       requests.push(e);
@@ -369,7 +446,7 @@ function claudeTrace(entries: Record<string, unknown>[], source: TraceSource): C
     } else if (e['isCompactSummary'] === true) {
       const message = e['message'];
       const content = record(message) ? message['content'] : null;
-      if (typeof content === 'string') summaryBytes = bytes(content);
+      if (typeof content === 'string') { summaryBytes = bytes(content); summaryText = content; }
     } else if ((type === 'user' || type === 'assistant') && record(e['message']) && e['isSidechain'] !== true) {
       // The host's own narrative of the session, and the place the content of
       // the messages it kept no blob for actually is. A sidechain entry is a
@@ -406,6 +483,15 @@ function claudeTrace(entries: Record<string, unknown>[], source: TraceSource): C
     listOf.set(id, list);
     return list;
   };
+
+  // Which call first ran under each shape. A property of the record, so it is
+  // settled here: when it was set in the trace's own later loop instead, every
+  // other reader of this index saw -1 — the sentinel, read as "unknown".
+  for (const [i, r] of requests.entries()) {
+    const ref = str(r['shapeHash']);
+    const shape = ref === null ? undefined : shapes.get(ref);
+    if (shape && shape.first_invocation === -1) shape.first_invocation = i;
+  }
 
   // The join to the remainder.
   //
@@ -462,6 +548,7 @@ function claudeTrace(entries: Record<string, unknown>[], source: TraceSource): C
         types: parts.map((b) => (record(b) ? str(b['type']) ?? '(untyped)' : 'text')),
         hashes: parts.map((b) => sha256(JSON.stringify(b))),
         via: from.map((e) => str(e['uuid']) ?? '(unuuided)'),
+        parts,
       };
     };
     const user = message('user', group.user);
@@ -469,7 +556,7 @@ function claudeTrace(entries: Record<string, unknown>[], source: TraceSource): C
   };
 
   const recovery: TraceRecovery = { resolved: 0, unresolved: 0, group_mismatches: 0, checked: 0, exact: 0, by_role: {}, modes: {} };
-  const resolvedVia = new Map<string, string[]>();
+  const reconstructedFor = new Map<string, ClaudeReconstruction>();
   const mode = (why: string) => { recovery.modes[why] = (recovery.modes[why] ?? 0) + 1; };
   for (const [n, r] of requests.entries()) {
     const tail = Array.isArray(r['tail']) ? r['tail'].filter((h): h is string => typeof h === 'string') : [];
@@ -498,7 +585,7 @@ function claudeTrace(entries: Record<string, unknown>[], source: TraceSource): C
       const blob = blobs.get(hash);
       if (blob === undefined) {
         recovery.resolved++;
-        resolvedVia.set(hash, message.via);
+        reconstructedFor.set(hash, message);
         continue;
       }
       recovery.checked++;
@@ -520,6 +607,29 @@ function claudeTrace(entries: Record<string, unknown>[], source: TraceSource): C
     }
   }
 
+
+  return {
+    sessionId,
+    cliVersion,
+    cwd,
+    models: [...models],
+    shapes,
+    shapeTexts,
+    blobs,
+    requests,
+    byId,
+    compactions,
+    summaryBytes,
+    summaryText,
+    listFor,
+    reconstructedFor,
+    recovery,
+  };
+}
+
+function claudeTrace(entries: Record<string, unknown>[], source: TraceSource): ContextTrace {
+  const { sessionId, cliVersion, cwd, models, shapes, blobs, requests, byId, compactions, summaryBytes, listFor, reconstructedFor, recovery } = indexClaude(entries);
+
   const invocations: TraceInvocation[] = [];
   const referenced = new Set<string>();
   for (const [i, r] of requests.entries()) {
@@ -532,10 +642,6 @@ function claudeTrace(entries: Record<string, unknown>[], source: TraceSource): C
     const params = r['params'];
     const management = record(params) && record(params['context_management']) ? (params['context_management'] as Record<string, unknown>)['edits'] : null;
     const shapeRef = str(r['shapeHash']);
-    if (shapeRef && shapes.has(shapeRef)) {
-      const shape = shapes.get(shapeRef)!;
-      if (shape.first_invocation === -1) shape.first_invocation = i;
-    }
     let recoverable: number | null = null;
     let resolved: number | null = null;
     if (list) {
@@ -544,12 +650,12 @@ function claudeTrace(entries: Record<string, unknown>[], source: TraceSource): C
       for (const h of list) {
         referenced.add(h);
         if (blobs.has(h)) recoverable++;
-        else if (resolvedVia.has(h)) resolved++;
+        else if (reconstructedFor.has(h)) resolved++;
       }
     }
     const via = (Array.isArray(r['tail']) ? r['tail'] : [])
       .filter((h): h is string => typeof h === 'string')
-      .flatMap((h) => resolvedVia.get(h) ?? []);
+      .flatMap((h) => reconstructedFor.get(h)?.via ?? []);
     invocations.push({
       ordinal: i,
       at: str(r['timestamp']),
@@ -793,7 +899,7 @@ function codexTrace(entries: Record<string, unknown>[], source: TraceSource): Co
  *  record contains; a path neither adapter recognises is refused by name
  *  rather than read as the other one. */
 export function contextTrace(path: string): ContextTrace | { error: string; source: TraceSource } {
-  const parsed = parseRecord(path);
+  const parsed = parseTraceRecord(path);
   if (parsed.error) return { error: parsed.error, source: parsed.source };
   const harness = harnessOf(parsed.entries);
   if (harness === null) {

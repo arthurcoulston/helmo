@@ -335,10 +335,16 @@ export interface ClaudeReconstruction {
   parts: unknown[];
 }
 
-/** The instructions and tool schemas of one request shape, as text. */
+/** The instructions and tool schemas of one request shape, as text.
+ *
+ *  `definition` is the tool entry the host wrote, whole. A name, a size and a
+ *  description are what an operator reads; they are NOT the tool, and an audit
+ *  that asks what the model was told a tool takes is asking for the input
+ *  schema — which the record retains and a summary of three fields throws away
+ *  (R-56, H-3818). */
 export interface ClaudeShapeText {
   system: string[];
-  tools: { name: string; bytes: number; description: string | null }[];
+  tools: { name: string; bytes: number; description: string | null; definition: unknown }[];
 }
 
 /** One reading of a claude record, indexed once.
@@ -412,6 +418,7 @@ export function indexClaude(entries: Record<string, unknown>[]): ClaudeIndex {
           name: record(t) ? str(t['name']) ?? '(unnamed)' : '(unnamed)',
           bytes: bytes(JSON.stringify(t)),
           description: record(t) ? str(t['description']) : null,
+          definition: t,
         })),
       });
       shapes.set(ref, {

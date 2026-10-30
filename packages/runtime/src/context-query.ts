@@ -79,6 +79,16 @@ export interface QueryPart {
   entered: number | null;
   text: string | null;
   truncated: boolean;
+  /** The content blocks the host retained, exactly as it wrote them — the
+   *  tool_use `input` object, the structured `tool_result` content, the image
+   *  part with its own metadata. `text` above is a RENDERING of these: it
+   *  prints an image as `[image]` and a tool call as its name and a JSON line,
+   *  which is what an operator wants to read and is not what the model was
+   *  given. An audit needs the payload, so it is carried verbatim when asked
+   *  for and `null` otherwise, because a terminal reading has no use for it
+   *  and every part would carry its own copy (R-56, H-3818). `null` is also
+   *  what an `unreadable` part has: nothing on this machine holds it. */
+  payload: unknown[] | null;
   /** What to discount this part by, where anything. */
   caveat: string | null;
 }
@@ -90,9 +100,24 @@ export interface QueryInstructions {
   /** The invocation this configuration first appeared at. */
   since: number | null;
   blocks: { bytes: number; sha256: string; text: string | null; truncated: boolean }[];
-  tools: { name: string; bytes: number; description: string | null }[];
+  /** `definition` is the whole tool entry the host recorded — its input schema
+   *  included — and is carried only when the caller asked for the payload.
+   *  Null otherwise, and null wherever the record holds no entry to carry. */
+  tools: { name: string; bytes: number; description: string | null; definition: unknown }[];
   bytes: number;
   tools_bytes: number;
+  /** The host's own configuration entry this reading was derived from, whole,
+   *  where it holds more than the blocks and tools above decompose it into.
+   *
+   *  On codex that is the full `world_state`: `blocks` carries the three keys
+   *  that are prose a reader can follow, and the entry holds sixteen more —
+   *  `environments`, `permissions`, `collaboration_mode`, `skills`, the model
+   *  catalogue — which are configuration in force for the call and were
+   *  retained all along (2,658 bytes of a 23,430-byte state on the run this
+   *  was measured against). On claude it is null: the `api-request-shape`
+   *  holds `system` and `tools` and nothing else, so the decomposition above
+   *  is the whole of it. Carried only when the payload was asked for. */
+  state: unknown | null;
 }
 
 export interface ContextAt {
@@ -110,6 +135,14 @@ export interface ContextAt {
   at: string | null;
   model: string | null;
   instructions: QueryInstructions | null;
+  /** The parameters the host sent this call under, as it recorded them —
+   *  the betas in force, its context-management edits, the sampling settings.
+   *  `model` above is one field of this; the rest change what the call was
+   *  and are in the record. Claude writes them per request; a codex rollout
+   *  writes no per-call parameters at all, and this is null there rather than
+   *  an empty object that would read as "none were sent". Carried only when
+   *  the payload was asked for. */
+  call_params: unknown | null;
   parts: QueryPart[];
   totals: {
     parts: number;
@@ -187,7 +220,17 @@ export interface ContextFind {
 export interface QueryOptions {
   /** Characters of each part's text to carry. `Infinity` for all of it. */
   chars?: number;
+  /** Carry each part's retained content blocks and each tool's whole
+   *  definition alongside the rendered text, for an audit that has to account
+   *  for what was in a call rather than read it. Implies no truncation: a
+   *  payload clipped at 400 characters is not the payload. */
+  verbatim?: boolean;
 }
+
+/** How much of each part an answer carries. One object, because `chars` and
+ *  `verbatim` are always decided together and every reader below has to be
+ *  handed both or silently answer at the default. */
+interface View { chars: number; verbatim: boolean }
 
 const sha256 = (text: string): string => createHash('sha256').update(text, 'utf8').digest('hex');
 const rec = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -254,11 +297,11 @@ function claudePart(
   hash: string,
   slot: number,
   entered: number | null,
-  chars: number,
+  view: View,
 ): QueryPart {
   const blob = ix.blobs.get(hash);
   if (blob !== undefined) {
-    const { text, truncated } = clip(partText(blob.parts), chars);
+    const { text, truncated } = clip(partText(blob.parts), view.chars);
     return {
       slot,
       role: blob.role,
@@ -269,12 +312,13 @@ function claudePart(
       entered,
       text,
       truncated,
+      payload: view.verbatim ? blob.parts : null,
       caveat: null,
     };
   }
   const made: ClaudeReconstruction | undefined = ix.reconstructedFor.get(hash);
   if (made !== undefined) {
-    const { text, truncated } = clip(partText(made.parts), chars);
+    const { text, truncated } = clip(partText(made.parts), view.chars);
     return {
       slot,
       role: made.role,
@@ -285,6 +329,10 @@ function claudePart(
       entered,
       text,
       truncated,
+      // The blocks the transcript was assembled into, not a retained message.
+      // `origin` and `caveat` already say so, and the payload is as much an
+      // inference as the text rendered from it.
+      payload: view.verbatim ? made.parts : null,
       caveat: reconstructionCaveat(ix, made.role),
     };
   }
@@ -300,6 +348,7 @@ function claudePart(
     entered,
     text: null,
     truncated: false,
+    payload: null,
     caveat: 'the call referenced this message by hash; the host retained no blob for it and the transcript does not reconstruct it, so its content is not on this machine',
   };
 }
@@ -313,7 +362,7 @@ function enteredAt(ix: ClaudeIndex): Map<string, number> {
   return first;
 }
 
-function claudeInstructions(ix: ClaudeIndex, ref: string | null, chars: number): QueryInstructions | null {
+function claudeInstructions(ix: ClaudeIndex, ref: string | null, view: View): QueryInstructions | null {
   if (ref === null) return null;
   const shape = ix.shapes.get(ref);
   const texts = ix.shapeTexts.get(ref);
@@ -322,12 +371,13 @@ function claudeInstructions(ix: ClaudeIndex, ref: string | null, chars: number):
     ref,
     since: shape.first_invocation === -1 ? null : shape.first_invocation,
     blocks: shape.system_blocks.map((b, i) => {
-      const { text, truncated } = clip(texts.system[i] ?? '', chars);
+      const { text, truncated } = clip(texts.system[i] ?? '', view.chars);
       return { bytes: b.bytes, sha256: b.sha256, text, truncated };
     }),
-    tools: texts.tools,
+    tools: texts.tools.map((t) => ({ ...t, definition: view.verbatim ? t.definition : null })),
     bytes: shape.system_bytes,
     tools_bytes: shape.tools_bytes,
+    state: null,
   };
 }
 
@@ -335,7 +385,7 @@ const CLAUDE_GAPS = [
   'what the host appended to or wrapped a reconstructed part with on the way out: `caveat` carries this session\'s own measured rate for the role',
 ];
 
-function claudeAt(ix: ClaudeIndex, ordinal: number, chars: number): ContextAt | { error: string } {
+function claudeAt(ix: ClaudeIndex, ordinal: number, view: View): ContextAt | { error: string } {
   const r = ix.requests[ordinal];
   if (r === undefined) {
     return { error: `this session made ${ix.requests.length} model calls, numbered 0 to ${Math.max(0, ix.requests.length - 1)}` };
@@ -344,7 +394,7 @@ function claudeAt(ix: ClaudeIndex, ordinal: number, chars: number): ContextAt | 
   const first = enteredAt(ix);
   const params = rec(r['params']) ? (r['params'] as Record<string, unknown>) : null;
   const shapeRef = str(r['shapeHash']);
-  const parts = (list ?? []).map((h, i) => claudePart(ix, h, i, first.get(h) ?? null, chars));
+  const parts = (list ?? []).map((h, i) => claudePart(ix, h, i, first.get(h) ?? null, view));
   const count = (o: PartOrigin) => parts.filter((p) => p.origin === o).length;
   return {
     harness: 'claude',
@@ -358,7 +408,8 @@ function claudeAt(ix: ClaudeIndex, ordinal: number, chars: number): ContextAt | 
     of: ix.requests.length,
     at: str(r['timestamp']),
     model: params ? str(params['model']) : null,
-    instructions: claudeInstructions(ix, shapeRef, chars),
+    call_params: view.verbatim ? params : null,
+    instructions: claudeInstructions(ix, shapeRef, view),
     parts,
     totals: {
       parts: parts.length,
@@ -377,7 +428,7 @@ function claudeAt(ix: ClaudeIndex, ordinal: number, chars: number): ContextAt | 
   };
 }
 
-function claudeEvolution(ix: ClaudeIndex, chars: number): ContextEvolution {
+function claudeEvolution(ix: ClaudeIndex, view: View): ContextEvolution {
   const first = enteredAt(ix);
   const changes: ContextChange[] = [];
   // A compaction is placed at the first call after the boundary's timestamp:
@@ -395,7 +446,7 @@ function claudeEvolution(ix: ClaudeIndex, chars: number): ContextEvolution {
     const keep = num(r['keep']);
     const removed = baseLength !== null && keep !== null ? Math.max(0, baseLength - keep) : null;
     const shapeRef = str(r['shapeHash']);
-    const added = tail.map((h, k) => claudePart(ix, h, (list?.length ?? tail.length) - tail.length + k, first.get(h) ?? null, chars));
+    const added = tail.map((h, k) => claudePart(ix, h, (list?.length ?? tail.length) - tail.length + k, first.get(h) ?? null, view));
 
     let instructions: ContextChange['instructions'] = null;
     if (shapeRef !== null && shapeRef !== previousShape) {
@@ -421,7 +472,7 @@ function claudeEvolution(ix: ClaudeIndex, chars: number): ContextEvolution {
     let compaction: ContextChange['compaction'] = null;
     if (pending.length > 0 && at !== null && (pending[0]!.at === null || pending[0]!.at <= at)) {
       const c = pending.shift()!;
-      const { text, truncated } = clip(ix.summaryText ?? '', chars);
+      const { text, truncated } = clip(ix.summaryText ?? '', view.chars);
       compaction = {
         ...c,
         replacement_text: ix.summaryText === null ? null : text,
@@ -466,7 +517,7 @@ function claudeEvolution(ix: ClaudeIndex, chars: number): ContextEvolution {
   // A boundary after the last call still happened, and dropping it would lose
   // the one compaction a session that ended on it ever had.
   for (const c of pending) {
-    const { text, truncated } = clip(ix.summaryText ?? '', chars);
+    const { text, truncated } = clip(ix.summaryText ?? '', view.chars);
     changes.push({
       ordinal: ix.requests.length,
       at: c.at,
@@ -527,7 +578,7 @@ function claudeFind(ix: ClaudeIndex, needle: string, chars: number): ContextFind
     }
   }
   for (const [hash, invocations] of held) {
-    const part = claudePart(ix, hash, -1, invocations[0] ?? null, Infinity);
+    const part = claudePart(ix, hash, -1, invocations[0] ?? null, { chars: Infinity, verbatim: false });
     if (part.text === null) { searched.unreadable++; continue; }
     searched.parts++;
     if (!part.text.toLowerCase().includes(lower)) continue;
@@ -586,6 +637,13 @@ interface CodexItem {
   bytes: number;
   /** Why this item's content is not readable here, where it is not. */
   opaque: string | null;
+  /** The response item the host wrote, whole. `text` above is what this
+   *  reader could make of it; an audit asking what a call carried needs the
+   *  entry, including the fields no rendering has a place for — a tool call's
+   *  arguments, an image part's own metadata, the `encrypted_content` of a
+   *  reasoning item whose plaintext is nowhere on this machine (R-56,
+   *  H-3818). */
+  payload: Record<string, unknown>;
 }
 
 interface CodexIndex {
@@ -616,7 +674,7 @@ interface CodexIndex {
    *  this record holds no plaintext for it. */
   items: CodexItem[];
   /** The last `full: true` world_state at or before each item index. */
-  instructions: { at: string | null; index: number; blocks: { bytes: number; sha256: string; text: string }[]; tools: { name: string; bytes: number; description: string | null }[] }[];
+  instructions: { at: string | null; index: number; blocks: { bytes: number; sha256: string; text: string }[]; tools: { name: string; bytes: number; description: string | null; definition: unknown }[]; state: Record<string, unknown> }[];
   /** `full: false` entries: a delta, naming only the keys that moved. Read as
    *  a configuration one reports every absent key as empty — the trap the
    *  first reading of this record fell into. */
@@ -736,6 +794,7 @@ function codexItem(at: string | null, payload: Record<string, unknown>): CodexIt
     text: text ?? '',
     bytes: Buffer.byteLength(JSON.stringify(payload), 'utf8'),
     opaque,
+    payload,
   };
 }
 
@@ -774,7 +833,7 @@ function indexCodex(entries: Record<string, unknown>[]): CodexIndex {
         const text = block ? str(block['text']) ?? str(block['body']) : null;
         if (text !== null) blocks.push({ bytes: Buffer.byteLength(text, 'utf8'), sha256: sha256(text), text });
       }
-      const tools: { name: string; bytes: number; description: string | null }[] = [];
+      const tools: { name: string; bytes: number; description: string | null; definition: unknown }[] = [];
       for (const key of ['tools', 'top_level_tools']) {
         const map = rec(state[key]) ? (state[key] as Record<string, unknown>) : null;
         if (!map) continue;
@@ -783,10 +842,11 @@ function indexCodex(entries: Record<string, unknown>[]): CodexIndex {
             name,
             bytes: Buffer.byteLength(JSON.stringify(value), 'utf8'),
             description: typeof value === 'string' ? value : rec(value) ? str(value['description']) : null,
+            definition: value,
           });
         }
       }
-      ix.instructions.push({ at, index: ix.items.length, blocks, tools });
+      ix.instructions.push({ at, index: ix.items.length, blocks, tools, state });
     } else if (type === 'turn_context' && payload) {
       ix.turns.push({ at, model: str(payload['model']), turn_id: str(payload['turn_id']), before: ix.items.length });
     } else if (type === 'response_item' && payload) {
@@ -990,23 +1050,24 @@ const codexPartsAt = (ix: CodexIndex, ordinal: number, byUsage: boolean): number
   return codexBaseItems(ix, ordinal, byUsage).length + (inForce?.replacement_items.length ?? 0) + Math.max(0, before - (inForce?.index ?? 0));
 };
 
-function codexInstructionsAt(ix: CodexIndex, index: number, chars: number): QueryInstructions | null {
+function codexInstructionsAt(ix: CodexIndex, index: number, view: View): QueryInstructions | null {
   const applicable = ix.instructions.filter((s) => s.index <= index).at(-1) ?? ix.instructions[0];
   if (!applicable) return null;
   return {
     ref: sha256(JSON.stringify(applicable.blocks.map((b) => b.sha256))).slice(0, 16),
     since: null,
     blocks: applicable.blocks.map((b) => {
-      const { text, truncated } = clip(b.text, chars);
+      const { text, truncated } = clip(b.text, view.chars);
       return { bytes: b.bytes, sha256: b.sha256, text, truncated };
     }),
-    tools: applicable.tools,
+    tools: applicable.tools.map((t) => ({ ...t, definition: view.verbatim ? t.definition : null })),
     bytes: applicable.blocks.reduce((t, b) => t + b.bytes, 0),
     tools_bytes: applicable.tools.reduce((t, b) => t + b.bytes, 0),
+    state: view.verbatim ? applicable.state : null,
   };
 }
 
-function codexAt(ix: CodexIndex, ordinal: number, chars: number): ContextAt | { error: string } {
+function codexAt(ix: CodexIndex, ordinal: number, view: View): ContextAt | { error: string } {
   // A call is a usage record where the rollout has them; a host old enough to
   // write none leaves only the turn, which is coarser by an order of magnitude
   // and is named as what it is rather than passed off as a call.
@@ -1056,7 +1117,7 @@ function codexAt(ix: CodexIndex, ordinal: number, chars: number): ContextAt | { 
     }),
   ];
   const parts: QueryPart[] = held.map(({ item, via, index }, slot) => {
-    const { text, truncated } = clip(item.text, chars);
+    const { text, truncated } = clip(item.text, view.chars);
     // A part the thread carried in entered before this file: no call here is
     // its first, and `entered call 0` would say it arrived at the call it was
     // already in the context of.
@@ -1082,6 +1143,10 @@ function codexAt(ix: CodexIndex, ordinal: number, chars: number): ContextAt | { 
           : ix.turns.filter((t) => t.before <= index).length,
       text: item.opaque === null ? text : null,
       truncated: item.opaque === null ? truncated : false,
+      // Carried even where the text is not: an item whose plaintext this
+      // record does not hold still has an entry, and that entry is what an
+      // audit has to account for.
+      payload: view.verbatim ? [item.payload] : null,
       caveat: carriedCaveat === null ? item.opaque : item.opaque === null ? carriedCaveat : `${carriedCaveat}. ${item.opaque}`,
     };
   });
@@ -1100,6 +1165,14 @@ function codexAt(ix: CodexIndex, ordinal: number, chars: number): ContextAt | { 
       ? `what the call before the compaction at ${compaction?.at ?? 'an unrecorded time'} held — which this record cannot count, because it continues thread ${ix.historyBase?.thread_id ?? '(unnamed)'} from ordinal ${ix.historyBase?.entries_before ?? '?'} and that call's context ran back into entries this file does not hold — is`
       : `every part the context held before the compaction at ${compaction?.at ?? 'an unrecorded time'} is`;
   const deltasBefore = ix.deltas.filter((d) => d.index <= call.before);
+  // The world_state keys `instructions` above does NOT decompose. They are
+  // configuration in force for this call and the host retained them; a
+  // reading that lists three keys as "the instructions" and says nothing
+  // about sixteen more reads as complete. Named here whatever the view, and
+  // carried whole by `instructions.state` when the payload was asked for.
+  const stateInForce = ix.instructions.filter((s) => s.index <= call.before).at(-1) ?? ix.instructions[0];
+  const undecomposed = Object.keys(stateInForce?.state ?? {})
+    .filter((k) => !['agents_md', 'host_skills', 'tools', 'top_level_tools'].includes(k));
   const readable = parts.filter((p) => p.origin === 'retained');
   const usage = byUsage ? (window as CodexIndex['calls'][number]) : null;
   return {
@@ -1115,7 +1188,8 @@ function codexAt(ix: CodexIndex, ordinal: number, chars: number): ContextAt | { 
     of,
     at: call.at,
     model: turn.model,
-    instructions: codexInstructionsAt(ix, call.before, chars),
+    call_params: null,
+    instructions: codexInstructionsAt(ix, call.before, view),
     parts,
     totals: {
       parts: parts.length,
@@ -1160,6 +1234,9 @@ function codexAt(ix: CodexIndex, ordinal: number, chars: number): ContextAt | { 
       ...(byUsage && (window as CodexIndex['calls'][number]).before > (window as CodexIndex['calls'][number]).inputs
         ? [`the ${(window as CodexIndex['calls'][number]).before - (window as CodexIndex['calls'][number]).inputs} items this call itself produced — its reasoning, its reply, its tool request — are NOT listed above: the host writes the usage record after the call, so they sit inside its window without ever having been in its input. An item kind this reader does not recognise counts as input, so the list errs long rather than short`]
         : []),
+      ...(undecomposed.length > 0
+        ? [`the instructions above are the world_state keys that are prose with a size — the host's full state for this call holds ${undecomposed.length} more (${undecomposed.join(', ')}) which are configuration it was run under and are not rendered here; --verbatim carries the whole state as \`instructions.state\``]
+        : []),
       ...(deltasBefore.length > 0
         ? [`${deltasBefore.length} world_state deltas were recorded before this turn (keys: ${[...new Set(deltasBefore.flatMap((d) => d.keys))].join(', ')}); the instructions above are the last FULL state, so a key a delta moved since then is stale here`]
         : []),
@@ -1168,7 +1245,7 @@ function codexAt(ix: CodexIndex, ordinal: number, chars: number): ContextAt | { 
   };
 }
 
-function codexEvolution(ix: CodexIndex, chars: number): ContextEvolution {
+function codexEvolution(ix: CodexIndex, view: View): ContextEvolution {
   const changes: ContextChange[] = [];
   const byUsage = ix.calls.length > 0;
   const boundaries: { at: string | null; before: number; input: number | null }[] = byUsage
@@ -1206,7 +1283,7 @@ function codexEvolution(ix: CodexIndex, chars: number): ContextEvolution {
       })),
     ];
     const added: QueryPart[] = entering.map(({ item, via, slot }) => {
-      const { text, truncated } = clip(item.text, chars);
+      const { text, truncated } = clip(item.text, view.chars);
       return {
         slot,
         role: item.role ?? item.kind,
@@ -1217,6 +1294,7 @@ function codexEvolution(ix: CodexIndex, chars: number): ContextEvolution {
         entered: i,
         text: item.opaque === null ? text : null,
         truncated: item.opaque === null ? truncated : false,
+        payload: view.verbatim ? [item.payload] : null,
         caveat: item.opaque,
       };
     });
@@ -1474,12 +1552,20 @@ function read(path: string): { entries: Record<string, unknown>[]; source: Trace
   return { entries: parsed.entries, source: parsed.source, harness };
 }
 
+/** The reading one set of options asks for. Asking for the payload asks for
+ *  all of it: a content block clipped at the preview length is a rendering
+ *  again, under a field name that promises it is not. */
+const viewOf = (options: QueryOptions): View => ({
+  chars: options.verbatim === true ? Infinity : options.chars ?? PREVIEW_CHARS,
+  verbatim: options.verbatim === true,
+});
+
 /** What was in the context of one model call, and where each part came from. */
 export function contextAt(path: string, ordinal: number, options: QueryOptions = {}): (ContextAt & { source: TraceSource }) | { error: string; source: TraceSource } {
   const r = read(path);
   if ('error' in r) return r;
-  const chars = options.chars ?? PREVIEW_CHARS;
-  const answer = r.harness === 'claude' ? claudeAt(indexClaude(r.entries), ordinal, chars) : codexAt(indexCodexRecord(path, r.entries), ordinal, chars);
+  const view = viewOf(options);
+  const answer = r.harness === 'claude' ? claudeAt(indexClaude(r.entries), ordinal, view) : codexAt(indexCodexRecord(path, r.entries), ordinal, view);
   return 'error' in answer ? { error: answer.error, source: r.source } : { ...answer, source: r.source };
 }
 
@@ -1488,8 +1574,8 @@ export function contextAt(path: string, ordinal: number, options: QueryOptions =
 export function contextEvolution(path: string, options: QueryOptions = {}): (ContextEvolution & { source: TraceSource }) | { error: string; source: TraceSource } {
   const r = read(path);
   if ('error' in r) return r;
-  const chars = options.chars ?? PREVIEW_CHARS;
-  const answer = r.harness === 'claude' ? claudeEvolution(indexClaude(r.entries), chars) : codexEvolution(indexCodexRecord(path, r.entries), chars);
+  const view = viewOf(options);
+  const answer = r.harness === 'claude' ? claudeEvolution(indexClaude(r.entries), view) : codexEvolution(indexCodexRecord(path, r.entries), view);
   return { ...answer, source: r.source };
 }
 

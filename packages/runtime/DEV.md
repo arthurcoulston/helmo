@@ -1846,6 +1846,36 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   session's parts are the 30MB the JSON reading already was. `--json` hands over
   the structure. Two questions at once is refused rather than answered as one,
   and a call the session never made is refused with the range it did.
+  `--verbatim` (with `--json`, and on `--at` or `--changes`) is the FULL-DATA
+  export an audit reads rather than the reading an operator reads (R-56,
+  H-3818). Every other field here is a rendering: a part's `text` prints an
+  image block as `[image]` and a tool call as a JSON line, a tool is three
+  fields of its schema, and the codex instructions are the world_state keys
+  that are prose. `--verbatim` adds, alongside them and without replacing
+  them, `parts[].payload` (the content blocks the host retained, whole — a
+  tool_use `input` as the object it was, a structured `tool_result`, an image
+  part with its own metadata), `instructions.tools[].definition` (the whole
+  tool entry, `input_schema` included), `instructions.state` (codex: the full
+  world_state, including the sixteen keys of twenty that no block or tool row
+  decomposes — `environments`, `permissions`, `collaboration_mode`, `skills`
+  and the rest; claude: null, because an `api-request-shape` holds `system`
+  and `tools` and nothing else) and `call_params` (claude: the parameters the
+  request was sent under, betas and context-management edits included; codex:
+  null, because a rollout writes none per call). It implies no truncation — a
+  content block clipped at the preview length is a rendering again — and it is
+  refused without `--json`, because the terminal rendering has nowhere to put
+  it and a flag that is silently a no-op is worse than one that says so.
+  Cross-checked against the host records independently of this reader on one
+  run per harness: 50/50 retained blobs and 17/17 tool definitions byte-equal
+  on a claude call of 122 parts (the other 72 are reconstructed, each carrying
+  its payload, its `via` transcript uuids and its measured caveat), and 82/82
+  recorded response items plus 42/42 replacement-history items byte-equal on a
+  codex call of 124.
+  Note the default reading is unchanged, and deliberately: an operator's
+  terminal has no use for a second copy of every part, so `payload`,
+  `definition`, `state` and `call_params` are all null without the flag — and
+  codex's `gaps` NAMES the world_state keys it is not rendering whatever the
+  view, so a reader who never passes `--verbatim` is still told they exist.
   ONE NORM FOR AN AGENT RUNNING THIS, not a code rule (ward, H-3750): the
   command stores nothing, but an agent running `--full` or `--find` puts the
   record's content into its own transcript, and anything it quotes into a

@@ -186,7 +186,9 @@ const COMMAND_HELP: Record<string, string> = {
     + `   or: --changes        what entered, what was dropped, when instructions or tools moved, what a compaction replaced\n`
     + `                        [--notable] only the calls with something to report\n`
     + `   or: --find <text>    which part of which call's context held it, and when it entered\n`
-    + `       [--chars <n>|--full|--json]`,
+    + `       [--chars <n>|--full|--json]\n`
+    + `       [--verbatim]       with --json: every part's retained content blocks and every tool's whole\n`
+    + `                          definition, as the host wrote them — the export an audit reads`,
   summons: `usage: ${commandName} summons [--since <YYYY-MM-DD>] [--limit <n>] [--root <path>] [--json]`,
   'startup-context': `usage: ${commandName} startup-context [seat] [--launch <id>] [--ticket <id>] [--limit <n>]\n   or: ${commandName} startup-context --diff <launch> --b <launch> [--a-seat <seat>] [--b-seat <seat>]\n   or: ${commandName} startup-context --prune [--apply]`,
   'session-spec': `usage: ${commandName} session-spec <seat> --session <actor stamp> [--provider claude] [--tier high] [--model M] [--cwd P] [--constitution P] [--version V]`,
@@ -522,14 +524,29 @@ switch (cmd) {
         console.error('--chars takes a number of characters per part; --full takes none and carries all of it');
         process.exit(1);
       }
+      // The payload has no place in the rendered reading: a terminal view
+      // shows a tool call as its name and its input, which is the point of
+      // it. Asked for without `--json` the flag would be accepted and do
+      // nothing, so it is refused and says where to put it (R-56, H-3818).
+      const verbatim = rest.includes('--verbatim');
+      if (verbatim && !rest.includes('--json')) {
+        console.error('--verbatim carries the retained payload of every part, which only the JSON export can hold: add --json');
+        process.exit(1);
+      }
       if ([at !== undefined, find !== undefined, changes].filter(Boolean).length > 1) {
         console.error('one question at a time: --at, --changes or --find');
         process.exit(1);
       }
+      // `--find` searches every part whole already and answers in excerpts
+      // around the hit; there is no part to carry a payload for.
+      if (verbatim && find !== undefined) {
+        console.error('--verbatim is for --at and --changes: --find answers in excerpts around the hit, not in parts');
+        process.exit(1);
+      }
       const answer = at !== undefined
-        ? contextAt(path, Number(at), { chars })
+        ? contextAt(path, Number(at), { chars, verbatim })
         : changes
-          ? contextEvolution(path, { chars })
+          ? contextEvolution(path, { chars, verbatim })
           : contextFind(path, find!, { chars });
       if ('error' in answer) {
         console.error(answer.error);

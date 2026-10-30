@@ -1169,3 +1169,178 @@ describe('the thread segment a continuation picks up from', () => {
     expect(e.changes[0]!.notable[0]).toContain('They are not listed as additions on this row or on any row until then');
   });
 });
+
+// The full-data export (R-56, H-3818). Every case here is about the
+// difference between what an operator READS and what an audit has to account
+// for: `text` is a rendering, and a rendering of an image is the word
+// "[image]". The payload is the host's own bytes, carried only when asked for.
+describe('the export an audit reads', () => {
+  /** A call carrying the traffic a rendering cannot hold: an image block, a
+   *  tool call with a structured input, a structured tool result, and a tool
+   *  whose schema is the thing an audit is actually asking about. */
+  function toolTrafficRecord(): unknown[] {
+    const sessionId = 'aaaaaaaa-1111-2222-3333-444444444444';
+    const blob = (hash: string, role: string, content: unknown[]) =>
+      ({ type: 'api-request-blob', sessionId, hash, message: { role, content } });
+    return [
+      {
+        type: 'api-request-shape', sessionId, shapeHash: 'shape0',
+        timestamp: '2026-10-29T08:00:00.000Z', version: '2.1.300',
+        shape: {
+          system: [{ type: 'text', text: 'host block one' }],
+          tools: [{
+            name: 'Bash',
+            description: 'Run a command',
+            input_schema: {
+              type: 'object',
+              properties: { command: { type: 'string' }, timeout: { type: 'number' } },
+              required: ['command'],
+            },
+          }],
+        },
+      },
+      blob('m0', 'user', [
+        { type: 'text', text: 'run it' },
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'QUJD' } },
+      ]),
+      blob('m1', 'assistant', [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls -la', timeout: 5000 } }]),
+      blob('m2', 'user', [{ type: 'tool_result', tool_use_id: 't1', is_error: false, content: [{ type: 'text', text: 'total 0' }] }]),
+      {
+        type: 'api-request', sessionId, id: 'r0', timestamp: '2026-10-29T08:00:01.000Z',
+        version: '2.1.300', shapeHash: 'shape0', cwd: '/tmp/seat',
+        params: { model: 'claude-opus-5' }, keep: 0, tail: ['m0', 'm1', 'm2'],
+      },
+    ];
+  }
+
+  // Mutation: render the payload with partText instead of carrying the
+  // blocks. The rendering says `[image]`, and an audit asking what the model
+  // was given gets a five-letter word in place of the part.
+  it('carries each part retained content blocks, which the rendered text cannot hold', () => {
+    const path = write('tools.jsonl', toolTrafficRecord());
+    const read = contextAt(path, 0, { verbatim: true });
+    if ('error' in read) throw new Error(read.error);
+
+    // The rendering is still there, and still a rendering.
+    expect(read.parts[0]!.text).toBe('run it\n[image]');
+    expect(read.parts[0]!.payload).toEqual([
+      { type: 'text', text: 'run it' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'QUJD' } },
+    ]);
+    // A tool call's input reaches the export as the object it was, not as the
+    // JSON line the rendering makes of it.
+    expect(read.parts[1]!.payload).toEqual([{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls -la', timeout: 5000 } }]);
+    expect(read.parts[2]!.payload).toEqual([{ type: 'tool_result', tool_use_id: 't1', is_error: false, content: [{ type: 'text', text: 'total 0' }] }]);
+  });
+
+  // Mutation: carry the payload always. Every terminal reading of a long
+  // session would then hold a second copy of every part it already printed.
+  it('carries no payload unless it was asked for', () => {
+    const a = at(write('tools.jsonl', toolTrafficRecord()), 0);
+
+    expect(a.parts.map((p) => p.payload)).toEqual([null, null, null]);
+    expect(a.instructions!.tools.map((t) => t.definition)).toEqual([null]);
+  });
+
+  // Mutation: keep the three-field summary. A tool's name, size and
+  // description do not say what it TAKES, and the schema is in the record.
+  it('carries each tool whole definition, schema included', () => {
+    const path = write('tools.jsonl', toolTrafficRecord());
+    const read = contextAt(path, 0, { verbatim: true });
+    if ('error' in read) throw new Error(read.error);
+
+    expect(read.instructions!.tools[0]).toEqual({
+      name: 'Bash',
+      bytes: expect.any(Number),
+      description: 'Run a command',
+      definition: {
+        name: 'Bash',
+        description: 'Run a command',
+        input_schema: {
+          type: 'object',
+          properties: { command: { type: 'string' }, timeout: { type: 'number' } },
+          required: ['command'],
+        },
+      },
+    });
+  });
+
+  // Mutation: honour --chars under --verbatim. A content block clipped at the
+  // preview length is a rendering again, under a field name that promises it
+  // is not.
+  it('is never truncated, whatever preview length came with it', () => {
+    const path = write('tools.jsonl', toolTrafficRecord());
+    const read = contextAt(path, 0, { chars: 4, verbatim: true });
+    if ('error' in read) throw new Error(read.error);
+
+    expect(read.parts.every((p) => p.truncated === false)).toBe(true);
+    expect(read.parts[0]!.text).toBe('run it\n[image]');
+  });
+
+  // Mutation: keep `blocks` as the whole account of the codex instructions.
+  // The fixture's world_state holds four keys; two of them are prose the
+  // blocks carry, and `tools`/`top_level_tools` are the tool list. A real one
+  // holds twenty, sixteen of which no block or tool row accounts for —
+  // environments, permissions, collaboration_mode, the model catalogue — and
+  // a reading that names three keys as "the instructions" reads as complete.
+  it('carries the whole codex world_state, not the keys it renders as prose', () => {
+    const entries = codexRecord({ compaction: false });
+    const full = entries.find((e) => (e as { type?: string }).type === 'world_state') as Record<string, unknown>;
+    (((full['payload'] as Record<string, unknown>)['state']) as Record<string, unknown>)['permissions'] = { approval: 'never' };
+    const path = write('state.jsonl', entries);
+
+    const read = contextAt(path, 0, { verbatim: true });
+    if ('error' in read) throw new Error(read.error);
+    expect((read.instructions!.state as Record<string, unknown>)['permissions']).toEqual({ approval: 'never' });
+
+    // And a reader who did not ask for the payload is told the key is there.
+    const plain = at(path, 0);
+    expect(plain.instructions!.state).toBeNull();
+    expect(plain.gaps.join(' ')).toContain('the host\'s full state for this call holds 1 more (permissions)');
+  });
+
+  // Mutation: report `model` and call the call's parameters accounted for.
+  // The betas in force and the host's context-management edits are what the
+  // call WAS, and claude writes them on every request entry.
+  it('carries the parameters a claude call was sent under, and says codex records none', () => {
+    const path = write('tools.jsonl', toolTrafficRecord());
+    const read = contextAt(path, 0, { verbatim: true });
+    if ('error' in read) throw new Error(read.error);
+    expect(read.call_params).toEqual({ model: 'claude-opus-5' });
+    expect(at(path, 0).call_params).toBeNull();
+
+    const codex = contextAt(write('rollout.jsonl', codexRecord({ compaction: false })), 0, { verbatim: true });
+    if ('error' in codex) throw new Error(codex.error);
+    expect(codex.call_params).toBeNull();
+  });
+
+  // Mutation: carry the codex item's rendered text as its payload. The
+  // reasoning item's plaintext is nowhere on this machine, and its entry —
+  // the encrypted_content the host DID write — is what an audit accounts for.
+  it('carries a codex response item as the host wrote it, including what has no plaintext', () => {
+    const path = write('rollout.jsonl', codexRecord({ attachment: true, secondCall: true }));
+    const first = contextAt(path, 0, { verbatim: true });
+    if ('error' in first) throw new Error(first.error);
+
+    const image = first.parts.find((p) => JSON.stringify(p.payload).includes('input_image'));
+    expect(image).toBeDefined();
+    const blocks = (image!.payload![0] as { content: Record<string, unknown>[] }).content;
+    // The rendering reports the data URL's size and refuses to print it; the
+    // payload holds the URL itself and the `detail` the rendering has no
+    // place for.
+    expect(image!.text).toContain('bytes of inline image data');
+    expect(blocks[1]!['image_url']).toMatch(/^data:image\/png;base64,/);
+    expect(blocks[1]!['detail']).toBe(4);
+
+    // The call after the compaction opens on the replacement list, and one of
+    // its items is carried only as provider-encrypted text. It was in that
+    // call's context; what it said is not on this machine, and the entry the
+    // host DID write is what an audit accounts for.
+    const after = contextAt(path, 1, { verbatim: true });
+    if ('error' in after) throw new Error(after.error);
+    const opaque = after.parts.find((p) => p.origin === 'unreadable');
+    expect(opaque).toBeDefined();
+    expect(opaque!.text).toBeNull();
+    expect((opaque!.payload![0] as Record<string, unknown>)['encrypted_content']).toBe('gAAAAABq4_compaction');
+  });
+});

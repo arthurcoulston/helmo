@@ -427,3 +427,48 @@ describe('the population comes from the journal, not from the host store', () =>
     }
   });
 });
+
+// The population as a MANIFEST, not a count (R-56, H-3818). `population`
+// answers "how many" and a cohort query needs "which": the record path for
+// every run that was read, and the launch id and reason for every run no
+// figure can come from.
+describe('the population is reachable, run by run', () => {
+  // Mutation: keep `population` as the whole account of the population. A
+  // consumer going from "30 read" to the thirty records has nowhere to go and
+  // has to rebuild the join from the launch journal — which is the bespoke
+  // reconstruction this capability exists to remove.
+  it('carries every run with its state, its reason and the record it was joined to', () => {
+    const profile = 'the mason profile, long enough to be a real instruction file and not a token\n'.repeat(4);
+    const record = write('manifest.jsonl', claudeWith({ system: [`preamble\n${profile}`], calls: [['the first ask']] }));
+    const seat = only(inventory([
+      run({ launch_id: 'L1', record }),
+      run({ launch_id: 'L2', state: 'unjoined', why: 'no host record on this machine names its session', record: null, calls: null }),
+    ]));
+
+    expect(seat.runs.map((r) => [r.launch_id, r.state, r.record])).toEqual([
+      ['L1', 'read', record],
+      ['L2', 'unjoined', null],
+    ]);
+    // And the manifest is the population, not a subset of it: the counts above
+    // it are these rows counted.
+    expect(seat.runs).toHaveLength(seat.runs_total);
+    expect(seat.runs.filter((r) => r.state === 'read')).toHaveLength(seat.population.read);
+  });
+
+  // Mutation: print the state counts and stop. `1 running` leaves an operator
+  // with no launch id to look at and no reason, and the reason is per run.
+  it('names each run no figure can come from, in the reading an operator sees', () => {
+    const text = renderInventory({
+      window: { from: 'a', to: 'b', basis: 'the test window' },
+      seats: [only(inventory([
+        run({ launch_id: 'L1', record: write('r.jsonl', claudeWith({ system: ['preamble'], calls: [['ask']] })) }),
+        run({ launch_id: 'L2', state: 'running', why: 'has not settled, so it carries no host session id', record: null, calls: null }),
+      ]))],
+      gaps: [],
+      measured_at: 'now',
+    });
+
+    expect(text).toContain('no figure from L2 (running): has not settled, so it carries no host session id');
+    expect(text).not.toContain('no figure from L1');
+  });
+});

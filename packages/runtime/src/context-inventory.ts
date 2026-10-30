@@ -202,6 +202,16 @@ export interface SeatInventory {
   configured_unseen: string[];
   population: Record<RunState, number>;
   runs_total: number;
+  /** The population itself, run by run: every launch in the window with its
+   *  state, its reason where it has one, and the record it was joined to.
+   *  `population` above is this counted, and a count is not a manifest — a
+   *  consumer that has to go from "30 read" to the thirty records has nowhere
+   *  to go without these, and had to rebuild the join from the launch journal
+   *  itself. The record path is what makes `context-trace --record <path>`
+   *  reachable for every run the population holds, which is how the per-run
+   *  readers apply over a cohort rather than over whatever one run an
+   *  operator typed (R-56, H-3818). */
+  runs: InventoryRun[];
   items: InventoryItem[];
   residue: ResidueAccount;
   accounts: RunAccount[];
@@ -637,7 +647,7 @@ export function inventory(runs: InventoryRun[], opts: InventoryOptions = {}): Se
     });
     const matched = new Set(items.filter((i) => i.attributed_to !== null).map((i) => i.attributed_to!));
     const configured_unseen = named.map((n) => n.label).filter((label) => !matched.has(label));
-    out.push({ seat, provider_paths: [], configured_unseen, population, runs_total: seatRuns.length, items, residue, accounts, gaps });
+    out.push({ seat, provider_paths: [], configured_unseen, population, runs_total: seatRuns.length, runs: seatRuns, items, residue, accounts, gaps });
   }
   return out;
 }
@@ -795,7 +805,7 @@ export function contextInventory(opts: InventoryOptions & { roster?: Roster } = 
     return {
       seat, provider_paths: paths, configured_unseen: [],
       population: { read: 0, no_model_call: 0, running: 0, unjoined: 0, unreadable: 0 },
-      runs_total: 0, items: [], residue: { parts: 0, bytes: 0, runs: 0 }, accounts: [],
+      runs_total: 0, runs: [], items: [], residue: { parts: 0, bytes: 0, runs: 0 }, accounts: [],
       gaps: ['This seat launched nothing in the window, so it has no items. That is a reading about the window, not about what the seat loads when it runs.'],
     };
   });
@@ -826,6 +836,11 @@ export function renderInventory(r: ContextInventory, limit = 20): string {
     out.push(`  runs in window: ${s.runs_total}  —  read ${p.read}, running ${p.running}, unjoined ${p.unjoined}, unreadable ${p.unreadable}, no model call ${p.no_model_call}`);
     if (s.runs_total === 0) { out.push('  nothing to itemise: this seat launched nothing in the window.'); continue; }
     if (p.read === 0) { out.push('  nothing readable: every run in the window is accounted for above, and none of them can be itemised.'); }
+    // Named, not counted. `1 running` on the line above leaves an operator
+    // with nothing to go and look at, and the reason is per run.
+    for (const run of s.runs.filter((x) => x.state !== 'read')) {
+      out.push(`  no figure from ${run.launch_id} (${run.state}): ${run.why ?? 'no reason recorded'}`);
+    }
     const shown = s.items.slice(0, limit);
     for (const i of shown) {
       const freq = i.share

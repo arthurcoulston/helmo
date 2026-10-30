@@ -1951,6 +1951,24 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   comparison against NaN is false, so a mistyped `--from` used to drop the
   lower bound and report the whole journal at exit 0, and a mistyped `--to`
   threw a RangeError at the operator (H-3817).
+  `seats[].runs` is the population as a MANIFEST rather than a count (R-56,
+  H-3818): every launch in the window with its state, its reason where it has
+  one, and the record it was joined to. `population` is these rows counted,
+  and a count is not reachable — a consumer going from "30 read" to the thirty
+  records had to rebuild the journal join itself, which is the bespoke
+  reconstruction this capability exists to remove. With the record path on
+  each row, the per-run readers APPLY OVER A COHORT: this command for the
+  population, then `context-trace --record <path> --changes --chars 0 --json`
+  per read run, and the acquired entries those exports already carry add up.
+  Over the 44-run cohort of 2026-10-30 that is 1,091 acquired inputs,
+  4,829,777B, 741 distinct sources from 43 runs, with the 44th named as
+  `running` and its reason printed rather than quietly absent — 617 command
+  results at 1,818,248B, 169 ticket reads at 1,725,670B from 67 distinct
+  tickets, 67 file reads at 388,718B, 52 searches, and 186 calls at 853,120B
+  whose arguments name no source this reader can follow (mostly ticket LIST
+  calls, which take filters rather than an id). The rendered reading names
+  each run no figure can come from, per run, for the same reason: `1 running`
+  leaves an operator with no launch id to go and look at.
   Reads only — the journal and the host's own records, no new store. The same
   norm as `context-trace` applies to an agent running it: `--json` carries the
   item labels and the paths, not the text, and a sweep reports counts and

@@ -298,8 +298,10 @@ const UNIVERSAL_GAPS = [
  *  once for every block kind. */
 export interface PartSegment {
   /** The block's own type, which is not the part's: a part carrying a result
-   *  and a reminder has two, and a reader that applied the part's type list to
-   *  each block would read the reminder as tool traffic. */
+   *  and the launcher's prompt has two, and a reader that applied the part's
+   *  type list to each block reads the prompt as tool traffic — the inventory
+   *  tests a result by the type list and the prompt by its text, first match
+   *  winning. */
   type: string;
   text: string;
   bytes: number;

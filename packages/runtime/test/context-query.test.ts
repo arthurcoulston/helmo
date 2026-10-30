@@ -1257,6 +1257,22 @@ describe('the export an audit reads', () => {
     expect(read.parts[1]!.segments).toBeNull();
   });
 
+  // Mutation: drop `segmentsFor`'s truncation test and take the blocks apart
+  // anyway. The blocks come from the record, not from the clipped text, so a
+  // bounded read would hand back every block whole — content past the cut the
+  // caller asked not to be given — and the inventory, which reads later parts
+  // under a finite bound, would classify and containment-match pieces of a
+  // part it cannot see the end of.
+  it('takes no part apart once its text has been clipped', () => {
+    const path = write('tools.jsonl', toolTrafficRecord());
+    const read = at(path, 0, 5);
+
+    const bundled = read.parts[0]!;
+    expect(bundled.truncated).toBe(true);
+    expect(bundled.text).toBe('run i');
+    expect(bundled.segments).toBeNull();
+  });
+
   // Mutation: carry the payload always. Every terminal reading of a long
   // session would then hold a second copy of every part it already printed.
   it('carries no payload unless it was asked for', () => {

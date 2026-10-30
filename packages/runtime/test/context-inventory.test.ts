@@ -28,6 +28,7 @@ import {
   type InventoryRun, type NamedSource, type SeatInventory,
 } from '../src/context-inventory.js';
 import { ITERATION_PROMPT_SEAM } from '../src/shim.js';
+import { ITERATION_PROMPT_OPENING } from '../src/summon-trace.js';
 
 let dir: string;
 let savedCodex: string | undefined;
@@ -49,6 +50,11 @@ afterEach(() => {
 });
 
 const sha256 = (text: string): string => createHash('sha256').update(text, 'utf8').digest('hex');
+
+/** One message of a call: its text, or the content blocks it bundled — a
+ *  string block for text, an object for a block the host wrote some other way
+ *  (a tool result, an image). */
+type Blocks = string | (string | Record<string, unknown>)[];
 const write = (name: string, entries: unknown[]): string => {
   const path = join(dir, name);
   writeFileSync(path, entries.map((e) => JSON.stringify(e)).join('\n') + '\n');
@@ -63,7 +69,7 @@ const write = (name: string, entries: unknown[]): string => {
  *  asserts about structure. Attribution is about content, so these cases need
  *  to put a known instruction file inside a known bundle, which means writing
  *  the bytes here. The shape is the fixture's; only the text differs. */
-const claudeWith = (over: { system: string[]; calls: (string | string[])[][]; session?: string; tools?: string[]; laterTools?: string[] }): unknown[] => {
+const claudeWith = (over: { system: string[]; calls: Blocks[][]; session?: string; tools?: string[]; laterTools?: string[] }): unknown[] => {
   const sessionId = over.session ?? 'aaaaaaaa-1111-2222-3333-444444444444';
   const texts = over.calls.flat();
   const shape = {
@@ -76,10 +82,12 @@ const claudeWith = (over: { system: string[]; calls: (string | string[])[][]; se
   // A message is one content block where the call named a string, and SEVERAL
   // where it named an array — which is how claude really delivers a first
   // call: the host's reminder, the repository instruction file and the
-  // launcher's prompt as three blocks of one part.
+  // launcher's prompt as three blocks of one part. A block given as an object
+  // is passed through as the host wrote it, which is how a part carries
+  // something other than text.
   const blobs = texts.map((text, i) => ({
     type: 'api-request-blob', sessionId, hash: `m${i}`,
-    message: { role: 'user', content: (Array.isArray(text) ? text : [text]).map((t) => ({ type: 'text', text: t })) },
+    message: { role: 'user', content: (Array.isArray(text) ? text : [text]).map((t) => (typeof t === 'string' ? { type: 'text', text: t } : t)) },
   }));
   const requests: unknown[] = [];
   let held = 0;
@@ -890,6 +898,66 @@ describe('whose content it is, how it got here, and which audit category that ma
     // Three blocks, three hashes, none of them the item's: a folded row claims
     // no version rather than the first piece's.
     expect(reminders.versions).toEqual([]);
+  });
+
+  // Mutation: drop the truncation test from the split — `partSeams`' own
+  // `p.truncated` and `segmentsFor`'s together, because each alone is covered
+  // by the other and only the pair changes an answer here (the reader's own
+  // half is pinned in context-query.test.ts). A later part is read under a
+  // finite bound, so a bundle can arrive clipped; split anyway, its pieces are
+  // classified and containment-matched as though each had been seen whole, and
+  // a file that happens to sit before the cut is reported as delivered on the
+  // strength of a read that stopped short of it.
+  it('reads a clipped later part as one chunk, naming nothing it cannot see the end of', () => {
+    const file = 'the repository instruction file, long enough to be attributed on its own\n'.repeat(4);
+    // Past the bound later parts are read under, so the part arrives clipped.
+    const reminder = `<system-reminder>\n${'the host reminder, repeated past the bound a later part is read under\n'.repeat(1000)}</system-reminder>`;
+    const prompt = `${ITERATION_PROMPT_OPENING} the queue is the work. Loop iteration 7 for agent 'mason'.`;
+    const seat = only(inventory([
+      run({ launch_id: 'L1', record: write('clipped.jsonl', claudeWith({ system: ['preamble'], calls: [['the first ask'], [[reminder, file, prompt]]] })) }),
+    ], { named: { mason: source('/tmp/seat/CLAUDE.md', file) } }));
+
+    expect(seat.items.filter((i) => i.key.includes('CLAUDE.md'))).toEqual([]);
+    expect(seat.items.filter((i) => i.label.includes('the run instruction the launcher supplied'))).toEqual([]);
+    // Accounted for all the same, as the one thing a clipped bundle can
+    // honestly be read as: whatever its text opens with.
+    expect(item(seat, 'harness system reminders').bytes!.max).toBeGreaterThan(0);
+  });
+
+  // Mutation: classify each piece with the PART's type list rather than its
+  // own. A claude user part carries a tool result and the host's or the
+  // launcher's text together, and `tool-output` is tested on the type list
+  // where `task-prompt` is tested on the text — so handing every piece the
+  // part's types reads our own iteration prompt as tool traffic, which is
+  // residue rather than an item, and loses the highest-control input there is
+  // out of the categories entirely.
+  it('classifies a piece by its own block type, so a prompt bundled with a tool result is not read as tool traffic', () => {
+    const result = { type: 'tool_result', tool_use_id: 't1', is_error: false, content: [{ type: 'text', text: 'total 0' }] };
+    const prompt = `${ITERATION_PROMPT_OPENING} the queue is the work. Loop iteration 9 for agent 'mason'.`;
+    const seat = only(inventory([
+      run({ launch_id: 'L1', record: write('mixed.jsonl', claudeWith({ system: ['preamble'], calls: [['the first ask'], [[result, prompt]]] })) }),
+    ]));
+
+    const launcher = item(seat, 'the run instruction the launcher supplied');
+    expect(launcher).toMatchObject({ supplier: 'us', supplier_basis: 'launcher_shape', entry: 'launcher_prompt', categories: ['4b'] });
+    // Its own block's size, which is also what says the result's bytes are not
+    // in this row: they are the run's own traffic and belong in the residue.
+    expect(launcher.bytes!.max).toBe(Buffer.byteLength(JSON.stringify({ type: 'text', text: prompt }), 'utf8'));
+  });
+
+  // Mutation: drop the legacy branch of the `task-prompt` shape. A record is
+  // not rewritten when the prompt is, so every run recorded before the current
+  // opening was composed would read as a chunk nothing named — our own writing
+  // in `unknown` instead of category 1, and silently, since the row still
+  // exists under another label.
+  it('recognises the opening the launcher composed before the current one', () => {
+    const seat = only(inventory([
+      run({ launch_id: 'L1', record: write('legacy.jsonl', claudeWith({ system: ['preamble'], calls: [["Loop iteration 12 for agent 'mason'. Working directory: /tmp/seat"]] })) }),
+    ]));
+
+    expect(item(seat, 'the run instruction the launcher supplied')).toMatchObject({
+      supplier: 'us', supplier_basis: 'launcher_shape', entry: 'launcher_prompt', categories: ['1'],
+    });
   });
 
   // Mutation: give every basis a control line, or leave the field off. A

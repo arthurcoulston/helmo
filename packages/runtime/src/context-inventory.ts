@@ -1242,7 +1242,15 @@ const foldChunkRows = (rows: Seen[]): Seen[] => {
  *  `bytes` is in, the way `claudeAcquired` already apportions a batch of
  *  results in one message. They sum to a little under the part — its array
  *  framing, its envelope — and that difference is left uncounted rather than
- *  smeared across the pieces to make a total balance. */
+ *  smeared across the pieces to make a total balance.
+ *
+ *  The truncation test below is redundant with `segmentsFor`'s, and measurably
+ *  so: dropped on its own, every test in this module stays green, because a
+ *  clipped part arrives with `segments: null` and the fallback below makes one
+ *  block of it (H-3850). It is kept as a declaration — this function splits
+ *  nothing it was not handed whole — and the behaviour is pinned where it is
+ *  decided, in context-query. Only the pair changes an answer here, which is
+ *  what the clipped-bundle case is mutated against. */
 const partSeams = (p: QueryPart): { type: string; text: string; bytes: number }[] | null => {
   if (p.origin === 'unreadable' || p.truncated) return null;
   const blocks = p.segments !== null
@@ -1282,9 +1290,13 @@ const classifyPart = (p: QueryPart, named: NamedSource[], ordinal: number, harne
   const rows: Seen[] = [];
   let residue_bytes = 0;
   for (const s of pieces) {
-    // The PIECE's type, not the part's: a part holding a result and a reminder
-    // has both in `p.types`, and handing that list to each piece would read
-    // the reminder as tool traffic.
+    // The PIECE's type, not the part's: a part holding a result and the
+    // launcher's prompt has both in `p.types`, and handing that list to each
+    // piece reads OUR PROMPT as tool traffic — `tool-output` is tested on the
+    // type list, `task-prompt` on the text, and the first match wins. A
+    // reminder in such a part survives the confusion only because its own
+    // shape sits above `tool-output` in the table; anything decided below it
+    // does not, which is the reachable loss (H-3850).
     const r = classify('message', s.text, s.bytes, p.role, [s.type], named, true, ordinal, p.via, false, harness);
     rows.push(...r.seen);
     residue_bytes += r.residue_bytes;

@@ -1192,18 +1192,26 @@ describe('the thread segment a continuation picks up from', () => {
     // Its own deltas are change points, not a configuration: the segment
     // carries `environments` and nothing else.
     expect(a.gaps.join(' ')).toContain('1 world_state deltas were recorded before this turn (keys: environments)');
+    // The keys of the state in force that no block or tool row decomposes are
+    // named from the state actually used — the inherited one.
+    expect(a.gaps.join(' ')).toContain("the host's full state for this call holds 1 more (permissions)");
   });
 
   // Mutation: prefer the inherited state over the record's own. A segment that
   // wrote its own full world_state was run under THAT, and the earlier
   // segment's is what the host replaced.
   it('prefers the configuration this record wrote over the one it was handed', () => {
-    const a = at(writeThread().child, 0);
+    const { child } = writeThread();
+    const a = at(child, 0);
 
     expect(a.instructions!.blocks.map((b) => b.text)).toEqual(['You are Codex.', 'the repository rules']);
     expect(a.instructions!.tools.map((t) => t.name)).toEqual(['clock']);
     expect(a.instructions!.inherited).toBeNull();
     expect(a.gaps.join(' ')).not.toContain("the thread's earlier segment — the configuration");
+    // And `--find` searches the same configuration the calls ran under: the
+    // earlier segment's blocks were in force for no call of this record, so a
+    // needle only they hold is not a hit here.
+    expect(find(child, 'only the earlier segment was given').hits).toHaveLength(0);
   });
 
   // Mutation: do not search the carried-in configuration. A needle in the

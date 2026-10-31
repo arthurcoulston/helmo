@@ -334,7 +334,10 @@ export function codexThreadParentRecord(over: { thread?: string; compacted?: boo
       // right thing from the wrong file would be indistinguishable if both
       // held the same text.
       type: 'world_state', timestamp: '2026-10-28T14:27:11.000Z',
-      payload: { full: true, state: { agents_md: { directory: '/tmp/seat', text: "the earlier segment's repository rules" }, tools: { clock: 'a clock', ledger: 'the tool only the earlier segment was given' } } },
+      // `permissions` is one of the sixteen keys of twenty that no block or
+      // tool row decomposes: a reading of an inherited state has to name them
+      // from the state it actually used.
+      payload: { full: true, state: { agents_md: { directory: '/tmp/seat', text: "the earlier segment's repository rules" }, tools: { clock: 'a clock', ledger: 'the tool only the earlier segment was given' }, permissions: { approval: 'on-request' } } },
     },
     { type: 'turn_context', timestamp: '2026-10-28T14:27:12.000Z', payload: { turn_id: 'turn-0', model: 'gpt-6-astra' } },
     item('earlier ask 1', '2026-10-28T14:27:13.000Z'),

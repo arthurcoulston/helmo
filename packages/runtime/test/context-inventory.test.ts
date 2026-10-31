@@ -700,6 +700,28 @@ describe('what the population FETCHED, not only what it was configured with', ()
     expect(mergeAcquired([mine, theirs]).by_kind.find((k) => k.kind === 'file')!.singletons).toEqual({ sources: 0, bytes: 0 });
   });
 
+  // Mutation: drop `singletonsOf`'s own kind filter. Every other singleton
+  // case above holds ONE kind, so the filter is free to vanish in them (ward's
+  // W2 on H-3858) — and a window with two kinds in it then reports each row's
+  // tail as the whole window's. The figure exists to say how far to trust THIS
+  // kind's source count, so a file read in every run would carry a tail
+  // because some query somewhere was asked once.
+  it('counts a kind\'s tail from its own sources, not from every kind in the window', () => {
+    const seat = only(inventory([
+      fetchingRun('L1', [[read('the rules'), query('R-56', 'once-only')]]),
+      fetchingRun('L2', [[read('the rules')]]),
+    ], { acquired: true }));
+    const file = seat.acquired!.by_kind.find((k) => k.kind === 'file')!;
+    const tool = seat.acquired!.by_kind.find((k) => k.kind === 'tool')!;
+
+    // The file was read in both runs, so its one source is a grouping and the
+    // file row has no tail at all; the query was asked once and is the whole
+    // of the tool row's.
+    expect(file).toMatchObject({ inputs: 2, sources: 1 });
+    expect(file.singletons).toEqual({ sources: 0, bytes: 0 });
+    expect(tool.singletons).toEqual({ sources: 1, bytes: resultBytes(0, 1, 'once-only') });
+  });
+
   // Mutation: keep both figures in --json and out of the reading. The whole
   // point of either is that an operator reads the kind row and knows how far
   // to trust its source count, without opening the export.
@@ -943,6 +965,33 @@ describe('whose content it is, how it got here, and which audit category that ma
     // Its own block's size, which is also what says the result's bytes are not
     // in this row: they are the run's own traffic and belong in the residue.
     expect(launcher.bytes!.max).toBe(Buffer.byteLength(JSON.stringify({ type: 'text', text: prompt }), 'utf8'));
+  });
+
+  // Mutation: remove the `tool-output` shape from the table. Nothing pinned
+  // that a result lands in a run's residue rather than getting an item (ward's
+  // W5 on H-3858), and for a part that can be cut at its seams nothing needs
+  // to: each piece is classified by its own block type, and a result with no
+  // shape falls to the message-channel residue either way. The reachable case
+  // is a part that CANNOT be cut — clipped past the bound a later part is read
+  // under — where the type list is the only thing left to read it by. Without
+  // it, the first thing the clipped text happens to open with wins, and the
+  // one shape below `tool-output` is our own iteration prompt: a run's tool
+  // traffic would be reported as the launcher's input, at the whole clipped
+  // part's size, which is the highest-control row in the report inflated by a
+  // result nobody can see the end of.
+  it('reads a clipped part carrying a result as tool traffic, whatever its first block opened with', () => {
+    const prompt = `${ITERATION_PROMPT_OPENING} the queue is the work. Loop iteration 31 for agent 'mason'.`;
+    // Past the bound, so the part arrives clipped and has no legible seam.
+    const result = { type: 'tool_result', tool_use_id: 't1', content: 'the record this run fetched, line after line\n'.repeat(2000) };
+    const seat = only(inventory([
+      run({ launch_id: 'L1', record: write('clipped-result.jsonl', claudeWith({ system: ['preamble'], calls: [['the first ask'], [[prompt, result]]] })) }),
+    ]));
+
+    expect(seat.items.filter((i) => i.label.includes('the run instruction the launcher supplied'))).toEqual([]);
+    // Two chunks of this run are its own material: the first ask and the
+    // clipped part, whose bytes are the result's and then some.
+    expect(seat.accounts[0]!.chunks.residue).toBe(2);
+    expect(seat.accounts[0]!.bytes.residue).toBeGreaterThan(Buffer.byteLength(JSON.stringify(result), 'utf8'));
   });
 
   // Mutation: drop the legacy branch of the `task-prompt` shape. A record is

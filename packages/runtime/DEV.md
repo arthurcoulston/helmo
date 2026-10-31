@@ -844,13 +844,20 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   earlier segment as where that inventory is rather than leaving an operator
   looking for something already readable. A compaction not ending this carry
   is now pinned on `--at` past the boundary and not only on `--find`'s span,
-  which is the reading an operator actually asks for.
+  which is the reading an operator actually asks for — and the pin is FIXTURE
+  evidence only, for a structural reason worth knowing: on every real
+  continuation segment that compacted, the host writes its own full
+  `world_state` at the SAME item index as the boundary (262 and 500 on
+  2026-10-26, 0 on 2026-10-28, 111 on 2026-10-30), so no real call has ever
+  read an inherited configuration past one. The one segment with no full state
+  of its own records no boundary at all.
   The host's own COMPLETENESS MARK on a message is read, reported and bounded.
   `metadata.retained_source` sits on the rollout ENTRY, beside the payload, and
   `codexItem` was handed the payload alone — so the whole of a response item's
   entry metadata was dropped at parse time and no reader could name a field in
-  it, while 3,698 items across 892 of the 962 records here carry a mark saying
-  the host's retained copy is not the whole message. `CodexItem.retained` holds
+  it, while 3,705 items of the 14,773 marked here carry a mark saying the host's
+  retained copy is not the whole message, across 892 of 962 records. The store
+  grows daily and these counts are as of 2026-10-31. `CodexItem.retained` holds
   it and `QueryPart.retained_source` reports it, with the revision so an
   operator can match a slot to the mark rather than to a position; `--at`
   prints `retained_source.complete: false` on the slot and says once in `gaps`
@@ -862,7 +869,8 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   11 marked incomplete across 6 boundaries, the two copies are byte-identical,
   image data and all. So nothing is discounted by the mark. Only the host's
   literal `false` is counted: a mark written without the field reads `complete:
-  null`, and an item reached by a route that has no entry of its own —
+  null` — fixture evidence only, since every one of the real marks here carries
+  the field — and an item reached by a route that has no entry of its own —
   a boundary's `replacement_history`, where not one of the 2,093 items here
   carries a `retained_source` — reads `null` for the whole mark, which says
   "the host wrote none where this was read" and never "the host marked it

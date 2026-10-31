@@ -367,7 +367,14 @@ describe("the host's own mark on its retained copy", () => {
     expect(gap).toContain('byte-identical');
     // And it is NOT a caveat: a part is not discounted by it.
     expect(a.parts[1]!.caveat).toBeNull();
-    expect(renderContextAt({ ...a, source: a.source as never }, 0)).toContain('retained_source.complete: false');
+    // On the SLOT's own line, which is the assertion the gap line's own
+    // wording would otherwise satisfy: a mutation that dropped the per-slot
+    // marker left `toContain` green against the gap text (M10, first pass).
+    const slotLine = renderContextAt({ ...a, source: a.source as never }, 0)
+      .split('\n').find((l) => l.startsWith('  #1 '));
+    expect(slotLine).toContain('retained_source.complete: false');
+    expect(renderContextAt({ ...a, source: a.source as never }, 0)
+      .split('\n').find((l) => l.startsWith('  #0 '))).not.toContain('retained_source');
   });
 
   // Mutation: carry the mark onto a replacement item from its twin elsewhere

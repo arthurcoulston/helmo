@@ -1010,9 +1010,11 @@ describe('the thread segment a continuation picks up from', () => {
     /** The child records no full world_state of its own, which is the shape of
      *  1 of the 3 real continuation segments here. */
     withoutConfig?: boolean;
+    /** The earlier segment rewrites its whole configuration before the cut. */
+    reconfigured?: boolean;
   } = {}): { child: string; parent: string; offset: number; cut: number } => {
     const thread = over.thread ?? '01a18468-eb66-7892-841e-3bc876b47680';
-    const { entries, cut } = codexThreadParentRecord({ thread, compacted: over.compacted, continues: over.continues });
+    const { entries, cut } = codexThreadParentRecord({ thread, compacted: over.compacted, reconfigured: over.reconfigured, continues: over.continues });
     const parent = write(`rollout-2026-10-28T14-27-10-${thread}.jsonl`, entries);
     if (over.twice === true) write(`rollout-2026-10-28T09-00-00-${thread}.jsonl`, entries);
     const offset = Buffer.byteLength(entries.slice(0, cut).map((e) => JSON.stringify(e)).join('\n') + '\n', 'utf8');
@@ -1195,6 +1197,20 @@ describe('the thread segment a continuation picks up from', () => {
     // The keys of the state in force that no block or tool row decomposes are
     // named from the state actually used — the inherited one.
     expect(a.gaps.join(' ')).toContain("the host's full state for this call holds 1 more (permissions)");
+  });
+
+  // Mutation: carry the earlier segment's FIRST full state. The host rewrites
+  // the whole state when the configuration moves, so what a continuation
+  // segment was handed is the last one before the cut — and a parent's own
+  // later states, written after the resume, are outside the prefix the cut
+  // defines and cannot reach a call that preceded them.
+  it('carries the configuration in force at the cut, not the earlier segment first', () => {
+    const { child, parent } = writeThread({ withoutConfig: true, reconfigured: true });
+    const a = at(child, 0);
+
+    expect(a.instructions!.blocks.map((b) => b.text)).toEqual(['You are Codex.', 'the rules the earlier segment ended under']);
+    expect(a.instructions!.tools.map((t) => t.name)).toEqual(['clock', 'ledger', 'almanac']);
+    expect(a.instructions!.inherited).toBe(parent);
   });
 
   // Mutation: prefer the inherited state over the record's own. A segment that

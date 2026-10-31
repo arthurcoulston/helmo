@@ -311,7 +311,7 @@ export function claudeTranscriptRecord(over: { retained?: unknown[]; sidechain?:
  *
  *  `continues` makes this segment a continuation in its turn, for a thread read
  *  through more than one hop. */
-export function codexThreadParentRecord(over: { thread?: string; compacted?: boolean; continues?: { thread_id: string; entries_before: number; byte_offset: number } } = {}): { entries: unknown[]; cut: number } {
+export function codexThreadParentRecord(over: { thread?: string; compacted?: boolean; reconfigured?: boolean; continues?: { thread_id: string; entries_before: number; byte_offset: number } } = {}): { entries: unknown[]; cut: number } {
   const thread = over.thread ?? '01a18468-eb66-7892-841e-3bc876b47680';
   const item = (text: string, at: string) => ({
     type: 'response_item', timestamp: at,
@@ -355,6 +355,16 @@ export function codexThreadParentRecord(over: { thread?: string; compacted?: boo
         }]
       : []),
     item('earlier ask 3', '2026-10-28T14:27:17.000Z'),
+    // A SECOND full state before the cut: the host rewrites the whole state
+    // when the configuration moves, and the one a continuation segment is
+    // handed is the last before the cut and not the segment's first. Two of
+    // the three real threads' parents hold more than one.
+    ...(over.reconfigured === true
+      ? [{
+          type: 'world_state', timestamp: '2026-10-28T14:27:17.500Z',
+          payload: { full: true, state: { agents_md: { directory: '/tmp/seat', text: 'the rules the earlier segment ended under' }, tools: { clock: 'a clock', ledger: 'the tool only the earlier segment was given', almanac: 'added before the cut' }, permissions: { approval: 'never' } } },
+        }]
+      : []),
     { type: 'token_usage_record', timestamp: '2026-10-28T14:27:18.000Z', payload: { response_id: 'early_1', turn_id: 'turn-0', usage: { input_tokens: 120, cached_input_tokens: 0 } } },
   ];
   // Written after the cut: the aborted turn every real parent ends with.

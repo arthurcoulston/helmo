@@ -968,17 +968,22 @@ describe('whose content it is, how it got here, and which audit category that ma
   });
 
   // Mutation: remove the `tool-output` shape from the table. Nothing pinned
-  // that a result lands in a run's residue rather than getting an item (ward's
-  // W5 on H-3858), and for a part that can be cut at its seams nothing needs
-  // to: each piece is classified by its own block type, and a result with no
-  // shape falls to the message-channel residue either way. The reachable case
-  // is a part that CANNOT be cut — clipped past the bound a later part is read
-  // under — where the type list is the only thing left to read it by. Without
-  // it, the first thing the clipped text happens to open with wins, and the
-  // one shape below `tool-output` is our own iteration prompt: a run's tool
-  // traffic would be reported as the launcher's input, at the whole clipped
-  // part's size, which is the highest-control row in the report inflated by a
-  // result nobody can see the end of.
+  // that a result lands in a run's residue rather than getting an item of its
+  // own (ward's W5 on H-3858), and the shape turns out to be reachable in
+  // exactly one way, which is why removing it survived 139 cases. A result is
+  // recognised by its TYPE LIST; everything the table decides below it is
+  // recognised by TEXT, and today that is only our own iteration prompt. So
+  // the shape changes an answer only where a result's text can open the way
+  // the prompt does, and two things otherwise prevent that: a claude
+  // `tool_result` block is rendered `[tool_result <id>] …` whether it is one
+  // piece of a bundle or a part on its own, and a codex output item carries no
+  // role, where `task-prompt` is gated on `user` or `developer`. What is left
+  // is a claude part clipped past the bound a later part is read under: no
+  // legible seam, so the type list is all that is left to read it by, and the
+  // text it opens with is whatever block came first. Without the shape that
+  // part is reported as the launcher's input at the WHOLE part's size — the
+  // highest-control row in the report, inflated by a result nobody can see
+  // the end of, and claiming a category for it.
   it('reads a clipped part carrying a result as tool traffic, whatever its first block opened with', () => {
     const prompt = `${ITERATION_PROMPT_OPENING} the queue is the work. Loop iteration 31 for agent 'mason'.`;
     // Past the bound, so the part arrives clipped and has no legible seam.

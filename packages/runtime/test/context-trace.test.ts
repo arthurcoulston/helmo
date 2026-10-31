@@ -14,7 +14,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { contextTrace, findCodexRecord, findCodexRecords, harnessOf, TRACE_CATEGORIES, type ContextTrace } from '../src/context-trace.js';
 import { claudeRecord, claudeTranscriptRecord, codexCompactionsRecord, codexRecord, codexThreadParentRecord } from './fixtures/host-records.js';
 
@@ -385,6 +385,75 @@ describe('finding a codex rollout by session id', () => {
     // Still partial: the additions counted here are this segment's own.
     expect(stateOf(child, 'additions')).toBe('partial');
     expect(reasonOf(child, 'additions')).toContain(`That record is ${parent}`);
+  });
+
+  // Mutation: say only "not in this record". A continuation segment can hold
+  // no full world_state at all, and the inventory its calls ran under is then
+  // the earlier segment's — readable, and the coverage line sent an operator
+  // looking for something a hop away.
+  it('names the earlier segment as where the tool inventory of a continuation segment is', () => {
+    const thread = '01a18468-eb66-7892-841e-3bc876b47680';
+    const { entries, cut } = codexThreadParentRecord({ thread });
+    const parent = write(`rollout-2026-10-28T14-27-10-${thread}.jsonl`, entries);
+    const offset = Buffer.byteLength(entries.slice(0, cut).map((e) => JSON.stringify(e)).join('\n') + '\n', 'utf8');
+    const child = trace(write(
+      `rollout-2026-10-28T21-04-49-${thread}_01a185d4-f73f-7db2-a4db-63438f35543e.jsonl`,
+      codexCompactionsRecord({ continuesThread: { thread_id: thread, entries_before: cut, byte_offset: offset }, withoutConfig: true }),
+    ));
+
+    expect(stateOf(child, 'tools')).toBe('unavailable');
+    expect(reasonOf(child, 'tools')).toContain(`the last full state before the cut is in ${parent}`);
+  });
+
+  // Mutation: dedup the candidates on their raw strings and resolve only
+  // `self`, as before. The siblings beside the record are built from
+  // `dirname(recordPath)` and keep its spelling, so a relative --record put
+  // the one parent in the list twice — `X.jsonl` and `/abs/X.jsonl` — and two
+  // spellings of one file were refused as two records holding the cut. Every
+  // operator who cd'd into the store lost the reading (ward on H-3780,
+  // residual 1).
+  it('resolves the earlier segment when the record is named by a relative path', () => {
+    const home = join(dir, 'codex');
+    const day = join(home, 'sessions', '2026', '10', '28');
+    mkdirSync(day, { recursive: true });
+    process.env['CODEX_HOME'] = home;
+    const thread = '01a18468-eb66-7892-841e-3bc876b47680';
+    const { entries, cut } = codexThreadParentRecord({ thread });
+    const parent = join(day, `rollout-2026-10-28T14-27-10-${thread}.jsonl`);
+    writeFileSync(parent, entries.map((e) => JSON.stringify(e)).join('\n') + '\n');
+    const offset = Buffer.byteLength(entries.slice(0, cut).map((e) => JSON.stringify(e)).join('\n') + '\n', 'utf8');
+    const childPath = join(day, `rollout-2026-10-28T21-04-49-${thread}_01a185d4-f73f-7db2-a4db-63438f35543e.jsonl`);
+    writeFileSync(childPath, codexCompactionsRecord({ continuesThread: { thread_id: thread, entries_before: cut, byte_offset: offset } })
+      .map((e) => JSON.stringify(e)).join('\n') + '\n');
+
+    // The same file, named the way an operator standing in the repository
+    // names it. The store walk finds the parent as well as the sibling scan,
+    // which is what put two spellings of it in one list.
+    const child = trace(relative(process.cwd(), childPath));
+
+    expect(child.identity.history_base?.record).toBe(parent);
+    expect(child.identity.history_base?.resolution).toContain(`resolved to ${parent}`);
+  });
+
+  // Mutation: look the siblings up without gating the id. `findCodexRecords`
+  // refuses a non-UUID id, but the scan beside the record matches by
+  // `includes()`, so a `history_base.thread_id` of `rollout` named every
+  // .jsonl in the directory and read each one to the stated offset (ward on
+  // H-3780, residual 2).
+  it('refuses a history base whose thread is not a session id, without reading the directory', () => {
+    const thread = '01a18468-eb66-7892-841e-3bc876b47680';
+    const { entries, cut } = codexThreadParentRecord({ thread });
+    const parent = write(`rollout-2026-10-28T14-27-10-${thread}.jsonl`, entries);
+    const offset = Buffer.byteLength(entries.slice(0, cut).map((e) => JSON.stringify(e)).join('\n') + '\n', 'utf8');
+    const child = trace(write(
+      `rollout-2026-10-28T21-04-49-${thread}_01a185d4-f73f-7db2-a4db-63438f35543e.jsonl`,
+      codexCompactionsRecord({ continuesThread: { thread_id: 'rollout', entries_before: cut, byte_offset: offset } }),
+    ));
+
+    expect(child.identity.history_base?.record).toBeNull();
+    expect(child.identity.history_base?.resolution).toContain('"rollout" as its thread, which is not a session id');
+    // Named, not spliced from the one file whose name matched the fragment.
+    expect(child.identity.history_base?.resolution).not.toContain(parent);
   });
 });
 

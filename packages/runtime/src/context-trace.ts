@@ -908,7 +908,13 @@ function codexTrace(entries: Record<string, unknown>[], source: TraceSource): Co
       ? state('instructions', 'unavailable', 'no base_instructions in session_meta: the host prompt this session was given is not in this record')
       : state('instructions', 'observed', `the host's own prompt verbatim (${baseInstructions.bytes}B), the repository AGENTS.md and the host skills body, each hashed; mode and permission instructions are present as the host's own hashes rather than text${deltas.length === 0 ? '' : `. ${deltas.length} partial world_state update(s) moved only ${[...new Set(deltas.flatMap((d) => d.keys))].join(', ')}, and are recorded as change points rather than read as configurations`}`),
     shapes.size === 0
-      ? state('tools', 'unavailable', 'no world_state entry, so the tool inventory this session was given is not in this record')
+      // A continuation segment can hold no FULL world_state at all — one of
+      // the three here does not — and the inventory its calls ran under is
+      // then the earlier segment's, which the read surface reports as the
+      // configuration in force. Unavailable in this record either way; where
+      // the hop resolved, saying only "not in this record" sends an operator
+      // looking for something already readable.
+      ? state('tools', 'unavailable', `no full world_state entry, so the tool inventory this session was given is not in this record${historyBase === null ? '' : historyBase.record === null ? `. It CONTINUES thread ${historyBase.thread_id ?? '(unnamed)'}, whose earlier segment would hold it, and that segment did not resolve here: ${historyBase.resolution}` : `. It CONTINUES thread ${historyBase.thread_id ?? '(unnamed)'}, and the last full state before the cut is in ${historyBase.record}, the earlier segment, which the read surface reports as the configuration in force for these calls`}`)
       : state('tools', 'partial', `${[...shapes.values()][0]?.tools.length ?? 0} tools named. Server descriptions are present as text; top-level tool schemas are present as the host's own hashes, so their sizes are not measurable from this record${additionalTools ? ', and an additional_tools item means the inventory changed mid-session' : ''}`),
     items === 0
       ? state('additions', 'unavailable', 'no response_item entries, so nothing says what was added during the session')
@@ -1151,6 +1157,16 @@ export function readCodexBaseSegment(
   if (base.thread_id === null) {
     return { why: 'the history_base names no thread id, so there is nothing to look the earlier record up by' };
   }
+  // A thread id or nothing. `findCodexRecords` refuses a non-UUID id, but the
+  // siblings beside the record are matched by `includes()`, so a crafted
+  // `history_base.thread_id` of `""` or `"rollout"` named every `.jsonl` in
+  // the directory and read each one to the stated offset — the cut keeps the
+  // content right, and the reading is still a bounded read per sibling for an
+  // id that cannot be a thread's (ward on H-3780, residual 2). Refused by
+  // name, like the null case above.
+  if (!UUID.test(base.thread_id)) {
+    return { why: `the history_base names ${JSON.stringify(base.thread_id)} as its thread, which is not a session id, so nothing is looked up by it: matched as a filename fragment it would name every rollout beside this record rather than one thread's segments` };
+  }
   if (base.byte_offset === null) {
     return { why: `the history_base for thread ${base.thread_id} carries no end_byte_offset, and the ordinal alone is not a cut: the earlier record runs past it, so ordinals at and after ${base.entries_before} exist in both files with different content` };
   }
@@ -1158,8 +1174,15 @@ export function readCodexBaseSegment(
     return { why: `the cut is at byte ${base.byte_offset} of the earlier record, past the ${TRACE_BYTE_CEILING}-byte ceiling this reads to, so its prefix is not read` };
   }
   const self = resolve(recordPath);
-  const candidates = [...new Set([...codexSiblings(recordPath, base.thread_id), ...findCodexRecords(base.thread_id)])]
-    .filter((p) => resolve(p) !== self);
+  // Resolved BEFORE the dedup, not after. The siblings are built from
+  // `dirname(recordPath)` and keep its spelling, so a record passed as a
+  // relative path put the same parent file in the list twice — once as
+  // `X.jsonl` and once as `/abs/X.jsonl` from the store walk — and two
+  // spellings of one file read as two records holding the cut, which is
+  // refused. Every operator who cd'd into the store lost the reading (ward on
+  // H-3780, residual 1).
+  const candidates = [...new Set([...codexSiblings(recordPath, base.thread_id), ...findCodexRecords(base.thread_id)].map((p) => resolve(p)))]
+    .filter((p) => p !== self);
   if (candidates.length === 0) {
     return { why: `no other rollout under ${join(codexHome(), 'sessions')} or beside this record names thread ${base.thread_id}. The host store is the host's: it is not versioned with our releases and nothing stops it being pruned` };
   }

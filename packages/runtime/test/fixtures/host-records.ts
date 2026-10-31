@@ -328,8 +328,13 @@ export function codexThreadParentRecord(over: { thread?: string; compacted?: boo
       },
     },
     {
+      // The configuration the segment hands on, and deliberately NOT the same
+      // as the child's own: a continuation segment that records no full state
+      // of its own was run under this one, and a reading that inherited the
+      // right thing from the wrong file would be indistinguishable if both
+      // held the same text.
       type: 'world_state', timestamp: '2026-10-28T14:27:11.000Z',
-      payload: { full: true, state: { agents_md: { directory: '/tmp/seat', text: 'the repository rules' }, tools: { clock: 'a clock' } } },
+      payload: { full: true, state: { agents_md: { directory: '/tmp/seat', text: "the earlier segment's repository rules" }, tools: { clock: 'a clock', ledger: 'the tool only the earlier segment was given' } } },
     },
     { type: 'turn_context', timestamp: '2026-10-28T14:27:12.000Z', payload: { turn_id: 'turn-0', model: 'gpt-6-astra' } },
     item('earlier ask 1', '2026-10-28T14:27:13.000Z'),
@@ -358,7 +363,7 @@ export function codexThreadParentRecord(over: { thread?: string; compacted?: boo
   return { entries: [...before, ...after], cut: before.length };
 }
 
-export function codexCompactionsRecord(over: { opensCompacted?: boolean; continuesThread?: boolean | { thread_id: string; entries_before: number; byte_offset: number }; emptyBase?: boolean; withoutBoundary?: boolean } = {}): unknown[] {
+export function codexCompactionsRecord(over: { opensCompacted?: boolean; continuesThread?: boolean | { thread_id: string; entries_before: number; byte_offset: number }; emptyBase?: boolean; withoutBoundary?: boolean; withoutConfig?: boolean } = {}): unknown[] {
   // A rollout the host wrote as a CONTINUATION of a thread opens at the
   // history base's own ordinal rather than at 0, which is how the three such
   // records on this machine are shaped.
@@ -413,10 +418,19 @@ export function codexCompactionsRecord(over: { opensCompacted?: boolean; continu
             : {}),
       },
     },
-    {
-      type: 'world_state', timestamp: '2026-10-22T12:00:01.000Z', ordinal: next(),
-      payload: { full: true, state: { agents_md: { directory: '/tmp/seat', text: 'the repository rules' }, tools: { clock: 'a clock' } } },
-    },
+    // A continuation segment need record no full state of its own: the host
+    // wrote one in the earlier segment and this file carries only its deltas.
+    // That is the shape of 1 of the 3 real continuation segments here, and the
+    // reading of it said the call had no instructions at all.
+    over.withoutConfig === true
+      ? {
+          type: 'world_state', timestamp: '2026-10-22T12:00:01.000Z', ordinal: next(),
+          payload: { full: false, state: { environments: { shell: 'zsh' } } },
+        }
+      : {
+          type: 'world_state', timestamp: '2026-10-22T12:00:01.000Z', ordinal: next(),
+          payload: { full: true, state: { agents_md: { directory: '/tmp/seat', text: 'the repository rules' }, tools: { clock: 'a clock' } } },
+        },
     { type: 'turn_context', timestamp: '2026-10-22T12:00:02.000Z', ordinal: next(), payload: { turn_id: 'turn-1', model: 'gpt-6-astra' } },
   ];
   // Calls and additions, and no boundary anywhere: on a continuation segment

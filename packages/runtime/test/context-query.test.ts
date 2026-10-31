@@ -1007,6 +1007,9 @@ describe('the thread segment a continuation picks up from', () => {
     /** Write the earlier segment twice, under two names that both carry the
      *  thread id. */
     twice?: boolean;
+    /** The child records no full world_state of its own, which is the shape of
+     *  1 of the 3 real continuation segments here. */
+    withoutConfig?: boolean;
   } = {}): { child: string; parent: string; offset: number; cut: number } => {
     const thread = over.thread ?? '01a18468-eb66-7892-841e-3bc876b47680';
     const { entries, cut } = codexThreadParentRecord({ thread, compacted: over.compacted, continues: over.continues });
@@ -1018,6 +1021,7 @@ describe('the thread segment a continuation picks up from', () => {
       codexCompactionsRecord({
         continuesThread: { thread_id: thread, entries_before: cut, byte_offset: offset + (over.offBy ?? 0) },
         withoutBoundary: over.withoutBoundary,
+        withoutConfig: over.withoutConfig,
       }),
     );
     return { child, parent, offset, cut };
@@ -1167,6 +1171,57 @@ describe('the thread segment a continuation picks up from', () => {
     expect(e.changes[0]!.added.map((p) => p.text)).toEqual(['ask 1']);
     expect(e.changes[0]!.notable[0]).toContain('the 3 items the thread held at the cut are listed as the first parts of each of those calls');
     expect(e.changes[0]!.notable[0]).toContain('They are not listed as additions on this row or on any row until then');
+  });
+
+  // The other half of a carried-in context: the configuration.
+  //
+  // Mutation: return null where the record holds no full world_state of its
+  // own, as before. `--at 0` then reports `instructions: none in this record
+  // for this call` for a call whose instruction blocks and tool inventory are
+  // one hop away — the reading of the real 2026-10-25T15-37-49 segment, which
+  // records no `world_state full: true` at all.
+  it('reads the configuration a continuation segment was given from the earlier segment', () => {
+    const { child, parent } = writeThread({ withoutConfig: true });
+    const a = at(child, 0);
+
+    expect(a.instructions!.blocks.map((b) => b.text)).toEqual(['You are Codex.', "the earlier segment's repository rules"]);
+    expect(a.instructions!.tools.map((t) => t.name)).toEqual(['clock', 'ledger']);
+    expect(a.instructions!.inherited).toBe(parent);
+    expect(renderContextAt({ ...a, source: a.source as never }, 0)).toContain(`carried in from ${parent}`);
+    expect(a.gaps.join(' ')).toContain(`the instructions and tool inventory above are the last full state of ${parent}, the thread's earlier segment`);
+    // Its own deltas are change points, not a configuration: the segment
+    // carries `environments` and nothing else.
+    expect(a.gaps.join(' ')).toContain('1 world_state deltas were recorded before this turn (keys: environments)');
+  });
+
+  // Mutation: prefer the inherited state over the record's own. A segment that
+  // wrote its own full world_state was run under THAT, and the earlier
+  // segment's is what the host replaced.
+  it('prefers the configuration this record wrote over the one it was handed', () => {
+    const a = at(writeThread().child, 0);
+
+    expect(a.instructions!.blocks.map((b) => b.text)).toEqual(['You are Codex.', 'the repository rules']);
+    expect(a.instructions!.tools.map((t) => t.name)).toEqual(['clock']);
+    expect(a.instructions!.inherited).toBeNull();
+    expect(a.gaps.join(' ')).not.toContain("the thread's earlier segment — the configuration");
+  });
+
+  // Mutation: do not search the carried-in configuration. A needle in the
+  // instruction blocks or the tool inventory `--at` reports for every call
+  // here was unfindable, and `searched 0 instruction blocks` read as a record
+  // configured by nothing.
+  it('finds a needle in the configuration it carried in', () => {
+    const { child, parent } = writeThread({ withoutConfig: true });
+    const f = find(child, 'only the earlier segment was given');
+
+    expect(f.hits).toHaveLength(1);
+    // In force for every call of this record: it never writes a full state of
+    // its own, and the boundary in it replaced the item list rather than the
+    // configuration — unlike the carried-in ITEMS, whose span ends there.
+    expect(f.hits[0]).toMatchObject({ where: 'tool', ref: `ledger, carried in from ${parent}`, first_invocation: 0, last_invocation: 5, invocations: 6 });
+    expect(find(child, "the earlier segment's repository rules").hits[0]).toMatchObject({ where: 'instructions', origin: 'configured' });
+    expect(f.searched.instructions).toBe(2);
+    expect(f.searched.tools).toBe(2);
   });
 });
 

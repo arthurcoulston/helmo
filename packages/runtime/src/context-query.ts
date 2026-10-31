@@ -155,6 +155,12 @@ export interface QueryInstructions {
    *  holds `system` and `tools` and nothing else, so the decomposition above
    *  is the whole of it. Carried only when the payload was asked for. */
   state: unknown | null;
+  /** The record this configuration was read from, where it is NOT the one
+   *  being queried: a codex segment that CONTINUES a thread can record no full
+   *  `world_state` of its own, and the instruction blocks and tool inventory
+   *  its calls ran under are then the earlier segment's. Null on the ordinary
+   *  case, which is the record's own. */
+  inherited: string | null;
 }
 
 export interface ContextAt {
@@ -520,6 +526,9 @@ function claudeInstructions(ix: ClaudeIndex, ref: string | null, view: View): Qu
     bytes: shape.system_bytes,
     tools_bytes: shape.tools_bytes,
     state: null,
+    // A claude transcript is one session's own file and names no earlier
+    // segment: a resumed session writes its carried-in messages into it.
+    inherited: null,
   };
 }
 
@@ -795,6 +804,18 @@ interface CodexItem {
   payload: Record<string, unknown>;
 }
 
+/** One `full: true` world_state: the configuration in force from the item it
+ *  was written at until the next one. The three keys that are prose with a
+ *  size are decomposed into `blocks` and `tools`; `state` is the host's own
+ *  entry whole, which holds more than they decompose it into. */
+interface CodexStateEntry {
+  at: string | null;
+  index: number;
+  blocks: { bytes: number; sha256: string; text: string }[];
+  tools: { name: string; bytes: number; description: string | null; definition: unknown }[];
+  state: Record<string, unknown>;
+}
+
 interface CodexIndex {
   sessionId: string | null;
   cwd: string | null;
@@ -823,7 +844,7 @@ interface CodexIndex {
    *  this record holds no plaintext for it. */
   items: CodexItem[];
   /** The last `full: true` world_state at or before each item index. */
-  instructions: { at: string | null; index: number; blocks: { bytes: number; sha256: string; text: string }[]; tools: { name: string; bytes: number; description: string | null; definition: unknown }[]; state: Record<string, unknown> }[];
+  instructions: CodexStateEntry[];
   /** `full: false` entries: a delta, naming only the keys that moved. Read as
    *  a configuration one reports every absent key as empty — the trap the
    *  first reading of this record fell into. */
@@ -871,6 +892,14 @@ export interface CodexBase {
   items: CodexItem[];
   /** Every earlier segment this followed, nearest first. */
   chain: string[];
+  /** The configuration it handed on: the last FULL `world_state` in its
+   *  prefix, with the record that holds it. A continuation segment can record
+   *  none of its own — one of the three real ones here holds no `world_state
+   *  full: true` at all — and its calls' instruction blocks and tool inventory
+   *  are then readable only here. Null where this segment held none either; the
+   *  chain is followed for configuration exactly as far as it is followed for
+   *  items, so a segment that compacted ends the search for both. */
+  config: (CodexStateEntry & { record: string }) | null;
   /** What is STILL outside the reading: the earlier segment is itself a
    *  continuation whose own base did not resolve. */
   short: string | null;
@@ -1133,7 +1162,20 @@ function resolveCodexBase(
   }
   const ix = indexCodex(read.entries);
   const items = codexLiveItems(ix);
-  const segment: CodexBase = { record: read.path, thread_id: base.thread_id, entries: base.entries_before, items, chain: [read.path], short: null };
+  // The last full state in its PREFIX, which is the prefix the cut defines:
+  // `read.entries` stops at the byte the child picks up after, so the parent's
+  // own later configuration — written after the resume — is not in this index
+  // and cannot be handed to a call that preceded it.
+  const config = ix.instructions.at(-1) ?? null;
+  const segment: CodexBase = {
+    record: read.path,
+    thread_id: base.thread_id,
+    entries: base.entries_before,
+    items,
+    chain: [read.path],
+    short: null,
+    config: config === null ? null : { ...config, record: read.path },
+  };
   // The earlier segment may be a continuation too. Its own base is in force at
   // its end only if it recorded no compaction — a boundary there replaced the
   // context with a list the file itself holds, which is why `codexLiveItems`
@@ -1146,7 +1188,7 @@ function resolveCodexBase(
   if ('why' in up) {
     return { ...segment, short: `${read.path} continues thread ${ix.historyBase.thread_id ?? '(unnamed)'} from ordinal ${ix.historyBase.entries_before} in its turn, and that segment did not resolve: ${up.why}` };
   }
-  return { ...segment, items: [...up.items, ...items], chain: [...segment.chain, ...up.chain], short: up.short };
+  return { ...segment, items: [...up.items, ...items], chain: [...segment.chain, ...up.chain], short: up.short, config: segment.config ?? up.config };
 }
 
 /** One codex record, indexed, with the thread's earlier segment read where it
@@ -1246,12 +1288,36 @@ const codexPartsAt = (ix: CodexIndex, ordinal: number, byUsage: boolean): number
   return codexBaseItems(ix, ordinal, byUsage).length + (inForce?.replacement_items.length ?? 0) + Math.max(0, before - (inForce?.index ?? 0));
 };
 
+/** The configuration one call was run under, and the record it is written in.
+ *
+ *  A rollout usually writes its own full `world_state` before its first call.
+ *  A segment that CONTINUES a thread need not: the host wrote the full state
+ *  in the earlier segment and this file holds only its own deltas, so `--at 0`
+ *  reported `instructions: none in this record for this call` for a call whose
+ *  instruction blocks and tool inventory sit one hop away — on one of the
+ *  three real continuation segments here, which holds no `full: true` state at
+ *  all. The inherited state stays in force until this record writes one of its
+ *  own: a compaction does not bear on it, because a boundary replaces the item
+ *  list and not the configuration. */
+function codexStateInForce(ix: CodexIndex, index: number): { state: CodexStateEntry; inherited: string | null } | null {
+  const own = ix.instructions.filter((s) => s.index <= index).at(-1);
+  if (own) return { state: own, inherited: null };
+  const carried = ix.base?.config ?? null;
+  if (carried) return { state: carried, inherited: carried.record };
+  // A record whose only full state is written after this call: the nearest
+  // configuration it holds, named as its own because it is.
+  const first = ix.instructions[0];
+  return first ? { state: first, inherited: null } : null;
+}
+
 function codexInstructionsAt(ix: CodexIndex, index: number, view: View): QueryInstructions | null {
-  const applicable = ix.instructions.filter((s) => s.index <= index).at(-1) ?? ix.instructions[0];
-  if (!applicable) return null;
+  const inForce = codexStateInForce(ix, index);
+  if (!inForce) return null;
+  const applicable = inForce.state;
   return {
     ref: sha256(JSON.stringify(applicable.blocks.map((b) => b.sha256))).slice(0, 16),
     since: null,
+    inherited: inForce.inherited,
     blocks: applicable.blocks.map((b) => {
       const { text, truncated } = clip(b.text, view.chars);
       return { bytes: b.bytes, sha256: b.sha256, text, truncated };
@@ -1371,8 +1437,8 @@ function codexAt(ix: CodexIndex, ordinal: number, view: View): ContextAt | { err
   // reading that lists three keys as "the instructions" and says nothing
   // about sixteen more reads as complete. Named here whatever the view, and
   // carried whole by `instructions.state` when the payload was asked for.
-  const stateInForce = ix.instructions.filter((s) => s.index <= call.before).at(-1) ?? ix.instructions[0];
-  const undecomposed = Object.keys(stateInForce?.state ?? {})
+  const stateInForce = codexStateInForce(ix, call.before);
+  const undecomposed = Object.keys(stateInForce?.state.state ?? {})
     .filter((k) => !['agents_md', 'host_skills', 'tools', 'top_level_tools'].includes(k));
   const readable = parts.filter((p) => p.origin === 'retained');
   const usage = byUsage ? (window as CodexIndex['calls'][number]) : null;
@@ -1441,6 +1507,13 @@ function codexAt(ix: CodexIndex, ordinal: number, view: View): ContextAt | { err
         : []),
       ...(deltasBefore.length > 0
         ? [`${deltasBefore.length} world_state deltas were recorded before this turn (keys: ${[...new Set(deltasBefore.flatMap((d) => d.keys))].join(', ')}); the instructions above are the last FULL state, so a key a delta moved since then is stale here`]
+        : []),
+      // The configuration half of a carried-in context. The items above were
+      // already read from the earlier segment; its last full world_state is
+      // the other half of what the host carried over, and without it this
+      // reading said the call had no instructions at all.
+      ...(stateInForce?.inherited !== null && stateInForce !== null
+        ? [`this record writes no full world_state at or before this call, so the instructions and tool inventory above are the last full state of ${stateInForce.inherited}, the thread's earlier segment — the configuration the host carried into this segment, in force here until this record writes one of its own. This record's own world_state deltas are reported as change points rather than merged into it`]
         : []),
       ...UNIVERSAL_GAPS,
     ],
@@ -1639,6 +1712,32 @@ function codexFind(ix: CodexIndex, needle: string, chars: number): ContextFind {
     return where === -1 ? (of === 0 ? null : of - 1) : where;
   };
   const lastCall = (ix.calls.length > 0 ? ix.calls.length : ix.turns.length) - 1;
+  // The configuration carried in from the thread's earlier segment, in force
+  // from the first call here until this record writes a full state of its own.
+  // `--at` reads a call's instructions from it; a needle in those blocks or in
+  // that tool inventory was unfindable, and `searched 0 instruction blocks`
+  // read as a record that was configured by nothing.
+  const carried = ix.base?.config ?? null;
+  if (carried !== null) {
+    const ownFirst = ix.instructions[0];
+    const until = ownFirst === undefined ? lastCall : (turnOf(ownFirst.index) ?? 0) - 1;
+    if (until >= 0) {
+      const span = { first_invocation: 0, last_invocation: until, invocations: until + 1 };
+      for (const [k, b] of carried.blocks.entries()) {
+        searched.instructions++;
+        if (b.text.toLowerCase().includes(lower)) {
+          hits.push({ where: 'instructions', ref: `${b.sha256.slice(0, 12)} block ${k}, carried in from ${carried.record}`, origin: 'configured', role: 'system', ...span, excerpt: excerpt(b.text) });
+        }
+      }
+      for (const t of carried.tools) {
+        searched.tools++;
+        const text = `${t.name} ${t.description ?? ''}`;
+        if (text.toLowerCase().includes(lower)) {
+          hits.push({ where: 'tool', ref: `${t.name}, carried in from ${carried.record}`, origin: 'configured', role: 'tool', ...span, excerpt: excerpt(text) });
+        }
+      }
+    }
+  }
   for (const [n, state] of ix.instructions.entries()) {
     // In force until the next FULL world_state, or to the end of the rollout.
     const next = ix.instructions[n + 1];
@@ -1883,7 +1982,7 @@ export function renderContextAt(a: ContextAt & { source: TraceSource }, chars = 
     out.push('instructions: none in this record for this call');
   } else {
     const i = a.instructions;
-    out.push(`instructions (${short(i.ref, 12)}${i.since === null ? '' : `, in force since call ${i.since}`}) — ${i.blocks.length} blocks, ${n(i.bytes)}B; ${i.tools.length} tools, ${n(i.tools_bytes)}B`);
+    out.push(`instructions (${short(i.ref, 12)}${i.since === null ? '' : `, in force since call ${i.since}`}${i.inherited === null ? '' : `, carried in from ${i.inherited}`}) — ${i.blocks.length} blocks, ${n(i.bytes)}B; ${i.tools.length} tools, ${n(i.tools_bytes)}B`);
     for (const [k, b] of i.blocks.entries()) {
       out.push(`  [${k}] ${n(b.bytes)}B sha256 ${short(b.sha256, 12)}`);
       if (chars > 0 && b.text !== null) out.push(indent(b.text + (b.truncated ? ' […]' : '')));

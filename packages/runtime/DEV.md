@@ -783,7 +783,16 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   so ordinals at and after the base exist in both files with different content.
   A candidate that does not hold exactly that cut is refused by name, and two
   that both do are refused rather than chosen between: a reading spliced from
-  the wrong record would be worse than the stated gap it replaces.
+  the wrong record would be worse than the stated gap it replaces. Every
+  candidate is `resolve`d BEFORE the dedup, not after: the siblings beside the
+  record keep `dirname(recordPath)`'s spelling, so a relative `--record` put
+  one parent in the list twice — `X.jsonl` and `/abs/X.jsonl` from the store
+  walk — and two spellings of one file were refused as two records holding the
+  cut, which cost the reading to every operator who `cd`'d into the store. The
+  stated thread id is gated to a UUID before either lookup, like the null case:
+  `findCodexRecords` refuses a non-id, but the sibling scan matches by
+  `includes()`, so a `history_base.thread_id` of `""` or `"rollout"` named
+  every `.jsonl` in the directory and read each one to the stated offset.
   What is carried in is the segment's LIVE items — its last replacement list
   plus what it recorded after that boundary — by the same two rules a call's
   context is read by here, because a parent that compacted holds items its own
@@ -809,6 +818,27 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   `contentPart` and never printed as its data — the same rule as the
   `compaction` item's ciphertext, one level down, inside a message that is
   otherwise readable.
+  The CONFIGURATION a continuation segment was given is carried over the same
+  cut. A segment need write no full `world_state` of its own — 1 of the 3 here
+  holds none at all, and the other two hold 1 and 2 — so `--at` reported
+  `instructions: none in this record for this call` for a call whose
+  instruction blocks and tool inventory sit one hop away in the parent's last
+  full state before the cut. `resolveCodexBase` carries that state as
+  `CodexBase.config`, and `codexStateInForce` reads a call's configuration in
+  one order: this record's own last full state at or before the call, else the
+  carried one, else the record's own first. A compaction does NOT end the carry
+  here, unlike the items: a boundary replaces the item list and not the
+  configuration, so the inherited state is in force until this record writes
+  one of its own. `QueryInstructions.inherited` names the record it came from
+  (null on the ordinary case and on every claude reading, whose transcript is
+  one session's own file), `--at` prints `carried in from <record>` and says in
+  `gaps` that this record writes no full state, `--find` searches those blocks
+  and that inventory with the span of calls they were in force for — a needle
+  in them was unfindable while `--at` reported them, and `searched 0
+  instruction blocks` read as a record configured by nothing — and the trace's
+  `tools` coverage, still `unavailable` for the record itself, names the
+  earlier segment as where that inventory is rather than leaving an operator
+  looking for something already readable.
   `findCodexRecord` names the LATEST segment of a thread, because a resumed
   thread's later rollout is the one the run went on in and the earlier ones are
   reachable from it; `findCodexRecords` is the whole list. Both segments of one

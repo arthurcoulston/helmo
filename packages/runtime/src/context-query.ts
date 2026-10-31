@@ -126,8 +126,42 @@ export interface QueryPart {
    *  path, and it is the first thing an audit of a context asks for. The
    *  request's own arguments ride along only under the payload view. */
   acquired: AcquiredInput[] | null;
+  /** The host's own mark on its RETAINED copy of this message, where it writes
+   *  one. Codex only, and `null` on claude, which writes no equivalent.
+   *
+   *  It is NOT a mark on the copy printed above, and a reader that discounted
+   *  the part by it would be wrong: see `RetainedSource`. It is carried so
+   *  that an operator who finds `complete: false` in a rollout and asks this
+   *  reader about the slot gets the host's own word and the bound on it,
+   *  rather than a reading that passes over a field the host wrote. */
+  retained_source: RetainedSource | null;
   /** What to discount this part by, where anything. */
   caveat: string | null;
+}
+
+/** `metadata.retained_source` on a codex rollout entry: the host's own
+ *  identity and completeness mark for the copy of a message it RETAINS, keyed
+ *  by its own `revision`.
+ *
+ *  Read here because it was read nowhere — `codexItem` was handed an entry's
+ *  `payload` and never the entry, so the whole of a response item's entry
+ *  metadata was dropped at parse time and no reader could name a field in it.
+ *
+ *  **What `complete: false` does not mean.** It does not say this record's
+ *  copy of the item is partial. Measured over every instance on this machine
+ *  where both copies exist — the 460 items in a boundary's
+ *  `replacement_history` whose own entry is also in the file, at all 57
+ *  compacted entries, 11 of them across 6 boundaries marked incomplete — the
+ *  two copies are byte-identical, image data and all. So the mark belongs to
+ *  the host's separate retention and not to the rollout, and the content this
+ *  reader prints for such a slot is whole. It is reported, never discounted. */
+export interface RetainedSource {
+  /** The host's id for the retained revision, so an operator can match the
+   *  slot to the mark in the rollout rather than by position. */
+  revision: string | null;
+  /** The host's own word. `null` where it wrote a `retained_source` without
+   *  one, which is not the same as `false`. */
+  complete: boolean | null;
 }
 
 /** The host instructions, repository and role rules, and tool schemas in force
@@ -455,6 +489,7 @@ function claudePart(
       segments: segmentsFor(blob.parts, truncated),
       payload: view.verbatim ? blob.parts : null,
       acquired: claudeAcquired(blob.parts, requests, view),
+      retained_source: null,
       caveat: null,
     };
   }
@@ -477,6 +512,7 @@ function claudePart(
       // inference as the text rendered from it.
       payload: view.verbatim ? made.parts : null,
       acquired: claudeAcquired(made.parts, requests, view),
+      retained_source: null,
       caveat: reconstructionCaveat(ix, made.role),
     };
   }
@@ -497,6 +533,7 @@ function claudePart(
     // Nothing on this machine holds this part's blocks, so whether it held a
     // result at all is unknown — which is not the same as it holding none.
     acquired: null,
+    retained_source: null,
     caveat: 'the call referenced this message by hash; the host retained no blob for it and the transcript does not reconstruct it, so its content is not on this machine',
   };
 }
@@ -802,6 +839,15 @@ interface CodexItem {
    *  reasoning item whose plaintext is nowhere on this machine (R-56,
    *  H-3818). */
   payload: Record<string, unknown>;
+  /** The host's mark on its own retained copy, from the ENTRY's metadata
+   *  rather than from the payload above — a distinction that matters, because
+   *  an item reached by any route other than its own entry does not carry it.
+   *  A boundary's `replacement_history` items are such a route: they are
+   *  payloads inside one `compacted` entry, and not one of the 2,093 of them
+   *  on this machine has a `retained_source` of its own. `null` therefore says
+   *  "the host wrote no mark where this item was read", never "the host marked
+   *  it complete". */
+  retained: RetainedSource | null;
 }
 
 /** One `full: true` world_state: the configuration in force from the item it
@@ -950,7 +996,7 @@ function itemText(payload: Record<string, unknown>): string | null {
  *  reason this record holds no plaintext for it. One function, because the
  *  items a compaction's `replacement_history` carries are read by the same
  *  rules as the items it replaced. */
-function codexItem(at: string | null, payload: Record<string, unknown>): CodexItem {
+function codexItem(at: string | null, payload: Record<string, unknown>, metadata: Record<string, unknown> | null): CodexItem {
   const kind = str(payload['type']) ?? '(untyped)';
   const text = itemText(payload);
   // An item whose plaintext this record does not hold. The reasoning items
@@ -965,6 +1011,9 @@ function codexItem(at: string | null, payload: Record<string, unknown>): CodexIt
     : encrypted
       ? `the host records this ${kind} item's content only as provider-encrypted text (encrypted_content), so what it said is not on this machine — it was in the call's context all the same`
       : `this ${kind} item carries no text in any field this reader knows (keys: ${Object.keys(payload).join(', ')})`;
+  const source = metadata !== null && rec(metadata['retained_source'])
+    ? (metadata['retained_source'] as Record<string, unknown>)
+    : null;
   return {
     at,
     kind,
@@ -973,6 +1022,9 @@ function codexItem(at: string | null, payload: Record<string, unknown>): CodexIt
     bytes: Buffer.byteLength(JSON.stringify(payload), 'utf8'),
     opaque,
     payload,
+    retained: source === null
+      ? null
+      : { revision: str(source['revision']), complete: typeof source['complete'] === 'boolean' ? (source['complete'] as boolean) : null },
   };
 }
 
@@ -1075,7 +1127,7 @@ function indexCodex(entries: Record<string, unknown>[]): CodexIndex {
     } else if (type === 'turn_context' && payload) {
       ix.turns.push({ at, model: str(payload['model']), turn_id: str(payload['turn_id']), before: ix.items.length });
     } else if (type === 'response_item' && payload) {
-      ix.items.push(codexItem(at, payload));
+      ix.items.push(codexItem(at, payload, rec(e['metadata']) ? (e['metadata'] as Record<string, unknown>) : null));
     } else if (type === 'token_usage_record' && payload) {
       const usage = rec(payload['usage']) ? (payload['usage'] as Record<string, unknown>) : null;
       const from = ix.calls.at(-1)?.before ?? 0;
@@ -1107,7 +1159,12 @@ function indexCodex(entries: Record<string, unknown>[]): CodexIndex {
         // replacement list.
         calls_before: ix.calls.length,
         turns_before: ix.turns.length,
-        replacement_items: history.filter(rec).map((item) => codexItem(at, item)),
+        // No metadata: a replacement item is a payload inside this one
+        // `compacted` entry, so there is no entry of its own to carry a
+        // `retained_source`. Its twin elsewhere in the file may have one, and
+        // reading that twin's mark onto this slot would attribute a mark the
+        // host did not write here.
+        replacement_items: history.filter(rec).map((item) => codexItem(at, item, null)),
         at,
         trigger: str(payload['message']) || 'unrecorded',
         pre_tokens: turnUsage ? num(turnUsage['input_tokens']) : null,
@@ -1414,6 +1471,7 @@ function codexAt(ix: CodexIndex, ordinal: number, view: View): ContextAt | { err
       // audit has to account for.
       payload: view.verbatim ? [item.payload] : null,
       acquired: codexAcquired(item, requests, view),
+      retained_source: item.retained,
       caveat: carriedCaveat === null ? item.opaque : item.opaque === null ? carriedCaveat : `${carriedCaveat}. ${item.opaque}`,
     };
   });
@@ -1441,6 +1499,10 @@ function codexAt(ix: CodexIndex, ordinal: number, view: View): ContextAt | { err
   const undecomposed = Object.keys(stateInForce?.state.state ?? {})
     .filter((k) => !['agents_md', 'host_skills', 'tools', 'top_level_tools'].includes(k));
   const readable = parts.filter((p) => p.origin === 'retained');
+  // Only `false`. A part whose entry carried no mark, or a mark without the
+  // field, is not one the host called incomplete, and counting it here would
+  // report the reader's own silence as the host's word.
+  const incompleteRetention = parts.filter((p) => p.retained_source?.complete === false);
   const usage = byUsage ? (window as CodexIndex['calls'][number]) : null;
   return {
     harness: 'codex',
@@ -1468,6 +1530,13 @@ function codexAt(ix: CodexIndex, ordinal: number, view: View): ContextAt | { err
     acquired: acquiredAccount(parts.flatMap((p) => p.acquired ?? [])),
     gaps: [
       ...CODEX_GAPS,
+      // The host's own mark, said once with its bound. A gap because what the
+      // retained copy HOLDS is nowhere in this record — the mark says only
+      // that it is not the whole message — and not a caveat, because the copy
+      // printed above is this record's own and is whole.
+      ...(incompleteRetention.length === 0 ? [] : [
+        `the host marks its own retained copy of ${incompleteRetention.length} part${incompleteRetention.length === 1 ? '' : 's'} above INCOMPLETE (metadata.retained_source.complete: false${incompleteRetention.length <= 4 ? ` at slot${incompleteRetention.length === 1 ? '' : 's'} ${incompleteRetention.map((pt) => pt.slot).join(', ')}` : ''}): what those copies hold is not in this record and cannot be read here. It is not a mark on the text above, which is this record's own copy — at every boundary on this machine where both copies exist they are byte-identical, image data and all — so nothing above is discounted by it`,
+      ]),
       ...(compaction === null ? [] : [
         compaction.replacement_items.length > 0
           ? `${droppedSays} NOT in this call's context, and not listed above: the host replaced them with the ${compaction.replacement_items.length} items it wrote as its replacement_history, which are the first ${compaction.replacement_items.length} slots here${entered === null || entered < 1
@@ -1583,6 +1652,7 @@ function codexEvolution(ix: CodexIndex, view: View): ContextEvolution {
         segments: null,
         payload: view.verbatim ? [item.payload] : null,
         acquired: codexAcquired(item, requests, view),
+        retained_source: item.retained,
         caveat: item.opaque,
       };
     });
@@ -1947,7 +2017,12 @@ function renderPart(p: QueryPart, chars: number): string[] {
     // for `replacement 12`, and `earlier item 3` names which record a part was
     // read from.
     : `${named ? (p.origin === 'retained' ? 'blob ' : 'hash ') : ''}${short(only, named ? 8 : 20)}`;
-  out.push(`  #${String(p.slot).padEnd(4)} ${p.role.padEnd(10)} ${p.origin.padEnd(14)} ${p.entered === null ? 'entered ?' : `entered call ${p.entered}`.padEnd(16)} ${p.bytes === null ? '-' : `${n(p.bytes)}B`.padStart(10)}  ${where}`);
+  // On the slot itself, because the gap line below names slots only while
+  // they are few enough to read, and the operator's question is which ONE.
+  // The host's word, in the host's own field name, with no verdict attached:
+  // the content below is this record's copy and is whole.
+  const retention = p.retained_source?.complete === false ? '  retained_source.complete: false' : '';
+  out.push(`  #${String(p.slot).padEnd(4)} ${p.role.padEnd(10)} ${p.origin.padEnd(14)} ${p.entered === null ? 'entered ?' : `entered call ${p.entered}`.padEnd(16)} ${p.bytes === null ? '-' : `${n(p.bytes)}B`.padStart(10)}  ${where}${retention}`);
   // Before the content, not after it: a 200KB tool result scrolls its own
   // provenance off the screen, and where a part came from is what an operator
   // reading a context is looking for.

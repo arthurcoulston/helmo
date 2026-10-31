@@ -803,9 +803,13 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   record they were read from on each part, `codexPartsAt` counts them (so a
   later boundary's drop figure is the real one), `--find` searches them with
   their span, and the timeline says they are context on its first row and not
-  additions. Measured on the three: `--at 0` went from 0, 5 and 2 parts to 415,
-  106 and 103, and ward's own probe over all 33 compacted boundaries reads
-  `bad=0` where two rows previously refused their drop. A chain is followed to
+  additions. Measured on the three that existed when this was built: `--at 0` went from
+  0, 5 and 2 parts to 415, 106 and 103, and ward's own probe over the 33
+  compacted boundaries then present reads `bad=0` where two rows previously
+  refused their drop. A fourth segment (2026-10-30T08-24-07) has since been
+  written and reads by the same rules, and the compacted boundaries are now
+  57: every count in this section is as of its own measurement and not a
+  standing total of a store that grows daily. A chain is followed to
   `BASE_HOPS` segments and names what is still outside it; a hop that does not
   resolve leaves `short` saying so rather than presenting what was read as the
   whole context.
@@ -819,8 +823,8 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   `compaction` item's ciphertext, one level down, inside a message that is
   otherwise readable.
   The CONFIGURATION a continuation segment was given is carried over the same
-  cut. A segment need write no full `world_state` of its own — 1 of the 3 here
-  holds none at all, and the other two hold 1 and 2 — so `--at` reported
+  cut. A segment need write no full `world_state` of its own — 1 of the 4 here
+  holds none at all, and the other three hold 1, 1 and 2 — so `--at` reported
   `instructions: none in this record for this call` for a call whose
   instruction blocks and tool inventory sit one hop away in the parent's last
   full state before the cut. `resolveCodexBase` carries that state as
@@ -838,7 +842,34 @@ the old name, and the `capstan-dev` workstream merged into `rev-dev` (H-62).
   instruction blocks` read as a record configured by nothing — and the trace's
   `tools` coverage, still `unavailable` for the record itself, names the
   earlier segment as where that inventory is rather than leaving an operator
-  looking for something already readable.
+  looking for something already readable. A compaction not ending this carry
+  is now pinned on `--at` past the boundary and not only on `--find`'s span,
+  which is the reading an operator actually asks for.
+  The host's own COMPLETENESS MARK on a message is read, reported and bounded.
+  `metadata.retained_source` sits on the rollout ENTRY, beside the payload, and
+  `codexItem` was handed the payload alone — so the whole of a response item's
+  entry metadata was dropped at parse time and no reader could name a field in
+  it, while 3,698 items across 892 of the 962 records here carry a mark saying
+  the host's retained copy is not the whole message. `CodexItem.retained` holds
+  it and `QueryPart.retained_source` reports it, with the revision so an
+  operator can match a slot to the mark rather than to a position; `--at`
+  prints `retained_source.complete: false` on the slot and says once in `gaps`
+  how many parts carry it. It is a GAP and not a caveat, and the distinction is
+  measured rather than assumed: what the retained copy holds is nowhere in the
+  record, so it cannot be read here, but the copy printed is the record's own
+  and is whole — over the 460 items in a boundary's `replacement_history` whose
+  own entry is also in the file, at all 57 compacted entries and including the
+  11 marked incomplete across 6 boundaries, the two copies are byte-identical,
+  image data and all. So nothing is discounted by the mark. Only the host's
+  literal `false` is counted: a mark written without the field reads `complete:
+  null`, and an item reached by a route that has no entry of its own —
+  a boundary's `replacement_history`, where not one of the 2,093 items here
+  carries a `retained_source` — reads `null` for the whole mark, which says
+  "the host wrote none where this was read" and never "the host marked it
+  complete". Claude writes no equivalent and reports `null` throughout. What
+  the mark is, where it can be seen: of the 15 marked items under 2,500
+  characters here every one carries an `input_image`, and the rest are text
+  past a size the retention does not keep.
   `findCodexRecord` names the LATEST segment of a thread, because a resumed
   thread's later rollout is the one the run went on in and the earlier ones are
   reachable from it; `findCodexRecords` is the whole list. Both segments of one

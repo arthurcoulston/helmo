@@ -327,6 +327,76 @@ describe('where a string came from', () => {
   });
 });
 
+describe("the host's own mark on its retained copy", () => {
+  // `metadata.retained_source` sits on the rollout ENTRY, beside the payload.
+  // `codexItem` was handed the payload alone, so the whole of a response
+  // item's entry metadata was dropped at parse time and no reader could name a
+  // field in it — 3,698 items across 892 of the 962 records on this machine
+  // carry a mark saying the host's retained copy is not the whole message, and
+  // every reading passed over it in silence (ward's PASS on increment 7).
+  //
+  // Mutation: read `payload.metadata` instead of the entry's. The real items
+  // carry nothing there, so every mark reads as absent.
+  it("carries the host's completeness mark on the slot, from the entry beside the payload", () => {
+    const a = at(write('marks.jsonl', codexRecord({ retention: true, attachment: true, compaction: false, secondCall: true })), 1);
+
+    expect(a.parts.map((p) => p.retained_source?.revision ?? null)).toEqual([
+      'retained_whole', 'retained_part', 'retained_unsaid', null,
+    ]);
+    // `??` would collapse the two distinct readings this case exists to
+    // separate: a mark the host wrote without a `complete`, and no mark at all.
+    expect(a.parts.map((p) => (p.retained_source === null ? 'no mark' : p.retained_source.complete))).toEqual([true, false, null, 'no mark']);
+  });
+
+  // Mutation: count any mark, or a missing `complete`, as incomplete. The
+  // host's word is the only thing worth reporting here; a mark it wrote
+  // without the field is not it saying the copy is partial, and reporting the
+  // reader's own silence as the host's word is how a qualification stops
+  // meaning anything.
+  it('reports only the parts the host itself marked incomplete, and says what the mark does not touch', () => {
+    const a = at(write('marks.jsonl', codexRecord({ retention: true, attachment: true, compaction: false, secondCall: true })), 1);
+
+    const gap = a.gaps.find((g) => g.includes('retained copy')) ?? '';
+    expect(gap).toContain('retained copy of 1 part above INCOMPLETE');
+    expect(gap).toContain('at slot 1');
+    // The bound, said with the mark: the copy printed is this record's own.
+    // Measured over every instance on this machine where both copies exist —
+    // 460 items at 57 boundaries, 11 of them marked incomplete across 6
+    // boundaries — the two are byte-identical, image data and all.
+    expect(gap).toContain("not a mark on the text above, which is this record's own copy");
+    expect(gap).toContain('byte-identical');
+    // And it is NOT a caveat: a part is not discounted by it.
+    expect(a.parts[1]!.caveat).toBeNull();
+    expect(renderContextAt({ ...a, source: a.source as never }, 0)).toContain('retained_source.complete: false');
+  });
+
+  // Mutation: carry the mark onto a replacement item from its twin elsewhere
+  // in the file. A boundary's `replacement_history` items are payloads inside
+  // one `compacted` entry and have no entry of their own — not one of the
+  // 2,093 on this machine carries a `retained_source` — so a mark on such a
+  // slot would be one the host did not write there.
+  it('leaves a replacement item unmarked rather than borrowing a mark', () => {
+    const a = at(write('compacted.jsonl', codexRecord({ retention: true, compaction: true, secondCall: true })), 1);
+
+    expect(a.parts[0]!.via).toEqual(['replacement 0']);
+    expect(a.parts.slice(0, 2).map((p) => p.retained_source)).toEqual([null, null]);
+    // The second replacement item carries `metadata: { kind: 'window' }` in
+    // its own PAYLOAD, which is the shape that makes borrowing look harmless:
+    // item metadata is not entry metadata and holds no completeness mark.
+    expect(a.gaps.join(' ')).not.toContain('retained copy');
+  });
+
+  // Mutation: drop the field from a claude part, or default it to a mark. The
+  // host writes no equivalent there, and `null` says so; a default would
+  // report a mark claude never made.
+  it('is null on claude, which writes no such mark', () => {
+    const a = at(write('join.jsonl', claudeTranscriptRecord()), 2);
+
+    expect(a.parts.every((p) => p.retained_source === null)).toBe(true);
+    expect(a.gaps.join(' ')).not.toContain('retained copy');
+  });
+});
+
 describe('the codex rollout', () => {
   // Mutation: present the items before a turn as the host's own message list.
   // The rollout records turns and items; the per-call array is this reader's
@@ -1228,6 +1298,33 @@ describe('the thread segment a continuation picks up from', () => {
     // earlier segment's blocks were in force for no call of this record, so a
     // needle only they hold is not a hit here.
     expect(find(child, 'only the earlier segment was given').hits).toHaveLength(0);
+  });
+
+  // Ward's second residual on H-3872: "a compaction does not end the carry"
+  // was pinned for `--find`'s span only, and `--at` past the boundary — the
+  // reading an operator actually asks for — rested on prose. A boundary
+  // replaces the ITEM list; it writes no configuration, so the state the host
+  // handed over at the cut is still the one in force after it.
+  //
+  // Mutation: end the carry at the first boundary (return null, or the
+  // record's own first state, once a compaction precedes the call). `--at 3`
+  // and `--at 5` then report no instructions at all for a call whose blocks
+  // and tools are one hop away — on the real 2026-10-25T15-37-49 shape, every
+  // call of the record.
+  it('still reports the configuration it carried in for a call past a boundary', () => {
+    const { child, parent } = writeThread({ withoutConfig: true });
+
+    // Boundaries land on calls 2 and 5 of this fixture; the carried ITEMS stop
+    // at the first one, and the configuration does not.
+    for (const ordinal of [3, 5]) {
+      const a = at(child, ordinal);
+      expect(a.instructions!.inherited).toBe(parent);
+      expect(a.instructions!.blocks.map((b) => b.text)).toEqual(['You are Codex.', "the earlier segment's repository rules"]);
+      expect(a.instructions!.tools.map((t) => t.name)).toEqual(['clock', 'ledger']);
+      // The items are a different answer: the boundary replaced them, so no
+      // slot here was read from the earlier segment.
+      expect(a.parts.some((p) => p.via[0]?.startsWith('earlier item '))).toBe(false);
+    }
   });
 
   // Mutation: do not search the carried-in configuration. A needle in the

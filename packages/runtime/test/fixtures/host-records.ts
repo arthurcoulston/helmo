@@ -73,7 +73,22 @@ export function claudeRecord(over: { blobs?: boolean; compaction?: boolean } = {
  *  list, so a call after one holds the host's `replacement_history` and none of
  *  the items before it — which is the wrong fixture for anything about how a
  *  call's own window is bounded. */
-export function codexRecord(over: { full?: boolean; encryptedReasoning?: boolean; secondCall?: boolean; compaction?: boolean; attachment?: boolean } = {}): unknown[] {
+export function codexRecord(over: { full?: boolean; encryptedReasoning?: boolean; secondCall?: boolean; compaction?: boolean; attachment?: boolean; retention?: boolean } = {}): unknown[] {
+  // `metadata.retained_source` sits on the ENTRY, beside the payload, which is
+  // why no reader saw it: `codexItem` was handed the payload alone. The three
+  // shapes the real records hold — a mark saying the retained copy is whole, a
+  // mark saying it is not, and (the fixture's own, to pin the reading of a
+  // field the host may omit) a mark that states no `complete` at all.
+  const mark = (revision: string, complete?: boolean) => (over.retention !== true ? {} : {
+    metadata: {
+      retained_source: {
+        id: { message_id: `msg_${revision}`, turn_id: 'turn-1', role: 'user' },
+        revision: `retained_${revision}`,
+        ...(complete === undefined ? {} : { complete }),
+      },
+      client_authored: false,
+    },
+  });
   const entries: unknown[] = [
     {
       type: 'session_meta', timestamp: '2026-10-29T04:00:00.000Z', ordinal: 0,
@@ -115,6 +130,7 @@ export function codexRecord(over: { full?: boolean; encryptedReasoning?: boolean
     {
       type: 'response_item', timestamp: '2026-10-29T04:00:03.000Z', ordinal: 4,
       payload: { type: 'message', role: 'user', content: [{ type: 'text', text: 'the first ask' }] },
+      ...mark('whole', true),
     },
     // A message carrying an image the way the host writes one: a line of text
     // naming the file, then the whole image as a base64 data URL. One real
@@ -131,6 +147,11 @@ export function codexRecord(over: { full?: boolean; encryptedReasoning?: boolean
             { type: 'input_text', text: '</image>' },
           ],
         },
+        // Marked INCOMPLETE, which is the shape every small real instance has:
+        // of the 15 items under 2,500 characters the host marks incomplete on
+        // this machine, every one carries an `input_image`. The large ones are
+        // text past a size its retention does not keep.
+        ...mark('part', false),
       }]
       : []),
     // Every reasoning item in a real rollout looks like this: an empty
@@ -145,6 +166,7 @@ export function codexRecord(over: { full?: boolean; encryptedReasoning?: boolean
     {
       type: 'response_item', timestamp: '2026-10-29T04:00:04.000Z', ordinal: 5,
       payload: { type: 'custom_tool_call', name: 'exec', arguments: 'printf one' },
+      ...mark('unsaid'),
     },
     {
       // One per API call, carrying the provider's own response id for it. The
